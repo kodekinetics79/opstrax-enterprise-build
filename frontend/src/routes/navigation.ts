@@ -7,8 +7,10 @@ import {
   Clock3,
   FileText,
   Gauge,
+  Headphones,
   Landmark,
   Layers3,
+  Settings2,
   ShieldCheck,
   TimerReset,
   UserCircle2,
@@ -26,13 +28,13 @@ export const navigationGroups: NavGroup[] = [
       { label: 'Employee Self-Service', icon: UserCircle2, path: '/ess' },
       { label: 'People', icon: UsersRound, path: '/people' },
       { label: 'Attendance', icon: Clock3, badge: 12, path: '/attendance' },
+      { label: 'Leave Management', icon: ClipboardList, path: '/leave' },
       { label: 'Shifts & Rosters', icon: CalendarCheck, path: '/shifts' },
     ],
   },
   {
     label: 'Leave & Time',
     items: [
-      { label: 'Leave', icon: ClipboardList, path: '/leave' },
       { label: 'Overtime', icon: TimerReset, path: '/overtime' },
     ],
   },
@@ -48,20 +50,28 @@ export const navigationGroups: NavGroup[] = [
     items: [
       { label: 'Recruitment', icon: BriefcaseBusiness, path: '/recruitment' },
       { label: 'Performance & Appraisals', icon: BarChart3, path: '/performance' },
+      { label: 'Compliance & Contracts', icon: ShieldCheck, path: '/compliance' },
       { label: 'Documents & Letters', icon: FileText, path: '/documents' },
     ],
   },
   {
     label: 'Intelligence',
     items: [
+      { label: 'AI HR Assistant', icon: Bot, path: '/ai-assistant' },
       { label: 'Reports & Analytics', icon: Layers3, path: '/reports' },
-      { label: 'AI Workforce Insights', icon: Bot, path: '/ai-insights' },
+    ],
+  },
+  {
+    label: 'Service Desk',
+    items: [
+      { label: 'HR Request Center', icon: Headphones, path: '/hr-requests' },
     ],
   },
   {
     label: 'Admin',
     items: [
       { label: 'Approval Center', icon: ShieldCheck, badge: 18, path: '/approvals' },
+      { label: 'Tenant Administration', icon: Settings2, path: '/tenant-admin' },
       { label: 'Setup & Administration', icon: UserRoundCog, path: '/setup' },
     ],
   },

@@ -56,7 +56,7 @@ public class LeaveCalendarController : ControllerBase
             r.LeaveTypeName,
             r.StartDate,
             r.EndDate,
-            Days = r.TotalDays,
+            TotalDays = r.TotalDays,
             r.Status,
             ColorCode = colorMap.TryGetValue(r.LeaveTypeId, out var color) ? color : "#3B82F6"
         });
@@ -113,25 +113,33 @@ public class LeaveCalendarController : ControllerBase
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        var onLeave = await _db.LeaveRequests
+        var requests = await _db.LeaveRequests
             .Where(r => r.TenantId == tenantId
                 && r.Status == "Approved"
                 && r.StartDate <= today
                 && r.EndDate >= today)
             .OrderBy(r => r.DepartmentName)
             .ThenBy(r => r.EmployeeName)
-            .Select(r => new
-            {
-                r.EmployeeId,
-                r.EmployeeName,
-                r.DepartmentName,
-                r.LeaveTypeName,
-                r.StartDate,
-                r.EndDate,
-                Days = r.TotalDays
-            })
             .ToListAsync(ct);
 
-        return Ok(new { date = today, count = onLeave.Count, employees = onLeave });
+        var leaveTypeIds = requests.Select(r => r.LeaveTypeId).Distinct().ToList();
+        var colorMap = await _db.LeaveTypes
+            .Where(t => leaveTypeIds.Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, t => t.ColorCode, ct);
+
+        var result = requests.Select(r => new
+        {
+            r.EmployeeId,
+            r.EmployeeName,
+            r.DepartmentName,
+            r.LeaveTypeName,
+            r.StartDate,
+            r.EndDate,
+            TotalDays = r.TotalDays,
+            r.Status,
+            ColorCode = colorMap.TryGetValue(r.LeaveTypeId, out var color) ? color : "#3B82F6"
+        });
+
+        return Ok(result);
     }
 }

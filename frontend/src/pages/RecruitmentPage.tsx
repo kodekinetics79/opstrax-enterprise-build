@@ -2,15 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Plus, ChevronLeft, Users, Briefcase, ClipboardList, UserPlus,
   CheckCircle, Clock, XCircle, ChevronRight, X, Star, Send,
-  FileText, AlertCircle, ArrowRight, Calendar,
+  FileText, AlertCircle, ArrowRight, Calendar, BarChart3, Bot,
+  Target, BookOpen, Award, TrendingUp, LayoutGrid,
 } from 'lucide-react';
 import {
   requisitionsApi, openingsApi, candidatesApi, applicationsApi,
+  workforcePlanningApi, interviewsApi, assessmentsApi, offersApi,
+  onboardingApi, recruitmentReportsApi,
 } from '../api/recruitment';
 import type {
   ManpowerRequisition, JobOpening, Candidate, JobApplication,
   ApplicationDetail, KanbanStage, OfferLetter,
   RecruitmentStats, RequisitionStats,
+  WorkforcePlan, InterviewSchedule as ExtInterviewSchedule,
+  CandidateAssessment, OnboardingTask,
 } from '../api/recruitment';
 import { StatusChip } from '../components/StatusChip';
 
@@ -1147,9 +1152,528 @@ function CandidatesTab() {
   );
 }
 
+// ── Workforce Planning Tab ────────────────────────────────────────────────────
+
+function WorkforcePlanningTab() {
+  const [plans, setPlans] = useState<WorkforcePlan[]>([]);
+  const [summary, setSummary] = useState<{ totalPlans: number; totalGap: number; totalBudget: number; approved: number } | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'AED', notes: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    try {
+      const [r, s] = await Promise.all([workforcePlanningApi.list(), workforcePlanningApi.summary()]);
+      setPlans(r.items); setSummary(s);
+    } catch {}
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try { await workforcePlanningApi.create(form); setShowCreate(false); setForm({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'AED', notes: '' }); load(); } catch {} finally { setSaving(false); }
+  };
+
+  const STATUS_COLORS: Record<string, string> = {
+    Draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+    Approved: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+    InProgress: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
+    Closed: 'bg-slate-200 text-slate-500',
+  };
+
+  return (
+    <div className="space-y-5">
+      {summary && (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { label: 'Total Plans', value: summary.totalPlans, color: 'bg-sapphire/10 text-sapphire dark:bg-sapphire/20' },
+            { label: 'Approved', value: summary.approved, color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
+            { label: 'Total Headcount Gap', value: summary.totalGap, color: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+            { label: 'Budget Allocated', value: `${summary.totalBudget.toLocaleString()}`, color: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400' },
+          ].map(k => (
+            <div key={k.label} className="surface flex items-center gap-3 p-4">
+              <div className={`h-8 w-8 shrink-0 rounded-lg grid place-items-center ${k.color}`}>
+                <Target className="h-4 w-4" />
+              </div>
+              <div><p className="text-xl font-bold text-slate-900 dark:text-white">{k.value}</p><p className="text-xs text-slate-500 dark:text-slate-400">{k.label}</p></div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="surface p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-white">Workforce Plans</h3>
+          <button type="button" onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 rounded-lg bg-sapphire px-3 py-1.5 text-xs font-medium text-white hover:bg-sapphire/90">
+            <Plus className="h-3.5 w-3.5" /> New Plan
+          </button>
+        </div>
+
+        {showCreate && (
+          <div className="mb-4 rounded-xl border border-slate-200 dark:border-white/10 p-4 space-y-3 bg-slate-50 dark:bg-white/[0.03]">
+            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">New Workforce Plan</h4>
+            <div className="grid grid-cols-2 gap-3">
+              {[['planName', 'Plan Name', 'text'], ['planYear', 'Year', 'number'], ['departmentName', 'Department', 'text']].map(([k, l, t]) => (
+                <div key={k}>
+                  <label htmlFor={`wfp-${k}`} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{l}</label>
+                  <input id={`wfp-${k}`} type={t} title={l as string} value={(form as Record<string, unknown>)[k] as string} onChange={e => setForm(f => ({ ...f, [k]: t === 'number' ? Number(e.target.value) : e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-900 dark:text-white" />
+                </div>
+              ))}
+              {[['currentHeadcount', 'Current HC', 'number'], ['plannedHeadcount', 'Planned HC', 'number'], ['budgetAllocated', 'Budget', 'number']].map(([k, l, t]) => (
+                <div key={k}>
+                  <label htmlFor={`wfp-${k}`} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{l}</label>
+                  <input id={`wfp-${k}`} type={t} title={l as string} value={(form as Record<string, unknown>)[k] as number} onChange={e => setForm(f => ({ ...f, [k]: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-900 dark:text-white" />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button type="button" onClick={save} disabled={saving} className="rounded-lg bg-sapphire px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-sapphire/90">{saving ? 'Saving…' : 'Create Plan'}</button>
+              <button type="button" onClick={() => setShowCreate(false)} className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {plans.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No workforce plans found. Create the first plan.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-white/10">
+                  {['Code', 'Name', 'Year', 'Department', 'Gap', 'Budget', 'Status'].map(h => (
+                    <th key={h} className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                {plans.map(p => (
+                  <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
+                    <td className="py-2.5 pr-3 font-mono text-xs text-sapphire dark:text-cyanAccent">{p.planCode}</td>
+                    <td className="py-2.5 pr-3 font-medium text-slate-800 dark:text-slate-200">{p.planName}</td>
+                    <td className="py-2.5 pr-3 text-slate-500 dark:text-slate-400">{p.planYear}</td>
+                    <td className="py-2.5 pr-3 text-slate-500 dark:text-slate-400">{p.departmentName || '—'}</td>
+                    <td className="py-2.5 pr-3 font-semibold text-slate-900 dark:text-white">{p.gapCount > 0 ? `+${p.gapCount}` : p.gapCount}</td>
+                    <td className="py-2.5 pr-3 text-slate-500 dark:text-slate-400">{p.currencyCode} {p.budgetAllocated.toLocaleString()}</td>
+                    <td className="py-2.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[p.status] ?? ''}`}>{p.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Interviews Tab ────────────────────────────────────────────────────────────
+
+function InterviewsTab() {
+  const [interviews, setInterviews] = useState<ExtInterviewSchedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try { const r = await interviewsApi.list(undefined, statusFilter || undefined); setInterviews(r.items); } catch {} finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [statusFilter]);
+
+  const MODE_ICON: Record<string, string> = { InPerson: '🏢', Video: '📹', Phone: '📞' };
+  const RECOMMENDATION_COLORS: Record<string, string> = {
+    StrongHire: 'text-emerald-600 dark:text-emerald-400',
+    Hire: 'text-blue-600 dark:text-blue-400',
+    Hold: 'text-amber-600 dark:text-amber-400',
+    Reject: 'text-rose-600 dark:text-rose-400',
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <select title="Filter by interview status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200">
+          <option value="">All Statuses</option>
+          {['Scheduled', 'Completed', 'Cancelled', 'NoShow'].map(s => <option key={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : interviews.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No interviews found.</p>
+      ) : (
+        <div className="space-y-2">
+          {interviews.map(iv => (
+            <div key={iv.id} className="surface p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">{iv.interviewType}</span>
+                    <span className="text-xs text-slate-400">{MODE_ICON[iv.mode] ?? '🗓'} {iv.mode}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      iv.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' :
+                      iv.status === 'Cancelled' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'
+                    }`}>{iv.status}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {new Date(iv.scheduledAt).toLocaleString()} · {iv.durationMinutes}min
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Interviewers: {iv.interviewerNames}</p>
+                  {iv.recommendation && (
+                    <p className={`text-xs font-medium mt-1 ${RECOMMENDATION_COLORS[iv.recommendation] ?? ''}`}>
+                      Recommendation: {iv.recommendation}
+                    </p>
+                  )}
+                </div>
+                {iv.overallRating && (
+                  <div className="text-right shrink-0">
+                    <p className="text-lg font-bold text-slate-900 dark:text-white">{iv.overallRating}/5</p>
+                    <p className="text-xs text-slate-400">Rating</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Assessments Tab ───────────────────────────────────────────────────────────
+
+function AssessmentsTab() {
+  const [assessments, setAssessments] = useState<CandidateAssessment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try { const r = await assessmentsApi.list(undefined, statusFilter || undefined); setAssessments(r.items); } catch {} finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [statusFilter]);
+
+  const STATUS_COLORS: Record<string, string> = {
+    Pending: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+    Sent: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
+    Completed: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+    Expired: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <select title="Filter by assessment status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200">
+          <option value="">All Statuses</option>
+          {['Pending', 'Sent', 'InProgress', 'Completed', 'Expired'].map(s => <option key={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : assessments.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No assessments found.</p>
+      ) : (
+        <div className="surface overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-white/10">
+                {['Assessment', 'Status', 'Sent', 'Expires', 'Score', 'Result'].map(h => (
+                  <th key={h} className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+              {assessments.map(a => (
+                <tr key={a.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
+                  <td className="p-3 font-medium text-slate-800 dark:text-slate-200">{a.templateName}</td>
+                  <td className="p-3">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[a.status] ?? ''}`}>{a.status}</span>
+                  </td>
+                  <td className="p-3 text-xs text-slate-500 dark:text-slate-400">{a.sentAtUtc ? new Date(a.sentAtUtc).toLocaleDateString() : '—'}</td>
+                  <td className="p-3 text-xs text-slate-500 dark:text-slate-400">{a.expiresAtUtc ? new Date(a.expiresAtUtc).toLocaleDateString() : '—'}</td>
+                  <td className="p-3 font-semibold text-slate-900 dark:text-white">{a.scorePercentage != null ? `${a.scorePercentage.toFixed(0)}%` : '—'}</td>
+                  <td className="p-3">
+                    {a.passed === true && <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">✓ Passed</span>}
+                    {a.passed === false && <span className="text-xs font-medium text-rose-600 dark:text-rose-400">✗ Failed</span>}
+                    {a.passed == null && <span className="text-xs text-slate-400">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Offers Tab ────────────────────────────────────────────────────────────────
+
+function OffersTab() {
+  const [offers, setOffers] = useState<OfferLetter[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try { const r = await offersApi.list(undefined, statusFilter || undefined); setOffers(r.items); } catch {} finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [statusFilter]);
+
+  const STATUS_COLORS: Record<string, string> = {
+    Draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+    Sent: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
+    Accepted: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+    Declined: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
+    Approved: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400',
+    Expired: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <select title="Filter by offer status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200">
+          <option value="">All Statuses</option>
+          {['Draft', 'PendingApproval', 'Approved', 'Sent', 'Accepted', 'Declined', 'Expired'].map(s => <option key={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : offers.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No offers found.</p>
+      ) : (
+        <div className="space-y-2">
+          {offers.map(o => (
+            <div key={o.id} className="surface p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 dark:text-white">{o.candidateName}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{o.offeredJobTitle} · Starts {o.startDate}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Gross: <span className="font-semibold text-slate-700 dark:text-slate-300">{o.grossSalary.toLocaleString()}</span>
+                    {o.responseDeadline && ` · Deadline: ${new Date(o.responseDeadline).toLocaleDateString()}`}
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[o.status] ?? ''}`}>{o.status}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Onboarding Tab ────────────────────────────────────────────────────────────
+
+function OnboardingTab() {
+  const [tasks, setTasks] = useState<OnboardingTask[]>([]);
+  const [summary, setSummary] = useState<{ total: number; pending: number; completed: number; blocked: number; completionPct: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [r, s] = await Promise.all([
+        onboardingApi.listTasks({ status: statusFilter || undefined }),
+        onboardingApi.summary(),
+      ]);
+      setTasks(r.items); setSummary(s);
+    } catch {} finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [statusFilter]);
+
+  const STATUS_COLORS: Record<string, string> = {
+    Pending: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+    InProgress: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
+    Completed: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+    Blocked: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
+    Skipped: 'bg-slate-100 text-slate-500',
+  };
+
+  const CATEGORY_ICONS: Record<string, string> = {
+    Document: '📄', IT: '💻', Training: '📚', Policy: '📋', Access: '🔑', General: '✅',
+  };
+
+  return (
+    <div className="space-y-4">
+      {summary && (
+        <div className="surface p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Overall Onboarding Progress</p>
+            <p className="text-sm font-bold text-slate-900 dark:text-white">{summary.completionPct.toFixed(0)}%</p>
+          </div>
+          <div className="h-2 rounded-full bg-slate-200 dark:bg-white/10">
+            <div className="h-2 rounded-full bg-sapphire transition-all" style={{ width: `${summary.completionPct}%` }} />
+          </div>
+          <div className="mt-3 flex gap-4 text-xs text-slate-500 dark:text-slate-400">
+            <span>Total: <strong>{summary.total}</strong></span>
+            <span className="text-amber-600">Pending: <strong>{summary.pending}</strong></span>
+            <span className="text-emerald-600">Done: <strong>{summary.completed}</strong></span>
+            <span className="text-rose-600">Blocked: <strong>{summary.blocked}</strong></span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <select title="Filter by task status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200">
+          <option value="">All Statuses</option>
+          {['Pending', 'InProgress', 'Completed', 'Blocked', 'Skipped'].map(s => <option key={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : tasks.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No onboarding tasks found.</p>
+      ) : (
+        <div className="space-y-2">
+          {tasks.map(t => (
+            <div key={t.id} className="surface flex items-center gap-4 p-3">
+              <span className="text-lg shrink-0">{CATEGORY_ICONS[t.category] ?? '✅'}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-900 dark:text-white">{t.taskTitle}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t.category} · {t.assignedToName || 'Unassigned'}{t.dueDate ? ` · Due: ${t.dueDate}` : ''}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {t.isMandatory && <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Required</span>}
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[t.status] ?? ''}`}>{t.status}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reports Tab ───────────────────────────────────────────────────────────────
+
+function ReportsTab() {
+  const [pipeline, setPipeline] = useState<{ byStage: { stage: string; count: number }[]; hiredThisMonth: number } | null>(null);
+  const [timeToHire, setTimeToHire] = useState<{ hiredCount: number; avgDaysToHire: number } | null>(null);
+  const [source, setSource] = useState<{ candidatesBySource: { source: string; total: number }[]; hiredBySource: { source: string; hired: number }[] } | null>(null);
+
+  useEffect(() => {
+    recruitmentReportsApi.pipelineSummary().then(setPipeline).catch(() => {});
+    recruitmentReportsApi.timeToHire().then(setTimeToHire).catch(() => {});
+    recruitmentReportsApi.sourceEffectiveness().then(setSource).catch(() => {});
+  }, []);
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="surface p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">Hired This Month</p>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white">{pipeline?.hiredThisMonth ?? '—'}</p>
+        </div>
+        <div className="surface p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">Avg. Time to Hire</p>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white">{timeToHire ? `${timeToHire.avgDaysToHire}d` : '—'}</p>
+        </div>
+        <div className="surface p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">Total Hired (YTD)</p>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white">{timeToHire?.hiredCount ?? '—'}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="surface p-5">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-white mb-4">Pipeline by Stage</h3>
+          {pipeline?.byStage.map(s => (
+            <div key={s.stage} className="flex items-center gap-3 mb-2">
+              <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">{s.stage}</span>
+              <div className="flex-1 h-2 rounded-full bg-slate-200 dark:bg-white/10">
+                <div className="h-2 rounded-full bg-sapphire" style={{ width: `${Math.min(100, s.count * 5)}%` }} />
+              </div>
+              <span className="shrink-0 text-xs font-semibold text-slate-900 dark:text-white w-8 text-right">{s.count}</span>
+            </div>
+          ))}
+          {!pipeline?.byStage.length && <p className="text-sm text-slate-400">No pipeline data.</p>}
+        </div>
+
+        <div className="surface p-5">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-white mb-4">Source Effectiveness</h3>
+          {source?.candidatesBySource.map(s => {
+            const hired = source.hiredBySource.find(h => h.source === s.source)?.hired ?? 0;
+            const rate = s.total > 0 ? (hired / s.total * 100).toFixed(0) : '0';
+            return (
+              <div key={s.source} className="flex items-center justify-between mb-2 text-sm">
+                <span className="text-slate-600 dark:text-slate-400">{s.source}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{s.total} candidates · {hired} hired ({rate}%)</span>
+              </div>
+            );
+          })}
+          {!source?.candidatesBySource.length && <p className="text-sm text-slate-400">No source data.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Recruitment AI Insights Tab ───────────────────────────────────────────────
+
+function RecruitmentAITab() {
+  const [insights, setInsights] = useState<{ type: string; severity: string; title: string; description: string; isAdvisory: boolean }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [genTime, setGenTime] = useState<string | null>(null);
+
+  useEffect(() => {
+    recruitmentReportsApi.aiInsights()
+      .then((r: { generatedAt: string; insights: typeof insights }) => { setInsights(r.insights); setGenTime(r.generatedAt); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const SEV_COLORS: Record<string, string> = {
+    High: 'border-l-rose-500 bg-rose-50 dark:bg-rose-500/5',
+    Medium: 'border-l-amber-500 bg-amber-50 dark:bg-amber-500/5',
+    Low: 'border-l-blue-400 bg-blue-50 dark:bg-blue-500/5',
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
+        <Bot className="inline h-3.5 w-3.5 mr-1.5" />
+        All insights are <strong>advisory only</strong>. Final hiring and staffing decisions remain with authorized HR personnel.
+        {genTime && <span className="ml-2 opacity-60">Generated: {new Date(genTime).toLocaleString()}</span>}
+      </div>
+
+      {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading AI insights…</p> : insights.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No insights generated yet.</p>
+      ) : (
+        <div className="space-y-3">
+          {insights.map((ins, i) => (
+            <div key={i} className={`rounded-xl border-l-4 p-4 ${SEV_COLORS[ins.severity] ?? 'border-l-slate-400 bg-slate-50'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ins.title}</p>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{ins.description}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                  ins.severity === 'High' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400' :
+                  ins.severity === 'Medium' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' :
+                  'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
+                }`}>{ins.severity}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'requisitions' | 'openings' | 'candidates';
+type Tab = 'overview' | 'requisitions' | 'openings' | 'candidates' | 'workforce' | 'interviews' | 'assessments' | 'offers' | 'onboarding' | 'reports' | 'ai';
 
 export function RecruitmentPage() {
   const [tab, setTab] = useState<Tab>('overview');
@@ -1158,9 +1682,16 @@ export function RecruitmentPage() {
 
   const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'overview', label: 'Overview', icon: ClipboardList },
+    { id: 'workforce', label: 'Workforce Planning', icon: Target },
     { id: 'requisitions', label: 'Requisitions', icon: AlertCircle },
     { id: 'openings', label: 'Job Openings', icon: Briefcase },
     { id: 'candidates', label: 'Talent Pool', icon: Users },
+    { id: 'interviews', label: 'Interviews', icon: Calendar },
+    { id: 'assessments', label: 'Assessments', icon: BookOpen },
+    { id: 'offers', label: 'Offers', icon: Award },
+    { id: 'onboarding', label: 'Onboarding', icon: UserPlus },
+    { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'ai', label: 'AI Insights', icon: Bot },
   ];
 
   const handleCreateOpening = (req: ManpowerRequisition) => {
@@ -1198,6 +1729,7 @@ export function RecruitmentPage() {
 
       {/* Content */}
       {tab === 'overview' && <OverviewTab onNavigate={setTab} />}
+      {tab === 'workforce' && <WorkforcePlanningTab />}
       {tab === 'requisitions' && <RequisitionsTab onCreateOpening={handleCreateOpening} />}
       {tab === 'openings' && !selectedOpening && (
         <OpeningsTab
@@ -1213,6 +1745,12 @@ export function RecruitmentPage() {
         />
       )}
       {tab === 'candidates' && <CandidatesTab />}
+      {tab === 'interviews' && <InterviewsTab />}
+      {tab === 'assessments' && <AssessmentsTab />}
+      {tab === 'offers' && <OffersTab />}
+      {tab === 'onboarding' && <OnboardingTab />}
+      {tab === 'reports' && <ReportsTab />}
+      {tab === 'ai' && <RecruitmentAITab />}
     </div>
   );
 }

@@ -15,6 +15,52 @@ public class LeaveReportsController : ControllerBase
 
     public LeaveReportsController(ZayraDbContext db) => _db = db;
 
+    [HttpGet("dashboard")]
+    public async Task<IActionResult> Dashboard(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var pendingStatuses = new[] { "Submitted", "PendingManagerApproval", "PendingHRApproval" };
+
+        var onLeaveToday = await _db.LeaveRequests.CountAsync(r =>
+            r.TenantId == tenantId && r.Status == "Approved" && r.StartDate <= today && r.EndDate >= today, ct);
+
+        var pendingApprovals = await _db.LeaveRequests.CountAsync(r =>
+            r.TenantId == tenantId && pendingStatuses.Contains(r.Status), ct);
+
+        var pendingCancellations = await _db.LeaveRequests.CountAsync(r =>
+            r.TenantId == tenantId && r.Status == "CancellationRequested", ct);
+
+        var pendingEncashments = await _db.LeaveEncashmentRequests.CountAsync(e =>
+            e.TenantId == tenantId && (e.Status == "Pending" || e.Status == "HRApproved"), ct);
+
+        var unauthorizedAbsences = await _db.AbsenceRecords.CountAsync(a =>
+            a.TenantId == tenantId && !a.IsRegularized, ct);
+
+        var upcomingLeaves = await _db.LeaveRequests.CountAsync(r =>
+            r.TenantId == tenantId && r.Status == "Approved" && r.StartDate > today && r.StartDate <= today.AddDays(14), ct);
+
+        var activeDelegations = await _db.LeaveDelegations.CountAsync(d =>
+            d.TenantId == tenantId && d.Status == "Active", ct);
+
+        var pendingCompOff = await _db.CompOffCredits.CountAsync(c =>
+            c.TenantId == tenantId && c.Status == "Pending", ct);
+
+        return Ok(new
+        {
+            OnLeaveToday = onLeaveToday,
+            PendingApprovals = pendingApprovals,
+            PendingCancellations = pendingCancellations,
+            PendingEncashments = pendingEncashments,
+            UnauthorizedAbsences = unauthorizedAbsences,
+            UpcomingLeaves = upcomingLeaves,
+            ActiveDelegations = activeDelegations,
+            PendingCompOff = pendingCompOff
+        });
+    }
+
     [HttpGet("balance-summary")]
     public async Task<IActionResult> BalanceSummary([FromQuery] int? year, CancellationToken ct)
     {
@@ -110,7 +156,8 @@ public class LeaveReportsController : ControllerBase
                 r.DepartmentName,
                 r.LeaveTypeName,
                 r.StartDate,
-                r.EndDate
+                r.EndDate,
+                TotalDays = r.TotalDays
             })
             .ToListAsync(ct);
 
@@ -176,14 +223,11 @@ public class LeaveReportsController : ControllerBase
             .GroupBy(r => new { r.StartDate.Year, r.StartDate.Month })
             .Select(g => new
             {
-                Year = g.Key.Year,
-                Month = g.Key.Month,
-                MonthName = new DateTime(g.Key.Year, g.Key.Month, 1).ToString("MMM yyyy"),
-                RequestCount = g.Count(),
+                Month = new DateTime(g.Key.Year, g.Key.Month, 1).ToString("MMM yyyy"),
+                Count = g.Count(),
                 TotalDays = g.Sum(r => r.TotalDays)
             })
-            .OrderBy(x => x.Year)
-            .ThenBy(x => x.Month);
+            .OrderBy(x => x.Month);
 
         return Ok(byMonth);
     }

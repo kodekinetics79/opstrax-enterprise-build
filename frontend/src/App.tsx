@@ -11,11 +11,16 @@ import { SetupPage } from './pages/SetupPage';
 import { AttendancePage } from './pages/AttendancePage';
 import { LeavePage } from './pages/LeavePage';
 import { PayrollPage } from './pages/PayrollPage';
+import { OvertimePage } from './pages/OvertimePage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ShiftsPage } from './pages/ShiftsPage';
 import { RecruitmentPage } from './pages/RecruitmentPage';
 import { PerformancePage } from './pages/PerformancePage';
+import CompliancePage from './pages/CompliancePage';
 import { EmployeeSelfServicePage } from './pages/EmployeeSelfServicePage';
+import AIAssistantPage from './pages/AIAssistantPage';
+import HRRequestCenterPage from './pages/HRRequestCenterPage';
+import TenantAdminPage from './pages/TenantAdminPage';
 import { applyTheme, getStoredTheme } from './utils/theme';
 import type { ThemeMode } from './types/ui';
 
@@ -48,12 +53,17 @@ function AppShell() {
         <Route path="people" element={<EmployeesPage />} />
         <Route path="attendance" element={<AttendancePage />} />
         <Route path="leave" element={<LeavePage />} />
+        <Route path="overtime" element={<OvertimePage />} />
         <Route path="payroll" element={<PayrollPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="shifts" element={<ShiftsPage />} />
         <Route path="recruitment" element={<RecruitmentPage />} />
+        <Route path="compliance" element={<CompliancePage />} />
         <Route path="performance" element={<PerformancePage />} />
         <Route path="ess" element={<EmployeeSelfServicePage />} />
+        <Route path="ai-assistant" element={<AIAssistantPage />} />
+        <Route path="hr-requests" element={<HRRequestCenterPage />} />
+        <Route path="tenant-admin" element={<TenantAdminPage />} />
         <Route path="setup" element={<SetupPage />} />
         <Route path="*" element={<ComingSoonPage />} />
       </Routes>

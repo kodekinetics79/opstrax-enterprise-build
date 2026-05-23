@@ -16,7 +16,8 @@
       "Read(//opt/homebrew/**)",
       "Bash(docker exec *)",
       "Bash(DOTNET_ROOT=/usr/local/share/dotnet /usr/local/share/dotnet/dotnet run --urls \"http://localhost:5117\")",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5117/swagger/v1/swagger.json)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5117/swagger/v1/swagger.json)",
+      "Bash(/usr/local/share/dotnet/dotnet build *)"
     ]
   }
 }

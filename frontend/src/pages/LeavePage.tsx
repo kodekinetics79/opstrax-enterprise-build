@@ -123,8 +123,10 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
   useEffect(() => {
     leaveReportsApi.dashboard().then(setDash).catch(() => {});
-    leaveCalendarApi.today().then(setOnLeave).catch(() => {});
-    leaveRequestsApi.list({ status: 'PendingManagerApproval' }).then(r => setPending(r.items.slice(0, 6))).catch(() => {});
+    leaveCalendarApi.today().then(data => setOnLeave(Array.isArray(data) ? data : [])).catch(() => {});
+    leaveRequestsApi.list({ status: 'PendingManagerApproval' })
+      .then(r => setPending(Array.isArray(r?.items) ? r.items.slice(0, 6) : []))
+      .catch(() => {});
   }, []);
 
   return (

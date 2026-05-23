@@ -88,7 +88,7 @@ public class LeaveBalancesController : ControllerBase
             tenantId.Value,
             req.EmployeeId,
             req.LeaveTypeId,
-            req.Days,
+            req.Amount,
             year,
             "Adjustment",
             $"MANUAL-ADJ-{Guid.NewGuid():N}",
@@ -100,6 +100,30 @@ public class LeaveBalancesController : ControllerBase
                 && b.LeaveTypeId == req.LeaveTypeId && b.Year == year, ct);
 
         return Ok(new { message = "Balance adjusted successfully.", balance });
+    }
+
+    [HttpGet("transactions")]
+    public async Task<IActionResult> Transactions(
+        [FromQuery] int employeeId,
+        [FromQuery] Guid? leaveTypeId,
+        [FromQuery] int? year,
+        CancellationToken ct = default)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var query = _db.LeaveBalanceTransactions
+            .Where(t => t.TenantId == tenantId && t.EmployeeId == employeeId);
+
+        if (leaveTypeId.HasValue) query = query.Where(t => t.LeaveTypeId == leaveTypeId.Value);
+        if (year.HasValue) query = query.Where(t => t.Year == year.Value);
+
+        var items = await query
+            .OrderByDescending(t => t.CreatedAtUtc)
+            .Take(100)
+            .ToListAsync(ct);
+
+        return Ok(items);
     }
 
     [HttpPost("accrue")]
@@ -117,6 +141,6 @@ public class LeaveBalancesController : ControllerBase
 public record BalanceAdjustmentRequest(
     int EmployeeId,
     Guid LeaveTypeId,
-    decimal Days,
+    decimal Amount,
     string Reason,
     int? Year);

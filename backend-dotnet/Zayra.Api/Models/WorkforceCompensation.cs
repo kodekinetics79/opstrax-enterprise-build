@@ -1,0 +1,493 @@
+namespace Zayra.Api.Models;
+
+public class LeavePolicyEligibility
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid LeavePolicyId { get; set; }
+    public string CountryCode { get; set; } = string.Empty;
+    public Guid? CompanyId { get; set; }
+    public Guid? BranchId { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public Guid? GradeId { get; set; }
+    public string EmploymentType { get; set; } = string.Empty;
+    public string ContractType { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class LeaveAccrualRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid LeavePolicyId { get; set; }
+    public string AccrualFrequency { get; set; } = "Monthly";
+    public decimal AccrualDays { get; set; }
+    public int CarryForwardExpiryDays { get; set; }
+    public decimal CarryForwardMaxDays { get; set; }
+    public bool NegativeBalanceAllowed { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class LeaveRequestDate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid LeaveRequestId { get; set; }
+    public DateOnly LeaveDate { get; set; }
+    public decimal DayValue { get; set; } = 1;
+    public bool IsPublicHoliday { get; set; }
+    public bool IsWeekend { get; set; }
+}
+
+public class LeaveAttachment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid LeaveRequestId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public string StorageUrl { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+}
+
+public class OvertimePolicy
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public Guid? BranchId { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public Guid? GradeId { get; set; }
+    public string HourlyRateBasis { get; set; } = "BasicSalary";
+    public decimal FixedHourlyRate { get; set; }
+    public int StandardMonthlyHours { get; set; } = 240;
+    public int MinimumMinutes { get; set; } = 30;
+    public int MaximumMinutesPerDay { get; set; } = 240;
+    public int MonthlyCapMinutes { get; set; } = 3600;
+    public string RoundingRule { get; set; } = "Nearest15";
+    public bool RequiresApproval { get; set; } = true;
+    public bool AllowCompOffConversion { get; set; } = true;
+    public bool RamadanReducedHoursPlaceholder { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+    public Guid? DeletedBy { get; set; }
+}
+
+public class OvertimeType
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = "Regular";
+    public bool IsActive { get; set; } = true;
+}
+
+public class OvertimeMultiplier
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimePolicyId { get; set; }
+    public Guid? OvertimeTypeId { get; set; }
+    public string DayCategory { get; set; } = "RegularDay";
+    public decimal Multiplier { get; set; } = 1.25m;
+    public bool IsActive { get; set; } = true;
+}
+
+public class OvertimeRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimePolicyId { get; set; }
+    public string RuleType { get; set; } = string.Empty;
+    public string RuleValueJson { get; set; } = "{}";
+    public bool IsActive { get; set; } = true;
+}
+
+public class OvertimeRequest
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public int EmployeeId { get; set; }
+    public string EmployeeName { get; set; } = string.Empty;
+    public Guid? OvertimePolicyId { get; set; }
+    public Guid? OvertimeTypeId { get; set; }
+    public DateOnly WorkDate { get; set; }
+    public DateTime StartTimeUtc { get; set; }
+    public DateTime EndTimeUtc { get; set; }
+    public int RequestedMinutes { get; set; }
+    public int ApprovedMinutes { get; set; }
+    public string Source { get; set; } = "Manual";
+    public string Reason { get; set; } = string.Empty;
+    public string Status { get; set; } = "PendingManager";
+    public Guid? AttendanceDailyRecordId { get; set; }
+    public Guid? ProjectId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+    public DateTime? DecidedAtUtc { get; set; }
+}
+
+public class OvertimeApproval
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimeRequestId { get; set; }
+    public string ApprovalLevel { get; set; } = "Manager";
+    public string Decision { get; set; } = "Pending";
+    public string Notes { get; set; } = string.Empty;
+    public Guid? DecidedByUserId { get; set; }
+    public DateTime? DecidedAtUtc { get; set; }
+}
+
+public class OvertimeCalculation
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimeRequestId { get; set; }
+    public int EmployeeId { get; set; }
+    public decimal ApprovedHours { get; set; }
+    public decimal HourlyRate { get; set; }
+    public decimal Multiplier { get; set; }
+    public decimal Amount { get; set; }
+    public string Currency { get; set; } = "AED";
+    public string CalculationJson { get; set; } = "{}";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class OvertimePayrollImpact
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimeRequestId { get; set; }
+    public int EmployeeId { get; set; }
+    public Guid? PayrollRunId { get; set; }
+    public decimal Hours { get; set; }
+    public decimal Amount { get; set; }
+    public string Status { get; set; } = "PendingPayroll";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ProcessedAtUtc { get; set; }
+}
+
+public class OvertimeAdjustment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public int EmployeeId { get; set; }
+    public Guid? OvertimeRequestId { get; set; }
+    public decimal HoursAdjustment { get; set; }
+    public decimal AmountAdjustment { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class OvertimeBudget
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public Guid? ProjectId { get; set; }
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public decimal BudgetAmount { get; set; }
+    public decimal ConsumedAmount { get; set; }
+    public string Currency { get; set; } = "AED";
+}
+
+public class OvertimeCompOffConversion
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OvertimeRequestId { get; set; }
+    public int EmployeeId { get; set; }
+    public decimal OvertimeHours { get; set; }
+    public decimal CompOffDays { get; set; }
+    public string Status { get; set; } = "Pending";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class OvertimeAuditLog
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string EntityName { get; set; } = string.Empty;
+    public string EntityId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string MetadataJson { get; set; } = "{}";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? UserId { get; set; }
+}
+
+public class SalaryStructure
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Currency { get; set; } = "AED";
+    public DateOnly EffectiveDate { get; set; } = DateOnly.FromDateTime(DateTime.UtcNow);
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+    public bool IsDeleted { get; set; }
+}
+
+public class SalaryComponent
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid? SalaryStructureId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ComponentType { get; set; } = "Earning";
+    public string CalculationType { get; set; } = "Fixed";
+    public decimal Amount { get; set; }
+    public decimal Percentage { get; set; }
+    public bool IsTaxable { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class EmployeeSalaryStructure
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public int EmployeeId { get; set; }
+    public Guid SalaryStructureId { get; set; }
+    public decimal BasicSalary { get; set; }
+    public decimal HousingAllowance { get; set; }
+    public decimal TransportAllowance { get; set; }
+    public decimal FoodAllowance { get; set; }
+    public decimal MobileAllowance { get; set; }
+    public decimal OtherAllowance { get; set; }
+    public decimal FixedDeduction { get; set; }
+    public DateOnly EffectiveDate { get; set; }
+    public string Currency { get; set; } = "AED";
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+}
+
+public class PayrollGroup
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Currency { get; set; } = "AED";
+    public bool IsActive { get; set; } = true;
+}
+
+public class PayrollCycle
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid? PayrollGroupId { get; set; }
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public DateOnly PeriodStart { get; set; }
+    public DateOnly PeriodEnd { get; set; }
+    public string Status { get; set; } = "Open";
+}
+
+public class PayrollRunEmployee
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public decimal GrossEarnings { get; set; }
+    public decimal TotalDeductions { get; set; }
+    public decimal NetPay { get; set; }
+    public string Status { get; set; } = "Draft";
+}
+
+public class PayrollEarning
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string ComponentCode { get; set; } = string.Empty;
+    public string ComponentName { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string Source { get; set; } = "Salary";
+}
+
+public class PayrollDeduction
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string ComponentCode { get; set; } = string.Empty;
+    public string ComponentName { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string Source { get; set; } = "Manual";
+}
+
+public class PayrollAllowance
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string AllowanceType { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+}
+
+public class PayrollAdjustment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string AdjustmentType { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+}
+
+public class PayrollApproval
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public string ApprovalLevel { get; set; } = "Payroll";
+    public string Decision { get; set; } = "Pending";
+    public string Notes { get; set; } = string.Empty;
+    public Guid? DecidedByUserId { get; set; }
+    public DateTime? DecidedAtUtc { get; set; }
+}
+
+public class PayrollValidationResult
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int? EmployeeId { get; set; }
+    public string Severity { get; set; } = "Info";
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public bool IsResolved { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class PayrollException
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int? EmployeeId { get; set; }
+    public string ExceptionType { get; set; } = string.Empty;
+    public string Details { get; set; } = string.Empty;
+    public string Status { get; set; } = "Open";
+}
+
+public class Payslip
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string PayslipNumber { get; set; } = string.Empty;
+    public string Language { get; set; } = "en";
+    public bool IsPublishedToEss { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? PublishedAtUtc { get; set; }
+}
+
+public class PayslipComponent
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayslipId { get; set; }
+    public string ComponentType { get; set; } = string.Empty;
+    public string ComponentName { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+}
+
+public class PayrollPaymentBatch
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PayrollRunId { get; set; }
+    public string BatchNumber { get; set; } = string.Empty;
+    public string PaymentMethod { get; set; } = "WPS";
+    public decimal TotalAmount { get; set; }
+    public string Currency { get; set; } = "AED";
+    public string Status { get; set; } = "Draft";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class PayrollPaymentRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PaymentBatchId { get; set; }
+    public int EmployeeId { get; set; }
+    public decimal Amount { get; set; }
+    public string Iban { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+    public string WpsReference { get; set; } = string.Empty;
+}
+
+public class BankTransferFile
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PaymentBatchId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string FileContent { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class WPSFileBatch
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid PaymentBatchId { get; set; }
+    public string SifFileName { get; set; } = string.Empty;
+    public string Status { get; set; } = "Generated";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class SIFFileRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid WPSFileBatchId { get; set; }
+    public int EmployeeId { get; set; }
+    public string EmployeeCode { get; set; } = string.Empty;
+    public string Iban { get; set; } = string.Empty;
+    public decimal NetPay { get; set; }
+}
+
+public class EOSBCalculation
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public int EmployeeId { get; set; }
+    public DateOnly CalculationDate { get; set; }
+    public decimal EligibleSalary { get; set; }
+    public decimal CalculatedAmount { get; set; }
+    public string RulesSnapshotJson { get; set; } = "{}";
+    public string Status { get; set; } = "Draft";
+}
+
+public class PayrollAuditLog
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string EntityName { get; set; } = string.Empty;
+    public string EntityId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string MetadataJson { get; set; } = "{}";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? UserId { get; set; }
+}

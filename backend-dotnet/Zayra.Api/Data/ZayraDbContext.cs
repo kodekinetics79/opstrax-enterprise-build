@@ -32,10 +32,14 @@ public class ZayraDbContext : DbContext
     // ── Leave Management ──────────────────────────────────────────────────────────
     public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
     public DbSet<LeavePolicy> LeavePolicies => Set<LeavePolicy>();
+    public DbSet<LeavePolicyEligibility> LeavePolicyEligibilities => Set<LeavePolicyEligibility>();
+    public DbSet<LeaveAccrualRule> LeaveAccrualRules => Set<LeaveAccrualRule>();
     public DbSet<EmployeeLeaveBalance> EmployeeLeaveBalances => Set<EmployeeLeaveBalance>();
     public DbSet<LeaveBalanceTransaction> LeaveBalanceTransactions => Set<LeaveBalanceTransaction>();
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
+    public DbSet<LeaveRequestDate> LeaveRequestDates => Set<LeaveRequestDate>();
     public DbSet<LeaveApproval> LeaveApprovals => Set<LeaveApproval>();
+    public DbSet<LeaveAttachment> LeaveAttachments => Set<LeaveAttachment>();
     public DbSet<LeaveCancellationRequest> LeaveCancellationRequests => Set<LeaveCancellationRequest>();
     public DbSet<LeaveModificationRequest> LeaveModificationRequests => Set<LeaveModificationRequest>();
     public DbSet<PublicHolidayCalendar> PublicHolidayCalendars => Set<PublicHolidayCalendar>();
@@ -50,8 +54,42 @@ public class ZayraDbContext : DbContext
     public DbSet<LeavePayrollImpact> LeavePayrollImpacts => Set<LeavePayrollImpact>();
     public DbSet<LeaveAuditLog> LeaveAuditLogs => Set<LeaveAuditLog>();
     public DbSet<LeaveAIInsight> LeaveAIInsights => Set<LeaveAIInsight>();
+    public DbSet<OvertimePolicy> OvertimePolicies => Set<OvertimePolicy>();
+    public DbSet<OvertimeType> OvertimeTypes => Set<OvertimeType>();
+    public DbSet<OvertimeMultiplier> OvertimeMultipliers => Set<OvertimeMultiplier>();
+    public DbSet<OvertimeRule> OvertimeRules => Set<OvertimeRule>();
+    public DbSet<OvertimeRequest> OvertimeRequests => Set<OvertimeRequest>();
+    public DbSet<OvertimeApproval> OvertimeApprovals => Set<OvertimeApproval>();
+    public DbSet<OvertimeCalculation> OvertimeCalculations => Set<OvertimeCalculation>();
+    public DbSet<OvertimePayrollImpact> OvertimePayrollImpacts => Set<OvertimePayrollImpact>();
+    public DbSet<OvertimeAdjustment> OvertimeAdjustments => Set<OvertimeAdjustment>();
+    public DbSet<OvertimeBudget> OvertimeBudgets => Set<OvertimeBudget>();
+    public DbSet<OvertimeCompOffConversion> OvertimeCompOffConversions => Set<OvertimeCompOffConversion>();
+    public DbSet<OvertimeAuditLog> OvertimeAuditLogs => Set<OvertimeAuditLog>();
     public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
     public DbSet<PayrollSlip> PayrollSlips => Set<PayrollSlip>();
+    public DbSet<SalaryStructure> SalaryStructures => Set<SalaryStructure>();
+    public DbSet<SalaryComponent> SalaryComponents => Set<SalaryComponent>();
+    public DbSet<EmployeeSalaryStructure> EmployeeSalaryStructures => Set<EmployeeSalaryStructure>();
+    public DbSet<PayrollGroup> PayrollGroups => Set<PayrollGroup>();
+    public DbSet<PayrollCycle> PayrollCycles => Set<PayrollCycle>();
+    public DbSet<PayrollRunEmployee> PayrollRunEmployees => Set<PayrollRunEmployee>();
+    public DbSet<PayrollEarning> PayrollEarnings => Set<PayrollEarning>();
+    public DbSet<PayrollDeduction> PayrollDeductions => Set<PayrollDeduction>();
+    public DbSet<PayrollAllowance> PayrollAllowances => Set<PayrollAllowance>();
+    public DbSet<PayrollAdjustment> PayrollAdjustments => Set<PayrollAdjustment>();
+    public DbSet<PayrollApproval> PayrollApprovals => Set<PayrollApproval>();
+    public DbSet<PayrollValidationResult> PayrollValidationResults => Set<PayrollValidationResult>();
+    public DbSet<PayrollException> PayrollExceptions => Set<PayrollException>();
+    public DbSet<Payslip> Payslips => Set<Payslip>();
+    public DbSet<PayslipComponent> PayslipComponents => Set<PayslipComponent>();
+    public DbSet<PayrollPaymentBatch> PayrollPaymentBatches => Set<PayrollPaymentBatch>();
+    public DbSet<PayrollPaymentRecord> PayrollPaymentRecords => Set<PayrollPaymentRecord>();
+    public DbSet<BankTransferFile> BankTransferFiles => Set<BankTransferFile>();
+    public DbSet<WPSFileBatch> WPSFileBatches => Set<WPSFileBatch>();
+    public DbSet<SIFFileRecord> SIFFileRecords => Set<SIFFileRecord>();
+    public DbSet<EOSBCalculation> EOSBCalculations => Set<EOSBCalculation>();
+    public DbSet<PayrollAuditLog> PayrollAuditLogs => Set<PayrollAuditLog>();
     public DbSet<ShiftDefinition> ShiftDefinitions => Set<ShiftDefinition>();
     public DbSet<ShiftAssignment> ShiftAssignments => Set<ShiftAssignment>();
     public DbSet<ManpowerRequisition> ManpowerRequisitions => Set<ManpowerRequisition>();
@@ -117,6 +155,46 @@ public class ZayraDbContext : DbContext
     public DbSet<EmployeeActionItem> EmployeeActionItems => Set<EmployeeActionItem>();
     public DbSet<EmployeeSentimentPulse> EmployeeSentimentPulses => Set<EmployeeSentimentPulse>();
     public DbSet<EmployeeMobileDevice> EmployeeMobileDevices => Set<EmployeeMobileDevice>();
+    // ── SaaS Platform ──────────────────────────────────────────────────────────
+    public DbSet<TenantSubscription> TenantSubscriptions => Set<TenantSubscription>();
+    public DbSet<TenantFeatureFlag> TenantFeatureFlags => Set<TenantFeatureFlag>();
+    public DbSet<TenantLocalizationSetting> TenantLocalizationSettings => Set<TenantLocalizationSetting>();
+    public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
+    public DbSet<CountryPayrollRule> CountryPayrollRules => Set<CountryPayrollRule>();
+    // ── AI Intelligence ────────────────────────────────────────────────────────
+    public DbSet<AIModelConfig> AIModelConfigs => Set<AIModelConfig>();
+    public DbSet<AIInsight> AIInsights => Set<AIInsight>();
+    public DbSet<AIRecommendation> AIRecommendations => Set<AIRecommendation>();
+    public DbSet<AIHRQueryLog> AIHRQueryLogs => Set<AIHRQueryLog>();
+    public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
+    public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
+    public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
+    public DbSet<EmployeeRiskScore> EmployeeRiskScores => Set<EmployeeRiskScore>();
+    public DbSet<EmployeeChurnPrediction> EmployeeChurnPredictions => Set<EmployeeChurnPrediction>();
+    public DbSet<BurnoutRiskSignal> BurnoutRiskSignals => Set<BurnoutRiskSignal>();
+    // ── Recruitment Extended ───────────────────────────────────────────────────
+    public DbSet<WorkforcePlan> WorkforcePlans => Set<WorkforcePlan>();
+    public DbSet<CandidateDocument> CandidateDocuments => Set<CandidateDocument>();
+    public DbSet<InterviewFeedback> InterviewFeedbacks => Set<InterviewFeedback>();
+    public DbSet<AssessmentTemplate> AssessmentTemplates => Set<AssessmentTemplate>();
+    public DbSet<AssessmentQuestion> AssessmentQuestions => Set<AssessmentQuestion>();
+    public DbSet<CandidateAssessment> CandidateAssessments => Set<CandidateAssessment>();
+    public DbSet<OfferApproval> OfferApprovals => Set<OfferApproval>();
+    public DbSet<OnboardingChecklist> OnboardingChecklists => Set<OnboardingChecklist>();
+    public DbSet<OnboardingTask> OnboardingTasks => Set<OnboardingTask>();
+    public DbSet<RecruitmentAuditLog> RecruitmentAuditLogs => Set<RecruitmentAuditLog>();
+    // ── Compliance Module ──────────────────────────────────────────────────────
+    public DbSet<DocType> DocTypes => Set<DocType>();
+    public DbSet<ContractTemplate> ContractTemplates => Set<ContractTemplate>();
+    public DbSet<EmployeeContract> EmployeeContracts => Set<EmployeeContract>();
+    public DbSet<ComplianceRequirement> ComplianceRequirements => Set<ComplianceRequirement>();
+    public DbSet<ComplianceRenewal> ComplianceRenewals => Set<ComplianceRenewal>();
+    public DbSet<ComplianceReminder> ComplianceReminders => Set<ComplianceReminder>();
+    public DbSet<VisaRecord> VisaRecords => Set<VisaRecord>();
+    public DbSet<PassportRecord> PassportRecords => Set<PassportRecord>();
+    public DbSet<WorkPermitRecord> WorkPermitRecords => Set<WorkPermitRecord>();
+    public DbSet<ComplianceAuditLog> ComplianceAuditLogs => Set<ComplianceAuditLog>();
+    public DbSet<ComplianceAIInsight> ComplianceAIInsights => Set<ComplianceAIInsight>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Branch> Branches => Set<Branch>();
@@ -667,6 +745,8 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.MaximumDaysPerRequest).HasPrecision(5,2);
             entity.HasIndex(x => new { x.TenantId, x.LeaveTypeId, x.Status });
         });
+        modelBuilder.Entity<LeavePolicyEligibility>(entity => { entity.ToTable("leave_policy_eligibilities"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.LeavePolicyId, x.IsActive }); });
+        modelBuilder.Entity<LeaveAccrualRule>(entity => { entity.ToTable("leave_accrual_rules"); entity.HasKey(x => x.Id); entity.Property(x => x.AccrualDays).HasPrecision(6,2); entity.Property(x => x.CarryForwardMaxDays).HasPrecision(6,2); entity.HasIndex(x => new { x.TenantId, x.LeavePolicyId, x.IsActive }); });
         modelBuilder.Entity<EmployeeLeaveBalance>(entity => {
             entity.ToTable("employee_leave_balances");
             entity.HasKey(x => x.Id);
@@ -697,7 +777,9 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.Status });
             entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.StartDate });
         });
+        modelBuilder.Entity<LeaveRequestDate>(entity => { entity.ToTable("leave_request_dates"); entity.HasKey(x => x.Id); entity.Property(x => x.DayValue).HasPrecision(4,2); entity.HasIndex(x => new { x.TenantId, x.LeaveRequestId, x.LeaveDate }).IsUnique(); });
         modelBuilder.Entity<LeaveApproval>(entity => { entity.ToTable("leave_approvals"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.LeaveRequestId }); });
+        modelBuilder.Entity<LeaveAttachment>(entity => { entity.ToTable("leave_attachments"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.LeaveRequestId }); });
         modelBuilder.Entity<LeaveCancellationRequest>(entity => { entity.ToTable("leave_cancellation_requests"); entity.HasKey(x => x.Id); });
         modelBuilder.Entity<LeaveModificationRequest>(entity => {
             entity.ToTable("leave_modification_requests"); entity.HasKey(x => x.Id);
@@ -731,6 +813,51 @@ public class ZayraDbContext : DbContext
         });
         modelBuilder.Entity<LeaveAuditLog>(entity => { entity.ToTable("leave_audit_logs"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId }); });
         modelBuilder.Entity<LeaveAIInsight>(entity => { entity.ToTable("leave_ai_insights"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.InsightType, x.IsAcknowledged }); });
+
+        modelBuilder.Entity<OvertimePolicy>(entity => {
+            entity.ToTable("overtime_policies"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.FixedHourlyRate).HasPrecision(12,2);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+        modelBuilder.Entity<OvertimeType>(entity => { entity.ToTable("overtime_types"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); });
+        modelBuilder.Entity<OvertimeMultiplier>(entity => { entity.ToTable("overtime_multipliers"); entity.HasKey(x => x.Id); entity.Property(x => x.Multiplier).HasPrecision(6,3); entity.HasIndex(x => new { x.TenantId, x.OvertimePolicyId, x.DayCategory }); });
+        modelBuilder.Entity<OvertimeRule>(entity => { entity.ToTable("overtime_rules"); entity.HasKey(x => x.Id); entity.Property(x => x.RuleValueJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.OvertimePolicyId, x.RuleType }); });
+        modelBuilder.Entity<OvertimeRequest>(entity => { entity.ToTable("overtime_requests"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.WorkDate }); entity.HasIndex(x => new { x.TenantId, x.Status }); });
+        modelBuilder.Entity<OvertimeApproval>(entity => { entity.ToTable("overtime_approvals"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.OvertimeRequestId }); });
+        modelBuilder.Entity<OvertimeCalculation>(entity => { entity.ToTable("overtime_calculations"); entity.HasKey(x => x.Id); entity.Property(x => x.ApprovedHours).HasPrecision(8,2); entity.Property(x => x.HourlyRate).HasPrecision(12,2); entity.Property(x => x.Multiplier).HasPrecision(6,3); entity.Property(x => x.Amount).HasPrecision(14,2); entity.Property(x => x.CalculationJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.OvertimeRequestId }); });
+        modelBuilder.Entity<OvertimePayrollImpact>(entity => { entity.ToTable("overtime_payroll_impacts"); entity.HasKey(x => x.Id); entity.Property(x => x.Hours).HasPrecision(8,2); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status }); });
+        modelBuilder.Entity<OvertimeAdjustment>(entity => { entity.ToTable("overtime_adjustments"); entity.HasKey(x => x.Id); entity.Property(x => x.HoursAdjustment).HasPrecision(8,2); entity.Property(x => x.AmountAdjustment).HasPrecision(14,2); });
+        modelBuilder.Entity<OvertimeBudget>(entity => { entity.ToTable("overtime_budgets"); entity.HasKey(x => x.Id); entity.Property(x => x.BudgetAmount).HasPrecision(14,2); entity.Property(x => x.ConsumedAmount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.Year, x.Month }); });
+        modelBuilder.Entity<OvertimeCompOffConversion>(entity => { entity.ToTable("overtime_comp_off_conversions"); entity.HasKey(x => x.Id); entity.Property(x => x.OvertimeHours).HasPrecision(8,2); entity.Property(x => x.CompOffDays).HasPrecision(6,2); });
+        modelBuilder.Entity<OvertimeAuditLog>(entity => { entity.ToTable("overtime_audit_logs"); entity.HasKey(x => x.Id); entity.Property(x => x.MetadataJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.EntityName, x.EntityId }); });
+
+        modelBuilder.Entity<SalaryStructure>(entity => { entity.ToTable("salary_structures"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); });
+        modelBuilder.Entity<SalaryComponent>(entity => { entity.ToTable("salary_components"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.Property(x => x.Percentage).HasPrecision(6,3); entity.HasIndex(x => new { x.TenantId, x.SalaryStructureId, x.Code }); });
+        modelBuilder.Entity<EmployeeSalaryStructure>(entity => { entity.ToTable("employee_salary_structures"); entity.HasKey(x => x.Id); entity.Property(x => x.BasicSalary).HasPrecision(14,2); entity.Property(x => x.HousingAllowance).HasPrecision(14,2); entity.Property(x => x.TransportAllowance).HasPrecision(14,2); entity.Property(x => x.FoodAllowance).HasPrecision(14,2); entity.Property(x => x.MobileAllowance).HasPrecision(14,2); entity.Property(x => x.OtherAllowance).HasPrecision(14,2); entity.Property(x => x.FixedDeduction).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsActive }); });
+        modelBuilder.Entity<PayrollGroup>(entity => { entity.ToTable("payroll_groups"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); });
+        modelBuilder.Entity<PayrollCycle>(entity => { entity.ToTable("payroll_cycles"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Year, x.Month }); });
+        modelBuilder.Entity<PayrollRunEmployee>(entity => { entity.ToTable("payroll_run_employees"); entity.HasKey(x => x.Id); entity.Property(x => x.GrossEarnings).HasPrecision(14,2); entity.Property(x => x.TotalDeductions).HasPrecision(14,2); entity.Property(x => x.NetPay).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.EmployeeId }).IsUnique(); });
+        modelBuilder.Entity<PayrollEarning>(entity => { entity.ToTable("payroll_earnings"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.EmployeeId }); });
+        modelBuilder.Entity<PayrollDeduction>(entity => { entity.ToTable("payroll_deductions"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.EmployeeId }); });
+        modelBuilder.Entity<PayrollAllowance>(entity => { entity.ToTable("payroll_allowances"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); });
+        modelBuilder.Entity<PayrollAdjustment>(entity => { entity.ToTable("payroll_adjustments"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.EmployeeId }); });
+        modelBuilder.Entity<PayrollApproval>(entity => { entity.ToTable("payroll_approvals"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId }); });
+        modelBuilder.Entity<PayrollValidationResult>(entity => { entity.ToTable("payroll_validation_results"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.Severity }); });
+        modelBuilder.Entity<PayrollException>(entity => { entity.ToTable("payroll_exceptions"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.Status }); });
+        modelBuilder.Entity<Payslip>(entity => { entity.ToTable("payslips"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.EmployeeId }).IsUnique(); });
+        modelBuilder.Entity<PayslipComponent>(entity => { entity.ToTable("payslip_components"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayslipId }); });
+        modelBuilder.Entity<PayrollPaymentBatch>(entity => { entity.ToTable("payroll_payment_batches"); entity.HasKey(x => x.Id); entity.Property(x => x.TotalAmount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PayrollRunId }); });
+        modelBuilder.Entity<PayrollPaymentRecord>(entity => { entity.ToTable("payroll_payment_records"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.PaymentBatchId, x.EmployeeId }); });
+        modelBuilder.Entity<BankTransferFile>(entity => { entity.ToTable("bank_transfer_files"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PaymentBatchId }); });
+        modelBuilder.Entity<WPSFileBatch>(entity => { entity.ToTable("wps_file_batches"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.PaymentBatchId }); });
+        modelBuilder.Entity<SIFFileRecord>(entity => {
+            entity.ToTable("sif_file_records"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.WPSFileBatchId).HasColumnName("wps_file_batch_id");
+            entity.Property(x => x.NetPay).HasPrecision(14,2);
+            entity.HasIndex(x => new { x.TenantId, x.WPSFileBatchId });
+        });
+        modelBuilder.Entity<EOSBCalculation>(entity => { entity.ToTable("eosb_calculations"); entity.HasKey(x => x.Id); entity.Property(x => x.EligibleSalary).HasPrecision(14,2); entity.Property(x => x.CalculatedAmount).HasPrecision(14,2); entity.Property(x => x.RulesSnapshotJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status }); });
+        modelBuilder.Entity<PayrollAuditLog>(entity => { entity.ToTable("payroll_audit_logs"); entity.HasKey(x => x.Id); entity.Property(x => x.MetadataJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.EntityName, x.EntityId }); });
 
         modelBuilder.Entity<PayrollRun>(entity =>
         {
@@ -1139,6 +1266,322 @@ public class ZayraDbContext : DbContext
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        // ── SaaS Platform ──────────────────────────────────────────────────────
+        modelBuilder.Entity<TenantSubscription>(entity =>
+        {
+            entity.ToTable("tenant_subscriptions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MonthlyAmount).HasPrecision(10, 2);
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<TenantFeatureFlag>(entity =>
+        {
+            entity.ToTable("tenant_feature_flags");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ConfigJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.FeatureKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<TenantLocalizationSetting>(entity =>
+        {
+            entity.ToTable("tenant_localization_settings");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.TenantId).IsUnique();
+        });
+
+        modelBuilder.Entity<TenantBranding>(entity =>
+        {
+            entity.ToTable("tenant_brandings");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.TenantId).IsUnique();
+        });
+
+        modelBuilder.Entity<CountryPayrollRule>(entity =>
+        {
+            entity.ToTable("country_payroll_rules");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.CountryCode, x.RuleKey, x.EffectiveFrom });
+        });
+
+        // ── AI Intelligence ────────────────────────────────────────────────────
+        modelBuilder.Entity<AIModelConfig>(entity =>
+        {
+            entity.ToTable("ai_model_configs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ConfigJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.UseCase, x.IsActive });
+        });
+
+        modelBuilder.Entity<AIInsight>(entity =>
+        {
+            entity.ToTable("ai_insights");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.DataJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.Module, x.InsightType, x.IsAcknowledged });
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId });
+        });
+
+        modelBuilder.Entity<AIRecommendation>(entity =>
+        {
+            entity.ToTable("ai_recommendations");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Module, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId });
+        });
+
+        modelBuilder.Entity<AIHRQueryLog>(entity =>
+        {
+            entity.ToTable("ai_hr_query_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.UserId, x.CreatedAtUtc });
+            entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<ResumeParseResult>(entity =>
+        {
+            entity.ToTable("resume_parse_results");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ParsedTextJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.CandidateId });
+            entity.HasIndex(x => new { x.TenantId, x.ParseStatus });
+        });
+
+        modelBuilder.Entity<CandidateAIScore>(entity =>
+        {
+            entity.ToTable("candidate_ai_scores");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.OverallScore).HasPrecision(5, 2);
+            entity.Property(x => x.SkillMatchScore).HasPrecision(5, 2);
+            entity.Property(x => x.ExperienceScore).HasPrecision(5, 2);
+            entity.Property(x => x.EducationScore).HasPrecision(5, 2);
+            entity.HasIndex(x => new { x.TenantId, x.CandidateId, x.JobOpeningId });
+        });
+
+        modelBuilder.Entity<PayrollAIValidationResult>(entity =>
+        {
+            entity.ToTable("payroll_ai_validation_results");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.DataJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.PayrollRunId, x.Severity });
+            entity.HasIndex(x => new { x.TenantId, x.IsResolved });
+        });
+
+        modelBuilder.Entity<EmployeeRiskScore>(entity =>
+        {
+            entity.ToTable("employee_risk_scores");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ChurnRiskScore).HasPrecision(5, 2);
+            entity.Property(x => x.BurnoutRiskScore).HasPrecision(5, 2);
+            entity.Property(x => x.PerformanceDeclineScore).HasPrecision(5, 2);
+            entity.Property(x => x.RiskFactorsJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.ComputedAtUtc });
+            entity.HasIndex(x => new { x.TenantId, x.OverallRiskLevel });
+        });
+
+        modelBuilder.Entity<EmployeeChurnPrediction>(entity =>
+        {
+            entity.ToTable("employee_churn_predictions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ChurnProbability).HasPrecision(4, 3);
+            entity.Ignore(x => x.ContributingFactors);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.ComputedAtUtc });
+        });
+
+        modelBuilder.Entity<BurnoutRiskSignal>(entity =>
+        {
+            entity.ToTable("burnout_risk_signals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.DetectedDate });
+            entity.HasIndex(x => new { x.TenantId, x.SignalType, x.IsAcknowledged });
+        });
+
+        // ── Recruitment Extended ───────────────────────────────────────────────
+        modelBuilder.Entity<WorkforcePlan>(entity =>
+        {
+            entity.ToTable("workforce_plans");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.BudgetAllocated).HasPrecision(14, 2);
+            entity.Property(x => x.BudgetUtilized).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.PlanCode }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.PlanYear, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<CandidateDocument>(entity =>
+        {
+            entity.ToTable("candidate_documents");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.CandidateId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.ApplicationId });
+        });
+
+        modelBuilder.Entity<InterviewFeedback>(entity =>
+        {
+            entity.ToTable("interview_feedbacks");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.InterviewScheduleId });
+            entity.HasIndex(x => new { x.TenantId, x.ApplicationId });
+        });
+
+        modelBuilder.Entity<AssessmentTemplate>(entity =>
+        {
+            entity.ToTable("assessment_templates");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<AssessmentQuestion>(entity =>
+        {
+            entity.ToTable("assessment_questions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.OptionsJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.TemplateId, x.OrderIndex });
+        });
+
+        modelBuilder.Entity<CandidateAssessment>(entity =>
+        {
+            entity.ToTable("candidate_assessments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ScorePercentage).HasPrecision(5, 2);
+            entity.Property(x => x.ResultJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.ApplicationId });
+            entity.HasIndex(x => new { x.TenantId, x.CandidateId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.InvitationToken }).IsUnique();
+        });
+
+        modelBuilder.Entity<OfferApproval>(entity =>
+        {
+            entity.ToTable("offer_approvals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.OfferLetterId, x.StepOrder });
+            entity.HasIndex(x => new { x.TenantId, x.ApplicationId, x.Status });
+        });
+
+        modelBuilder.Entity<OnboardingChecklist>(entity =>
+        {
+            entity.ToTable("onboarding_checklists");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<OnboardingTask>(entity =>
+        {
+            entity.ToTable("onboarding_tasks");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.ApplicationId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.ChecklistId, x.OrderIndex });
+        });
+
+        modelBuilder.Entity<RecruitmentAuditLog>(entity =>
+        {
+            entity.ToTable("recruitment_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId, x.CreatedAtUtc });
+        });
+
+        // ── Compliance Module ──────────────────────────────────────────────────
+        modelBuilder.Entity<DocType>(entity =>
+        {
+            entity.ToTable("doc_types");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<ContractTemplate>(entity =>
+        {
+            entity.ToTable("contract_templates");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ContentHtmlEn).HasColumnType("longtext");
+            entity.Property(x => x.ContentHtmlAr).HasColumnType("longtext");
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<EmployeeContract>(entity =>
+        {
+            entity.ToTable("employee_contracts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.BasicSalary).HasPrecision(14, 2);
+            entity.Property(x => x.ContentHtmlEn).HasColumnType("longtext");
+            entity.Property(x => x.ContentHtmlAr).HasColumnType("longtext");
+            entity.HasIndex(x => new { x.TenantId, x.ContractNumber }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<ComplianceRequirement>(entity =>
+        {
+            entity.ToTable("compliance_requirements");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.DocTypeId, x.CountryCode });
+            entity.HasIndex(x => new { x.TenantId, x.IsActive });
+        });
+
+        modelBuilder.Entity<ComplianceRenewal>(entity =>
+        {
+            entity.ToTable("compliance_renewals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.ExpiryDate, x.Status });
+        });
+
+        modelBuilder.Entity<ComplianceReminder>(entity =>
+        {
+            entity.ToTable("compliance_reminders");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.ReminderType, x.Status });
+        });
+
+        modelBuilder.Entity<VisaRecord>(entity =>
+        {
+            entity.ToTable("visa_records");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.VisaNumber });
+            entity.HasIndex(x => new { x.TenantId, x.ExpiryDate, x.Status });
+        });
+
+        modelBuilder.Entity<PassportRecord>(entity =>
+        {
+            entity.ToTable("passport_records");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.PassportNumber });
+            entity.HasIndex(x => new { x.TenantId, x.ExpiryDate, x.Status });
+        });
+
+        modelBuilder.Entity<WorkPermitRecord>(entity =>
+        {
+            entity.ToTable("work_permit_records");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.PermitNumber });
+            entity.HasIndex(x => new { x.TenantId, x.ExpiryDate, x.Status });
+        });
+
+        modelBuilder.Entity<ComplianceAuditLog>(entity =>
+        {
+            entity.ToTable("compliance_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MetadataJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<ComplianceAIInsight>(entity =>
+        {
+            entity.ToTable("compliance_ai_insights");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.InsightType, x.IsAcknowledged });
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId });
         });
     }
 

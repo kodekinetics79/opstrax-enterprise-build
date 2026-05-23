@@ -150,9 +150,47 @@ public class HolidayCalendarController : ControllerBase
 
         return Ok(holidays);
     }
+
+    [HttpGet("blackouts")]
+    public async Task<IActionResult> ListBlackouts(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var items = await _db.LeaveBlackoutDates
+            .Where(b => b.TenantId == tenantId)
+            .OrderBy(b => b.StartDate)
+            .ToListAsync(ct);
+
+        return Ok(items);
+    }
+
+    [HttpPost("blackouts")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> CreateBlackout([FromBody] CreateBlackoutRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var blackout = new LeaveBlackoutDate
+        {
+            TenantId = tenantId.Value,
+            NameEn = req.NameEn,
+            StartDate = req.StartDate,
+            EndDate = req.EndDate,
+            DepartmentName = req.DepartmentName ?? string.Empty,
+            Reason = req.Reason,
+            IsCompanyWide = req.IsCompanyWide ?? true
+        };
+
+        _db.LeaveBlackoutDates.Add(blackout);
+        await _db.SaveChangesAsync(ct);
+        return Created($"/api/leave/holidays/blackouts/{blackout.Id}", blackout);
+    }
 }
 
 public record CreateCalendarRequest(string Name, string CountryCode, int CalendarYear, Guid? CompanyId, Guid? BranchId);
+public record CreateBlackoutRequest(string NameEn, DateOnly StartDate, DateOnly EndDate, string Reason, string? DepartmentName, bool? IsCompanyWide);
 public record AddHolidayRequest(
     string NameEn,
     string? NameAr,
