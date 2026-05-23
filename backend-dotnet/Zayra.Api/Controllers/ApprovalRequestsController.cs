@@ -1,0 +1,67 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Zayra.Api.Application.Approvals;
+using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Common;
+
+namespace Zayra.Api.Controllers;
+
+[ApiController]
+[Route("api/approval-requests")]
+[Authorize(Roles = "Admin,HR Manager,HR Officer,Manager,Auditor")]
+public class ApprovalRequestsController : ControllerBase
+{
+    private readonly IApprovalWorkflowService _approvals;
+
+    public ApprovalRequestsController(IApprovalWorkflowService approvals)
+    {
+        _approvals = approvals;
+    }
+
+    [HttpGet]
+    public async Task<ActionResult<PagedResult<ApprovalRequestDto>>> Search([FromQuery] string? status, [FromQuery] string? entityName, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        return Ok(await _approvals.GetRequestsAsync(tenantId.Value, status, entityName, page, pageSize, cancellationToken));
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<ApprovalRequestDto>> Get(Guid id, CancellationToken cancellationToken)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var request = await _approvals.GetRequestAsync(tenantId.Value, id, cancellationToken);
+        return request is null ? NotFound() : Ok(request);
+    }
+
+    [HttpPost]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Manager")]
+    public async Task<ActionResult<ApprovalRequestDto>> Create(CreateApprovalRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tenantId = this.GetTenantId();
+            if (tenantId is null) return Unauthorized();
+            var approval = await _approvals.CreateRequestAsync(tenantId.Value, request, Context(), cancellationToken);
+            return CreatedAtAction(nameof(Get), new { id = approval.Id }, approval);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [HttpPost("{id:guid}/decisions")]
+    [Authorize(Roles = "Admin,HR Manager,Manager")]
+    public async Task<ActionResult<ApprovalRequestDto>> Decide(Guid id, ApprovalDecisionRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tenantId = this.GetTenantId();
+            if (tenantId is null) return Unauthorized();
+            var approval = await _approvals.DecideAsync(tenantId.Value, id, request, Context(), cancellationToken);
+            return approval is null ? NotFound() : Ok(approval);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    private RequestContext Context() => new(HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), this.GetUserId(), this.GetTenantId());
+}

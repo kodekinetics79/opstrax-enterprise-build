@@ -1,0 +1,68 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: zayra-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zayra}
+      MYSQL_USER: ${MYSQL_USER:-zayra}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zayra_password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - zayra-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend-dotnet/Zayra.Api
+    container_name: zayra-api
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:5117
+      ConnectionStrings__Default: server=mysql;port=3306;database=${MYSQL_DATABASE:-zayra};user=${MYSQL_USER:-zayra};password=${MYSQL_PASSWORD:-zayra_password}
+      Jwt__Issuer: ${JWT_ISSUER:-Zayra.Api}
+      Jwt__Audience: ${JWT_AUDIENCE:-Zayra.Client}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-CHANGE_ME_TO_A_64_CHARACTER_PRODUCTION_SECRET_KEY_1234567890}
+      SeedAdmin__TenantName: ${SEED_TENANT_NAME:-Zayra HQ}
+      SeedAdmin__TenantSlug: ${SEED_TENANT_SLUG:-zayra}
+      SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@zayra.local}
+      SeedAdmin__FullName: ${SEED_ADMIN_NAME:-Zayra Admin}
+      SeedAdmin__Password: ${SEED_ADMIN_PASSWORD:-ChangeMe123!}
+    ports:
+      - "${BACKEND_PORT:-5117}:5117"
+    volumes:
+      - zayra-documents:/app/storage
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: zayra-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:5117}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+
+  redis:
+    image: redis:7-alpine
+    container_name: zayra-redis
+    restart: unless-stopped
+    profiles: ["optional"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+volumes:
+  zayra-mysql-data:
+  zayra-documents:

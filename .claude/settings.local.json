@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx vite *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
+      "Bash(pkill -f \"vite --host\")",
+      "Bash(dotnet build *)",
+      "Bash(mysql -u root -ppassword -e \"SHOW DATABASES;\")",
+      "Read(//usr/local/share/dotnet/**)",
+      "Read(//Users/zackkhan/.dotnet/**)",
+      "Read(//usr/**)",
+      "Bash(brew list *)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(brew services *)",
+      "Read(//opt/homebrew/**)",
+      "Bash(docker exec *)",
+      "Bash(DOTNET_ROOT=/usr/local/share/dotnet /usr/local/share/dotnet/dotnet run --urls \"http://localhost:5117\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5117/swagger/v1/swagger.json)"
+    ]
+  }
+}

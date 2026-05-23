@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "mysql2": "latest"
+  },
+  "devDependencies": {},
+  "type": "module"
+}

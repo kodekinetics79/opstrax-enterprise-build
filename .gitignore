@@ -1,0 +1,11 @@
+node_modules/
+dist/
+backend-dotnet/**/bin/
+backend-dotnet/**/obj/
+frontend/dist/
+backend-node/.env
+backend-dotnet/**/appsettings.Development.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store

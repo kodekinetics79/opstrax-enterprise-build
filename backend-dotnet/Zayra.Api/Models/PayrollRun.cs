@@ -1,0 +1,37 @@
+namespace Zayra.Api.Models;
+
+public class PayrollRun
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public string Status { get; set; } = "Draft";
+    public decimal TotalGrossSalary { get; set; }
+    public decimal TotalDeductions { get; set; }
+    public decimal TotalNetSalary { get; set; }
+    public int EmployeeCount { get; set; }
+    public Guid? CreatedByUserId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ProcessedAtUtc { get; set; }
+    public DateTime? LockedAtUtc { get; set; }
+}
+
+public class PayrollSlip
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid RunId { get; set; }
+    public int EmployeeId { get; set; }
+    public string EmployeeCode { get; set; } = string.Empty;
+    public string EmployeeName { get; set; } = string.Empty;
+    public string Department { get; set; } = string.Empty;
+    public decimal BasicSalary { get; set; }
+    public decimal HousingAllowance { get; set; }
+    public decimal TransportAllowance { get; set; }
+    public decimal OtherAllowances { get; set; }
+    public decimal GrossSalary { get; set; }
+    public decimal Deductions { get; set; }
+    public decimal NetSalary { get; set; }
+    public string Status { get; set; } = "Draft";
+}
