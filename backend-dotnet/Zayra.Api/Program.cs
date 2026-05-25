@@ -27,6 +27,8 @@ using Zayra.Api.Application.Performance;
 using Zayra.Api.Infrastructure.Performance;
 using Zayra.Api.Application.Leave;
 using Zayra.Api.Infrastructure.Leave;
+using Zayra.Api.Application.Common;
+using Zayra.Api.Infrastructure.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:5117");
@@ -76,6 +78,7 @@ builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IRecruitmentService, RecruitmentService>();
 builder.Services.AddScoped<IPerformanceService, PerformanceService>();
 builder.Services.AddScoped<ILeaveService, LeaveService>();
+builder.Services.AddScoped<IDataScopeService, DataScopeService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

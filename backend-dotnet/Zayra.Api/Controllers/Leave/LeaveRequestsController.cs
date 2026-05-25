@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,11 +16,13 @@ public class LeaveRequestsController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly ILeaveService _leaveService;
+    private readonly IDataScopeService _scopeService;
 
-    public LeaveRequestsController(ZayraDbContext db, ILeaveService leaveService)
+    public LeaveRequestsController(ZayraDbContext db, ILeaveService leaveService, IDataScopeService scopeService)
     {
         _db = db;
         _leaveService = leaveService;
+        _scopeService = scopeService;
     }
 
     [HttpGet]
@@ -37,10 +40,14 @@ public class LeaveRequestsController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
+
         var query = _db.LeaveRequests.Where(r => r.TenantId == tenantId);
 
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
-        if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
+        if (setFilter is not null) query = query.Where(r => setFilter.Contains(r.EmployeeId));
+        else if (singleId.HasValue) query = query.Where(r => r.EmployeeId == singleId.Value);
         if (leaveTypeId.HasValue) query = query.Where(r => r.LeaveTypeId == leaveTypeId.Value);
         if (fromDate.HasValue) query = query.Where(r => r.EndDate >= fromDate.Value);
         if (toDate.HasValue) query = query.Where(r => r.StartDate <= toDate.Value);
@@ -79,6 +86,16 @@ public class LeaveRequestsController : ControllerBase
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
+
+        // GCC compliance: employees may only submit for themselves unless they hold employees.write or approvals.decide
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        if (!scope.IsUnrestricted && scope.CallerEmployeeId.HasValue && req.EmployeeId != scope.CallerEmployeeId.Value)
+        {
+            var hasWritePermission = User.Claims.Any(c => c.Type == "permission" &&
+                (c.Value == "employees.write" || c.Value == "approvals.decide"));
+            if (!hasWritePermission)
+                return Forbid();
+        }
 
         var leaveType = await _db.LeaveTypes
             .FirstOrDefaultAsync(t => t.Id == req.LeaveTypeId && t.TenantId == tenantId, ct);

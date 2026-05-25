@@ -216,6 +216,41 @@ public class ZayraDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    // ── Setup & Admin ──────────────────────────────────────────────────────────
+    public DbSet<MasterDataType> MasterDataTypes => Set<MasterDataType>();
+    public DbSet<MasterDataValue> MasterDataValues => Set<MasterDataValue>();
+    public DbSet<NumberingRule> NumberingRules => Set<NumberingRule>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<GCCComplianceSetting> GCCComplianceSettings => Set<GCCComplianceSetting>();
+    public DbSet<Location> Locations => Set<Location>();
+    public DbSet<FiscalYear> FiscalYears => Set<FiscalYear>();
+    public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
+    public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+    // ── Loans, Advances & Bonuses ──────────────────────────────────────────────
+    public DbSet<LoanType> LoanTypes => Set<LoanType>();
+    public DbSet<LoanPolicy> LoanPolicies => Set<LoanPolicy>();
+    public DbSet<EmployeeLoan> EmployeeLoans => Set<EmployeeLoan>();
+    public DbSet<LoanApproval> LoanApprovals => Set<LoanApproval>();
+    public DbSet<LoanInstallment> LoanInstallments => Set<LoanInstallment>();
+    public DbSet<LoanSettlement> LoanSettlements => Set<LoanSettlement>();
+    public DbSet<LoanAuditLog> LoanAuditLogs => Set<LoanAuditLog>();
+    public DbSet<AdvancePolicy> AdvancePolicies => Set<AdvancePolicy>();
+    public DbSet<SalaryAdvance> SalaryAdvances => Set<SalaryAdvance>();
+    public DbSet<AdvanceApproval> AdvanceApprovals => Set<AdvanceApproval>();
+    public DbSet<AdvanceInstallment> AdvanceInstallments => Set<AdvanceInstallment>();
+    public DbSet<AdvanceAuditLog> AdvanceAuditLogs => Set<AdvanceAuditLog>();
+    public DbSet<BonusType> BonusTypes => Set<BonusType>();
+    public DbSet<BonusBatch> BonusBatches => Set<BonusBatch>();
+    public DbSet<EmployeeBonus> EmployeeBonuses => Set<EmployeeBonus>();
+    public DbSet<BonusApproval> BonusApprovals => Set<BonusApproval>();
+    public DbSet<BonusAuditLog> BonusAuditLogs => Set<BonusAuditLog>();
+    // ── Reports & Analytics ────────────────────────────────────────────────────
+    public DbSet<SavedReport> SavedReports => Set<SavedReport>();
+    public DbSet<ReportSchedule> ReportSchedules => Set<ReportSchedule>();
+    public DbSet<ReportExecutionLog> ReportExecutionLogs => Set<ReportExecutionLog>();
+    // ── Identity & Security ────────────────────────────────────────────────────
+    public DbSet<SecuritySetting> SecuritySettings => Set<SecuritySetting>();
+    public DbSet<PermissionGrantorRecord> PermissionGrantorRecords => Set<PermissionGrantorRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -983,8 +1018,31 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.NormalizedEmail).HasMaxLength(256).IsRequired();
             entity.Property(x => x.FullName).HasMaxLength(180).IsRequired();
             entity.Property(x => x.PasswordHash).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.PhoneNumber).HasMaxLength(40);
+            entity.Property(x => x.PreferredLanguage).HasMaxLength(10).HasDefaultValue("en");
+            entity.Property(x => x.Timezone).HasMaxLength(80).HasDefaultValue("UTC");
+            entity.Property(x => x.Status).HasMaxLength(40).HasDefaultValue("Active");
+            entity.Property(x => x.AccessMode).HasMaxLength(40).HasDefaultValue("FullPortal");
             entity.HasIndex(x => new { x.TenantId, x.NormalizedEmail }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
             entity.HasOne(x => x.Tenant).WithMany(x => x.Users).HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SecuritySetting>(entity =>
+        {
+            entity.ToTable("security_settings");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.TenantId).IsUnique();
+        });
+
+        modelBuilder.Entity<PermissionGrantorRecord>(entity =>
+        {
+            entity.ToTable("permission_grantor_records");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.PermissionScope).HasMaxLength(2000).IsRequired();
+            entity.Property(x => x.Reason).HasMaxLength(500);
+            entity.HasIndex(x => new { x.TenantId, x.GrantorUserId, x.IsActive });
         });
 
         modelBuilder.Entity<Role>(entity =>
@@ -1582,6 +1640,262 @@ public class ZayraDbContext : DbContext
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.InsightType, x.IsAcknowledged });
             entity.HasIndex(x => new { x.TenantId, x.EmployeeId });
+        });
+
+        // ── Setup & Admin ──────────────────────────────────────────────────────
+        modelBuilder.Entity<MasterDataType>(entity =>
+        {
+            entity.ToTable("master_data_types");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(100);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive });
+        });
+
+        modelBuilder.Entity<MasterDataValue>(entity =>
+        {
+            entity.ToTable("master_data_values");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(100);
+            entity.Property(x => x.ExtraJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.TypeId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.TypeId, x.IsActive });
+        });
+
+        modelBuilder.Entity<NumberingRule>(entity =>
+        {
+            entity.ToTable("numbering_rules");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EntityType }).IsUnique();
+        });
+
+        modelBuilder.Entity<SystemSetting>(entity =>
+        {
+            entity.ToTable("system_settings");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Category, x.SettingKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<GCCComplianceSetting>(entity =>
+        {
+            entity.ToTable("gcc_compliance_settings");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EosbYears1To5Rate).HasPrecision(8, 2);
+            entity.Property(x => x.EosbYearsAbove5Rate).HasPrecision(8, 2);
+            entity.HasIndex(x => new { x.TenantId, x.CountryCode }).IsUnique();
+        });
+
+        modelBuilder.Entity<Location>(entity =>
+        {
+            entity.ToTable("locations");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Latitude).HasPrecision(10, 7);
+            entity.Property(x => x.Longitude).HasPrecision(10, 7);
+            entity.Property(x => x.GeofenceRadiusMeters).HasPrecision(10, 2);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsActive });
+        });
+
+        modelBuilder.Entity<FiscalYear>(entity =>
+        {
+            entity.ToTable("fiscal_years");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Year }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.IsCurrent });
+        });
+
+        modelBuilder.Entity<NotificationTemplate>(entity =>
+        {
+            entity.ToTable("notification_templates");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Code, x.Channel }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.EventType });
+        });
+
+        modelBuilder.Entity<AdminAuditLog>(entity =>
+        {
+            entity.ToTable("admin_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
+            entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        // ── Loans ──────────────────────────────────────────────────────────────
+        modelBuilder.Entity<LoanType>(entity =>
+        {
+            entity.ToTable("loan_types");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MaxAmount).HasPrecision(14, 2);
+            entity.Property(x => x.InterestRate).HasPrecision(8, 4);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+
+        modelBuilder.Entity<LoanPolicy>(entity =>
+        {
+            entity.ToTable("loan_policies");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MaxMultiplierOfSalary).HasPrecision(8, 2);
+            entity.HasIndex(x => new { x.TenantId, x.LoanTypeId });
+        });
+
+        modelBuilder.Entity<EmployeeLoan>(entity =>
+        {
+            entity.ToTable("employee_loans");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RequestedAmount).HasPrecision(14, 2);
+            entity.Property(x => x.ApprovedAmount).HasPrecision(14, 2);
+            entity.Property(x => x.InstallmentAmount).HasPrecision(14, 2);
+            entity.Property(x => x.TotalRepaid).HasPrecision(14, 2);
+            entity.Property(x => x.OutstandingBalance).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.LoanNumber }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+        });
+
+        modelBuilder.Entity<LoanApproval>(entity =>
+        {
+            entity.ToTable("loan_approvals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.LoanId, x.StepOrder });
+        });
+
+        modelBuilder.Entity<LoanInstallment>(entity =>
+        {
+            entity.ToTable("loan_installments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.AmountDue).HasPrecision(14, 2);
+            entity.Property(x => x.AmountPaid).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.LoanId, x.InstallmentNumber }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<LoanSettlement>(entity =>
+        {
+            entity.ToTable("loan_settlements");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.SettlementAmount).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.LoanId });
+        });
+
+        modelBuilder.Entity<LoanAuditLog>(entity =>
+        {
+            entity.ToTable("loan_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.LoanId });
+        });
+
+        // ── Advances ───────────────────────────────────────────────────────────
+        modelBuilder.Entity<AdvancePolicy>(entity =>
+        {
+            entity.ToTable("advance_policies");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.MaxPercentageOfSalary).HasPrecision(8, 2);
+            entity.HasIndex(x => new { x.TenantId, x.IsActive });
+        });
+
+        modelBuilder.Entity<SalaryAdvance>(entity =>
+        {
+            entity.ToTable("salary_advances");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RequestedAmount).HasPrecision(14, 2);
+            entity.Property(x => x.ApprovedAmount).HasPrecision(14, 2);
+            entity.Property(x => x.InstallmentAmount).HasPrecision(14, 2);
+            entity.Property(x => x.TotalRepaid).HasPrecision(14, 2);
+            entity.Property(x => x.OutstandingBalance).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.AdvanceNumber }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+        });
+
+        modelBuilder.Entity<AdvanceApproval>(entity =>
+        {
+            entity.ToTable("advance_approvals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.AdvanceId, x.StepOrder });
+        });
+
+        modelBuilder.Entity<AdvanceInstallment>(entity =>
+        {
+            entity.ToTable("advance_installments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.AmountDue).HasPrecision(14, 2);
+            entity.Property(x => x.AmountPaid).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.AdvanceId, x.InstallmentNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<AdvanceAuditLog>(entity =>
+        {
+            entity.ToTable("advance_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.AdvanceId });
+        });
+
+        // ── Bonuses ────────────────────────────────────────────────────────────
+        modelBuilder.Entity<BonusType>(entity =>
+        {
+            entity.ToTable("bonus_types");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
+        });
+
+        modelBuilder.Entity<BonusBatch>(entity =>
+        {
+            entity.ToTable("bonus_batches");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TotalAmount).HasPrecision(16, 2);
+            entity.HasIndex(x => new { x.TenantId, x.BatchNumber }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<EmployeeBonus>(entity =>
+        {
+            entity.ToTable("employee_bonuses");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.BasicSalary).HasPrecision(14, 2);
+            entity.Property(x => x.CalculationValue).HasPrecision(10, 4);
+            entity.Property(x => x.BonusAmount).HasPrecision(14, 2);
+            entity.HasIndex(x => new { x.TenantId, x.BonusBatchId, x.EmployeeId });
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.Status });
+        });
+
+        modelBuilder.Entity<BonusApproval>(entity =>
+        {
+            entity.ToTable("bonus_approvals");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.BonusBatchId, x.StepOrder });
+        });
+
+        modelBuilder.Entity<BonusAuditLog>(entity =>
+        {
+            entity.ToTable("bonus_audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.BonusBatchId });
+        });
+
+        // ── Reports & Analytics ────────────────────────────────────────────────
+        modelBuilder.Entity<SavedReport>(entity =>
+        {
+            entity.ToTable("saved_reports");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FiltersJson).HasColumnType("json");
+            entity.Property(x => x.ColumnsJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.CreatedBy });
+            entity.HasIndex(x => new { x.TenantId, x.Category });
+        });
+
+        modelBuilder.Entity<ReportSchedule>(entity =>
+        {
+            entity.ToTable("report_schedules");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FiltersJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.IsActive });
+        });
+
+        modelBuilder.Entity<ReportExecutionLog>(entity =>
+        {
+            entity.ToTable("report_execution_logs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FiltersJson).HasColumnType("json");
+            entity.HasIndex(x => new { x.TenantId, x.ReportKey });
+            entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
         });
     }
 

@@ -29,9 +29,10 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("dashboard")]
     public async Task<ActionResult<ESSDashboardDto>> Dashboard(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
-        if (employee is null) return NotFound();
+        if (employee is null) return NotFound(new { message = "Your user account is not linked to an employee record. Ask HR to invite you using the Invite Employee flow in User Management." });
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var attendance = await _db.AttendanceDailyRecords.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.WorkDate == today && !x.IsDeleted, cancellationToken);
         var leaveBalances = await _db.EmployeeLeaveBalances.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Year == DateTime.UtcNow.Year).ToListAsync(cancellationToken);
@@ -62,7 +63,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("profile")]
     public async Task<ActionResult<Employee>> Profile(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
         if (employee is null) return NotFound();
         await EssAudit(tenantId, employeeId, "ess.profile.viewed", "Employee", employeeId.ToString(), cancellationToken);
@@ -72,7 +74,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPut("profile-change-request")]
     public async Task<ActionResult<EmployeeProfileChangeRequest>> ProfileChangeRequest(ProfileChangeRequestDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var changesJson = JsonSerializer.Serialize(request.Changes);
         var containsSensitive = request.Changes.Keys.Any(SensitiveProfileFields.Contains);
         var change = new EmployeeProfileChangeRequest
@@ -93,7 +96,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("payslips")]
     public async Task<ActionResult<IReadOnlyCollection<PayrollSlip>>> Payslips(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var slips = await _db.PayrollSlips.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId)
             .OrderByDescending(x => x.RunId)
@@ -105,7 +109,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("payslips/{id:guid}/download")]
     public async Task<IActionResult> DownloadPayslip(Guid id, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var slip = await _db.PayrollSlips.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id, cancellationToken);
         if (slip is null) return NotFound();
         _db.EmployeePayslipAccessLogs.Add(new EmployeePayslipAccessLog { TenantId = tenantId, EmployeeId = employeeId, PayslipId = id, Action = "Download", UserId = GetUserId() });
@@ -117,7 +122,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("attendance")]
     public async Task<ActionResult<IReadOnlyCollection<AttendanceDailyRecord>>> Attendance([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var start = from ?? DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
         var end = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
         return Ok(await _db.AttendanceDailyRecords.AsNoTracking()
@@ -129,7 +135,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("attendance/regularization")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> AttendanceRegularization(ESSAttendanceRegularizationDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var regularization = new AttendanceRegularizationRequest
         {
             TenantId = tenantId,
@@ -151,7 +158,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("leave/balance")]
     public async Task<ActionResult<IReadOnlyCollection<ESSLeaveBalanceDto>>> LeaveBalance(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var balances = await _db.EmployeeLeaveBalances.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Year == DateTime.UtcNow.Year).ToListAsync(cancellationToken);
         return Ok(balances.Select(x => new ESSLeaveBalanceDto(x.LeaveTypeId, x.LeaveTypeName, x.Entitled, x.Used, x.Pending, x.Available)).ToList());
     }
@@ -159,7 +167,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("leave/request")]
     public async Task<ActionResult<LeaveRequest>> LeaveRequest(ESSLeaveRequestDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
         if (employee is null) return NotFound();
         var leaveType = await _db.LeaveTypes.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == request.LeaveTypeId && x.IsActive, cancellationToken);
@@ -191,7 +200,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("documents")]
     public async Task<ActionResult<IReadOnlyCollection<ESSDocumentDto>>> Documents(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var documents = await _db.EmployeeDocuments.AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && !x.IsDeleted)
             .OrderBy(x => x.DocumentType)
@@ -204,7 +214,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("documents/upload")]
     public async Task<ActionResult<EmployeeDocument>> UploadDocument(ESSDocumentUploadDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var document = new EmployeeDocument
         {
             TenantId = tenantId,
@@ -226,7 +237,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("hr-requests")]
     public async Task<ActionResult<HRRequest>> CreateHrRequest(ESSHRRequestCreateDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var category = request.CategoryId is null ? null : await _db.HRRequestCategories.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == request.CategoryId && x.IsActive, cancellationToken);
         var slaHours = category?.DefaultSlaHours ?? 48;
         var hrRequest = new HRRequest
@@ -250,14 +262,16 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("hr-requests/my")]
     public async Task<ActionResult<IReadOnlyCollection<HRRequest>>> MyHrRequests(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         return Ok(await _db.HRRequests.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId).OrderByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
     }
 
     [HttpPost("hr-requests/{id:guid}/comments")]
     public async Task<ActionResult<HRRequestComment>> AddHrRequestComment(Guid id, ESSCommentDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         if (!await _db.HRRequests.AnyAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id, cancellationToken)) return NotFound();
         var comment = new HRRequestComment { TenantId = tenantId, HRRequestId = id, EmployeeId = employeeId, UserId = GetUserId(), Comment = request.Comment };
         _db.HRRequestComments.Add(comment);
@@ -268,7 +282,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("announcements")]
     public async Task<ActionResult<IReadOnlyCollection<ESSAnnouncementDto>>> Announcements(CancellationToken cancellationToken)
     {
-        var (tenantId, _) = RequireEssRead();
+        var (essOk, tenantId, _, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var announcements = await ActiveAnnouncements(tenantId).ToListAsync(cancellationToken);
         return Ok(announcements.Select(ToAnnouncementDto).ToList());
     }
@@ -276,7 +291,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("policies")]
     public async Task<ActionResult<IReadOnlyCollection<ESSDocumentDto>>> Policies(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         return Ok(await _db.EmployeeDocuments.AsNoTracking()
             .Where(x => x.TenantId == tenantId && (x.EmployeeId == employeeId || x.DocumentType.Contains("Policy")) && !x.IsDeleted)
             .Select(x => new ESSDocumentDto(x.Id, x.DocumentType, x.FileName, x.ExpiryDate, x.ApprovalStatus))
@@ -286,7 +302,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("policies/{id:guid}/acknowledge")]
     public async Task<ActionResult<EmployeePolicyAcknowledgement>> AcknowledgePolicy(Guid id, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         if (!await _db.EmployeeDocuments.AnyAsync(x => x.TenantId == tenantId && x.Id == id && !x.IsDeleted, cancellationToken)) return NotFound();
         var existing = await _db.EmployeePolicyAcknowledgements.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.PolicyId == id, cancellationToken);
         if (existing is not null) return Ok(existing);
@@ -300,7 +317,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPost("ai/ask")]
     public async Task<ActionResult<ESSAIAnswerDto>> AskAi(ESSAIQuestionDto request, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var leaveAvailable = await _db.EmployeeLeaveBalances.Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Year == DateTime.UtcNow.Year).SumAsync(x => x.Entitled + x.Accrued + x.CarriedForward + x.ManualAdjustment - x.Used - x.Pending - x.Encashed, cancellationToken);
         var openTickets = await _db.HRRequests.CountAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Status != "Closed", cancellationToken);
         var expiringDocs = await _db.EmployeeDocuments.CountAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && !x.IsDeleted && x.ExpiryDate != null && x.ExpiryDate <= DateOnly.FromDateTime(DateTime.UtcNow.AddDays(60)), cancellationToken);
@@ -313,7 +331,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpGet("notifications")]
     public async Task<ActionResult<IReadOnlyCollection<ESSNotificationDto>>> Notifications(CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssRead();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var notifications = await _db.EmployeeNotifications.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId).OrderByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
         return Ok(notifications.Select(ToNotificationDto).ToList());
     }
@@ -321,7 +340,8 @@ public class EmployeeSelfServiceController : ControllerBase
     [HttpPatch("notifications/{id:guid}/read")]
     public async Task<IActionResult> MarkNotificationRead(Guid id, CancellationToken cancellationToken)
     {
-        var (tenantId, employeeId) = RequireEssWrite();
+        var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
+        if (!essOk) return BadRequest(new { message = ctxError });
         var notification = await _db.EmployeeNotifications.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id, cancellationToken);
         if (notification is null) return NotFound();
         notification.IsRead = true;
@@ -336,24 +356,45 @@ public class EmployeeSelfServiceController : ControllerBase
     private async Task<Employee?> OwnEmployee(Guid tenantId, int employeeId, CancellationToken cancellationToken) =>
         await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == employeeId && !x.IsDeleted, cancellationToken);
 
-    private (Guid TenantId, int EmployeeId) RequireEssRead()
+    private async Task<(bool Ok, Guid TenantId, int EmployeeId, string? Error)> GetEssContextAsync(CancellationToken cancellationToken, bool requireWrite = false)
     {
         var accessMode = User.FindFirstValue("access_mode") ?? string.Empty;
-        if (accessMode is "NoLogin" or "KioskOnly") throw new UnauthorizedAccessException("This access mode cannot use ESS.");
-        if (!HasPermission("ess.read") && !HasPermission("ess.write")) throw new UnauthorizedAccessException("ESS permission is required.");
-        return (RequireTenantId(), RequireEmployeeId());
-    }
+        if (accessMode is "NoLogin" or "KioskOnly")
+            return (false, default, default, "This access mode cannot use ESS.");
 
-    private (Guid TenantId, int EmployeeId) RequireEssWrite()
-    {
-        var data = RequireEssRead();
-        if (!HasPermission("ess.write")) throw new UnauthorizedAccessException("ESS write permission is required.");
-        return data;
+        if (!HasPermission("ess.read") && !HasPermission("ess.write"))
+            return (false, default, default, "ESS read permission is required.");
+
+        if (requireWrite && !HasPermission("ess.write"))
+            return (false, default, default, "ESS write permission is required.");
+
+        var tenantClaim = User.FindFirstValue("tenant_id");
+        if (!Guid.TryParse(tenantClaim, out var tenantId))
+            return (false, default, default, "Tenant claim is missing. Please log in again.");
+
+        // Fast path: JWT already has the employee_id claim (user was invited via employee invite flow)
+        if (int.TryParse(User.FindFirstValue("employee_id"), out var empId))
+            return (true, tenantId, empId, null);
+
+        // Fallback: match by email — handles users created via "Create User" whose email
+        // matches an employee record in the same tenant (WorkEmail or PersonalEmail)
+        var email = User.FindFirstValue("email") ?? User.FindFirstValue(ClaimTypes.Email) ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            var normalizedEmail = email.Trim().ToUpperInvariant();
+            var employee = await _db.Employees.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && !x.IsDeleted &&
+                    (x.WorkEmail.ToUpper() == normalizedEmail || x.PersonalEmail.ToUpper() == normalizedEmail),
+                    cancellationToken);
+            if (employee is not null)
+                return (true, tenantId, employee.Id, null);
+        }
+
+        return (false, default, default,
+            "No employee record found for your account. Ensure an employee profile exists in the People module with the same email address as your login, or ask HR to link your account via User Management → Invite Employee.");
     }
 
     private bool HasPermission(string permission) => User.Claims.Any(x => x.Type == "permission" && x.Value == permission);
-    private Guid RequireTenantId() => Guid.Parse(User.FindFirstValue("tenant_id") ?? throw new UnauthorizedAccessException("Tenant claim is required."));
-    private int RequireEmployeeId() => int.Parse(User.FindFirstValue("employee_id") ?? throw new UnauthorizedAccessException("Employee claim is required."));
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
 
     private async Task EssAudit(Guid tenantId, int employeeId, string action, string entityName, string entityId, CancellationToken cancellationToken)

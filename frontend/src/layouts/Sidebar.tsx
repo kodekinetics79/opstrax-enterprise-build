@@ -15,7 +15,12 @@ interface SidebarProps {
 export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: SidebarProps) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
+
+  const canSee = (requiredPermissions?: string[]) => {
+    if (!requiredPermissions || requiredPermissions.length === 0) return true;
+    return requiredPermissions.some(p => hasPermission(p));
+  };
 
   const handleNav = (path?: string) => {
     if (path) navigate(path);
@@ -80,7 +85,10 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
 
         {/* Navigation */}
         <nav aria-label="Primary navigation" className="flex-1 overflow-y-auto py-2">
-          {navigationGroups.map((group, gi) => (
+          {navigationGroups.map((group, gi) => {
+            const visibleItems = group.items.filter(item => canSee(item.requiredPermissions));
+            if (visibleItems.length === 0) return null;
+            return (
             <div key={group.label} className={gi > 0 ? 'mt-1' : ''}>
               {!isCollapsed ? (
                 <p className="mb-0.5 mt-3 px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 first:mt-2 dark:text-slate-500">
@@ -91,7 +99,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
               )}
 
               <div className="space-y-0.5 px-2">
-                {group.items.map((item) => {
+                {visibleItems.map((item) => {
                   const Icon = item.icon;
                   const active = isActive(item.path);
 
@@ -131,7 +139,8 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                 })}
               </div>
             </div>
-          ))}
+          );
+          })}
         </nav>
 
         {/* Footer */}

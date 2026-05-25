@@ -118,9 +118,7 @@ public class ContractsController : ControllerBase
     {
         var tid = GetTenantId();
 
-        var employee = await _db.Employees
-            .FirstOrDefaultAsync(x => x.Id == req.EmployeeId && x.TenantId == tid && !x.IsDeleted, ct);
-        if (employee == null) return BadRequest("Employee not found.");
+        // EmployeeId in contracts is a Guid reference; name accepted from request
 
         var count = await _db.EmployeeContracts.CountAsync(x => x.TenantId == tid, ct);
         var contractNumber = $"CON-{DateTime.UtcNow.Year}-{(count + 1):D4}";
@@ -143,7 +141,7 @@ public class ContractsController : ControllerBase
         {
             TenantId = tid,
             EmployeeId = req.EmployeeId,
-            EmployeeName = employee.FullName,
+            EmployeeName = req.EmployeeName ?? string.Empty,
             TemplateId = req.TemplateId,
             ContractNumber = contractNumber,
             ContractType = req.ContractType ?? "Employment",
@@ -255,7 +253,7 @@ public record CreateContractTemplateRequest(
     string? Variables, string? CountryCode);
 
 public record CreateContractRequest(
-    Guid EmployeeId, Guid? TemplateId, string? ContractType,
+    Guid EmployeeId, string? EmployeeName, Guid? TemplateId, string? ContractType,
     DateOnly StartDate, DateOnly? EndDate, decimal BasicSalary,
     string? CurrencyCode, string? ContentHtmlEn, string? ContentHtmlAr, string? Language);
 

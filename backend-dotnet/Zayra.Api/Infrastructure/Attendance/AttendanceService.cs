@@ -225,25 +225,27 @@ public class AttendanceService : IAttendanceService
         return processed;
     }
 
-    public async Task<PagedResult<AttendanceDailyDto>> GetDailyAsync(Guid tenantId, DateOnly? from, DateOnly? to, int? employeeId, string? status, int page, int pageSize, CancellationToken ct)
+    public async Task<PagedResult<AttendanceDailyDto>> GetDailyAsync(Guid tenantId, DateOnly? from, DateOnly? to, int? employeeId, string? status, int page, int pageSize, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
         from ??= today;
         to ??= today;
         var query = _db.AttendanceDailyRecords.Where(x => x.TenantId == tenantId && !x.IsDeleted && x.WorkDate >= from && x.WorkDate <= to);
-        if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
+        if (scopeIds is not null) query = query.Where(x => scopeIds.Contains(x.EmployeeId));
+        else if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
         var total = await query.CountAsync(ct);
         var items = await query.OrderByDescending(x => x.WorkDate).ThenBy(x => x.EmployeeName).Skip((page - 1) * pageSize).Take(pageSize).Select(x => x.ToDto()).ToListAsync(ct);
         return new PagedResult<AttendanceDailyDto>(items, total, page, pageSize);
     }
 
-    public async Task<IReadOnlyCollection<AttendanceMonthlyDto>> GetMonthlyAsync(Guid tenantId, int year, int month, int? employeeId, CancellationToken ct)
+    public async Task<IReadOnlyCollection<AttendanceMonthlyDto>> GetMonthlyAsync(Guid tenantId, int year, int month, int? employeeId, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null)
     {
         var from = new DateOnly(year, month, 1);
         var to = from.AddMonths(1).AddDays(-1);
         var query = _db.AttendanceDailyRecords.Where(x => x.TenantId == tenantId && x.WorkDate >= from && x.WorkDate <= to);
-        if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
+        if (scopeIds is not null) query = query.Where(x => scopeIds.Contains(x.EmployeeId));
+        else if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
         var records = await query.ToListAsync(ct);
         return records.GroupBy(x => new { x.EmployeeId, x.EmployeeName })
             .Select(g => new AttendanceMonthlyDto(g.Key.EmployeeId, g.Key.EmployeeName, g.Count(x => x.Status == "Present"), g.Count(x => x.Status == "Absent"), g.Count(x => x.LateMinutes > 0), g.Count(x => x.MissingPunch), g.Sum(x => x.OvertimeMinutes)))
@@ -275,10 +277,11 @@ public class AttendanceService : IAttendanceService
         return reg;
     }
 
-    public async Task<PagedResult<AttendanceRegularizationRequest>> GetRegularizationAsync(Guid tenantId, int? employeeId, string? status, int page, int pageSize, CancellationToken ct)
+    public async Task<PagedResult<AttendanceRegularizationRequest>> GetRegularizationAsync(Guid tenantId, int? employeeId, string? status, int page, int pageSize, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null)
     {
         var query = _db.AttendanceRegularizationRequests.Where(x => x.TenantId == tenantId);
-        if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
+        if (scopeIds is not null) query = query.Where(x => scopeIds.Contains(x.EmployeeId));
+        else if (employeeId is not null) query = query.Where(x => x.EmployeeId == employeeId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
         var total = await query.CountAsync(ct);
         var items = await query.OrderByDescending(x => x.CreatedAtUtc).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);

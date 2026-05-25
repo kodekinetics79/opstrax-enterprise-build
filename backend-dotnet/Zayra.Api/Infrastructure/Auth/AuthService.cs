@@ -140,6 +140,20 @@ public class AuthService : IAuthService
         return user?.Tenant is null ? null : ToUserDto(user);
     }
 
+    public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new UnauthorizedAccessException("User not found.");
+        if (!_passwordHasher.Verify(request.CurrentPassword, user.PasswordHash))
+            throw new InvalidOperationException("Current password is incorrect.");
+        user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+        user.MustChangePassword = false;
+        user.LastPasswordChangedAt = DateTime.UtcNow;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("auth.password_changed", "User", user.Id.ToString(), context, null, cancellationToken);
+    }
+
     private async Task<User?> LoadUserGraph(string email, string? tenantSlug, CancellationToken cancellationToken)
     {
         var normalizedEmail = Normalize(email);

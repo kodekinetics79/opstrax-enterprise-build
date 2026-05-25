@@ -11,6 +11,8 @@ export interface NavItem {
   icon: LucideIcon;
   badge?: number;
   path?: string;
+  /** At least one permission must be present for this item to show. Empty/absent = visible to all logged-in users. */
+  requiredPermissions?: string[];
 }
 
 export interface NavGroup {

@@ -17,10 +17,13 @@ import { ShiftsPage } from './pages/ShiftsPage';
 import { RecruitmentPage } from './pages/RecruitmentPage';
 import { PerformancePage } from './pages/PerformancePage';
 import CompliancePage from './pages/CompliancePage';
+import { LoansPage } from './pages/LoansPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { EmployeeSelfServicePage } from './pages/EmployeeSelfServicePage';
 import AIAssistantPage from './pages/AIAssistantPage';
 import HRRequestCenterPage from './pages/HRRequestCenterPage';
 import TenantAdminPage from './pages/TenantAdminPage';
+import { UserManagementPage } from './pages/UserManagementPage';
 import { applyTheme, getStoredTheme } from './utils/theme';
 import type { ThemeMode } from './types/ui';
 
@@ -50,21 +53,24 @@ function AppShell() {
       <Routes>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="people" element={<EmployeesPage />} />
-        <Route path="attendance" element={<AttendancePage />} />
-        <Route path="leave" element={<LeavePage />} />
-        <Route path="overtime" element={<OvertimePage />} />
-        <Route path="payroll" element={<PayrollPage />} />
-        <Route path="approvals" element={<ApprovalsPage />} />
-        <Route path="shifts" element={<ShiftsPage />} />
-        <Route path="recruitment" element={<RecruitmentPage />} />
-        <Route path="compliance" element={<CompliancePage />} />
-        <Route path="performance" element={<PerformancePage />} />
-        <Route path="ess" element={<EmployeeSelfServicePage />} />
+        <Route path="people" element={<ProtectedRoute requiredPermissions={['employees.read']}><EmployeesPage /></ProtectedRoute>} />
+        <Route path="attendance" element={<ProtectedRoute requiredPermissions={['attendance.read','attendance.write','attendance.kiosk']}><AttendancePage /></ProtectedRoute>} />
+        <Route path="leave" element={<ProtectedRoute requiredPermissions={['leave.read','leave.write']}><LeavePage /></ProtectedRoute>} />
+        <Route path="overtime" element={<ProtectedRoute requiredPermissions={['overtime.read','overtime.write']}><OvertimePage /></ProtectedRoute>} />
+        <Route path="payroll" element={<ProtectedRoute requiredPermissions={['payroll.read']}><PayrollPage /></ProtectedRoute>} />
+        <Route path="approvals" element={<ProtectedRoute requiredPermissions={['approvals.read','approvals.decide']}><ApprovalsPage /></ProtectedRoute>} />
+        <Route path="shifts" element={<ProtectedRoute requiredPermissions={['attendance.read']}><ShiftsPage /></ProtectedRoute>} />
+        <Route path="recruitment" element={<ProtectedRoute requiredPermissions={['recruitment.read','recruitment.write']}><RecruitmentPage /></ProtectedRoute>} />
+        <Route path="compliance" element={<ProtectedRoute requiredPermissions={['compliance.read','compliance.write']}><CompliancePage /></ProtectedRoute>} />
+        <Route path="loans" element={<ProtectedRoute requiredPermissions={['loans.read','loans.write']}><LoansPage /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute requiredPermissions={['reports.read','reports.schedule']}><ReportsPage /></ProtectedRoute>} />
+        <Route path="performance" element={<ProtectedRoute requiredPermissions={['performance.read','performance.write']}><PerformancePage /></ProtectedRoute>} />
+        <Route path="ess" element={<ProtectedRoute requiredPermissions={['ess.read']}><EmployeeSelfServicePage /></ProtectedRoute>} />
         <Route path="ai-assistant" element={<AIAssistantPage />} />
-        <Route path="hr-requests" element={<HRRequestCenterPage />} />
-        <Route path="tenant-admin" element={<TenantAdminPage />} />
-        <Route path="setup" element={<SetupPage />} />
+        <Route path="hr-requests" element={<ProtectedRoute requiredPermissions={['approvals.read','approvals.write','approvals.decide']}><HRRequestCenterPage /></ProtectedRoute>} />
+        <Route path="tenant-admin" element={<ProtectedRoute requiredPermissions={['security.manage']}><TenantAdminPage /></ProtectedRoute>} />
+        <Route path="user-management" element={<ProtectedRoute requiredPermissions={['users.manage','roles.manage','security.manage']}><UserManagementPage /></ProtectedRoute>} />
+        <Route path="setup" element={<ProtectedRoute requiredPermissions={['organization.write']}><SetupPage /></ProtectedRoute>} />
         <Route path="*" element={<ComingSoonPage />} />
       </Routes>
     </AppLayout>

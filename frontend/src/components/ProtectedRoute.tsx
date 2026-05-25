@@ -1,8 +1,14 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  /** Redirect to /dashboard if the user holds none of these permissions. */
+  requiredPermissions?: string[];
+}
+
+export function ProtectedRoute({ children, requiredPermissions }: ProtectedRouteProps) {
+  const { user, isLoading, hasPermission } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -15,6 +21,13 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (requiredPermissions && requiredPermissions.length > 0) {
+    const hasAccess = requiredPermissions.some(p => hasPermission(p));
+    if (!hasAccess) {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return <>{children}</>;

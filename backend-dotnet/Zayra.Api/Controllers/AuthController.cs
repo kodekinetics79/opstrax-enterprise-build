@@ -77,6 +77,21 @@ public class AuthController : ControllerBase
         return user is null ? Unauthorized() : Ok(user);
     }
 
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId is null) return Unauthorized();
+            await _authService.ChangePasswordAsync(userId.Value, request, GetContext(), cancellationToken);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
+    }
+
     private RequestContext GetContext()
     {
         return new RequestContext(

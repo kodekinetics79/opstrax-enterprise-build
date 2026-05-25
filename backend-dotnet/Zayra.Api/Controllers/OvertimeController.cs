@@ -14,8 +14,13 @@ namespace Zayra.Api.Controllers;
 public class OvertimeController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public OvertimeController(ZayraDbContext db) => _db = db;
+    public OvertimeController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet("policies")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimePolicy>>> Policies(CancellationToken ct)
@@ -78,9 +83,12 @@ public class OvertimeController : ControllerBase
     public async Task<ActionResult<PagedResult<OvertimeRequest>>> Requests([FromQuery] string? status, [FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
         var query = _db.OvertimeRequests.AsNoTracking().Where(x => x.TenantId == tenantId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
-        if (employeeId.HasValue) query = query.Where(x => x.EmployeeId == employeeId.Value);
+        if (setFilter is not null) query = query.Where(x => setFilter.Contains(x.EmployeeId));
+        else if (singleId.HasValue) query = query.Where(x => x.EmployeeId == singleId.Value);
         var total = await query.CountAsync(ct);
         var items = await query.OrderByDescending(x => x.WorkDate).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         return Ok(new PagedResult<OvertimeRequest>(items, total, page, pageSize));
@@ -197,8 +205,11 @@ public class OvertimeController : ControllerBase
     public async Task<ActionResult<IReadOnlyCollection<OvertimeCalculation>>> Calculations([FromQuery] int? employeeId, [FromQuery] int pageSize = 100, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
         var query = _db.OvertimeCalculations.AsNoTracking().Where(x => x.TenantId == tenantId);
-        if (employeeId.HasValue) query = query.Where(x => x.EmployeeId == employeeId.Value);
+        if (setFilter is not null) query = query.Where(x => setFilter.Contains(x.EmployeeId));
+        else if (singleId.HasValue) query = query.Where(x => x.EmployeeId == singleId.Value);
         return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).Take(pageSize).ToListAsync(ct));
     }
 

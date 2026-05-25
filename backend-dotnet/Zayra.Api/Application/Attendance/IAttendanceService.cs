@@ -20,12 +20,12 @@ public interface IAttendanceService
     Task<PagedResult<AttendanceRawEvent>> GetRawEventsAsync(Guid tenantId, DateOnly? from, DateOnly? to, int? employeeId, bool? processed, int page, int pageSize, CancellationToken ct);
 
     Task<int> ProcessAsync(Guid tenantId, ProcessAttendanceRequest request, RequestContext context, CancellationToken ct);
-    Task<PagedResult<AttendanceDailyDto>> GetDailyAsync(Guid tenantId, DateOnly? from, DateOnly? to, int? employeeId, string? status, int page, int pageSize, CancellationToken ct);
-    Task<IReadOnlyCollection<AttendanceMonthlyDto>> GetMonthlyAsync(Guid tenantId, int year, int month, int? employeeId, CancellationToken ct);
+    Task<PagedResult<AttendanceDailyDto>> GetDailyAsync(Guid tenantId, DateOnly? from, DateOnly? to, int? employeeId, string? status, int page, int pageSize, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null);
+    Task<IReadOnlyCollection<AttendanceMonthlyDto>> GetMonthlyAsync(Guid tenantId, int year, int month, int? employeeId, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null);
     Task<AttendanceRawEvent> PunchAsync(Guid tenantId, WebPunchRequest request, string source, RequestContext context, CancellationToken ct);
 
     Task<AttendanceRegularizationRequest> CreateRegularizationAsync(Guid tenantId, RegularizationRequestDto request, RequestContext context, CancellationToken ct);
-    Task<PagedResult<AttendanceRegularizationRequest>> GetRegularizationAsync(Guid tenantId, int? employeeId, string? status, int page, int pageSize, CancellationToken ct);
+    Task<PagedResult<AttendanceRegularizationRequest>> GetRegularizationAsync(Guid tenantId, int? employeeId, string? status, int page, int pageSize, CancellationToken ct, IReadOnlyCollection<int>? scopeIds = null);
     Task<AttendanceRegularizationRequest?> ApproveRegularizationAsync(Guid tenantId, Guid id, RegularizationDecisionRequest request, RequestContext context, CancellationToken ct);
     Task<AttendanceRegularizationRequest?> RejectRegularizationAsync(Guid tenantId, Guid id, RegularizationDecisionRequest request, RequestContext context, CancellationToken ct);
 

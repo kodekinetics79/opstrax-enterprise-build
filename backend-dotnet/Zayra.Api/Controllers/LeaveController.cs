@@ -16,8 +16,13 @@ namespace Zayra.Api.Controllers;
 public class LeaveController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public LeaveController(ZayraDbContext db) => _db = db;
+    public LeaveController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -29,9 +34,12 @@ public class LeaveController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         var tenantId = GetTenantId();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
         var query = _db.LeaveRequests.Where(l => l.TenantId == tenantId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(l => l.Status == status);
-        if (employeeId.HasValue) query = query.Where(l => l.EmployeeId == employeeId.Value);
+        if (setFilter is not null) query = query.Where(l => setFilter.Contains(l.EmployeeId));
+        else if (singleId.HasValue) query = query.Where(l => l.EmployeeId == singleId.Value);
         if (!string.IsNullOrWhiteSpace(leaveType)) query = query.Where(l => l.LeaveTypeName == leaveType);
 
         var total = await query.CountAsync(cancellationToken);

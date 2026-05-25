@@ -35,13 +35,101 @@ public class AuthSeeder : IAuthSeeder
         }
 
         var permissions = await EnsurePermissions(cancellationToken);
-        var adminRole = await EnsureRole(tenant.Id, "Admin", "Tenant administrator", permissions, cancellationToken);
-        await EnsureRole(tenant.Id, "HR Manager", "HR operations manager", permissions.Where(x => x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") || x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.")).ToList(), cancellationToken);
-        await EnsureRole(tenant.Id, "HR Officer", "HR operations specialist", permissions.Where(x => x.Key is "dashboard.read" or "employees.read" or "employees.write" or "employees.documents" or "employees.templates" or "organization.read" or "approvals.read" or "approvals.write" or "notifications.read" or "localization.read").ToList(), cancellationToken);
-        await EnsureRole(tenant.Id, "Payroll Officer", "Payroll and WPS specialist", permissions.Where(x => x.Key is "dashboard.read" or "employees.read" or "employees.sensitive" or "attendance.read" or "notifications.read").ToList(), cancellationToken);
-        await EnsureRole(tenant.Id, "Manager", "People manager approver", permissions.Where(x => x.Key is "dashboard.read" or "employees.read" or "approvals.read" or "approvals.decide" or "notifications.read" or "manager.read" or "manager.approve" or "ess.read" or "ess.write").ToList(), cancellationToken);
-        await EnsureRole(tenant.Id, "Auditor", "Read-only audit and compliance reviewer", permissions.Where(x => x.Key is "dashboard.read" or "employees.read" or "organization.read" or "approvals.read" or "audit.read").ToList(), cancellationToken);
-        await EnsureRole(tenant.Id, "Employee", "Employee self-service user", permissions.Where(x => x.Key is "dashboard.read" or "profile.read" or "ess.read" or "ess.write").ToList(), cancellationToken);
+        var Ps = (string[] keys) => permissions.Where(x => keys.Contains(x.Key)).ToList();
+
+        // Level 1 — Admin: all permissions
+        var adminRole = await EnsureRole(tenant.Id, "Admin", "Tenant system administrator with full access", permissions, 1, false, cancellationToken);
+
+        // Level 2 — HR Director: full HR + payroll visibility + reports + compliance
+        await EnsureRole(tenant.Id, "HR Director", "Senior HR leader with strategic visibility", permissions.Where(x =>
+            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
+            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
+            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
+            x.Key.StartsWith("performance.") || x.Key.StartsWith("compliance.") || x.Key.StartsWith("reports.") ||
+            x.Key.StartsWith("recruitment.") || x.Key is "payroll.read" or "loans.read" or "audit.read" or
+            "roles.manage" or "users.manage" or "manager.read" or "manager.approve"
+        ).ToList(), 2, true, cancellationToken);
+
+        // Level 3 — HR Manager: operational HR management
+        await EnsureRole(tenant.Id, "HR Manager", "HR operations manager", permissions.Where(x =>
+            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
+            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
+            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
+            x.Key is "audit.read" or "manager.read" or "manager.approve" or "reports.read"
+        ).ToList(), 3, true, cancellationToken);
+
+        // Level 4 — Payroll Manager: payroll + finance + employees
+        await EnsureRole(tenant.Id, "Payroll Manager", "Manages payroll processing and WPS submissions", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read", "leave.read",
+            "overtime.read", "payroll.read", "payroll.write", "payroll.approve", "loans.read", "loans.approve",
+            "approvals.read", "approvals.decide", "reports.read", "notifications.read"
+        }), 4, true, cancellationToken);
+
+        // Level 5 — HR Officer: HR operations specialist
+        await EnsureRole(tenant.Id, "HR Officer", "HR operations specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.write", "employees.documents", "employees.templates",
+            "organization.read", "approvals.read", "approvals.write", "notifications.read", "localization.read",
+            "leave.read", "leave.write", "attendance.read", "overtime.read", "profile.read"
+        }), 5, true, cancellationToken);
+
+        // Level 6 — Payroll Officer: payroll processing
+        await EnsureRole(tenant.Id, "Payroll Officer", "Payroll and WPS specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read",
+            "payroll.read", "payroll.write", "loans.read", "notifications.read", "reports.read"
+        }), 6, true, cancellationToken);
+
+        // Level 7 — Finance Approver: finance approvals
+        await EnsureRole(tenant.Id, "Finance Approver", "Finance approver for loans, advances and payroll", Ps(new[] {
+            "dashboard.read", "employees.read", "payroll.read", "payroll.approve",
+            "loans.read", "loans.approve", "approvals.read", "approvals.decide"
+        }), 7, true, cancellationToken);
+
+        // Level 8 — Compliance Officer: compliance and contracts
+        await EnsureRole(tenant.Id, "Compliance Officer", "Manages compliance, contracts and regulatory records", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.documents", "organization.read",
+            "compliance.read", "compliance.write", "approvals.read", "audit.read", "reports.read", "notifications.read"
+        }), 8, true, cancellationToken);
+
+        // Level 9 — Manager: team management and approvals
+        await EnsureRole(tenant.Id, "Manager", "People manager with team oversight and approval authority", Ps(new[] {
+            "dashboard.read", "employees.read", "approvals.read", "approvals.decide", "notifications.read",
+            "manager.read", "manager.approve", "ess.read", "ess.write", "leave.read", "leave.approve",
+            "attendance.read", "overtime.read", "overtime.approve", "profile.read"
+        }), 9, true, cancellationToken);
+
+        // Level 10 — Supervisor: front-line supervision
+        await EnsureRole(tenant.Id, "Supervisor", "Front-line supervisor for operational staff", Ps(new[] {
+            "dashboard.read", "employees.read", "attendance.read", "attendance.write",
+            "manager.read", "manager.approve", "leave.read", "overtime.read", "ess.read", "ess.write", "profile.read"
+        }), 10, true, cancellationToken);
+
+        // Level 11 — Recruiter: talent acquisition
+        await EnsureRole(tenant.Id, "Recruiter", "Recruitment and hiring specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "recruitment.read", "recruitment.write",
+            "notifications.read", "organization.read", "profile.read"
+        }), 11, true, cancellationToken);
+
+        // Level 12 — HR Assistant: limited HR support
+        await EnsureRole(tenant.Id, "HR Assistant", "Junior HR support with limited write access", Ps(new[] {
+            "dashboard.read", "employees.read", "organization.read", "notifications.read",
+            "attendance.read", "leave.read", "ess.read", "profile.read", "localization.read"
+        }), 12, true, cancellationToken);
+
+        // Level 13 — Auditor: read-only audit
+        await EnsureRole(tenant.Id, "Auditor", "Read-only audit and compliance reviewer", Ps(new[] {
+            "dashboard.read", "employees.read", "organization.read", "approvals.read",
+            "audit.read", "payroll.read", "attendance.read", "leave.read", "compliance.read", "reports.read"
+        }), 13, true, cancellationToken);
+
+        // Level 14 — Kiosk Operator: attendance kiosk only
+        await EnsureRole(tenant.Id, "Kiosk Operator", "Restricted to kiosk attendance capture only", Ps(new[] {
+            "attendance.kiosk"
+        }), 14, true, cancellationToken);
+
+        // Level 15 — Employee: self-service only
+        await EnsureRole(tenant.Id, "Employee", "Employee self-service user", Ps(new[] {
+            "dashboard.read", "profile.read", "ess.read", "ess.write"
+        }), 15, true, cancellationToken);
 
         var normalizedEmail = AuthService.Normalize(_options.Email);
         var admin = await _db.Users
@@ -56,6 +144,8 @@ public class AuthSeeder : IAuthSeeder
                 NormalizedEmail = normalizedEmail,
                 FullName = _options.FullName.Trim(),
                 PasswordHash = _passwordHasher.Hash(_options.Password),
+                AccessMode = "FullPortal",
+                Status = "Active",
                 IsActive = true,
                 IsEmailConfirmed = true
             };
@@ -75,31 +165,103 @@ public class AuthSeeder : IAuthSeeder
     {
         var definitions = new (string Key, string Module, string Description)[]
         {
+            // Dashboard
             ("dashboard.read", "Dashboard", "Read workforce dashboard metrics"),
+            ("dashboard.export", "Dashboard", "Export dashboard data"),
+            // Employees
             ("employees.read", "Employees", "Read employee records"),
             ("employees.write", "Employees", "Create and update employee records"),
-            ("employees.sensitive", "Employees", "View and approve sensitive employee fields"),
+            ("employees.delete", "Employees", "Delete/archive employee records"),
+            ("employees.sensitive", "Employees", "View sensitive employee fields (salary, NID, passport)"),
             ("employees.approve", "Employees", "Approve employee drafts, changes, and transfers"),
             ("employees.documents", "Employees", "Upload and download employee documents"),
             ("employees.templates", "Employees", "Generate localized employee document templates"),
+            ("employees.bulk_import", "Employees", "Bulk import employee records"),
+            // Profile
+            ("profile.read", "Profile", "Read own profile"),
+            ("profile.write", "Profile", "Update own profile"),
+            // Organization
             ("organization.read", "Organization", "Read companies, branches, departments, and designations"),
             ("organization.write", "Organization", "Create and update organization master data"),
+            ("organization.delete", "Organization", "Delete organization master data"),
+            // Attendance
+            ("attendance.read", "Attendance", "Read attendance records"),
+            ("attendance.write", "Attendance", "Create and update attendance records"),
+            ("attendance.delete", "Attendance", "Delete or cancel attendance records"),
+            ("attendance.kiosk", "Attendance", "Use kiosk-only attendance capture"),
+            ("attendance.bulk_import", "Attendance", "Bulk import attendance data"),
+            ("attendance.lock", "Attendance", "Lock/unlock attendance periods"),
+            // Leave
+            ("leave.read", "Leave", "Read leave requests and balances"),
+            ("leave.write", "Leave", "Submit and manage leave requests"),
+            ("leave.approve", "Leave", "Approve or reject leave requests"),
+            ("leave.cancel", "Leave", "Cancel approved leave"),
+            ("leave.policy_manage", "Leave", "Manage leave types and policies"),
+            // Overtime
+            ("overtime.read", "Overtime", "Read overtime requests"),
+            ("overtime.write", "Overtime", "Submit overtime requests"),
+            ("overtime.approve", "Overtime", "Approve or reject overtime requests"),
+            ("overtime.policy_manage", "Overtime", "Manage overtime types and policies"),
+            // Payroll
+            ("payroll.read", "Payroll", "Read payroll runs and slips"),
+            ("payroll.write", "Payroll", "Create and process payroll runs"),
+            ("payroll.approve", "Payroll", "Approve payroll runs"),
+            ("payroll.export", "Payroll", "Export payroll and WPS files"),
+            ("payroll.structure_manage", "Payroll", "Manage salary structures and components"),
+            // Loans & Advances
+            ("loans.read", "Loans", "Read loan and advance records"),
+            ("loans.write", "Loans", "Create loan and advance applications"),
+            ("loans.approve", "Loans", "Approve or reject loans and advances"),
+            ("loans.policy_manage", "Loans", "Manage loan types and policies"),
+            // Recruitment
+            ("recruitment.read", "Recruitment", "Read job openings and applications"),
+            ("recruitment.write", "Recruitment", "Manage recruitment pipeline"),
+            ("recruitment.approve", "Recruitment", "Approve requisitions and offers"),
+            ("recruitment.delete", "Recruitment", "Delete recruitment records"),
+            // Performance
+            ("performance.read", "Performance", "Read appraisal and performance data"),
+            ("performance.write", "Performance", "Create and update performance reviews"),
+            ("performance.approve", "Performance", "Approve performance ratings and recommendations"),
+            ("performance.cycle_manage", "Performance", "Manage performance cycles and templates"),
+            // Compliance
+            ("compliance.read", "Compliance", "Read compliance and contract records"),
+            ("compliance.write", "Compliance", "Manage compliance documents"),
+            ("compliance.approve", "Compliance", "Approve compliance items"),
+            // Manager
+            ("manager.read", "Manager", "Read direct and indirect team records"),
+            ("manager.approve", "Manager", "Approve assigned team requests"),
+            // ESS
+            ("ess.read", "ESS", "Read own employee self-service records"),
+            ("ess.write", "ESS", "Create employee self-service requests"),
+            // Approvals
             ("approvals.read", "Approvals", "Read approval workflows and approval requests"),
             ("approvals.write", "Approvals", "Create approval workflows and start approval requests"),
             ("approvals.decide", "Approvals", "Approve or reject approval requests"),
+            ("approvals.manage", "Approvals", "Manage approval workflow definitions"),
+            // Reports
+            ("reports.read", "Reports", "Run and view reports"),
+            ("reports.schedule", "Reports", "Create scheduled reports"),
+            ("reports.export", "Reports", "Export reports to Excel/PDF"),
+            // Notifications
             ("notifications.read", "Notifications", "Read workflow notifications"),
+            ("notifications.manage", "Notifications", "Manage notification templates"),
+            // Localization
             ("localization.read", "Localization", "Read localized calendar conversions"),
-            ("attendance.read", "Attendance", "Read attendance records"),
-            ("attendance.write", "Attendance", "Create and update attendance records"),
-            ("attendance.kiosk", "Attendance", "Use kiosk-only attendance capture"),
-            ("ess.read", "ESS", "Read own employee self-service records"),
-            ("ess.write", "ESS", "Create employee self-service requests"),
-            ("manager.read", "Manager", "Read direct and indirect team records"),
-            ("manager.approve", "Manager", "Approve assigned team requests"),
-            ("roles.manage", "Access", "Manage user roles"),
-            ("users.manage", "Access", "Manage users"),
+            ("localization.manage", "Localization", "Manage localization and calendar settings"),
+            // Access Control
+            ("roles.manage", "Access", "Manage user roles and permissions"),
+            ("users.manage", "Access", "Manage users and user accounts"),
+            ("security.manage", "Security", "Manage security settings and access policies"),
+            // Audit
             ("audit.read", "Audit", "Read audit logs"),
-            ("profile.read", "Profile", "Read own profile")
+            ("audit.export", "Audit", "Export audit logs"),
+            // AI & Intelligence
+            ("ai.query", "AI", "Query the AI HR assistant"),
+            ("ai.insights_view", "AI", "View AI-generated workforce insights"),
+            // Shifts
+            ("shifts.read", "Shifts", "Read shift schedules and rosters"),
+            ("shifts.write", "Shifts", "Create and update shift schedules"),
+            ("shifts.manage", "Shifts", "Manage shift definitions and policies"),
         };
 
         foreach (var definition in definitions)
@@ -113,7 +275,7 @@ public class AuthSeeder : IAuthSeeder
         return await _db.Permissions.ToListAsync(cancellationToken);
     }
 
-    private async Task<Role> EnsureRole(Guid tenantId, string name, string description, IReadOnlyCollection<Permission> permissions, CancellationToken cancellationToken)
+    private async Task<Role> EnsureRole(Guid tenantId, string name, string description, IReadOnlyCollection<Permission> permissions, int authorityLevel, bool isEditable, CancellationToken cancellationToken)
     {
         var normalized = AuthService.Normalize(name);
         var role = await _db.Roles
@@ -121,9 +283,19 @@ public class AuthSeeder : IAuthSeeder
             .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.NormalizedName == normalized, cancellationToken);
         if (role is null)
         {
-            role = new Role { TenantId = tenantId, Name = name, NormalizedName = normalized, Description = description, IsSystem = true };
+            role = new Role
+            {
+                TenantId = tenantId, Name = name, NormalizedName = normalized, Description = description,
+                IsSystem = true, AuthorityLevel = authorityLevel, IsActive = true, IsEditable = isEditable
+            };
             _db.Roles.Add(role);
             await _db.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            role.AuthorityLevel = authorityLevel;
+            role.IsEditable = isEditable;
+            role.Description = description;
         }
 
         foreach (var permission in permissions)

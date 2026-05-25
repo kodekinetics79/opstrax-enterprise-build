@@ -9,8 +9,24 @@ public class User
     public string NormalizedEmail { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
+    public string PhoneNumber { get; set; } = string.Empty;
+    public string PreferredLanguage { get; set; } = "en";
+    public string Timezone { get; set; } = "UTC";
+    // Status: Active | Invited | Suspended | Locked | Deactivated | PendingPasswordSetup | PasswordResetRequired
+    public string Status { get; set; } = "Active";
+    // AccessMode for direct (non-employee) users — employee-linked users use EmployeeUserAccount.AccessMode
+    public string AccessMode { get; set; } = "FullPortal";
     public bool IsActive { get; set; } = true;
     public bool IsEmailConfirmed { get; set; } = true;
+    public bool IsLocked { get; set; }
+    public DateTime? LockoutEnd { get; set; }
+    public int FailedLoginCount { get; set; }
+    public DateTime? LastPasswordChangedAt { get; set; }
+    public bool MustChangePassword { get; set; }
+    public bool MFAEnabled { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+    public Guid? DeletedBy { get; set; }
     public DateTime? LastLoginAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAtUtc { get; set; }

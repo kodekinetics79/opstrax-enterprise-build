@@ -68,15 +68,11 @@ public class VisaTrackingController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateVisaRequest req, CancellationToken ct)
     {
         var tid = GetTenantId();
-
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == req.EmployeeId && x.TenantId == tid && !x.IsDeleted, ct);
-        if (employee == null) return BadRequest("Employee not found.");
-
         var record = new VisaRecord
         {
             TenantId = tid,
             EmployeeId = req.EmployeeId,
-            EmployeeName = employee.FullName,
+            EmployeeName = req.EmployeeName ?? string.Empty,
             VisaType = req.VisaType,
             VisaNumber = req.VisaNumber ?? string.Empty,
             IqamaNumber = req.IqamaNumber ?? string.Empty,
@@ -94,7 +90,7 @@ public class VisaTrackingController : ControllerBase
         var alertDays = 60;
         _db.ComplianceReminders.Add(new ComplianceReminder
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = employee.FullName,
+            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName ?? string.Empty,
             ReminderType = "VisaExpiry", DocumentType = req.VisaType,
             ExpiryDate = req.ExpiryDate,
             ScheduledAtUtc = req.ExpiryDate.ToDateTime(TimeOnly.MinValue).AddDays(-alertDays),
@@ -175,14 +171,10 @@ public class VisaTrackingController : ControllerBase
     public async Task<IActionResult> CreatePassport([FromBody] CreatePassportRequest req, CancellationToken ct)
     {
         var tid = GetTenantId();
-
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == req.EmployeeId && x.TenantId == tid && !x.IsDeleted, ct);
-        if (employee == null) return BadRequest("Employee not found.");
-
         var record = new PassportRecord
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = employee.FullName,
-            PassportNumber = req.PassportNumber, Nationality = req.Nationality ?? employee.Nationality ?? string.Empty,
+            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName ?? string.Empty,
+            PassportNumber = req.PassportNumber, Nationality = req.Nationality ?? string.Empty,
             IssuingCountry = req.IssuingCountry ?? string.Empty,
             DateOfBirth = req.DateOfBirth, IssueDate = req.IssueDate, ExpiryDate = req.ExpiryDate,
             PlaceOfIssue = req.PlaceOfIssue ?? string.Empty,
@@ -194,7 +186,7 @@ public class VisaTrackingController : ControllerBase
 
         _db.ComplianceReminders.Add(new ComplianceReminder
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = employee.FullName,
+            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName ?? string.Empty,
             ReminderType = "PassportExpiry", DocumentType = "Passport",
             ExpiryDate = req.ExpiryDate,
             ScheduledAtUtc = req.ExpiryDate.ToDateTime(TimeOnly.MinValue).AddDays(-90),
@@ -246,13 +238,9 @@ public class VisaTrackingController : ControllerBase
     public async Task<IActionResult> CreateWorkPermit([FromBody] CreateWorkPermitRequest req, CancellationToken ct)
     {
         var tid = GetTenantId();
-
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == req.EmployeeId && x.TenantId == tid && !x.IsDeleted, ct);
-        if (employee == null) return BadRequest("Employee not found.");
-
         var record = new WorkPermitRecord
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = employee.FullName,
+            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName ?? string.Empty,
             PermitNumber = req.PermitNumber, CountryCode = req.CountryCode,
             PermitType = req.PermitType, IssueDate = req.IssueDate, ExpiryDate = req.ExpiryDate,
             IssuingAuthority = req.IssuingAuthority ?? string.Empty, FileUrl = req.FileUrl ?? string.Empty,
@@ -299,13 +287,9 @@ public class VisaTrackingController : ControllerBase
     public async Task<IActionResult> CreateRenewal([FromBody] CreateRenewalRequest req, CancellationToken ct)
     {
         var tid = GetTenantId();
-
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == req.EmployeeId && x.TenantId == tid && !x.IsDeleted, ct);
-        if (employee == null) return BadRequest("Employee not found.");
-
         var renewal = new ComplianceRenewal
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = employee.FullName,
+            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName ?? string.Empty,
             DocumentType = req.DocumentType, DocumentNumber = req.DocumentNumber ?? string.Empty,
             ExpiryDate = req.ExpiryDate, AssignedToName = req.AssignedToName ?? string.Empty,
             AssignedToUserId = req.AssignedToUserId, Notes = req.Notes ?? string.Empty,
@@ -335,7 +319,7 @@ public class VisaTrackingController : ControllerBase
 }
 
 public record CreateVisaRequest(
-    Guid EmployeeId, string VisaType, string? VisaNumber, string? IqamaNumber,
+    Guid EmployeeId, string? EmployeeName, string VisaType, string? VisaNumber, string? IqamaNumber,
     string? EmiratesIdNumber, string CountryCode, DateOnly IssueDate, DateOnly ExpiryDate,
     string? Sponsor, string? FileUrl);
 
@@ -344,16 +328,16 @@ public record UpdateVisaRequest(
     DateOnly? IssueDate, DateOnly? ExpiryDate, string? Status, string? FileUrl);
 
 public record CreatePassportRequest(
-    Guid EmployeeId, string PassportNumber, string? Nationality, string? IssuingCountry,
+    Guid EmployeeId, string? EmployeeName, string PassportNumber, string? Nationality, string? IssuingCountry,
     DateOnly DateOfBirth, DateOnly IssueDate, DateOnly ExpiryDate,
     string? PlaceOfIssue, bool IsHeldByCompany, string? FileUrl);
 
 public record CreateWorkPermitRequest(
-    Guid EmployeeId, string PermitNumber, string CountryCode, string PermitType,
+    Guid EmployeeId, string? EmployeeName, string PermitNumber, string CountryCode, string PermitType,
     DateOnly IssueDate, DateOnly ExpiryDate, string? IssuingAuthority, string? FileUrl);
 
 public record CreateRenewalRequest(
-    Guid EmployeeId, string DocumentType, string? DocumentNumber, DateOnly ExpiryDate,
+    Guid EmployeeId, string? EmployeeName, string DocumentType, string? DocumentNumber, DateOnly ExpiryDate,
     string? AssignedToName, Guid? AssignedToUserId, string? Notes);
 
 public record UpdateRenewalStatusRequest(string Status, DateOnly? RenewalDate, string? Notes);

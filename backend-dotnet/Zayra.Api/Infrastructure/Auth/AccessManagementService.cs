@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
@@ -23,12 +24,12 @@ public class AccessManagementService : IAccessManagementService
 
     public async Task<IReadOnlyCollection<RoleDto>> GetRolesAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        return await _db.Roles
+        var roles = await _db.Roles
             .Include(x => x.RolePermissions).ThenInclude(x => x.Permission)
-            .Where(x => x.TenantId == tenantId || x.TenantId == null)
-            .OrderBy(x => x.Name)
-            .Select(x => new RoleDto(x.Id, x.Name, x.Description, x.RolePermissions.Select(rp => rp.Permission!.Key).OrderBy(p => p).ToList()))
+            .Where(x => (x.TenantId == tenantId || x.TenantId == null) && !x.IsDeleted)
+            .OrderBy(x => x.AuthorityLevel).ThenBy(x => x.Name)
             .ToListAsync(cancellationToken);
+        return roles.Select(ToRoleDto).ToList();
     }
 
     public async Task<IReadOnlyCollection<PermissionDto>> GetPermissionsAsync(CancellationToken cancellationToken)
@@ -56,6 +57,7 @@ public class AccessManagementService : IAccessManagementService
             NormalizedEmail = normalizedEmail,
             FullName = request.FullName.Trim(),
             PasswordHash = _passwordHasher.Hash(request.Password),
+            AccessMode = AccessModes.FullPortal,
             IsActive = true,
             IsEmailConfirmed = true
         };
@@ -88,6 +90,7 @@ public class AccessManagementService : IAccessManagementService
                 NormalizedEmail = normalizedEmail,
                 FullName = employee.FullName,
                 PasswordHash = _passwordHasher.Hash(Guid.NewGuid().ToString("N") + "!Aa1"),
+                AccessMode = accessMode,
                 IsActive = accessMode != AccessModes.NoLogin,
                 IsEmailConfirmed = false
             };
@@ -149,13 +152,16 @@ public class AccessManagementService : IAccessManagementService
         var user = await LoadAccessUser(tenantId, userId, cancellationToken);
         if (user is null) return null;
         var accessMode = NormalizeAccessMode(request.AccessMode);
-        var link = user.EmployeeUserAccounts.Where(x => !x.IsDeleted).OrderByDescending(x => x.IsPrimary).FirstOrDefault()
-            ?? throw new InvalidOperationException("User is not linked to an employee.");
-        link.AccessMode = accessMode;
-        link.Status = accessMode == AccessModes.NoLogin ? "NoLogin" : "Active";
-        link.LoginDisabledReason = accessMode == AccessModes.NoLogin ? request.Reason ?? "No login access" : string.Empty;
-        link.UpdatedAtUtc = DateTime.UtcNow;
-        link.UpdatedBy = context.UserId;
+        var link = user.EmployeeUserAccounts.Where(x => !x.IsDeleted).OrderByDescending(x => x.IsPrimary).FirstOrDefault();
+        if (link is not null)
+        {
+            link.AccessMode = accessMode;
+            link.Status = accessMode == AccessModes.NoLogin ? "NoLogin" : "Active";
+            link.LoginDisabledReason = accessMode == AccessModes.NoLogin ? request.Reason ?? "No login access" : string.Empty;
+            link.UpdatedAtUtc = DateTime.UtcNow;
+            link.UpdatedBy = context.UserId;
+        }
+        user.AccessMode = accessMode;
         user.IsActive = accessMode != AccessModes.NoLogin;
         user.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
@@ -275,6 +281,325 @@ public class AccessManagementService : IAccessManagementService
         return authorities.Select(ToAuthorityDto).ToList();
     }
 
+    public async Task<PagedResult<UserListDto>> ListUsersAsync(Guid tenantId, UserListQuery query, CancellationToken cancellationToken)
+    {
+        var q = _db.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.EmployeeUserAccounts)
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted)
+            .AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var s = query.Search.Trim().ToLowerInvariant();
+            q = q.Where(x => x.Email.Contains(s) || x.FullName.ToLower().Contains(s));
+        }
+        if (!string.IsNullOrWhiteSpace(query.Status))
+            q = q.Where(x => x.Status == query.Status);
+        if (!string.IsNullOrWhiteSpace(query.Role))
+            q = q.Where(x => x.UserRoles.Any(r => r.Role!.NormalizedName == AuthService.Normalize(query.Role)));
+
+        var total = await q.CountAsync(cancellationToken);
+        var items = await q.OrderByDescending(x => x.CreatedAtUtc)
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<UserListDto>(items.Select(ToUserListDto).ToList(), total, query.Page, query.PageSize);
+    }
+
+    public async Task<UserListDto?> GetUserAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.EmployeeUserAccounts)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken);
+        return user is null ? null : ToUserListDto(user);
+    }
+
+    public async Task<UserListDto?> UpdateUserAsync(Guid tenantId, Guid userId, UpdateUserRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+            .Include(x => x.EmployeeUserAccounts)
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken);
+        if (user is null) return null;
+        if (!string.IsNullOrWhiteSpace(request.FullName)) user.FullName = request.FullName.Trim();
+        if (request.PhoneNumber is not null) user.PhoneNumber = request.PhoneNumber.Trim();
+        if (!string.IsNullOrWhiteSpace(request.PreferredLanguage)) user.PreferredLanguage = request.PreferredLanguage.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Timezone)) user.Timezone = request.Timezone.Trim();
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_updated", "User", user.Id.ToString(), context, null, cancellationToken);
+        return ToUserListDto(user);
+    }
+
+    public async Task ActivateUserAsync(Guid tenantId, Guid userId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+        user.IsActive = true;
+        user.IsLocked = false;
+        user.LockoutEnd = null;
+        user.FailedLoginCount = 0;
+        user.Status = "Active";
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_activated", "User", user.Id.ToString(), context, null, cancellationToken);
+    }
+
+    public async Task SuspendUserAsync(Guid tenantId, Guid userId, string reason, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+        user.IsActive = false;
+        user.Status = "Suspended";
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.RefreshTokens.Where(x => x.UserId == userId && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_suspended", "User", user.Id.ToString(), context, $"{{\"reason\":\"{reason}\"}}", cancellationToken);
+    }
+
+    public async Task LockUserAsync(Guid tenantId, Guid userId, string reason, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+        user.IsLocked = true;
+        user.LockoutEnd = DateTime.UtcNow.AddDays(1);
+        user.Status = "Locked";
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.RefreshTokens.Where(x => x.UserId == userId && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_locked", "User", user.Id.ToString(), context, $"{{\"reason\":\"{reason}\"}}", cancellationToken);
+    }
+
+    public async Task UnlockUserAsync(Guid tenantId, Guid userId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+        user.IsLocked = false;
+        user.LockoutEnd = null;
+        user.FailedLoginCount = 0;
+        user.Status = user.IsActive ? "Active" : "Suspended";
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_unlocked", "User", user.Id.ToString(), context, null, cancellationToken);
+    }
+
+    public async Task AdminResetPasswordAsync(Guid tenantId, Guid userId, AdminResetPasswordRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+        user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+        user.MustChangePassword = request.MustChangePassword;
+        user.LastPasswordChangedAt = DateTime.UtcNow;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.RefreshTokens.Where(x => x.UserId == userId && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.admin_password_reset", "User", user.Id.ToString(), context, null, cancellationToken);
+    }
+
+    public async Task<bool> CancelDelegationAsync(Guid tenantId, Guid delegationId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var delegation = await _db.ApprovalDelegations.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == delegationId, cancellationToken);
+        if (delegation is null) return false;
+        delegation.Status = "Cancelled";
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.delegation_cancelled", "ApprovalDelegation", delegationId.ToString(), context, null, cancellationToken);
+        return true;
+    }
+
+    public async Task<ApprovalAuthorityDto?> UpdateAuthorityAsync(Guid tenantId, Guid authorityId, ApprovalAuthorityRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var authority = await _db.ApprovalAuthorities.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == authorityId, cancellationToken);
+        if (authority is null) return null;
+        authority.AuthorityScope = request.AuthorityScope.Trim();
+        authority.ApproverRole = request.ApproverRole.Trim();
+        authority.AmountLimit = request.AmountLimit;
+        authority.Currency = request.Currency ?? string.Empty;
+        authority.CanFinalApprove = request.CanFinalApprove;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.authority_updated", "ApprovalAuthority", authorityId.ToString(), context, null, cancellationToken);
+        return ToAuthorityDto(authority);
+    }
+
+    public async Task<SecuritySettingDto> GetSecuritySettingsAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var setting = await _db.SecuritySettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        if (setting is null)
+        {
+            setting = new Models.SecuritySetting { TenantId = tenantId };
+            _db.SecuritySettings.Add(setting);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        return ToSecuritySettingDto(setting);
+    }
+
+    public async Task<SecuritySettingDto> UpdateSecuritySettingsAsync(Guid tenantId, UpdateSecuritySettingRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var setting = await _db.SecuritySettings.FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        if (setting is null)
+        {
+            setting = new Models.SecuritySetting { TenantId = tenantId };
+            _db.SecuritySettings.Add(setting);
+        }
+        if (request.PasswordMinLength.HasValue) setting.PasswordMinLength = Math.Clamp(request.PasswordMinLength.Value, 6, 64);
+        if (request.PasswordRequireUppercase.HasValue) setting.PasswordRequireUppercase = request.PasswordRequireUppercase.Value;
+        if (request.PasswordRequireLowercase.HasValue) setting.PasswordRequireLowercase = request.PasswordRequireLowercase.Value;
+        if (request.PasswordRequireDigit.HasValue) setting.PasswordRequireDigit = request.PasswordRequireDigit.Value;
+        if (request.PasswordRequireSpecial.HasValue) setting.PasswordRequireSpecial = request.PasswordRequireSpecial.Value;
+        if (request.PasswordExpiryDays.HasValue) setting.PasswordExpiryDays = Math.Clamp(request.PasswordExpiryDays.Value, 0, 365);
+        if (request.PasswordHistoryCount.HasValue) setting.PasswordHistoryCount = Math.Clamp(request.PasswordHistoryCount.Value, 0, 24);
+        if (request.MaxFailedLoginAttempts.HasValue) setting.MaxFailedLoginAttempts = Math.Clamp(request.MaxFailedLoginAttempts.Value, 1, 20);
+        if (request.LockoutDurationMinutes.HasValue) setting.LockoutDurationMinutes = Math.Clamp(request.LockoutDurationMinutes.Value, 5, 1440);
+        if (request.SessionTimeoutMinutes.HasValue) setting.SessionTimeoutMinutes = Math.Clamp(request.SessionTimeoutMinutes.Value, 15, 1440);
+        if (request.RefreshTokenExpiryDays.HasValue) setting.RefreshTokenExpiryDays = Math.Clamp(request.RefreshTokenExpiryDays.Value, 1, 90);
+        if (request.AllowMultipleSessions.HasValue) setting.AllowMultipleSessions = request.AllowMultipleSessions.Value;
+        setting.UpdatedAtUtc = DateTime.UtcNow;
+        setting.UpdatedBy = context.UserId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.security_settings_updated", "SecuritySetting", setting.Id.ToString(), context, null, cancellationToken);
+        return ToSecuritySettingDto(setting);
+    }
+
+    public async Task<IReadOnlyCollection<PermissionGrantorDto>> GetGrantorsAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var records = await _db.PermissionGrantorRecords
+            .Where(x => x.TenantId == tenantId && x.IsActive)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        var userIds = records.Select(x => x.GrantorUserId).Distinct().ToList();
+        var users = await _db.Users.Where(x => userIds.Contains(x.Id)).Select(x => new { x.Id, x.Email, x.FullName }).ToListAsync(cancellationToken);
+        var userMap = users.ToDictionary(x => x.Id);
+
+        return records.Select(r =>
+        {
+            userMap.TryGetValue(r.GrantorUserId, out var u);
+            return new PermissionGrantorDto(r.Id, r.GrantorUserId, u?.Email ?? "unknown", u?.FullName ?? "unknown", r.PermissionScope, r.CanSubDelegate, r.GrantedByUserId, r.ExpiresAtUtc, r.IsActive, r.Reason, r.CreatedAtUtc);
+        }).ToList();
+    }
+
+    public async Task<PermissionGrantorDto> AddGrantorAsync(Guid tenantId, AddGrantorRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var grantorUser = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == request.GrantorUserId && !x.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+
+        // If the caller is not Admin, they must have CanSubDelegate=true and must own a grantor record that covers this scope
+        if (context.UserId is not null)
+        {
+            var callerIsAdmin = await _db.Users
+                .Include(x => x.UserRoles).ThenInclude(x => x.Role)
+                .Where(x => x.Id == context.UserId && x.TenantId == tenantId)
+                .AnyAsync(x => x.UserRoles.Any(r => r.Role!.NormalizedName == "ADMIN"), cancellationToken);
+            if (!callerIsAdmin)
+            {
+                var callerGrant = await _db.PermissionGrantorRecords
+                    .Where(x => x.TenantId == tenantId && x.GrantorUserId == context.UserId && x.IsActive && x.CanSubDelegate
+                        && (x.ExpiresAtUtc == null || x.ExpiresAtUtc > DateTime.UtcNow))
+                    .ToListAsync(cancellationToken);
+                if (!callerGrant.Any(g => ScopeCoversScope(g.PermissionScope, request.PermissionScope)))
+                    throw new InvalidOperationException("You are not authorised to delegate this permission scope.");
+            }
+        }
+
+        var record = new Models.PermissionGrantorRecord
+        {
+            TenantId = tenantId,
+            GrantorUserId = request.GrantorUserId,
+            PermissionScope = request.PermissionScope.Trim(),
+            CanSubDelegate = request.CanSubDelegate,
+            GrantedByUserId = context.UserId,
+            ExpiresAtUtc = request.ExpiresAtUtc,
+            Reason = request.Reason ?? string.Empty,
+            CreatedBy = context.UserId
+        };
+        _db.PermissionGrantorRecords.Add(record);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.grantor_added", "PermissionGrantorRecord", record.Id.ToString(), context,
+            $"{{\"grantorUserId\":\"{request.GrantorUserId}\",\"scope\":\"{request.PermissionScope}\",\"canSubDelegate\":{request.CanSubDelegate.ToString().ToLowerInvariant()}}}", cancellationToken);
+
+        return new PermissionGrantorDto(record.Id, record.GrantorUserId, grantorUser.Email, grantorUser.FullName, record.PermissionScope, record.CanSubDelegate, record.GrantedByUserId, record.ExpiresAtUtc, record.IsActive, record.Reason, record.CreatedAtUtc);
+    }
+
+    public async Task<bool> RevokeGrantorAsync(Guid tenantId, Guid recordId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var record = await _db.PermissionGrantorRecords.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == recordId, cancellationToken);
+        if (record is null) return false;
+        record.IsActive = false;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.grantor_revoked", "PermissionGrantorRecord", recordId.ToString(), context, null, cancellationToken);
+        return true;
+    }
+
+    public async Task<UserAccessDto?> GrantPermissionAsync(Guid tenantId, Guid targetUserId, GrantPermissionRequest request, Guid? callerUserId, bool isAdmin, CancellationToken cancellationToken)
+    {
+        if (!isAdmin)
+        {
+            if (callerUserId is null) throw new UnauthorizedAccessException("Authentication required.");
+            var grantor = await _db.PermissionGrantorRecords
+                .Where(x => x.TenantId == tenantId && x.GrantorUserId == callerUserId.Value && x.IsActive
+                    && (x.ExpiresAtUtc == null || x.ExpiresAtUtc > DateTime.UtcNow))
+                .ToListAsync(cancellationToken);
+            if (!grantor.Any(g => PermissionMatchesScope(request.PermissionKey, g.PermissionScope)))
+                throw new InvalidOperationException("You are not authorised to grant or revoke this permission.");
+        }
+
+        var user = await LoadAccessUser(tenantId, targetUserId, cancellationToken);
+        if (user is null) return null;
+
+        if (request.Effect.Equals("Remove", StringComparison.OrdinalIgnoreCase))
+        {
+            var existing = user.PermissionOverrides.FirstOrDefault(x => x.PermissionKey == request.PermissionKey);
+            if (existing is not null) { existing.IsActive = false; await _db.SaveChangesAsync(cancellationToken); }
+        }
+        else
+        {
+            var permissionExists = await _db.Permissions.AnyAsync(x => x.Key == request.PermissionKey, cancellationToken);
+            if (!permissionExists) throw new InvalidOperationException("Permission key does not exist.");
+
+            var effect = request.Effect.Equals("Deny", StringComparison.OrdinalIgnoreCase) ? "Deny" : "Allow";
+            var ov = user.PermissionOverrides.FirstOrDefault(x => x.PermissionKey == request.PermissionKey);
+            if (ov is null)
+            {
+                ov = new Models.UserPermissionOverride { TenantId = tenantId, UserId = targetUserId, PermissionKey = request.PermissionKey, CreatedBy = callerUserId };
+                _db.UserPermissionOverrides.Add(ov);
+            }
+            ov.Effect = effect;
+            ov.Reason = request.Reason ?? string.Empty;
+            ov.ExpiresAtUtc = request.ExpiresAtUtc;
+            ov.IsActive = true;
+            ov.UpdatedAtUtc = DateTime.UtcNow;
+            ov.UpdatedBy = callerUserId;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        await _auditService.WriteAsync("access.permission_granted", "UserPermissionOverride", targetUserId.ToString(), new RequestContext(null, null, callerUserId, tenantId),
+            $"{{\"permission\":\"{request.PermissionKey}\",\"effect\":\"{request.Effect}\"}}", cancellationToken);
+        return await GetUserAccessAsync(tenantId, targetUserId, cancellationToken);
+    }
+
+    private static bool PermissionMatchesScope(string permissionKey, string scope)
+    {
+        if (scope.Equals("all", StringComparison.OrdinalIgnoreCase)) return true;
+        var parts = scope.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Any(s =>
+            s.EndsWith(".*", StringComparison.OrdinalIgnoreCase)
+                ? permissionKey.StartsWith(s[..^2] + ".", StringComparison.OrdinalIgnoreCase)
+                : permissionKey.Equals(s, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Does parent scope cover (is superset of) child scope?
+    private static bool ScopeCoversScope(string parentScope, string childScope)
+    {
+        if (parentScope.Equals("all", StringComparison.OrdinalIgnoreCase)) return true;
+        if (childScope.Equals("all", StringComparison.OrdinalIgnoreCase)) return false;
+        var childParts = childScope.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return childParts.All(c => PermissionMatchesScope(c.TrimEnd('*').TrimEnd('.'), parentScope) ||
+                                   PermissionMatchesScope(c, parentScope));
+    }
+
     private async Task<IReadOnlyCollection<Role>> LoadRoles(Guid tenantId, IReadOnlyCollection<string> roleNames, CancellationToken cancellationToken)
     {
         var normalizedRoles = roleNames.Select(AuthService.Normalize).Distinct().ToList();
@@ -306,6 +631,11 @@ public class AccessManagementService : IAccessManagementService
         "fullportal" => AccessModes.FullPortal,
         "essonly" => AccessModes.EssOnly,
         "managerportal" => AccessModes.ManagerPortal,
+        "hrportal" => AccessModes.HRPortal,
+        "payrollportal" => AccessModes.PayrollPortal,
+        "financeportal" => AccessModes.FinancePortal,
+        "supervisorportal" => AccessModes.SupervisorPortal,
+        "readonlyauditor" => AccessModes.ReadOnlyAuditor,
         "mobile" => AccessModes.Mobile,
         "kioskonly" => AccessModes.KioskOnly,
         "nologin" => AccessModes.NoLogin,
@@ -328,7 +658,7 @@ public class AccessManagementService : IAccessManagementService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x)
             .ToList();
-        return new UserAccessDto(user.Id, link?.EmployeeId, user.Email, user.FullName, link?.AccessMode ?? AccessModes.FullPortal, link?.RequiresPasswordSetup ?? false, roles, basePermissions.OrderBy(x => x).ToList(), denied);
+        return new UserAccessDto(user.Id, link?.EmployeeId, user.Email, user.FullName, link?.AccessMode ?? user.AccessMode, link?.RequiresPasswordSetup ?? false, roles, basePermissions.OrderBy(x => x).ToList(), denied);
     }
 
     private static AuthUserDto ToUserDto(User user, Tenant tenant, IReadOnlyCollection<Role> roles)
@@ -347,4 +677,185 @@ public class AccessManagementService : IAccessManagementService
 
     private static ApprovalAuthorityDto ToAuthorityDto(ApprovalAuthority authority) =>
         new(authority.Id, authority.EmployeeId, authority.UserId, authority.AuthorityScope, authority.ApproverRole, authority.AmountLimit, authority.Currency, authority.CanFinalApprove, authority.IsActive);
+
+    private static UserListDto ToUserListDto(User user)
+    {
+        var roles = user.UserRoles.Select(x => x.Role?.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().OrderBy(x => x).ToList();
+        var link = user.EmployeeUserAccounts.Where(x => !x.IsDeleted).OrderByDescending(x => x.IsPrimary).FirstOrDefault();
+        return new UserListDto(user.Id, user.Email, user.FullName, user.PhoneNumber, user.Status, user.IsActive, user.IsLocked, user.MustChangePassword, roles, link?.AccessMode ?? user.AccessMode, link?.EmployeeId, user.LastLoginAtUtc, user.CreatedAtUtc);
+    }
+
+    private static SecuritySettingDto ToSecuritySettingDto(Models.SecuritySetting s) =>
+        new(s.Id, s.TenantId, s.PasswordMinLength, s.PasswordRequireUppercase, s.PasswordRequireLowercase, s.PasswordRequireDigit, s.PasswordRequireSpecial, s.PasswordExpiryDays, s.PasswordHistoryCount, s.MaxFailedLoginAttempts, s.LockoutDurationMinutes, s.SessionTimeoutMinutes, s.RefreshTokenExpiryDays, s.AllowMultipleSessions, s.UpdatedAtUtc);
+
+    private static RoleDto ToRoleDto(Role role) =>
+        new(role.Id, role.Name, role.Description, role.IsSystem, role.IsActive, role.IsEditable, role.AuthorityLevel,
+            role.RolePermissions.Select(rp => rp.Permission!.Key).OrderBy(p => p).ToList());
+
+    // ── Role CRUD ─────────────────────────────────────────────────────────────
+
+    public async Task<RoleDto> CreateRoleAsync(Guid tenantId, CreateRoleRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var normalized = AuthService.Normalize(request.Name);
+        var exists = await _db.Roles.AnyAsync(x => x.TenantId == tenantId && x.NormalizedName == normalized && !x.IsDeleted, cancellationToken);
+        if (exists) throw new InvalidOperationException($"A role named '{request.Name}' already exists.");
+
+        var permissions = request.Permissions != null && request.Permissions.Count > 0
+            ? await _db.Permissions.Where(x => request.Permissions.Contains(x.Key)).ToListAsync(cancellationToken)
+            : new List<Domain.Entities.Permission>();
+
+        var role = new Role
+        {
+            TenantId = tenantId,
+            Name = request.Name.Trim(),
+            NormalizedName = normalized,
+            Description = request.Description?.Trim() ?? string.Empty,
+            AuthorityLevel = request.AuthorityLevel,
+            IsSystem = false,
+            IsActive = true,
+            IsEditable = true
+        };
+        foreach (var p in permissions) role.RolePermissions.Add(new RolePermission { RoleId = role.Id, PermissionId = p.Id, Permission = p });
+        _db.Roles.Add(role);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.role_created", "Role", role.Id.ToString(), context, $"{{\"name\":\"{role.Name}\"}}", cancellationToken);
+        return ToRoleDto(role);
+    }
+
+    public async Task<RoleDto?> UpdateRoleAsync(Guid tenantId, Guid roleId, UpdateRoleRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var role = await _db.Roles.Include(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == roleId && !x.IsDeleted, cancellationToken);
+        if (role is null) return null;
+        if (!role.IsEditable) throw new InvalidOperationException("This role is not editable.");
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+        {
+            var normalized = AuthService.Normalize(request.Name);
+            var conflict = await _db.Roles.AnyAsync(x => x.TenantId == tenantId && x.NormalizedName == normalized && x.Id != roleId && !x.IsDeleted, cancellationToken);
+            if (conflict) throw new InvalidOperationException($"A role named '{request.Name}' already exists.");
+            role.Name = request.Name.Trim();
+            role.NormalizedName = normalized;
+        }
+        if (request.Description is not null) role.Description = request.Description.Trim();
+        if (request.AuthorityLevel.HasValue) role.AuthorityLevel = request.AuthorityLevel.Value;
+        role.UpdatedAtUtc = DateTime.UtcNow;
+        role.UpdatedBy = context.UserId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.role_updated", "Role", roleId.ToString(), context, $"{{\"name\":\"{role.Name}\"}}", cancellationToken);
+        return ToRoleDto(role);
+    }
+
+    public async Task<bool> ActivateRoleAsync(Guid tenantId, Guid roleId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var role = await _db.Roles.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == roleId && !x.IsDeleted, cancellationToken);
+        if (role is null) return false;
+        role.IsActive = true;
+        role.UpdatedAtUtc = DateTime.UtcNow;
+        role.UpdatedBy = context.UserId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.role_activated", "Role", roleId.ToString(), context, null, cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> DeactivateRoleAsync(Guid tenantId, Guid roleId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var role = await _db.Roles.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == roleId && !x.IsDeleted, cancellationToken);
+        if (role is null) return false;
+        if (role.IsSystem) throw new InvalidOperationException("System roles cannot be deactivated.");
+        role.IsActive = false;
+        role.UpdatedAtUtc = DateTime.UtcNow;
+        role.UpdatedBy = context.UserId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.role_deactivated", "Role", roleId.ToString(), context, null, cancellationToken);
+        return true;
+    }
+
+    public async Task<RoleDto?> SetRolePermissionsAsync(Guid tenantId, Guid roleId, BulkRolePermissionsRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var role = await _db.Roles.Include(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == roleId && !x.IsDeleted, cancellationToken);
+        if (role is null) return null;
+
+        var permissions = await _db.Permissions.Where(x => request.Permissions.Contains(x.Key)).ToListAsync(cancellationToken);
+        _db.RolePermissions.RemoveRange(role.RolePermissions);
+        role.RolePermissions.Clear();
+        foreach (var p in permissions) role.RolePermissions.Add(new RolePermission { RoleId = role.Id, PermissionId = p.Id, Permission = p });
+        role.UpdatedAtUtc = DateTime.UtcNow;
+        role.UpdatedBy = context.UserId;
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.role_permissions_set", "Role", roleId.ToString(), context, $"{{\"count\":{permissions.Count}}}", cancellationToken);
+        return ToRoleDto(role);
+    }
+
+    // ── Permission Matrix ─────────────────────────────────────────────────────
+
+    public async Task<PermissionMatrixDto> GetPermissionMatrixAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var roles = await _db.Roles
+            .Include(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .Where(x => (x.TenantId == tenantId || x.TenantId == null) && !x.IsDeleted && x.IsActive)
+            .OrderBy(x => x.AuthorityLevel).ThenBy(x => x.Name)
+            .ToListAsync(cancellationToken);
+
+        var permissions = await _db.Permissions.OrderBy(x => x.Module).ThenBy(x => x.Key).ToListAsync(cancellationToken);
+        var roleGrantMap = roles.ToDictionary(r => r.Id, r => r.RolePermissions.Select(rp => rp.PermissionId).ToHashSet());
+
+        var matrix = permissions.Select(p => new PermissionMatrixRow(
+            p.Key, p.Module, p.Description,
+            roles.ToDictionary(r => r.Id.ToString(), r => roleGrantMap[r.Id].Contains(p.Id))
+        )).ToList();
+
+        return new PermissionMatrixDto(roles.Select(ToRoleDto).ToList(), matrix);
+    }
+
+    public async Task SavePermissionMatrixAsync(Guid tenantId, PermissionMatrixUpdateRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var roleIds = request.RolePermissions.Keys.Select(k => Guid.TryParse(k, out var g) ? g : (Guid?)null).Where(x => x.HasValue).Select(x => x!.Value).ToList();
+        var roles = await _db.Roles.Include(x => x.RolePermissions)
+            .Where(x => (x.TenantId == tenantId || x.TenantId == null) && roleIds.Contains(x.Id) && !x.IsDeleted)
+            .ToListAsync(cancellationToken);
+        var allPermissions = await _db.Permissions.ToListAsync(cancellationToken);
+        var permMap = allPermissions.ToDictionary(p => p.Key, p => p, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var role in roles)
+        {
+            if (!request.RolePermissions.TryGetValue(role.Id.ToString(), out var permKeys)) continue;
+            _db.RolePermissions.RemoveRange(role.RolePermissions);
+            role.RolePermissions.Clear();
+            foreach (var key in permKeys.Where(k => permMap.ContainsKey(k)))
+                role.RolePermissions.Add(new RolePermission { RoleId = role.Id, PermissionId = permMap[key].Id });
+            role.UpdatedAtUtc = DateTime.UtcNow;
+            role.UpdatedBy = context.UserId;
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.permission_matrix_saved", "Tenant", tenantId.ToString(), context, null, cancellationToken);
+    }
+
+    // ── Effective permissions ─────────────────────────────────────────────────
+
+    public async Task<EffectivePermissionsDto?> GetEffectivePermissionsAsync(Guid tenantId, Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await LoadAccessUser(tenantId, userId, cancellationToken);
+        if (user is null) return null;
+        var roles = user.UserRoles.Select(x => x.Role?.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().OrderBy(x => x).ToList();
+        var byRole = user.UserRoles.SelectMany(x => x.Role?.RolePermissions ?? Array.Empty<RolePermission>()).Select(x => x.Permission?.Key).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+        var activeOverrides = user.PermissionOverrides.Where(x => x.IsActive && (x.ExpiresAtUtc is null || x.ExpiresAtUtc > DateTime.UtcNow)).ToList();
+        var allowed = activeOverrides.Where(x => x.Effect == "Allow").Select(x => x.PermissionKey).OrderBy(x => x).ToList();
+        var denied = activeOverrides.Where(x => x.Effect == "Deny").Select(x => x.PermissionKey).OrderBy(x => x).ToList();
+        var effective = byRole.Concat(allowed).Distinct(StringComparer.OrdinalIgnoreCase).Where(p => !denied.Contains(p, StringComparer.OrdinalIgnoreCase)).OrderBy(x => x).ToList();
+        return new EffectivePermissionsDto(user.Id, user.Email, roles, byRole, allowed, denied, effective);
+    }
+
+    // ── Permission override delete ─────────────────────────────────────────────
+
+    public async Task<bool> DeletePermissionOverrideAsync(Guid tenantId, Guid userId, Guid overrideId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var ov = await _db.UserPermissionOverrides.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.UserId == userId && x.Id == overrideId, cancellationToken);
+        if (ov is null) return false;
+        _db.UserPermissionOverrides.Remove(ov);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.permission_override_deleted", "UserPermissionOverride", overrideId.ToString(), context, null, cancellationToken);
+        return true;
+    }
 }

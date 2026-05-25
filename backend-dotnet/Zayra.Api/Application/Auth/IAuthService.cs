@@ -9,4 +9,5 @@ public interface IAuthService
     Task ResetPasswordAsync(ResetPasswordRequest request, RequestContext context, CancellationToken cancellationToken);
     Task<AuthResponse> AcceptInvitationAsync(AcceptInvitationRequest request, RequestContext context, CancellationToken cancellationToken);
     Task<AuthUserDto?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken);
+    Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, RequestContext context, CancellationToken cancellationToken);
 }

@@ -472,16 +472,9 @@ public record RejectApplicationRequest(string Reason, string? PerformedByName);
 
 public record NoteRequest(string Notes, string? PerformedByName);
 
-public record ScheduleInterviewRequest(
-    string InterviewType, string InterviewerNames,
-    DateTime ScheduledAt, int DurationMinutes,
-    string Mode, string MeetingLink, string Location);
-
 public record InterviewFeedbackRequest(int OverallRating, string Recommendation, string FeedbackNotes);
 
 public record GenerateOfferRequest(
     string Department, DateOnly StartDate,
     decimal BasicSalary, decimal HousingAllowance, decimal TransportAllowance, decimal OtherAllowances,
     int ProbationMonths);
-
-public record DeclineOfferRequest(string Reason);

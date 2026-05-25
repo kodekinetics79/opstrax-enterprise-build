@@ -123,6 +123,133 @@ public record AuthUserDto(
 
 public record ForgotPasswordResponse(string Message, string? ResetToken, DateTime? ResetTokenExpiresAtUtc);
 
-public record RoleDto(Guid Id, string Name, string Description, IReadOnlyCollection<string> Permissions);
+public record RoleDto(
+    Guid Id,
+    string Name,
+    string Description,
+    bool IsSystem,
+    bool IsActive,
+    bool IsEditable,
+    int AuthorityLevel,
+    IReadOnlyCollection<string> Permissions);
+
+public record CreateRoleRequest(
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.MaxLength(80)] string Name,
+    [System.ComponentModel.DataAnnotations.MaxLength(240)] string? Description,
+    int AuthorityLevel = 99,
+    IReadOnlyCollection<string>? Permissions = null);
+
+public record UpdateRoleRequest(
+    [System.ComponentModel.DataAnnotations.MaxLength(80)] string? Name,
+    [System.ComponentModel.DataAnnotations.MaxLength(240)] string? Description,
+    int? AuthorityLevel);
+
+public record BulkRolePermissionsRequest([System.ComponentModel.DataAnnotations.Required] IReadOnlyCollection<string> Permissions);
+
+public record PermissionMatrixRow(string PermissionKey, string Module, string Description, Dictionary<string, bool> Roles);
+
+public record PermissionMatrixDto(IReadOnlyCollection<RoleDto> Roles, IReadOnlyCollection<PermissionMatrixRow> Matrix);
+
+public record PermissionMatrixUpdateRequest([System.ComponentModel.DataAnnotations.Required] Dictionary<string, IReadOnlyCollection<string>> RolePermissions);
+
+public record EffectivePermissionsDto(
+    Guid UserId,
+    string Email,
+    IReadOnlyCollection<string> Roles,
+    IReadOnlyCollection<string> GrantedByRole,
+    IReadOnlyCollection<string> ExplicitlyAllowed,
+    IReadOnlyCollection<string> ExplicitlyDenied,
+    IReadOnlyCollection<string> Effective);
 
 public record PermissionDto(Guid Id, string Key, string Module, string Description);
+
+public record UserListDto(
+    Guid Id,
+    string Email,
+    string FullName,
+    string PhoneNumber,
+    string Status,
+    bool IsActive,
+    bool IsLocked,
+    bool MustChangePassword,
+    IReadOnlyCollection<string> Roles,
+    string AccessMode,
+    int? EmployeeId,
+    DateTime? LastLoginAtUtc,
+    DateTime CreatedAtUtc);
+
+public record UpdateUserRequest(
+    string? FullName,
+    string? PhoneNumber,
+    string? PreferredLanguage,
+    string? Timezone);
+
+public record ChangePasswordRequest(
+    [System.ComponentModel.DataAnnotations.Required] string CurrentPassword,
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.MinLength(10)] string NewPassword);
+
+public record AdminResetPasswordRequest(
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.MinLength(10)] string NewPassword,
+    bool MustChangePassword = true);
+
+public record UserListQuery(string? Search, string? Status, string? Role, int Page = 1, int PageSize = 30);
+
+public record SecuritySettingDto(
+    Guid Id,
+    Guid TenantId,
+    int PasswordMinLength,
+    bool PasswordRequireUppercase,
+    bool PasswordRequireLowercase,
+    bool PasswordRequireDigit,
+    bool PasswordRequireSpecial,
+    int PasswordExpiryDays,
+    int PasswordHistoryCount,
+    int MaxFailedLoginAttempts,
+    int LockoutDurationMinutes,
+    int SessionTimeoutMinutes,
+    int RefreshTokenExpiryDays,
+    bool AllowMultipleSessions,
+    DateTime UpdatedAtUtc);
+
+public record ReasonRequest(string? Reason);
+
+public record PermissionGrantorDto(
+    Guid Id,
+    Guid GrantorUserId,
+    string GrantorEmail,
+    string GrantorName,
+    string PermissionScope,
+    bool CanSubDelegate,
+    Guid? GrantedByUserId,
+    DateTime? ExpiresAtUtc,
+    bool IsActive,
+    string Reason,
+    DateTime CreatedAtUtc);
+
+public record AddGrantorRequest(
+    [System.ComponentModel.DataAnnotations.Required] Guid GrantorUserId,
+    // "all" | module e.g. "leave" | comma-separated keys
+    [System.ComponentModel.DataAnnotations.Required] string PermissionScope,
+    bool CanSubDelegate = false,
+    DateTime? ExpiresAtUtc = null,
+    string? Reason = null);
+
+public record GrantPermissionRequest(
+    [System.ComponentModel.DataAnnotations.Required] string PermissionKey,
+    [System.ComponentModel.DataAnnotations.Required] string Effect,  // "Allow" | "Deny" | "Remove"
+    string? Reason = null,
+    DateTime? ExpiresAtUtc = null);
+
+public record UpdateSecuritySettingRequest(
+    int? PasswordMinLength,
+    bool? PasswordRequireUppercase,
+    bool? PasswordRequireLowercase,
+    bool? PasswordRequireDigit,
+    bool? PasswordRequireSpecial,
+    int? PasswordExpiryDays,
+    int? PasswordHistoryCount,
+    int? MaxFailedLoginAttempts,
+    int? LockoutDurationMinutes,
+    int? SessionTimeoutMinutes,
+    int? RefreshTokenExpiryDays,
+    bool? AllowMultipleSessions);

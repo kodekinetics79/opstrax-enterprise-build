@@ -14,8 +14,13 @@ namespace Zayra.Api.Controllers;
 public class AttendanceController : ControllerBase
 {
     private readonly IAttendanceService _attendance;
+    private readonly IDataScopeService _scopeService;
 
-    public AttendanceController(IAttendanceService attendance) => _attendance = attendance;
+    public AttendanceController(IAttendanceService attendance, IDataScopeService scopeService)
+    {
+        _attendance = attendance;
+        _scopeService = scopeService;
+    }
 
     [HttpGet("dashboard")]
     public Task<AttendanceDashboardDto> Dashboard([FromQuery] DateOnly? date, CancellationToken ct) =>
@@ -101,12 +106,20 @@ public class AttendanceController : ControllerBase
 
     [HttpGet]
     [HttpGet("daily")]
-    public Task<PagedResult<AttendanceDailyDto>> Daily([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default) =>
-        _attendance.GetDailyAsync(RequireTenant(), from, to, employeeId, status, page, pageSize, ct);
+    public async Task<PagedResult<AttendanceDailyDto>> Daily([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, [FromQuery] int? employeeId, [FromQuery] string? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
+    {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
+        return await _attendance.GetDailyAsync(RequireTenant(), from, to, singleId, status, page, pageSize, ct, setFilter);
+    }
 
     [HttpGet("monthly")]
-    public Task<IReadOnlyCollection<AttendanceMonthlyDto>> Monthly([FromQuery] int year, [FromQuery] int month, [FromQuery] int? employeeId, CancellationToken ct) =>
-        _attendance.GetMonthlyAsync(RequireTenant(), year == 0 ? DateTime.UtcNow.Year : year, month == 0 ? DateTime.UtcNow.Month : month, employeeId, ct);
+    public async Task<IReadOnlyCollection<AttendanceMonthlyDto>> Monthly([FromQuery] int year, [FromQuery] int month, [FromQuery] int? employeeId, CancellationToken ct)
+    {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
+        return await _attendance.GetMonthlyAsync(RequireTenant(), year == 0 ? DateTime.UtcNow.Year : year, month == 0 ? DateTime.UtcNow.Month : month, singleId, ct, setFilter);
+    }
 
     [HttpPost("process")]
     public Task<int> Process(ProcessAttendanceRequest request, CancellationToken ct) =>
@@ -133,12 +146,20 @@ public class AttendanceController : ControllerBase
         _attendance.CreateRegularizationAsync(RequireTenant(), request, Context(), ct);
 
     [HttpGet("regularization/my")]
-    public Task<PagedResult<AttendanceRegularizationRequest>> MyRegularization([FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default) =>
-        _attendance.GetRegularizationAsync(RequireTenant(), employeeId, null, page, pageSize, ct);
+    public async Task<PagedResult<AttendanceRegularizationRequest>> MyRegularization([FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
+    {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        var (singleId, setFilter) = scope.Constrain(employeeId);
+        return await _attendance.GetRegularizationAsync(RequireTenant(), singleId, null, page, pageSize, ct, setFilter);
+    }
 
     [HttpGet("regularization/pending-approval")]
-    public Task<PagedResult<AttendanceRegularizationRequest>> PendingRegularization([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default) =>
-        _attendance.GetRegularizationAsync(RequireTenant(), null, "PendingManager", page, pageSize, ct);
+    public async Task<PagedResult<AttendanceRegularizationRequest>> PendingRegularization([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
+    {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        var (_, setFilter) = scope.Constrain(null);
+        return await _attendance.GetRegularizationAsync(RequireTenant(), null, "PendingManager", page, pageSize, ct, setFilter);
+    }
 
     [HttpPost("regularization/{id:guid}/approve")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> ApproveRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct)

@@ -7,9 +7,37 @@ public static class AccessModes
     public const string FullPortal = "FullPortal";
     public const string EssOnly = "ESSOnly";
     public const string ManagerPortal = "ManagerPortal";
+    public const string HRPortal = "HRPortal";
+    public const string PayrollPortal = "PayrollPortal";
+    public const string FinancePortal = "FinancePortal";
+    public const string SupervisorPortal = "SupervisorPortal";
+    public const string ReadOnlyAuditor = "ReadOnlyAuditor";
     public const string Mobile = "Mobile";
     public const string KioskOnly = "KioskOnly";
     public const string NoLogin = "NoLogin";
+}
+
+public class SecuritySetting
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    // Password policy
+    public int PasswordMinLength { get; set; } = 10;
+    public bool PasswordRequireUppercase { get; set; } = true;
+    public bool PasswordRequireLowercase { get; set; } = true;
+    public bool PasswordRequireDigit { get; set; } = true;
+    public bool PasswordRequireSpecial { get; set; } = true;
+    public int PasswordExpiryDays { get; set; } = 90;
+    public int PasswordHistoryCount { get; set; } = 5;
+    // Lockout policy
+    public int MaxFailedLoginAttempts { get; set; } = 5;
+    public int LockoutDurationMinutes { get; set; } = 30;
+    // Session policy
+    public int SessionTimeoutMinutes { get; set; } = 480;
+    public int RefreshTokenExpiryDays { get; set; } = 30;
+    public bool AllowMultipleSessions { get; set; } = true;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? UpdatedBy { get; set; }
 }
 
 public class EmployeeUserAccount
@@ -83,6 +111,25 @@ public class ApprovalAuthority
     public string Currency { get; set; } = string.Empty;
     public bool CanFinalApprove { get; set; }
     public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+}
+
+// Tracks users who are authorised to manually grant/revoke individual permissions
+public class PermissionGrantorRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    // The user who is allowed to grant permissions
+    public Guid GrantorUserId { get; set; }
+    // "all" | module prefix e.g. "leave" | comma-separated keys e.g. "leave.read,leave.write"
+    public string PermissionScope { get; set; } = "all";
+    // Whether this grantor can further sub-delegate their granting authority
+    public bool CanSubDelegate { get; set; }
+    public Guid? GrantedByUserId { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string Reason { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }
 }
