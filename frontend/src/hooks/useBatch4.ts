@@ -1,0 +1,22 @@
+import { useQuery } from "@tanstack/react-query";
+import { coachingApi } from "@/services/coachingApi";
+import { dashcamApi } from "@/services/dashcamApi";
+import { evidenceApi } from "@/services/evidenceApi";
+import { incidentsApi } from "@/services/incidentsApi";
+import { safetyApi } from "@/services/safetyApi";
+
+export const useSafetySummary = () => useQuery({ queryKey: ["safety", "summary"], queryFn: safetyApi.summary });
+export const useSafetyEvents = () => useQuery({ queryKey: ["safety"], queryFn: safetyApi.events });
+export const useSafetyEventDetail = (id?: string | number) => useQuery({ queryKey: ["safety", "detail", id], queryFn: () => safetyApi.detail(id!), enabled: Boolean(id) });
+export const useDashcamSummary = () => useQuery({ queryKey: ["dashcam", "summary"], queryFn: dashcamApi.summary });
+export const useDashcamEvents = () => useQuery({ queryKey: ["dashcam"], queryFn: dashcamApi.events });
+export const useDashcamEventDetail = (id?: string | number) => useQuery({ queryKey: ["dashcam", "detail", id], queryFn: () => dashcamApi.detail(id!), enabled: Boolean(id) });
+export const useCoachingSummary = () => useQuery({ queryKey: ["coaching", "summary"], queryFn: coachingApi.summary });
+export const useCoachingTasks = () => useQuery({ queryKey: ["coaching"], queryFn: coachingApi.tasks });
+export const useCoachingTaskDetail = (id?: string | number) => useQuery({ queryKey: ["coaching", "detail", id], queryFn: () => coachingApi.detail(id!), enabled: Boolean(id) });
+export const useIncidents = () => useQuery({ queryKey: ["incidents"], queryFn: incidentsApi.list });
+export const useIncidentDetail = (id?: string | number) => useQuery({ queryKey: ["incidents", "detail", id], queryFn: () => incidentsApi.detail(id!), enabled: Boolean(id) });
+export const useEvidencePackages = () => useQuery({ queryKey: ["evidence-packages"], queryFn: evidenceApi.list });
+export const useEvidencePackageDetail = (id?: string | number) => useQuery({ queryKey: ["evidence-packages", "detail", id], queryFn: () => evidenceApi.detail(id!), enabled: Boolean(id) });
+export const useEvidenceSummary = () => useQuery({ queryKey: ["evidence-packages", "summary"], queryFn: evidenceApi.summary });
+export const useIncidentsSummary = () => useQuery({ queryKey: ["incidents", "summary"], queryFn: incidentsApi.summary });

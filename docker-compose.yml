@@ -1,0 +1,69 @@
+name: opstrax
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8088
+        VITE_NODE_EVENTS_URL: http://localhost:8090
+    container_name: opstrax-frontend
+    restart: unless-stopped
+    ports:
+      - "10000:80"
+    depends_on:
+      - api-dotnet
+      - node-events
+
+  api-dotnet:
+    build:
+      context: ./backend-dotnet
+      dockerfile: Dockerfile
+    container_name: opstrax-dotnet-api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: server=mysql;port=3306;database=opstrax;user=opstrax;password=opstraxpass
+      Cors__AllowedOrigins: http://localhost:10000
+    ports:
+      - "8088:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  node-events:
+    build:
+      context: ./services/node-events
+      dockerfile: Dockerfile
+    container_name: opstrax-node-events
+    restart: unless-stopped
+    environment:
+      PORT: 8090
+      API_BASE_URL: http://api-dotnet:8080
+      CORS_ORIGIN: http://localhost:10000
+    ports:
+      - "8090:8090"
+
+  mysql:
+    image: mysql:8.4
+    container_name: opstrax-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: opstrax
+      MYSQL_USER: opstrax
+      MYSQL_PASSWORD: opstraxpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    expose:
+      - "3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql_data:
