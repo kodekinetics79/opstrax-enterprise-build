@@ -244,7 +244,7 @@ export function LoginPage() {
           {login.isError && (
             <div className="mx-5 mb-5 flex items-center gap-2 rounded-xl border border-red-300/50 bg-red-50 p-3 text-sm text-red-700">
               <Lock className="h-4 w-4 flex-shrink-0" />
-              Login failed — check backend service is running.
+              Login failed — use one of the demo role buttons or check the backend service.
             </div>
           )}
 
