@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Download, Edit3, FileText, Plus, Save, Search, ShieldCheck, Sparkles, Target, Trash2, X } from "lucide-react";
+import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText, Plus, Save, Search, Sparkles, Target, Trash2, UserCheck, X } from "lucide-react";
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import { assetsApi } from "@/services/assetsApi";
 import { customersApi } from "@/services/customersApi";
@@ -39,6 +40,9 @@ type EntityConfig = {
   defaults: AnyRecord;
   kpis: string[][];
   wow: string[];
+  painPoints: string[];
+  competitiveEdges: string[];
+  decisionSignals: string[];
   detailSections: [string, string, string[]][];
 };
 
@@ -67,6 +71,9 @@ const config: Record<EntityKind, EntityConfig> = {
       ["Device Exceptions", "deviceExceptions", ""],
     ],
     wow: ["Vehicle Risk Heat Score", "Recommended Action", "Smart Driver Assignment Suggestion", "Fleet Readiness Score", "Data Completeness Score"],
+    painPoints: ["Unplanned downtime", "Dispatching unavailable units", "Device/camera blind spots", "Expiring documents", "Cost leakage by asset"],
+    competitiveEdges: ["Readiness + risk in one score", "Camera/device status visible before dispatch", "Maintenance, safety, fuel and compliance evidence in one drawer", "Smart driver match action", "Audit-ready lifecycle trail"],
+    decisionSignals: ["readiness_score", "data_quality_score", "risk_score", "device_status", "camera_status", "assigned_driver"],
     detailSections: [
       ["Maintenance Summary", "maintenance", ["title", "category", "status", "riskLevel", "dueDate"]],
       ["Compliance Summary", "compliance", ["documentName", "documentType", "status", "expiryDate"]],
@@ -98,6 +105,9 @@ const config: Record<EntityKind, EntityConfig> = {
       ["At Risk", "atRisk", ""],
     ],
     wow: ["Driver Risk Heat Score", "Recommended Action", "Smart Vehicle Assignment Suggestion", "Driver Readiness Score", "Compliance/Data Completeness Score"],
+    painPoints: ["HOS and compliance uncertainty", "Unsafe driver assignment", "Missing certification/document risk", "Coaching not connected to operations", "Manual vehicle pairing"],
+    competitiveEdges: ["Readiness score blends safety, compliance and availability", "HOS, DVIR, certifications and safety history are joined in detail", "Smart vehicle match action", "Coaching and incident risk visible before assignment", "Audit-ready driver lifecycle"],
+    decisionSignals: ["readiness_score", "safety_score", "compliance_score", "risk_score", "assigned_vehicle", "status"],
     detailSections: [
       ["License / Certifications", "certifications", ["certificationType", "status", "expiryDate"]],
       ["Documents", "documents", ["documentName", "documentType", "status", "expiryDate"]],
@@ -132,6 +142,9 @@ const config: Record<EntityKind, EntityConfig> = {
       ["Platinum Accounts", "platinumAccounts", ""],
     ],
     wow: ["Customer SLA Health Score", "At-Risk Customer Watch", "Recommended Customer Update", "Customer Delivery Experience Score"],
+    painPoints: ["SLA surprise escalations", "Manual customer update follow-up", "Contract/rate context separated from jobs", "ETA history hard to find", "At-risk account drift"],
+    competitiveEdges: ["SLA and delivery experience scored together", "ETA history and communications tied to each customer", "Contracts, active jobs and contacts in one view", "AI customer update recommendation", "Customer risk watch for service teams"],
+    decisionSignals: ["sla_health_score", "delivery_experience_score", "risk_score", "active_jobs", "sla_tier", "status"],
     detailSections: [
       ["Contact Info", "contacts", ["fullName", "title", "email", "phone", "isPrimary"]],
       ["Billing / Shipping Addresses", "addresses", ["addressType", "addressLine", "city", "state", "postalCode"]],
@@ -167,6 +180,9 @@ const config: Record<EntityKind, EntityConfig> = {
       ["At Risk", "atRisk", ""],
     ],
     wow: ["Asset Utilization Score", "Lost Asset / Unauthorized Movement Watch", "Geofence Risk Badge", "Smart Assignment Suggestion"],
+    painPoints: ["Trailer location uncertainty", "Unauthorized movement", "Underutilized assets", "Asset assigned to wrong vehicle/customer", "Maintenance and document gaps"],
+    competitiveEdges: ["Geofence risk badge by asset", "Utilization score on every row", "Vehicle, driver and customer assignment in one action", "Movement history and documents in one drawer", "Lost asset watch built into the workflow"],
+    decisionSignals: ["utilization_score", "risk_score", "geofence_status", "current_zone", "assigned_vehicle", "assigned_driver"],
     detailSections: [
       ["Documents", "documents", ["documentName", "documentType", "status", "expiryDate"]],
       ["Movement History Placeholder", "movementHistory", ["eventType", "title", "severity", "eventTime", "createdAt"]],
@@ -183,6 +199,9 @@ const config: Record<EntityKind, EntityConfig> = {
     defaults: {},
     kpis: [["Total Records", "total", ""], ["Active", "active", ""], ["At Risk", "atRisk", ""], ["AI Signals", "aiSignals", ""]],
     wow: [],
+    painPoints: [],
+    competitiveEdges: [],
+    decisionSignals: [],
     detailSections: [],
   },
 };
@@ -206,6 +225,12 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const selectedDetail = detail.data;
   const selectedRecord = (selectedDetail?.record as AnyRecord | undefined) || selected;
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
+  const isFleetMaster = kind === "vehicles" || kind === "drivers" || kind === "assets";
+
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: kind === "vehicles" || kind === "assets" });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: kind === "drivers" || kind === "assets" });
+  const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: kind === "assets" });
+  const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" });
 
   const saveMutation = useMutation({
     mutationFn: (payload: AnyRecord) => payload.id && !isCreating ? cfg.api.update!(String(payload.id), payload) : cfg.api.create!(payload),
@@ -220,6 +245,36 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     onSuccess: async () => {
       setSelected(null);
       await queryClient.invalidateQueries({ queryKey: [kind] });
+    },
+  });
+  const assignMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedRecord?.id) return null;
+      if (kind === "vehicles") {
+        const driver = pickBestDriver(driverOptions.data || []);
+        if (!driver?.id) throw new Error("No available driver found for assignment.");
+        return vehiclesApi.assignDriver(String(selectedRecord.id), String(driver.id));
+      }
+      if (kind === "drivers") {
+        const vehicle = pickBestVehicle(vehicleOptions.data || []);
+        if (!vehicle?.id) throw new Error("No available vehicle found for assignment.");
+        return driversApi.assignVehicle(String(selectedRecord.id), String(vehicle.id));
+      }
+      if (kind === "assets") {
+        const vehicle = pickBestVehicle(vehicleOptions.data || []);
+        const driver = pickBestDriver(driverOptions.data || []);
+        const customer = (customerOptions.data || [])[0];
+        return assetsApi.assign(String(selectedRecord.id), {
+          vehicleId: vehicle?.id ?? null,
+          driverId: driver?.id ?? null,
+          customerId: customer?.id ?? null,
+        });
+      }
+      return null;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [kind] });
+      if (selectedRecord?.id) await queryClient.invalidateQueries({ queryKey: [kind, "detail", selectedRecord.id] });
     },
   });
 
@@ -248,6 +303,17 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         }
       />
 
+      {isFleetMaster ? (
+        <FleetPainPointCockpit
+          kind={kind}
+          config={cfg}
+          rows={rows}
+          summary={summary.data}
+        />
+      ) : null}
+
+      {kind === "vehicles" ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
+
       <div className="grid gap-4 md:grid-cols-4">
         {cfg.kpis.map(([label, key, suffix]) => (
           <KpiCard key={label} label={label} value={`${summary.data?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0)}${suffix}`} icon={<Target />} status={Number(summary.data?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label) ? "Review" : "Healthy"} />
@@ -270,11 +336,12 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} />
         <div className="space-y-4">
           <div className="panel p-5">
-            <div className="flex items-center gap-2 text-teal-200"><Sparkles className="h-4 w-4" /><span className="section-title">Batch 1 Intelligence</span></div>
+            <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Competitive Intelligence</span></div>
             <div className="mt-4 flex flex-wrap gap-2">
               {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
             </div>
           </div>
+          {isFleetMaster ? <RiskActionQueue kind={kind} rows={rows} /> : null}
           {(recommendations.length ? recommendations : [{ title: "Select a record", body: "Open a row to inspect detail evidence, timeline, recommendations, documents, assignments and audit trail." }]).slice(0, 3).map((item, i) => (
             <AiInsightCard key={String(item.id || i)} insight={item} />
           ))}
@@ -287,9 +354,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         detail={selectedDetail}
         record={selectedRecord}
         loading={detail.isLoading}
+        assignPending={assignMutation.isPending}
         onClose={() => setSelected(null)}
         onEdit={(record) => { setIsCreating(false); setEditing(record); }}
         onDelete={(record) => cfg.api.remove && deleteMutation.mutate(String(record.id))}
+        onSmartAssign={isFleetMaster ? () => assignMutation.mutate() : undefined}
       />
 
       {editing ? (
@@ -306,15 +375,17 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   );
 }
 
-function BatchDetailDrawer({ config: cfg, detail, record, loading, onClose, onEdit, onDelete }: {
+function BatchDetailDrawer({ config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onSmartAssign }: {
   kind: EntityKind;
   config: EntityConfig;
   detail?: AnyRecord;
   record: AnyRecord | null;
   loading: boolean;
+  assignPending?: boolean;
   onClose: () => void;
   onEdit: (record: AnyRecord) => void;
   onDelete: (record: AnyRecord) => void;
+  onSmartAssign?: () => void;
 }) {
   if (!record) return null;
   const timeline = (detail?.timeline as AnyRecord[] | undefined) || [];
@@ -333,9 +404,12 @@ function BatchDetailDrawer({ config: cfg, detail, record, loading, onClose, onEd
         </div>
         <div className="mt-5 flex gap-3">
           <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
           <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button>
           <button className="btn-ghost"><FileText className="h-4 w-4" /> Report Placeholder</button>
         </div>
+
+        <DecisionBrief config={cfg} record={record} />
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
           {Object.entries(record).slice(0, 18).map(([key, value]) => (
@@ -357,6 +431,334 @@ function BatchDetailDrawer({ config: cfg, detail, record, loading, onClose, onEd
       </aside>
     </div>
   );
+}
+
+function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: EntityKind; config: EntityConfig; rows: AnyRecord[]; summary?: AnyRecord }) {
+  const blockers = rows.filter((row) => riskValue(row) >= 50 || /maintenance|delayed|suspended|outside|risk/i.test(String(row.status || row.geofenceStatus || row.geofenceRiskBadge || ""))).length;
+  const ready = Math.max(0, rows.length - blockers);
+  const assigned = rows.filter((row) => row.assignedDriver || row.assignedVehicle || row.assigned_driver || row.assigned_vehicle || row.customerName).length;
+  const blindSpots = rows.filter((row) => /degraded|review|offline|unknown/i.test(String(row.deviceStatus || row.device_status || row.cameraStatus || row.camera_status || ""))).length;
+  const primaryScore = kind === "vehicles"
+    ? Number(summary?.fleetReadinessScore ?? summary?.fleet_readiness_score ?? 0)
+    : kind === "drivers"
+      ? Number(summary?.driverReadinessScore ?? summary?.driver_readiness_score ?? 0)
+      : Number(summary?.utilizationScore ?? summary?.utilization_score ?? 0);
+  const assignedPct = rows.length ? Math.round((assigned / rows.length) * 100) : 0;
+  const title = kind === "vehicles" ? "Fleet readiness cockpit" : kind === "drivers" ? "Driver bench cockpit" : "Asset control cockpit";
+  const sub = kind === "vehicles"
+    ? "A live-feeling view of what can move, what is blocked, and what should be retired or fixed before it hurts dispatch."
+    : kind === "drivers"
+      ? "Availability, safety, compliance and assignment signals in one place so dispatch does not gamble with driver fit."
+      : "Trailer and equipment control focused on utilization, geofence trust, and fast reassignment.";
+  const lanes = [
+    { label: "Ready", value: ready, pct: rows.length ? Math.round((ready / rows.length) * 100) : 0, color: "#059669", bg: "bg-emerald-50", border: "border-emerald-200" },
+    { label: "Blocked", value: blockers, pct: rows.length ? Math.round((blockers / rows.length) * 100) : 0, color: "#d97706", bg: "bg-amber-50", border: "border-amber-200" },
+    { label: "Assigned", value: assigned, pct: assignedPct, color: "#2563eb", bg: "bg-blue-50", border: "border-blue-200" },
+    { label: kind === "vehicles" ? "Blind spots" : "Review", value: kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length, pct: rows.length ? Math.round(((kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length) / rows.length) * 100) : 0, color: "#7c3aed", bg: "bg-violet-50", border: "border-violet-200" },
+  ];
+  const watchList = [...rows].sort((a, b) => riskValue(b) - riskValue(a)).slice(0, 4);
+
+  return (
+    <section className="overflow-hidden rounded-[18px] border border-blue-100 bg-white shadow-sm">
+      <div className="grid gap-0 xl:grid-cols-[360px_1fr]">
+        <div className="relative min-h-[280px] overflow-hidden bg-gradient-to-br from-blue-600 via-sky-500 to-teal-500 p-6 text-white">
+          <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-white/20 blur-2xl" />
+          <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-t from-blue-950/20 to-transparent" />
+          <p className="relative text-xs font-black uppercase tracking-[0.24em] text-blue-50">OpsTrax Intelligence</p>
+          <h2 className="relative mt-3 text-2xl font-black leading-tight">{title}</h2>
+          <p className="relative mt-3 text-sm leading-relaxed text-blue-50/90">{sub}</p>
+          <div className="relative mt-8 grid grid-cols-[120px_1fr] items-center gap-5">
+            <div className="grid h-28 w-28 place-items-center rounded-full bg-white/15 shadow-inner" style={{ background: `conic-gradient(#ffffff ${Math.min(100, Math.max(0, primaryScore)) * 3.6}deg, rgba(255,255,255,.22) 0deg)` }}>
+              <div className="grid h-20 w-20 place-items-center rounded-full bg-blue-600/95 text-center shadow-lg">
+                <span className="text-2xl font-black">{Math.round(primaryScore || 0)}%</span>
+              </div>
+            </div>
+            <div className="space-y-2 text-sm text-blue-50/95">
+              <p className="font-bold">Decision index</p>
+              <p>Combines readiness, risk, assignment coverage and evidence quality into one operating posture.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            {lanes.map((lane) => (
+              <div key={lane.label} className={`rounded-2xl border ${lane.border} ${lane.bg} p-4`}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-black text-slate-900">{lane.label}</p>
+                  <span className="text-xs font-bold text-slate-500">{lane.pct}%</span>
+                </div>
+                <p className="mt-3 text-3xl font-black text-slate-950">{lane.value}</p>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, lane.pct)}%`, background: lane.color }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_320px]">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="section-title">Watch Floor</p>
+                  <h3 className="mt-1 font-black text-slate-950">Records needing action</h3>
+                </div>
+                <span className="badge border-teal-200 bg-teal-50 text-teal-700">Live ranked</span>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {watchList.map((row) => (
+                  <div key={String(row.id)} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-bold text-slate-950">{recordTitle(kind, row)}</p>
+                      <RiskBadge risk={riskValue(row) >= 70 ? "High" : riskValue(row) >= 40 ? "Medium" : "Low"} />
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">{String(row.recommendedAction || row.recommended_action || actionFor(kind, row))}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="section-title">Pain Points Covered</p>
+              <div className="mt-3 space-y-2">
+                {cfg.painPoints.map((point, index) => (
+                  <div key={point} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                    <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-xs font-black text-blue-700">{index + 1}</span>
+                    <span className="text-sm font-semibold text-slate-700">{point}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RiskActionQueue({ kind, rows }: { kind: EntityKind; rows: AnyRecord[] }) {
+  const risky = [...rows].sort((a, b) => riskValue(b) - riskValue(a)).slice(0, 5);
+  return (
+    <div className="panel p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="section-title">Action Queue</p>
+          <h3 className="mt-1 font-bold text-slate-950">Highest-value reviews</h3>
+        </div>
+        <span className="badge border-teal-200 bg-teal-50 text-teal-700">AI ranked</span>
+      </div>
+      <div className="mt-4 space-y-3">
+        {risky.map((row) => (
+          <div key={String(row.id)} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-semibold text-slate-950">{recordTitle(kind, row)}</p>
+              <RiskBadge risk={riskValue(row) >= 70 ? "High" : riskValue(row) >= 40 ? "Medium" : "Low"} />
+            </div>
+            <p className="mt-2 text-xs text-slate-600">{String(row.recommendedAction || row.recommended_action || actionFor(kind, row))}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VehiclePlanningForecast({ data, loading }: { data?: AnyRecord; loading: boolean }) {
+  const replacement = ((data?.replacementForecast as AnyRecord[]) || []).slice(0, 6);
+  const customers = ((data?.customerBusiness as AnyRecord[]) || []).slice(0, 5);
+  const routes = ((data?.routeBusiness as AnyRecord[]) || []).slice(0, 5);
+  const gaps = ((data?.operationalGaps as AnyRecord[]) || []);
+  const chartRows = replacement.map((row) => ({
+    name: String(row.vehicleCode || row.vehicle_code || "").replace("-", "\n"),
+    score: Number(row.capexPriorityScore ?? row.capex_priority_score ?? 0),
+    status: String(row.lifecycleStatus || row.lifecycle_status || ""),
+  }));
+
+  return (
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,.85fr)]">
+      <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-blue-50 to-teal-50 p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="section-title">Resource Planning / Forecasting</p>
+              <h2 className="mt-2 text-xl font-black text-slate-950">Aging fleet and replacement plan</h2>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600">Real backend-calculated lifecycle visibility using vehicle year, odometer, readiness, risk and downtime status.</p>
+            </div>
+            <span className="badge border-violet-200 bg-violet-50 text-violet-700">CapEx forecast</span>
+          </div>
+        </div>
+        {loading ? <p className="p-5 text-sm text-slate-500">Loading lifecycle forecast...</p> : null}
+        <div className="grid gap-0 lg:grid-cols-[.8fr_1.2fr]">
+          <div className="border-b border-slate-100 p-5 lg:border-b-0 lg:border-r">
+            <p className="text-sm font-black text-slate-950">Replacement priority curve</p>
+            <div className="mt-4 h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartRows}>
+                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+                  <Tooltip cursor={{ fill: "rgba(37,99,235,.06)" }} />
+                  <Bar dataKey="score" radius={[8, 8, 0, 0]}>
+                    {chartRows.map((row) => <Cell key={row.name} fill={row.score > 180 ? "#dc2626" : row.score > 90 ? "#f59e0b" : "#2563eb"} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">Higher bars mean stronger replacement or budget pressure. This gives the buyer a concrete CapEx queue, not a static vehicle list.</p>
+          </div>
+          <div>
+            {replacement.map((row, index) => {
+              const score = Number(row.capexPriorityScore ?? row.capex_priority_score ?? 0);
+              return (
+                <article key={String(row.id)} className="grid gap-3 border-b border-slate-100 p-4 last:border-b-0 md:grid-cols-[70px_1fr]">
+                  <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-lg font-black text-slate-700">#{index + 1}</div>
+                  <div>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-black text-slate-950">{String(row.vehicleCode || row.vehicle_code)}</p>
+                        <p className="text-xs text-slate-500">{String(row.type)} · {String(row.make)} {String(row.model)} · {String(row.ageYears ?? row.age_years)} years · {Number(row.odometerMiles ?? row.odometer_miles ?? 0).toLocaleString()} mi</p>
+                      </div>
+                      <StatusBadge status={row.lifecycleStatus || row.lifecycle_status} />
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round(score / 2.6))}%`, background: score > 180 ? "#dc2626" : score > 90 ? "#f59e0b" : "#2563eb" }} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-bold text-slate-600">{String(row.replacementWindow || row.replacement_window)} replacement window</p>
+                      <p className="text-xs font-semibold text-blue-700">{String(row.recommendedAction || row.recommended_action)}</p>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-5">
+            <p className="section-title">Measured Features</p>
+            <h3 className="mt-2 font-black text-slate-950">Pain points with live counts</h3>
+          </div>
+          <div className="grid gap-0 sm:grid-cols-2">
+            {gaps.map((gap) => (
+              <div key={String(gap.gapName || gap.gap_name)} className="border-b border-r border-slate-100 p-4">
+                <p className="text-3xl font-black text-slate-950">{String(gap.affectedRecords ?? gap.affected_records ?? 0)}</p>
+                <p className="mt-2 text-sm font-black text-slate-800">{String(gap.gapName || gap.gap_name)}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">{String(gap.visibility)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <BusinessPlanningPanel title="Top Customers by Business" rows={customers} entityLabel="customer" />
+        <BusinessPlanningPanel title="Top Routes by Business" rows={routes} entityLabel="route" />
+      </div>
+    </section>
+  );
+}
+
+function BusinessPlanningPanel({ title, rows, entityLabel }: { title: string; rows: AnyRecord[]; entityLabel: "customer" | "route" }) {
+  const counts = rows.map((row) => Number(row.jobCount ?? row.job_count ?? 0));
+  const maxJobs = Math.max(1, ...counts);
+  return (
+    <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="section-title">Business Planning</p>
+            <h3 className="mt-2 text-lg font-black text-slate-950">{title}</h3>
+          </div>
+          <span className="badge border-blue-200 bg-blue-50 text-blue-700">Revenue + margin</span>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {rows.map((row, index) => {
+          const label = entityLabel === "customer" ? row.customerName || row.customer_name : row.routeName || row.route_name;
+          const jobs = Number(row.jobCount ?? row.job_count ?? 0);
+          const width = Math.max(8, Math.round((jobs / maxJobs) * 100));
+          return (
+            <article key={String(row.id)} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span>
+                    <p className="truncate font-black text-slate-950">{String(label)}</p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">{jobs} jobs · {String(row.revenueEstimate ?? row.revenue_estimate ?? "$0")} revenue · {String(row.marginEstimate ?? row.margin_estimate ?? "$0")} margin</p>
+                </div>
+                <RiskBadge risk={Number(row.avgJobRisk ?? row.avg_job_risk ?? 0) >= 55 ? "High" : Number(row.avgJobRisk ?? row.avg_job_risk ?? 0) >= 35 ? "Medium" : "Low"} />
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-teal-500" style={{ width: `${width}%` }} />
+              </div>
+              <p className="mt-2 text-xs font-bold text-blue-700">{String(row.planningSignal || row.planning_signal || "Maintain plan")}</p>
+            </article>
+          );
+        })}
+        {!rows.length ? (
+          <div className="p-5 text-sm text-slate-500">No business planning records yet.</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DecisionBrief({ config: cfg, record }: { config: EntityConfig; record: AnyRecord }) {
+  const signals = cfg.decisionSignals.filter((key) => record[key] != null || record[toCamel(key)] != null).slice(0, 6);
+  return (
+    <section className="mt-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-teal-50 p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="section-title">Operational Decision Brief</p>
+          <h3 className="mt-2 text-lg font-bold text-slate-950">{String(record.recommendedAction || record.recommended_action || "Review readiness before next dispatch action")}</h3>
+          <p className="mt-2 text-sm text-slate-600">This brief is designed around the practical questions clients ask: can it move, is it compliant, is it assigned correctly, and what should we do next?</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {cfg.competitiveEdges.slice(0, 3).map((edge) => <span key={edge} className="badge">{edge}</span>)}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {signals.map((key) => {
+          const value = record[key] ?? record[toCamel(key)] ?? "--";
+          return (
+            <div key={key} className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{labelize(key)}</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{String(value)}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function pickBestDriver(rows: AnyRecord[]) {
+  return [...rows].sort((a, b) => Number(b.driverReadinessScore ?? b.readinessScore ?? b.safetyScore ?? 0) - Number(a.driverReadinessScore ?? a.readinessScore ?? a.safetyScore ?? 0))[0];
+}
+
+function pickBestVehicle(rows: AnyRecord[]) {
+  return [...rows].sort((a, b) => Number(b.fleetReadinessScore ?? b.readinessScore ?? b.dataQualityScore ?? 0) - Number(a.fleetReadinessScore ?? a.readinessScore ?? a.dataQualityScore ?? 0))[0];
+}
+
+function riskValue(row: AnyRecord) {
+  return Number(row.riskHeatScore ?? row.risk_score ?? row.riskScore ?? (String(row.geofenceRiskBadge || "").toLowerCase() === "high" ? 75 : 0));
+}
+
+function recordTitle(kind: EntityKind, row: AnyRecord) {
+  if (kind === "vehicles") return String(row.vehicleCode || row.vehicle_code || row.name || `Vehicle ${row.id}`);
+  if (kind === "drivers") return String(row.fullName || row.full_name || row.driverCode || `Driver ${row.id}`);
+  if (kind === "assets") return String(row.assetCode || row.asset_code || row.name || `Asset ${row.id}`);
+  return String(row.name || row.title || `Record ${row.id}`);
+}
+
+function actionFor(kind: EntityKind, row: AnyRecord) {
+  if (kind === "vehicles") return /maintenance/i.test(String(row.status)) ? "Create maintenance review before dispatch release." : "Confirm device, camera and driver assignment before next trip.";
+  if (kind === "drivers") return Number(row.complianceScore ?? row.compliance_score ?? 100) < 85 ? "Review license, certification and HOS risk before assigning." : "Match with best-fit vehicle and monitor safety score.";
+  if (kind === "assets") return /outside/i.test(String(row.geofenceStatus ?? row.geofence_status)) ? "Open unauthorized movement review and notify dispatch." : "Confirm customer/vehicle assignment and utilization target.";
+  return "Review operational record.";
+}
+
+function toCamel(value: string) {
+  return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
 function Section({ title, rows, columns, loading }: { title: string; rows: AnyRecord[]; columns: string[]; loading?: boolean }) {

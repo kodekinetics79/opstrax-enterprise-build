@@ -67,7 +67,7 @@ const configs = {
     columns: ["workOrderNumber", "vehicleCode", "assetName", "issueType", "priority", "status", "assignedToName", "vendorName", "createdDate", "dueDate", "estimatedCost", "approvedCost", "downtimeHours", "repairPriorityScore", "recommendedAction"],
     fields: [["workOrderNumber", "Work Order Number"], ["vehicleId", "Vehicle ID"], ["assetId", "Asset ID"], ["maintenanceItemId", "Maintenance Item ID"], ["dvirReportId", "DVIR Report ID"], ["issueType", "Issue Type"], ["title", "Title"], ["description", "Description"], ["priority", "Priority"], ["status", "Status"], ["assignedToUserId", "Assigned User ID"], ["vendorName", "Vendor / Shop"], ["dueDate", "Due Date"], ["estimatedCost", "Estimated Cost"], ["approvedCost", "Approved Cost"], ["downtimeHours", "Downtime Hours"]],
     actions: ["assign", "status", "labor", "part", "approveCost", "complete"],
-    detailSections: [["Labor", "labor", ["technicianName", "laborHours", "laborRate", "totalCost", "notes"]], ["Parts", "parts", ["partName", "partNumber", "quantity", "unitCost", "status"]], ["Photos / Documents Placeholder", "documents", ["documentNumber", "documentType", "status", "expiresAt"]]],
+    detailSections: [["Labor", "labor", ["technicianName", "laborHours", "laborRate", "totalCost", "notes"]], ["Parts", "parts", ["partName", "partNumber", "quantity", "unitCost", "status"]], ["Photos / Documents", "documents", ["documentNumber", "documentType", "status", "expiresAt"]]],
   },
   dvir: {
     queryKey: "dvir",
@@ -102,7 +102,7 @@ const configs = {
     useDetail: useDocumentDetail,
     api: documentsApi,
     idLabel: "Document #",
-    createLabel: "Upload Placeholder",
+    createLabel: "Upload Document",
     kpis: [
       ["Total Documents", "totalDocuments"], ["Expiring Soon", "expiringSoon"], ["Expired", "expired"], ["Missing Critical", "missingCriticalDocuments"],
       ["Vehicle Documents", "vehicleDocuments"], ["Driver Documents", "driverDocuments"], ["Compliance Docs", "complianceDocuments"], ["Pending Renewal", "pendingRenewal"],
@@ -184,7 +184,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option>All</option><option>Open</option><option>Active</option><option>Scheduled</option><option>In Progress</option><option>Pending</option><option>Overdue</option><option>Expired</option><option>Completed</option>
         </select>
-        <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations and report placeholders active</span>
+        <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
       </div>
       <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
       <DetailDrawer
@@ -215,7 +215,7 @@ function DetailDrawer({ config, detail, loading, onClose, onEdit, onAction }: { 
         <div className="mt-5 flex flex-wrap gap-3">
           <button className="btn-primary" onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>
           {config.actions.map((type) => <button key={type} className="btn-ghost" onClick={() => onAction(type, record)}>{labelize(type)}</button>)}
-          <button className="btn-ghost"><Download className="h-4 w-4" /> Report Placeholder</button>
+          <button className="btn-ghost" onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Record</button>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <InfoPanel title="Primary Evidence" record={record} keys={Object.keys(record).slice(0, 12)} />
@@ -253,10 +253,10 @@ function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; colu
 }
 
 function defaultForm(kind: Batch3Kind): AnyRecord {
-  if (kind === "maintenance") return { vehicleId: 1, serviceType: "PM-A Service", priority: "High", status: "Open", dueDate: new Date().toISOString().slice(0, 10), estimatedCost: 450 };
-  if (kind === "work-orders") return { workOrderNumber: `WO-NEW-${Date.now()}`, vehicleId: 1, issueType: "Preventive", title: "New repair order", priority: "High", status: "Open", vendorName: "NOVA Fleet Care", estimatedCost: 650 };
-  if (kind === "dvir") return { reportNumber: `DVIR-NEW-${Date.now()}`, driverId: 1, vehicleId: 1, countryCode: "US", inspectionType: "Pre-Trip", inspectionStatus: "Submitted", defectsFound: 0, safeToOperate: true, driverSignatureStatus: "Pending", mechanicReviewStatus: "Pending", repairCertificationStatus: "Pending" };
-  return { title: "New compliance document", documentNumber: `DOC-NEW-${Date.now()}`, entityType: "vehicle", entityId: 1, documentType: "Insurance", category: "Insurance", countryCode: "US", status: "Active", renewalStatus: "Current", issuedAt: new Date().toISOString().slice(0, 10), expiresAt: new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10) };
+  if (kind === "maintenance") return { serviceType: "PM-A Service", priority: "High", status: "Open", dueDate: new Date().toISOString().slice(0, 10), estimatedCost: "" };
+  if (kind === "work-orders") return { workOrderNumber: `WO-NEW-${Date.now()}`, issueType: "Preventive", title: "", priority: "High", status: "Open", vendorName: "", estimatedCost: "" };
+  if (kind === "dvir") return { reportNumber: `DVIR-NEW-${Date.now()}`, countryCode: "US", inspectionType: "Pre-Trip", inspectionStatus: "Submitted", defectsFound: 0, safeToOperate: true, driverSignatureStatus: "Pending", mechanicReviewStatus: "Pending", repairCertificationStatus: "Pending" };
+  return { title: "", documentNumber: `DOC-NEW-${Date.now()}`, entityType: "vehicle", documentType: "Insurance", category: "Insurance", countryCode: "US", status: "Active", renewalStatus: "Current", issuedAt: new Date().toISOString().slice(0, 10), expiresAt: new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10) };
 }
 
 async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
@@ -267,10 +267,10 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
     return maintenanceApi.createWorkOrder(id);
   }
   if (kind === "work-orders") {
-    if (type === "assign") return workOrdersApi.assign(id, { assignedToUserId: 1 });
+    if (type === "assign") return workOrdersApi.assign(id, {});
     if (type === "status") return workOrdersApi.status(id, { status: "In Progress" });
-    if (type === "labor") return workOrdersApi.addLabor(id, { technicianName: "OpsTrax Technician", laborHours: 1.5, laborRate: 95 });
-    if (type === "part") return workOrdersApi.addPart(id, { partName: "Placeholder repair part", quantity: 1, unitCost: 75 });
+    if (type === "labor") return workOrdersApi.addLabor(id, { technicianName: "Technician", laborHours: 1.0, laborRate: 95 });
+    if (type === "part") return workOrdersApi.addPart(id, { partName: "Repair part", quantity: 1, unitCost: 75 });
     if (type === "approveCost") return workOrdersApi.approveCost(id, { approvedCost: row.estimatedCost });
     return workOrdersApi.complete(id);
   }

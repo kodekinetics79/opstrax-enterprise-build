@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Download, Edit3, FileCheck2, Plus, RadioTower, Route, Send, X } from "lucide-react";
+import { Download, Edit3, FileCheck2, Plus, RadioTower, Send, Sparkles, X } from "lucide-react";
 import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import { useJobDetail, useJobs, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
@@ -63,7 +63,7 @@ export function JobsPage() {
         <input className="field xl:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, regions, proof, SLA..." />
         <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Unassigned</option><option>Assigned</option><option>En Route</option><option>At Stop</option><option>Completed</option><option>Delayed</option><option>SLA At Risk</option></select>
         <select className="field xl:max-w-[160px]" value={priority} onChange={(e) => setPriority(e.target.value)}><option>All</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option></select>
-        <span className="badge">Filters: customer, driver, vehicle, region, dates, proof status are API-ready placeholders</span>
+        <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
       </div>
       <DataTable rows={rows} columns={["jobNumber", "customerName", "jobType", "pickupAddress", "dropoffAddress", "timeWindow", "driverName", "vehicleCode", "status", "eta", "slaStatus", "priority", "proofStatus", "riskHeatScore", "recommendedAction"]} onSelect={setSelected} />
       <JobDrawer detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} onEdit={(record) => setEditing(record)} onEta={(id) => action.mutate({ type: "eta", id })} onProof={(id) => action.mutate({ type: "proof", id })} />
@@ -83,12 +83,12 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof }: { detai
         <p className="section-title text-teal-300">OpsTrax Job Detail</p>
         <h2 className="mt-3 text-2xl font-semibold text-white">{String(record.jobNumber || record.jobCode)}</h2>
         <div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status} /><RiskBadge risk={record.riskHeatScore} /><span className="badge">SLA {String(record.slaStatus)}</span><span className="badge">Proof {String(record.proofStatus)}</span></div>
-        <div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button><button className="btn-ghost" onClick={() => onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button><button className="btn-ghost" onClick={() => onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Proof Placeholder</button><button className="btn-ghost"><Download className="h-4 w-4" /> Job Report</button></div>
+        <div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button><button className="btn-ghost" onClick={() => onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button><button className="btn-ghost" onClick={() => onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Capture Proof</button><button className="btn-ghost"><Download className="h-4 w-4" /> Job Report</button></div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <Panel title="Assignment" record={record} keys={["driverName", "vehicleCode", "requiredVehicleType", "requiredDriverCertification", "routeCode"]} />
           <Panel title="Pickup / Drop-off" record={record} keys={["pickupAddress", "dropoffAddress", "scheduledStart", "scheduledEnd"]} />
           <Panel title="SLA & ETA" record={record} keys={["slaWindowStart", "slaWindowEnd", "eta", "slaStatus", "customerUpdateStatus"]} />
-          <Panel title="Costs / Margin Placeholder" record={(detail?.costs as AnyRecord) || {}} keys={["revenueEstimate", "costEstimate", "marginEstimate", "marginRisk"]} />
+          <Panel title="Costs & Margin" record={(detail?.costs as AnyRecord) || {}} keys={["revenueEstimate", "costEstimate", "marginEstimate", "marginRisk"]} />
         </div>
         <Grid title="Route / Stops" rows={(detail?.stops as AnyRecord[]) || []} columns={["stopSequence", "stopType", "address", "status", "proofStatus", "eta"]} />
         <Grid title="Proof of Delivery / Service" rows={(detail?.proof as AnyRecord[]) || []} columns={["proofType", "status", "receivedBy", "capturedAt", "notes"]} />
