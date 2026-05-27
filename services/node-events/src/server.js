@@ -56,6 +56,25 @@ const eventTypes = [
   "margin.risk_detected",
   "cost.leakage_detected",
   "cost.action_created",
+  // Batch 6 — Compliance / HOS / ELD / Localization
+  "compliance.violation_detected",
+  "compliance.document_expiring",
+  "compliance.audit_package_created",
+  "hos.warning",
+  "hos.log_certified",
+  "eld.malfunction",
+  "dvir.compliance_warning",
+  "localization.preference_changed",
+  "cross_border.risk_detected",
+  // Batch 7 — Reports / KPI / Audit / Executive
+  "report.run_completed",
+  "report.export_requested",
+  "scheduled_report.created",
+  "kpi.drift_detected",
+  "sla.breach_detected",
+  "audit.sensitive_action",
+  "executive.snapshot_created",
+  "ai.report_recommended",
 ];
 
 const locations = ["Manassas, VA", "Woodbridge, VA", "Alexandria, VA", "Dulles, VA", "Fairfax, VA", "Arlington, VA", "Washington DC"];

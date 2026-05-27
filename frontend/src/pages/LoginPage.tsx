@@ -99,7 +99,7 @@ export function LoginPage() {
   const activeEmail = login.variables?.email;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+    <div className="relative min-h-screen overflow-hidden bg-[#f8fafc] text-slate-900">
 
       {/* ── Background ── */}
       <div className="login-bg absolute inset-0" />
@@ -132,9 +132,9 @@ export function LoginPage() {
             </div>
             <div>
               <p className="text-xl font-extrabold tracking-tight">OpsTrax</p>
-              <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-teal-300/70">Enterprise TMS</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-teal-600">Enterprise TMS</p>
             </div>
-            <div className="ml-4 flex items-center gap-1.5 rounded-full border border-emerald-400/22 bg-emerald-400/7 px-3 py-1.5 text-[11px] font-bold text-emerald-300">
+            <div className="ml-4 flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
               <span className="live-dot h-[6px] w-[6px]" />
               Live Demo
             </div>
@@ -146,7 +146,7 @@ export function LoginPage() {
               Connected transport.{" "}
               <span className="gradient-text">Intelligent control.</span>
             </h1>
-            <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-400">
+            <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-600">
               A premium command center for fleets of every scale — dispatch, safety,
               compliance, cost intelligence and AI-assisted operations in one place.
             </p>
@@ -156,7 +156,7 @@ export function LoginPage() {
           <div className="flex items-center gap-8">
             {STATS.map(({ value, label }) => (
               <div key={label}>
-                <p className="text-2xl font-extrabold text-white">{value}</p>
+                <p className="text-2xl font-extrabold text-slate-900">{value}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{label}</p>
               </div>
             ))}
@@ -167,10 +167,10 @@ export function LoginPage() {
             {FEATURES.map(({ icon, label, color }) => (
               <div
                 key={label}
-                className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.03] px-3.5 py-3 transition hover:border-white/[0.12] hover:bg-white/[0.05]"
+                className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white/80 px-3.5 py-3 transition hover:border-slate-300 hover:bg-white"
               >
                 <span className={`flex-shrink-0 ${color}`}>{icon}</span>
-                <span className="text-sm font-medium text-slate-300">{label}</span>
+                <span className="text-sm font-medium text-slate-600">{label}</span>
               </div>
             ))}
           </div>
@@ -227,13 +227,13 @@ export function LoginPage() {
           </div>
 
           {/* Security footer */}
-          <div className="mx-5 mb-5 flex items-start gap-3 rounded-2xl border border-emerald-400/15 bg-emerald-400/5 p-4">
+          <div className="mx-5 mb-5 flex items-start gap-3 rounded-2xl border border-emerald-300/40 bg-emerald-50 p-4">
             <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" />
             <div>
               <p className="text-xs font-semibold text-emerald-300">Enterprise security active</p>
               <p className="mt-0.5 text-xs text-slate-500">
                 Demo password:{" "}
-                <span className="rounded border border-white/10 bg-white/[0.06] px-1.5 py-px font-mono text-slate-200">
+                <span className="rounded border border-slate-200 bg-slate-100 px-1.5 py-px font-mono text-slate-700">
                   Admin@12345
                 </span>
                 {" "}· Seeded operational data · RBAC metadata
@@ -242,11 +242,19 @@ export function LoginPage() {
           </div>
 
           {login.isError && (
-            <div className="mx-5 mb-5 flex items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/8 p-3 text-sm text-red-300">
+            <div className="mx-5 mb-5 flex items-center gap-2 rounded-xl border border-red-300/50 bg-red-50 p-3 text-sm text-red-700">
               <Lock className="h-4 w-4 flex-shrink-0" />
               Login failed — check backend service is running.
             </div>
           )}
+
+          {/* Kode Kinetics attribution */}
+          <div className="border-t border-white/[0.06] px-6 py-3 text-center">
+            <p className="text-[11px] text-slate-600">
+              An enterprise transport intelligence platform by{" "}
+              <span className="font-semibold text-slate-500">Kode Kinetics</span>
+            </p>
+          </div>
         </section>
       </div>
     </div>

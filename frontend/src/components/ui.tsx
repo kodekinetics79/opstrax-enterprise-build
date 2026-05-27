@@ -28,7 +28,7 @@ export function PageHeader({
   title: string; eyebrow?: string; description: string; actions?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-white/[0.07] pb-6 lg:flex-row lg:items-end lg:justify-between">
+    <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
       <div className="max-w-3xl">
         {eyebrow && (
           <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/25 bg-teal-400/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-teal-300">
@@ -36,7 +36,7 @@ export function PageHeader({
             {eyebrow}
           </span>
         )}
-        <h1 className="mt-3 text-3xl font-bold tracking-tight text-white md:text-4xl">{title}</h1>
+        <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">{title}</h1>
         <p className="mt-2.5 text-sm leading-6 text-slate-400">{description}</p>
       </div>
       {actions && (
@@ -90,7 +90,7 @@ export function KpiCard({
           </div>
         )}
       </div>
-      <div className="mt-3 text-2xl font-bold tracking-tight text-white">{value}</div>
+      <div className="mt-3 text-2xl font-bold tracking-tight text-slate-900">{value}</div>
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-xs">
           {delta ? (
@@ -147,7 +147,7 @@ export function StatusBadge({ status }: { status?: unknown }) {
   } else if (/ai|intelligence|predict/i.test(text)) {
     cls = "border-violet-400/28 bg-violet-500/10 text-violet-300";
   } else {
-    cls = "border-slate-500/25 bg-slate-500/8 text-slate-300";
+    cls = "border-slate-300 bg-slate-50 text-slate-600";
   }
 
   return (
@@ -202,7 +202,7 @@ export function ScoreRing({
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-xs font-bold text-white">{score}</span>
+        <span className="text-xs font-bold text-slate-800">{score}</span>
         {label && <span className="text-[9px] text-slate-500 mt-0.5">{label}</span>}
       </div>
     </div>
@@ -223,7 +223,7 @@ export function ProgressBar({
       {label && (
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-xs text-slate-400">{label}</span>
-          <span className="text-xs font-bold text-white">{Math.round(pct)}%</span>
+          <span className="text-xs font-bold text-slate-800">{Math.round(pct)}%</span>
         </div>
       )}
       <div className="progress-track">
@@ -262,13 +262,13 @@ export function DataTable({
   return (
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
-      <div className="flex flex-col gap-3 border-b border-white/[0.07] px-5 py-3.5 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3.5 md:flex-row md:items-center md:justify-between">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <input className="field h-9 py-0 pl-9 pr-3 text-sm" placeholder="Search records..." />
         </div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-bold text-slate-400">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
             {rows.length} records
           </span>
           <button className="btn-ghost h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
@@ -277,7 +277,7 @@ export function DataTable({
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="border-b border-white/[0.06] bg-white/[0.025]">
+          <thead className="border-b border-slate-100 bg-slate-50">
             <tr>
               {columns.map((col) => {
                 const isActive = sortKey === col;
@@ -286,7 +286,7 @@ export function DataTable({
                     key={col}
                     onClick={() => handleSort(col)}
                     className={`sortable px-5 py-3.5 text-[11px] font-bold uppercase tracking-[0.15em] transition ${
-                      isActive ? "sort-active text-slate-200" : "text-slate-500"
+                      isActive ? "sort-active text-slate-700" : "text-slate-500"
                     }`}
                   >
                     <span className="flex items-center gap-1.5">
@@ -304,7 +304,7 @@ export function DataTable({
               })}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/[0.05]">
+          <tbody className="divide-y divide-slate-100">
             {sorted.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-slate-500">
@@ -316,10 +316,10 @@ export function DataTable({
                 <tr
                   key={String(row.id ?? index)}
                   onClick={() => onSelect?.(row)}
-                  className="group cursor-pointer transition-colors hover:bg-white/[0.035]"
+                  className="group cursor-pointer transition-colors hover:bg-slate-50"
                 >
                   {columns.map((col) => (
-                    <td key={col} className="px-5 py-3.5 text-slate-300">
+                    <td key={col} className="px-5 py-3.5 text-slate-600">
                       {renderCell(col, row[col])}
                     </td>
                   ))}
@@ -331,7 +331,7 @@ export function DataTable({
       </div>
 
       {sorted.length > 0 && (
-        <div className="flex items-center justify-between border-t border-white/[0.05] px-5 py-2.5">
+        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-2.5">
           <span className="text-xs text-slate-600">Showing {sorted.length} of {rows.length} records</span>
           <span className="text-xs text-slate-600">Click a row to view details · Click column headers to sort</span>
         </div>
@@ -361,17 +361,17 @@ export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; on
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm anim-fade-in">
-      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-white/[0.09] bg-slate-950/98 p-6 shadow-2xl">
+      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl">
         <button className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
-        <p className="section-title text-teal-400">OpsTrax Detail</p>
-        <h2 className="mt-3 text-2xl font-bold text-white">
+        <p className="section-title text-teal-700">OpsTrax Detail</p>
+        <h2 className="mt-3 text-2xl font-bold text-slate-900">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}
         </h2>
         <div className="mt-6 space-y-2">
           {Object.entries(record).slice(0, 24).map(([key, value]) => (
-            <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-2.5">
+            <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5">
               <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{labelize(key)}</p>
-              <p className="text-sm text-slate-200 text-right break-all">{String(value ?? "--")}</p>
+              <p className="text-sm text-slate-700 text-right break-all">{String(value ?? "--")}</p>
             </div>
           ))}
         </div>
@@ -397,7 +397,7 @@ export function LoadingState() {
           <div className="skeleton h-9 w-24 rounded-xl ml-auto" />
         </div>
         {[...Array(6)].map((_, i) => (
-          <div key={i} className="flex items-center gap-4 rounded-xl border border-white/[0.04] bg-white/[0.02] px-4 py-3">
+          <div key={i} className="flex items-center gap-4 rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
             <div className="skeleton h-4 w-24 flex-shrink-0" />
             <div className="skeleton h-4 flex-1" />
             <div className="skeleton h-4 w-16" />
@@ -427,10 +427,10 @@ export function ErrorState({ message }: { message?: string }) {
 export function EmptyState({ title = "No records found", subtitle }: { title?: string; subtitle?: string }) {
   return (
     <div className="panel flex flex-col items-center justify-center p-14 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-500">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400">
         <Search className="h-6 w-6" />
       </div>
-      <p className="font-semibold text-slate-300">{title}</p>
+      <p className="font-semibold text-slate-600">{title}</p>
       {subtitle && <p className="mt-1.5 max-w-xs text-sm text-slate-500">{subtitle}</p>}
     </div>
   );
@@ -442,29 +442,29 @@ export function EmptyState({ title = "No records found", subtitle }: { title?: s
 export function AiInsightCard({ insight }: { insight: AnyRecord }) {
   const score = Number(insight.score || insight.confidence || 0);
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-violet-400/18 bg-gradient-to-br from-violet-500/8 to-slate-950/80 p-4">
+    <div className="relative overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
       {/* Glow blob */}
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-500/12 blur-2xl" />
       <div className="relative">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/15 border border-violet-400/20">
-              <Sparkles className="h-3.5 w-3.5 text-violet-300" />
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
+              <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-400">OpsTrax AI</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600">OpsTrax AI</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
           )}
         </div>
-        <h3 className="mt-2.5 text-sm font-bold text-white leading-snug">
+        <h3 className="mt-2.5 text-sm font-bold text-slate-800 leading-snug">
           {String(insight.title || insight.recommendation || "Recommended action")}
         </h3>
-        <p className="mt-1.5 text-xs leading-5 text-slate-400">
+        <p className="mt-1.5 text-xs leading-5 text-slate-600">
           {String(insight.body || insight.recommendation || insight.description || "Review the available data and assign an action owner.")}
         </p>
         {!!insight.moduleKey && (
-          <span className="mt-2.5 inline-block rounded-full border border-violet-400/15 bg-violet-400/6 px-2 py-0.5 text-[10px] text-violet-400/70">
+          <span className="mt-2.5 inline-block rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-600">
             {String(insight.moduleKey)}
           </span>
         )}
@@ -488,7 +488,7 @@ export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
     <div className="panel p-5">
       <div className="flex items-center justify-between mb-4">
         <h2 className="section-title">Priority Action Queue</h2>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold text-slate-500">
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
           {actions.length}
         </span>
       </div>
@@ -497,10 +497,10 @@ export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
           const priority = String(action.priority || action.riskLevel || "Medium");
           const dot = priorityDot[priority] || "bg-slate-500";
           return (
-            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 transition hover:border-white/[0.1] hover:bg-white/[0.05]">
+            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
               <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dot}`} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-white">{String(action.title)}</p>
+                <p className="truncate text-sm font-semibold text-slate-800">{String(action.title)}</p>
                 <p className="text-xs text-slate-500">{String(action.moduleKey || action.module_key || "operations")}</p>
               </div>
               <RiskBadge risk={priority} />
@@ -538,11 +538,11 @@ export function Timeline({ items }: { items: AnyRecord[] }) {
           return (
             <div key={String(item.id || i)} className="flex gap-3">
               <div className="flex flex-col items-center">
-                <div className={`mt-0.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${dot} ring-2 ring-slate-950`} />
-                {!isLast && <div className="mt-1 w-px flex-1 bg-white/[0.07] min-h-[20px]" />}
+                <div className={`mt-0.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${dot} ring-2 ring-white`} />
+                {!isLast && <div className="mt-1 w-px flex-1 bg-slate-200 min-h-[20px]" />}
               </div>
               <div className="pb-4 min-w-0">
-                <p className="text-sm font-semibold text-white">{String(item.title || item.eventType || "Event")}</p>
+                <p className="text-sm font-semibold text-slate-800">{String(item.title || item.eventType || "Event")}</p>
                 <p className="text-xs text-slate-500">{String(item.eventTime || item.createdAt || "Live")}</p>
               </div>
             </div>
@@ -577,7 +577,7 @@ function renderCell(column: string, value: unknown) {
     return <span className="text-slate-600">—</span>;
   const str = String(value);
   if (/^\$[\d,]+/.test(str))
-    return <span className="font-semibold text-emerald-300">{str}</span>;
+    return <span className="font-semibold text-emerald-700">{str}</span>;
   if (/^\d{4}-\d{2}-\d{2}/.test(str))
     return <span className="text-slate-400 font-mono text-xs">{str.slice(0, 10)}</span>;
   return <span>{str}</span>;

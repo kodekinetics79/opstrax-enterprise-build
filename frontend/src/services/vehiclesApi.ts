@@ -4,6 +4,7 @@ import type { AnyRecord } from "@/types";
 export const vehiclesApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/vehicles")),
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/summary")),
+  planningInsights: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/planning-insights")),
   detail: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/vehicles/${id}`)),
   timeline: (id: string | number) => unwrap<AnyRecord[]>(apiClient.get(`/api/vehicles/${id}/timeline`)),
   recommendations: (id: string | number) => unwrap<AnyRecord[]>(apiClient.get(`/api/vehicles/${id}/recommendations`)),
