@@ -79,6 +79,7 @@ builder.Services.AddScoped<IRecruitmentService, RecruitmentService>();
 builder.Services.AddScoped<IPerformanceService, PerformanceService>();
 builder.Services.AddScoped<ILeaveService, LeaveService>();
 builder.Services.AddScoped<IDataScopeService, DataScopeService>();
+builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

@@ -354,8 +354,15 @@ public class AttendanceService : IAttendanceService
     public async Task<IReadOnlyCollection<AttendanceAIInsight>> GenerateInsightsAsync(Guid tenantId, CancellationToken ct)
     {
         var since = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(-30));
-        var repeatedMissed = await _db.AttendanceDailyRecords.Where(x => x.TenantId == tenantId && x.WorkDate >= since && x.MissingPunch)
-            .GroupBy(x => new { x.EmployeeId, x.EmployeeName }).Where(g => g.Count() >= 3).ToListAsync(ct);
+        // Materialise first — EF Core cannot translate GroupBy with element access into SQL
+        var missingRecords = await _db.AttendanceDailyRecords
+            .Where(x => x.TenantId == tenantId && x.WorkDate >= since && x.MissingPunch)
+            .Select(x => new { x.EmployeeId, x.EmployeeName })
+            .ToListAsync(ct);
+        var repeatedMissed = missingRecords
+            .GroupBy(x => new { x.EmployeeId, x.EmployeeName })
+            .Where(g => g.Count() >= 3)
+            .ToList();
         foreach (var group in repeatedMissed)
         {
             var exists = await _db.AttendanceAIInsights.AnyAsync(x => x.TenantId == tenantId && x.EmployeeId == group.Key.EmployeeId && x.InsightType == "RepeatedMissedPunch" && !x.IsAcknowledged, ct);

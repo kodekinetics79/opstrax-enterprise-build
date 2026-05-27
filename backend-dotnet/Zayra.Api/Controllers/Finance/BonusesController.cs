@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -12,7 +13,13 @@ namespace Zayra.Api.Controllers.Finance;
 public class BonusesController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public BonusesController(ZayraDbContext db) => _db = db;
+    private readonly IDataScopeService _scopeService;
+
+    public BonusesController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     private Guid GetTenantId() =>
         Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
@@ -68,7 +75,20 @@ public class BonusesController : ControllerBase
         var tid = GetTenantId();
         var batch = await _db.BonusBatches.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
         if (batch == null) return NotFound();
-        var bonuses = await _db.EmployeeBonuses.Where(x => x.BonusBatchId == id && !x.IsDeleted).ToListAsync(ct);
+
+        // GCC salary confidentiality: bonus details restricted to HR/Finance or caller's own record.
+        var scope = await _scopeService.ResolveAsync(User, tid, ct);
+        IQueryable<EmployeeBonus> bonusQuery = _db.EmployeeBonuses.Where(x => x.BonusBatchId == id && !x.IsDeleted);
+        if (!scope.IsUnrestricted)
+        {
+            var callerUserId = GetUserId();
+            if (callerUserId.HasValue)
+                bonusQuery = bonusQuery.Where(x => x.EmployeeId == callerUserId.Value);
+            else
+                bonusQuery = bonusQuery.Where(_ => false);
+        }
+
+        var bonuses = await bonusQuery.ToListAsync(ct);
         var approvals = await _db.BonusApprovals.Where(x => x.BonusBatchId == id).OrderBy(x => x.StepOrder).ToListAsync(ct);
         return Ok(new { batch, bonuses, approvals });
     }

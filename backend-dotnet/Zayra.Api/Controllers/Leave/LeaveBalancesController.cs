@@ -15,11 +15,13 @@ public class LeaveBalancesController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly ILeaveService _leaveService;
+    private readonly IDataScopeService _scopeService;
 
-    public LeaveBalancesController(ZayraDbContext db, ILeaveService leaveService)
+    public LeaveBalancesController(ZayraDbContext db, ILeaveService leaveService, IDataScopeService scopeService)
     {
         _db = db;
         _leaveService = leaveService;
+        _scopeService = scopeService;
     }
 
     [HttpGet]
@@ -34,10 +36,14 @@ public class LeaveBalancesController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         year ??= DateTime.UtcNow.Year;
         var query = _db.EmployeeLeaveBalances
             .Where(b => b.TenantId == tenantId && b.Year == year);
 
+        if (!scope.IsUnrestricted)
+            query = query.Where(b => scope.AllowedEmployeeIds!.Contains(b.EmployeeId));
         if (employeeId.HasValue) query = query.Where(b => b.EmployeeId == employeeId.Value);
         if (leaveTypeId.HasValue) query = query.Where(b => b.LeaveTypeId == leaveTypeId.Value);
 
@@ -57,6 +63,10 @@ public class LeaveBalancesController : ControllerBase
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
+
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(employeeId))
+            return Forbid();
 
         year ??= DateTime.UtcNow.Year;
         var balances = await _db.EmployeeLeaveBalances
@@ -111,6 +121,10 @@ public class LeaveBalancesController : ControllerBase
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
+
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(employeeId))
+            return Forbid();
 
         var query = _db.LeaveBalanceTransactions
             .Where(t => t.TenantId == tenantId && t.EmployeeId == employeeId);

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -13,7 +14,13 @@ namespace Zayra.Api.Controllers;
 public class ShiftsController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public ShiftsController(ZayraDbContext db) => _db = db;
+    private readonly IDataScopeService _scopeService;
+
+    public ShiftsController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     // ── Shift Definitions ─────────────────────────────────────────────
 
@@ -86,18 +93,27 @@ public class ShiftsController : ControllerBase
     public async Task<IActionResult> GetRoster([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken ct)
     {
         var tenantId = GetTenantId();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
         var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
         var start = from ?? today.AddDays(-(int)today.DayOfWeek + 1); // Monday
         var end = to ?? start.AddDays(6); // Sunday
 
-        var employees = await _db.Employees
-            .Where(e => e.TenantId == tenantId && e.Status == "Active")
+        var employeeQuery = _db.Employees
+            .Where(e => e.TenantId == tenantId && e.Status == "Active");
+        if (!scope.IsUnrestricted)
+            employeeQuery = employeeQuery.Where(e => scope.AllowedEmployeeIds!.Contains(e.Id));
+
+        var employees = await employeeQuery
             .OrderBy(e => e.Department).ThenBy(e => e.FullName)
             .Select(e => new RosterEmployee(e.Id, e.FullName, e.Department, e.EmployeeCode))
             .ToListAsync(ct);
 
-        var assignments = await _db.ShiftAssignments
-            .Where(a => a.TenantId == tenantId && a.AssignedDate >= start && a.AssignedDate <= end)
+        var assignmentQuery = _db.ShiftAssignments
+            .Where(a => a.TenantId == tenantId && a.AssignedDate >= start && a.AssignedDate <= end);
+        if (!scope.IsUnrestricted)
+            assignmentQuery = assignmentQuery.Where(a => scope.AllowedEmployeeIds!.Contains(a.EmployeeId));
+
+        var assignments = await assignmentQuery
             .OrderBy(a => a.AssignedDate)
             .Select(a => new RosterAssignment(a.Id, a.EmployeeId, a.AssignedDate, a.ShiftDefinitionId, a.ShiftName, a.ShiftCode, a.ShiftColor))
             .ToListAsync(ct);

@@ -65,7 +65,7 @@ export const navigationGroups: NavGroup[] = [
   {
     label: 'Service Desk',
     items: [
-      { label: 'HR Request Center', icon: Headphones, path: '/hr-requests', requiredPermissions: ['approvals.read', 'approvals.write', 'approvals.decide'] },
+      { label: 'HR Request Center', icon: Headphones, path: '/hr-requests', requiredPermissions: ['approvals.read', 'approvals.write', 'approvals.decide', 'ess.read'] },
     ],
   },
   {

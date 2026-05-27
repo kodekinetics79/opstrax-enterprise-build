@@ -13,7 +13,13 @@ namespace Zayra.Api.Controllers.Performance;
 public class FeedbackController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public FeedbackController(ZayraDbContext db) => _db = db;
+    private readonly IDataScopeService _scopeService;
+
+    public FeedbackController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     // ── Continuous feedback ────────────────────────────────────────────────────
 
@@ -26,7 +32,10 @@ public class FeedbackController : ControllerBase
     {
         var tenantId = this.GetTenantId()!.Value;
         var userId   = this.GetUserId();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
         var query = _db.ContinuousFeedback.Where(f => f.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(f => scope.AllowedEmployeeIds!.Contains(f.EmployeeId));
         if (employeeId.HasValue) query = query.Where(f => f.EmployeeId == employeeId.Value);
         if (!string.IsNullOrWhiteSpace(type)) query = query.Where(f => f.FeedbackType == type);
         // Only show private feedback to the author

@@ -1136,8 +1136,7 @@ function EncashmentTab() {
     if (!form.employeeId || !form.leaveTypeId || !form.daysToEncash || !form.amountPerDay) return;
     setSaving(true);
     try {
-      const lt = leaveTypes.find(t => t.id === form.leaveTypeId);
-      await encashmentApi.create({ employeeId: Number(form.employeeId), employeeName: form.employeeName, leaveTypeId: form.leaveTypeId, leaveTypeName: lt?.nameEn ?? '', year: Number(form.year), daysToEncash: Number(form.daysToEncash), amountPerDay: Number(form.amountPerDay), reason: form.reason });
+      await encashmentApi.create({ employeeId: Number(form.employeeId), leaveTypeId: form.leaveTypeId, year: Number(form.year), daysToEncash: Number(form.daysToEncash), amountPerDay: Number(form.amountPerDay), reason: form.reason });
       setShowCreate(false); load();
     } catch { alert('Failed.'); }
     setSaving(false);
@@ -1227,7 +1226,7 @@ function CompOffTab() {
   const create = async () => {
     if (!form.employeeId || !form.workedDate || !form.daysEarned) return;
     setSaving(true);
-    try { await compOffApi.create({ employeeId: Number(form.employeeId), employeeName: form.employeeName, workedDate: form.workedDate, workType: form.workType, hoursWorked: Number(form.hoursWorked), daysEarned: Number(form.daysEarned), expiryDate: form.expiryDate || undefined }); setShowCreate(false); load(); }
+    try { await compOffApi.create({ employeeId: Number(form.employeeId), workedDate: form.workedDate, workType: form.workType, hoursWorked: Number(form.hoursWorked), daysEarned: Number(form.daysEarned), expiryDate: form.expiryDate || undefined }); setShowCreate(false); load(); }
     catch { alert('Failed.'); }
     setSaving(false);
   };
@@ -1303,7 +1302,7 @@ function AbsencesTab() {
 
   const regularize = async () => {
     if (!regModal || !regReason) return;
-    try { await absenceApi.submitRegularization({ employeeId: regModal.employeeId, employeeName: regModal.employeeName, absenceRecordId: regModal.id, reason: regReason }); setRegModal(null); load(); }
+    try { await absenceApi.submitRegularization({ employeeId: regModal.employeeId, absenceRecordId: regModal.id, reason: regReason }); setRegModal(null); load(); }
     catch { alert('Failed.'); }
   };
 

@@ -12,8 +12,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class LeaveCalendarController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public LeaveCalendarController(ZayraDbContext db) => _db = db;
+    public LeaveCalendarController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -26,6 +31,8 @@ public class LeaveCalendarController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var from = fromDate ?? DateOnly.FromDateTime(new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1));
         var to = toDate ?? from.AddMonths(1).AddDays(-1);
 
@@ -35,6 +42,8 @@ public class LeaveCalendarController : ControllerBase
                 && r.StartDate <= to
                 && r.EndDate >= from);
 
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
         if (!string.IsNullOrWhiteSpace(departmentName)) query = query.Where(r => r.DepartmentName == departmentName);
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
 
@@ -73,14 +82,21 @@ public class LeaveCalendarController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var from = fromDate ?? DateOnly.FromDateTime(new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1));
         var to = toDate ?? from.AddMonths(1).AddDays(-1);
 
-        var requests = await _db.LeaveRequests
+        var query = _db.LeaveRequests
             .Where(r => r.TenantId == tenantId
                 && (r.Status == "Approved" || r.Status == "Submitted")
                 && r.StartDate <= to
-                && r.EndDate >= from)
+                && r.EndDate >= from);
+
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
+
+        var requests = await query
             .OrderBy(r => r.DepartmentName)
             .ThenBy(r => r.StartDate)
             .ToListAsync(ct);
@@ -111,13 +127,20 @@ public class LeaveCalendarController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        var requests = await _db.LeaveRequests
+        var query = _db.LeaveRequests
             .Where(r => r.TenantId == tenantId
                 && r.Status == "Approved"
                 && r.StartDate <= today
-                && r.EndDate >= today)
+                && r.EndDate >= today);
+
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
+
+        var requests = await query
             .OrderBy(r => r.DepartmentName)
             .ThenBy(r => r.EmployeeName)
             .ToListAsync(ct);

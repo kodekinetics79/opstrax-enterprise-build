@@ -37,8 +37,9 @@ public class EmployeesController : ControllerBase
     private readonly IDocumentStorage _documents;
     private readonly INotificationService _notifications;
     private readonly IHijriDateService _hijri;
+    private readonly IDataScopeService _scopeService;
 
-    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri)
+    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri, IDataScopeService scopeService)
     {
         _db = db;
         _passwordHasher = passwordHasher;
@@ -46,19 +47,40 @@ public class EmployeesController : ControllerBase
         _documents = documents;
         _notifications = notifications;
         _hijri = hijri;
+        _scopeService = scopeService;
     }
 
     [HttpGet]
     [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Officer,Manager,Auditor")]
     public async Task<ActionResult<PagedResult<EmployeeListItemDto>>> Search([FromServices] IEmployeeManagementService employeeManagement, [FromQuery] string? search, [FromQuery] string? status, [FromQuery] string? department, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
     {
-        return Ok(await employeeManagement.SearchAsync(RequireTenant(), search, status, department, page, pageSize, cancellationToken));
+        var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        if (scope.IsUnrestricted)
+            return Ok(await employeeManagement.SearchAsync(tenantId, search, status, department, page, pageSize, cancellationToken));
+
+        // Restricted scope: query directly and apply AllowedEmployeeIds filter
+        var query = _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted
+            && scope.AllowedEmployeeIds!.Contains(e.Id));
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(e => e.FullName.Contains(search) || e.EmployeeCode.Contains(search) || (e.WorkEmail != null && e.WorkEmail.Contains(search)));
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(e => e.Status == status);
+        if (!string.IsNullOrWhiteSpace(department)) query = query.Where(e => e.Department == department);
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query.OrderBy(e => e.FullName).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(e => new EmployeeListItemDto(e.Id, e.EmployeeCode, e.FullName, e.ArabicName ?? string.Empty, e.Department ?? string.Empty, e.Designation ?? string.Empty, e.Branch ?? string.Empty, e.ManagerEmployeeId, e.Status, e.ProfileCompletenessScore, e.VisaExpiryDate, e.PassportExpiryDate, e.IqamaNumber ?? string.Empty))
+            .ToListAsync(cancellationToken);
+        return Ok(new PagedResult<EmployeeListItemDto>(items, total, page, pageSize));
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<EmployeeDetailDto>> Get(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
-        var employee = await employeeManagement.GetAsync(RequireTenant(), id, CanViewSensitive(), Context(), cancellationToken);
+        var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(id))
+            return Forbid();
+        var employee = await employeeManagement.GetAsync(tenantId, id, CanViewSensitive(), Context(), cancellationToken);
         return employee is null ? NotFound() : Ok(employee);
     }
 

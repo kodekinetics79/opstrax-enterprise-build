@@ -10,3 +10,9 @@ yarn-error.log*
 .vscode/
 .idea/
 coverage/
+
+# .NET build artifacts
+backend-dotnet/**/bin/
+backend-dotnet/**/obj/
+*.user
+*.suo

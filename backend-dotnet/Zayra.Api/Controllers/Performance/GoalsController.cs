@@ -13,7 +13,13 @@ namespace Zayra.Api.Controllers.Performance;
 public class GoalsController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public GoalsController(ZayraDbContext db) => _db = db;
+    private readonly IDataScopeService _scopeService;
+
+    public GoalsController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -26,7 +32,10 @@ public class GoalsController : ControllerBase
         CancellationToken ct = default)
     {
         var tenantId = this.GetTenantId()!.Value;
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
         var query = _db.EmployeeGoals.Where(g => g.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(g => scope.AllowedEmployeeIds!.Contains(g.EmployeeId));
         if (employeeId.HasValue) query = query.Where(g => g.EmployeeId == employeeId.Value);
         if (cycleId.HasValue)    query = query.Where(g => g.CycleId == cycleId.Value);
         if (!string.IsNullOrWhiteSpace(status))   query = query.Where(g => g.Status == status);

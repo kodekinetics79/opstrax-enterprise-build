@@ -18,8 +18,14 @@ public class DataScopeService : IDataScopeService
             .Select(c => c.Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // 1. Organisation-wide access
-        if (permissions.Contains("employees.read"))
+        // 1. Organisation-wide access:
+        //    - HR/Admin roles: have employees.write (can create/edit any employee)
+        //    - Read-only org roles (Payroll, Compliance, Auditor): have employees.read but NOT manager.read
+        //    - Manager/Supervisor: have employees.read AND manager.read → fall through to team scope
+        bool hasEmpWrite = permissions.Contains("employees.write");
+        bool hasEmpRead = permissions.Contains("employees.read");
+        bool hasMgrRead = permissions.Contains("manager.read");
+        if (hasEmpWrite || (hasEmpRead && !hasMgrRead))
             return new DataScope { Level = DataScopeLevel.Organization };
 
         // 2. Resolve caller's employee ID
