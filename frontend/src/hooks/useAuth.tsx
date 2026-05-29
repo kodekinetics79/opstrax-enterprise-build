@@ -1,6 +1,27 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { UserSession } from "@/types";
 
+const STORAGE_KEY = "opstrax.session.v2";
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+type StoredSession = { session: UserSession; expiresAt: number };
+
+function loadSession(): UserSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const { session, expiresAt } = JSON.parse(raw) as StoredSession;
+    if (Date.now() > expiresAt) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return session;
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
+}
+
 type AuthContextValue = {
   session: UserSession | null;
   setSession: (session: UserSession | null) => void;
@@ -10,15 +31,16 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSessionState] = useState<UserSession | null>(() => {
-    const stored = localStorage.getItem("opstrax.session");
-    return stored ? JSON.parse(stored) : null;
-  });
+  const [session, setSessionState] = useState<UserSession | null>(loadSession);
 
   const setSession = (next: UserSession | null) => {
     setSessionState(next);
-    if (next) localStorage.setItem("opstrax.session", JSON.stringify(next));
-    else localStorage.removeItem("opstrax.session");
+    if (next) {
+      const stored: StoredSession = { session: next, expiresAt: Date.now() + SESSION_TTL_MS };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   };
 
   const value = useMemo(() => ({
