@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Activity, Bot, ChevronRight, Globe,
+  Activity, Bot, ChevronRight, Eye, EyeOff, Globe,
   Lock, Shield, ShieldCheck, Sparkles,
   Truck, Users, Wrench, Zap,
 } from "lucide-react";
@@ -12,7 +13,8 @@ import { useAuth } from "@/hooks/useAuth";
 const ROLES = [
   {
     role: "Company Admin",
-    email: "admin@opstrax.com",
+    username: "admin",
+    password: "Admin@12345",
     description: "Full fleet visibility and executive command",
     icon: <Shield className="h-5 w-5" />,
     gradient: "from-teal-400/20 to-blue-500/10",
@@ -23,7 +25,8 @@ const ROLES = [
   },
   {
     role: "Dispatcher",
-    email: "dispatcher@opstrax.com",
+    username: "dispatcher",
+    password: "Admin@12345",
     description: "Dispatch board, job assignment and driver coordination",
     icon: <Activity className="h-5 w-5" />,
     gradient: "from-blue-500/18 to-sky-400/8",
@@ -34,7 +37,8 @@ const ROLES = [
   },
   {
     role: "Driver",
-    email: "driver@opstrax.com",
+    username: "driver",
+    password: "Admin@12345",
     description: "Route info, jobs, HOS, DVIR and coaching",
     icon: <Truck className="h-5 w-5" />,
     gradient: "from-emerald-500/16 to-green-400/6",
@@ -45,7 +49,8 @@ const ROLES = [
   },
   {
     role: "Mechanic",
-    email: "mechanic@opstrax.com",
+    username: "mechanic",
+    password: "Admin@12345",
     description: "Maintenance queue, work orders and DVIR reviews",
     icon: <Wrench className="h-5 w-5" />,
     gradient: "from-amber-500/16 to-yellow-400/6",
@@ -56,7 +61,8 @@ const ROLES = [
   },
   {
     role: "Customer",
-    email: "customer@opstrax.com",
+    username: "customer",
+    password: "Admin@12345",
     description: "ETA portal, job status and delivery proof",
     icon: <Users className="h-5 w-5" />,
     gradient: "from-violet-500/16 to-purple-400/6",
@@ -87,16 +93,29 @@ const STATS = [
 export function LoginPage() {
   const { setSession } = useAuth();
   const navigate = useNavigate();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const login = useMutation({
-    mutationFn: ({ email }: { email: string }) => authApi.login(email, "Admin@12345"),
+    mutationFn: ({ user, pass }: { user: string; pass: string }) =>
+      authApi.login(user, pass),
     onSuccess: (session) => {
       setSession(session);
       navigate("/command-center", { replace: true });
     },
   });
 
-  const activeEmail = login.variables?.email;
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim() || !password) return;
+    login.mutate({ user: username.trim(), pass: password });
+  };
+
+  const fillCredentials = (roleUsername: string, rolePassword: string) => {
+    setUsername(roleUsername);
+    setPassword(rolePassword);
+  };
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f8fafc] text-slate-900">
@@ -106,18 +125,9 @@ export function LoginPage() {
       <div className="login-grid absolute inset-0" />
 
       {/* Floating orbs */}
-      <div
-        className="pointer-events-none absolute left-[8%] top-[18%] h-64 w-64 rounded-full anim-float"
-        style={{ background: "radial-gradient(circle, rgba(45,212,191,.09) 0%, transparent 70%)" }}
-      />
-      <div
-        className="pointer-events-none absolute right-[10%] top-[35%] h-80 w-80 rounded-full anim-float"
-        style={{ animationDelay: "2s", background: "radial-gradient(circle, rgba(59,130,246,.07) 0%, transparent 70%)" }}
-      />
-      <div
-        className="pointer-events-none absolute bottom-[15%] left-[30%] h-56 w-56 rounded-full anim-float"
-        style={{ animationDelay: "4s", background: "radial-gradient(circle, rgba(139,92,246,.07) 0%, transparent 70%)" }}
-      />
+      <div className="orb-teal pointer-events-none absolute left-[8%] top-[18%] h-64 w-64 rounded-full anim-float" />
+      <div className="orb-blue pointer-events-none absolute right-[10%] top-[35%] h-80 w-80 rounded-full anim-float anim-delay-2s" />
+      <div className="orb-violet pointer-events-none absolute bottom-[15%] left-[30%] h-56 w-56 rounded-full anim-float anim-delay-4s" />
 
       {/* ── Main Layout ── */}
       <div className="relative mx-auto grid min-h-screen max-w-[1320px] items-center gap-10 px-6 py-14 lg:grid-cols-[1.15fr_0.9fr] xl:gap-16">
@@ -177,7 +187,7 @@ export function LoginPage() {
         </section>
 
         {/* ── Right: Login Panel ── */}
-        <section className="panel panel-glow anim-fade-up p-0 overflow-hidden" style={{ animationDelay: ".08s" }}>
+        <section className="panel panel-glow anim-fade-up anim-delay-08 p-0 overflow-hidden">
 
           {/* Panel header */}
           <div className="border-b border-white/[0.08] px-6 pt-6 pb-5">
@@ -187,27 +197,84 @@ export function LoginPage() {
               </div>
               <div>
                 <h2 className="text-xl font-extrabold">Sign in to OpsTrax</h2>
-                <p className="text-xs text-slate-500">Select a demo role to explore the platform</p>
+                <p className="text-xs text-slate-500">Enter your credentials or pick a demo role below</p>
               </div>
             </div>
           </div>
 
+          {/* ── Login Form ── */}
+          <form onSubmit={handleSubmit} className="px-5 pt-5 pb-4 space-y-3">
+            {/* Username field */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="e.g. admin, dispatcher, demo"
+                autoComplete="username"
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-teal-400/50 focus:outline-none focus:ring-1 focus:ring-teal-400/30 transition"
+              />
+            </div>
+
+            {/* Password field */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  autoComplete="current-password"
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-11 text-sm text-white placeholder:text-slate-500 focus:border-teal-400/50 focus:outline-none focus:ring-1 focus:ring-teal-400/30 transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition"
+                >
+                  {showPassword
+                    ? <EyeOff className="h-4 w-4" />
+                    : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={login.isPending || !username.trim() || !password}
+              className="w-full rounded-xl bg-gradient-to-r from-teal-500 to-blue-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-teal-500/20 transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {login.isPending
+                ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                : <Lock className="h-4 w-4" />}
+              Sign In
+            </button>
+          </form>
+
+          {/* Divider */}
+          <div className="flex items-center gap-3 px-5 pb-3">
+            <div className="h-px flex-1 bg-white/[0.07]" />
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">or quick access</span>
+            <div className="h-px flex-1 bg-white/[0.07]" />
+          </div>
+
           {/* Role cards */}
-          <div className="stagger space-y-2 p-5">
-            {ROLES.map(({ role, email, description, icon, gradient, border, iconBg, tag, tagCls }) => {
-              const isLoading = login.isPending && activeEmail === email;
+          <div className="stagger space-y-2 px-5 pb-4">
+            {ROLES.map(({ role, username: roleUsername, password: rolePassword, description, icon, gradient, border, iconBg, tag, tagCls }) => {
+              const isFilled = username === roleUsername && password === rolePassword;
               return (
                 <button
-                  key={email}
-                  className={`role-card w-full bg-gradient-to-r ${gradient} ${border} disabled:opacity-60 disabled:cursor-not-allowed`}
-                  onClick={() => login.mutate({ email })}
-                  disabled={login.isPending}
+                  key={roleUsername}
+                  type="button"
+                  className={`role-card w-full bg-gradient-to-r ${gradient} ${border} ${isFilled ? "ring-2 ring-teal-400/40" : ""}`}
+                  onClick={() => fillCredentials(roleUsername, rolePassword)}
                 >
                   {/* Icon */}
                   <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border ${iconBg}`}>
-                    {isLoading
-                      ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                      : icon}
+                    {icon}
                   </div>
 
                   {/* Text */}
@@ -216,14 +283,52 @@ export function LoginPage() {
                       <p className="font-bold text-white">{role}</p>
                       <span className={`rounded-full border px-2 py-px text-[10px] font-bold ${tagCls}`}>{tag}</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-slate-400 truncate">{description}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-xs text-slate-400 truncate">{description}</p>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                      user: <span className="text-slate-300">{roleUsername}</span>
+                      {" · "}pass: <span className="text-slate-300">{rolePassword}</span>
+                    </p>
                   </div>
 
-                  {/* Arrow */}
-                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-500 transition group-hover:translate-x-0.5" />
+                  {/* Arrow / filled indicator */}
+                  {isFilled
+                    ? <span className="text-[10px] font-bold text-teal-400 flex-shrink-0">Filled ✓</span>
+                    : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-500 transition group-hover:translate-x-0.5" />}
                 </button>
               );
             })}
+          </div>
+
+          {/* ── Client Demo Credentials ── */}
+          <div className="mx-5 mb-4 rounded-2xl border border-violet-400/30 bg-violet-500/8 p-4">
+            <div className="flex items-start gap-3">
+              <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-violet-400" />
+              <div className="flex-1">
+                <p className="text-xs font-bold text-violet-300">Client Demo Access</p>
+                <p className="mt-0.5 text-xs text-slate-400">Share these credentials with clients for a full platform tour:</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-mono">
+                    <span className="text-slate-500">user:</span>
+                    <span className="text-white font-semibold">demo</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-mono">
+                    <span className="text-slate-500">pass:</span>
+                    <span className="text-white font-semibold">Demo@2025</span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fillCredentials("demo", "Demo@2025")}
+                  className="mt-2.5 text-[11px] font-bold text-violet-400 hover:text-violet-300 transition"
+                >
+                  {username === "demo" && password === "Demo@2025"
+                    ? "Credentials filled — click Sign In ✓"
+                    : "Fill demo credentials →"}
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Security footer */}
@@ -232,11 +337,7 @@ export function LoginPage() {
             <div>
               <p className="text-xs font-semibold text-emerald-300">Enterprise security active</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                Demo password:{" "}
-                <span className="rounded border border-slate-200 bg-slate-100 px-1.5 py-px font-mono text-slate-700">
-                  Admin@12345
-                </span>
-                {" "}· Seeded operational data · RBAC metadata
+                Seeded operational data · RBAC role isolation · Demo environment
               </p>
             </div>
           </div>
@@ -244,7 +345,7 @@ export function LoginPage() {
           {login.isError && (
             <div className="mx-5 mb-5 flex items-center gap-2 rounded-xl border border-red-300/50 bg-red-50 p-3 text-sm text-red-700">
               <Lock className="h-4 w-4 flex-shrink-0" />
-              Login failed — use one of the demo role buttons or check the backend service.
+              Invalid credentials — check the username and password or use a quick access role.
             </div>
           )}
 

@@ -508,6 +508,16 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   border-color: #e2e8f0;
 }
 
+/* ---------- ANIMATION DELAY UTILS ---------- */
+.anim-delay-08  { animation-delay: .08s; }
+.anim-delay-2s  { animation-delay: 2s; }
+.anim-delay-4s  { animation-delay: 4s; }
+
+/* ---------- LOGIN ORBS ---------- */
+.orb-teal   { background: radial-gradient(circle, rgba(45,212,191,.09) 0%, transparent 70%); }
+.orb-blue   { background: radial-gradient(circle, rgba(59,130,246,.07) 0%, transparent 70%); }
+.orb-violet { background: radial-gradient(circle, rgba(139,92,246,.07) 0%, transparent 70%); }
+
 /* ---------- LOGIN SPECIFIC ---------- */
 .login-bg {
   background:
