@@ -1,0 +1,94 @@
+export const PERMISSIONS = {
+  DASHBOARD_VIEW: "dashboard.view",
+  MAP_VIEW: "map.view",
+  FLEET_VIEW: "fleet.view",
+  FLEET_MANAGE: "fleet.manage",
+  DRIVERS_VIEW: "drivers.view",
+  DRIVERS_MANAGE: "drivers.manage",
+  DISPATCH_VIEW: "dispatch.view",
+  DISPATCH_MANAGE: "dispatch.manage",
+  ORDERS_VIEW: "orders.view",
+  ORDERS_MANAGE: "orders.manage",
+  SHIPMENTS_VIEW: "shipments.view",
+  SHIPMENTS_MANAGE: "shipments.manage",
+  POD_VIEW: "pod.view",
+  POD_UPLOAD: "pod.upload",
+  MAINTENANCE_VIEW: "maintenance.view",
+  MAINTENANCE_MANAGE: "maintenance.manage",
+  FUEL_VIEW: "fuel.view",
+  FUEL_MANAGE: "fuel.manage",
+  SAFETY_VIEW: "safety.view",
+  SAFETY_MANAGE: "safety.manage",
+  DASHCAM_VIEW: "dashcam.view",
+  DASHCAM_MANAGE: "dashcam.manage",
+  COMPLIANCE_VIEW: "compliance.view",
+  COMPLIANCE_MANAGE: "compliance.manage",
+  CRM_VIEW: "crm.view",
+  CRM_MANAGE: "crm.manage",
+  CAMPAIGNS_VIEW: "campaigns.view",
+  CAMPAIGNS_MANAGE: "campaigns.manage",
+  FINANCE_VIEW: "finance.view",
+  FINANCE_MANAGE: "finance.manage",
+  REPORTS_VIEW: "reports.view",
+  REPORTS_MANAGE: "reports.manage",
+  USERS_VIEW: "users.view",
+  USERS_MANAGE: "users.manage",
+  SETTINGS_VIEW: "settings.view",
+  SETTINGS_MANAGE: "settings.manage",
+  CUSTOMER_PORTAL_VIEW: "customer_portal.view",
+  VENDOR_PORTAL_VIEW: "vendor_portal.view",
+} as const;
+
+export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
+
+const P = PERMISSIONS;
+
+export const ROLE_PERMISSIONS = {
+  platform_super_admin: ["*"],
+  company_admin: [
+    P.DASHBOARD_VIEW, P.MAP_VIEW, P.FLEET_VIEW, P.FLEET_MANAGE, P.DRIVERS_VIEW, P.DRIVERS_MANAGE,
+    P.DISPATCH_VIEW, P.DISPATCH_MANAGE, P.ORDERS_VIEW, P.ORDERS_MANAGE, P.SHIPMENTS_VIEW, P.SHIPMENTS_MANAGE,
+    P.POD_VIEW, P.POD_UPLOAD, P.MAINTENANCE_VIEW, P.MAINTENANCE_MANAGE, P.FUEL_VIEW, P.FUEL_MANAGE,
+    P.SAFETY_VIEW, P.SAFETY_MANAGE, P.DASHCAM_VIEW, P.DASHCAM_MANAGE, P.COMPLIANCE_VIEW, P.COMPLIANCE_MANAGE,
+    P.CRM_VIEW, P.CRM_MANAGE, P.CAMPAIGNS_VIEW, P.CAMPAIGNS_MANAGE, P.FINANCE_VIEW, P.FINANCE_MANAGE,
+    P.REPORTS_VIEW, P.REPORTS_MANAGE, P.USERS_VIEW, P.USERS_MANAGE, P.SETTINGS_VIEW, P.SETTINGS_MANAGE,
+    P.CUSTOMER_PORTAL_VIEW, P.VENDOR_PORTAL_VIEW,
+  ],
+  operations_manager: [
+    P.DASHBOARD_VIEW, P.MAP_VIEW, P.FLEET_VIEW, P.DISPATCH_VIEW, P.DISPATCH_MANAGE,
+    P.ORDERS_VIEW, P.ORDERS_MANAGE, P.SHIPMENTS_VIEW, P.SHIPMENTS_MANAGE, P.POD_VIEW, P.POD_UPLOAD,
+    P.MAINTENANCE_VIEW, P.SAFETY_VIEW, P.DASHCAM_VIEW, P.COMPLIANCE_VIEW, P.REPORTS_VIEW, P.SETTINGS_VIEW,
+  ],
+  dispatcher: [
+    P.DASHBOARD_VIEW, P.MAP_VIEW, P.DISPATCH_VIEW, P.DISPATCH_MANAGE, P.ORDERS_VIEW, P.ORDERS_MANAGE,
+    P.SHIPMENTS_VIEW, P.SHIPMENTS_MANAGE, P.POD_VIEW, P.POD_UPLOAD, P.CUSTOMER_PORTAL_VIEW, P.REPORTS_VIEW,
+  ],
+  fleet_manager: [
+    P.DASHBOARD_VIEW, P.FLEET_VIEW, P.FLEET_MANAGE, P.DRIVERS_VIEW, P.DRIVERS_MANAGE,
+    P.MAINTENANCE_VIEW, P.MAINTENANCE_MANAGE, P.FUEL_VIEW, P.FUEL_MANAGE, P.SAFETY_VIEW, P.DASHCAM_VIEW, P.REPORTS_VIEW,
+  ],
+  driver: [
+    P.ORDERS_VIEW, P.SHIPMENTS_VIEW, P.POD_UPLOAD, P.POD_VIEW, P.COMPLIANCE_VIEW, P.SAFETY_VIEW,
+  ],
+  safety_compliance_manager: [
+    P.SAFETY_VIEW, P.SAFETY_MANAGE, P.DASHCAM_VIEW, P.DASHCAM_MANAGE,
+    P.COMPLIANCE_VIEW, P.COMPLIANCE_MANAGE, P.REPORTS_VIEW,
+  ],
+  maintenance_manager: [
+    P.MAINTENANCE_VIEW, P.MAINTENANCE_MANAGE, P.FLEET_VIEW, P.FUEL_VIEW, P.REPORTS_VIEW,
+  ],
+  finance_billing_manager: [
+    P.FINANCE_VIEW, P.FINANCE_MANAGE, P.FUEL_VIEW, P.FUEL_MANAGE, P.REPORTS_VIEW, P.SETTINGS_VIEW,
+  ],
+  crm_sales_manager: [
+    P.CRM_VIEW, P.CRM_MANAGE, P.CAMPAIGNS_VIEW, P.CAMPAIGNS_MANAGE, P.CUSTOMER_PORTAL_VIEW, P.REPORTS_VIEW,
+  ],
+  customer_portal_user: [
+    P.CUSTOMER_PORTAL_VIEW, P.SHIPMENTS_VIEW, P.POD_VIEW,
+  ],
+  vendor_service_provider: [
+    P.VENDOR_PORTAL_VIEW, P.MAINTENANCE_VIEW, P.POD_VIEW,
+  ],
+} satisfies Record<string, string[]>;
+
+export type RoleKey = keyof typeof ROLE_PERMISSIONS;

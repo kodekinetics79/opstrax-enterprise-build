@@ -6,72 +6,32 @@ import {
   Truck, Users, Wrench, Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { demoUsers } from "@/auth/demoUsers";
 import { authApi } from "@/services/authApi";
 import { useAuth } from "@/hooks/useAuth";
 
 /* ── Demo roles ── */
-const ROLES = [
-  {
-    role: "Company Admin",
-    username: "admin",
-    password: "Admin@12345",
-    description: "Full fleet visibility and executive command",
-    icon: <Shield className="h-5 w-5" />,
-    gradient: "from-teal-400/20 to-blue-500/10",
-    border:   "border-teal-400/22",
-    iconBg:   "bg-teal-400/12 border-teal-400/20 text-teal-300",
-    tag:      "Full Access",
-    tagCls:   "border-teal-400/25 bg-teal-400/8 text-teal-300",
-  },
-  {
-    role: "Dispatcher",
-    username: "dispatcher",
-    password: "Admin@12345",
-    description: "Dispatch board, job assignment and driver coordination",
-    icon: <Activity className="h-5 w-5" />,
-    gradient: "from-blue-500/18 to-sky-400/8",
-    border:   "border-blue-400/22",
-    iconBg:   "bg-blue-400/12 border-blue-400/20 text-blue-300",
-    tag:      "Operations",
-    tagCls:   "border-blue-400/25 bg-blue-400/8 text-blue-300",
-  },
-  {
-    role: "Driver",
-    username: "driver",
-    password: "Admin@12345",
-    description: "Route info, jobs, HOS, DVIR and coaching",
-    icon: <Truck className="h-5 w-5" />,
-    gradient: "from-emerald-500/16 to-green-400/6",
-    border:   "border-emerald-400/22",
-    iconBg:   "bg-emerald-400/12 border-emerald-400/20 text-emerald-300",
-    tag:      "Field",
-    tagCls:   "border-emerald-400/25 bg-emerald-400/8 text-emerald-300",
-  },
-  {
-    role: "Mechanic",
-    username: "mechanic",
-    password: "Admin@12345",
-    description: "Maintenance queue, work orders and DVIR reviews",
-    icon: <Wrench className="h-5 w-5" />,
-    gradient: "from-amber-500/16 to-yellow-400/6",
-    border:   "border-amber-400/22",
-    iconBg:   "bg-amber-400/12 border-amber-400/20 text-amber-300",
-    tag:      "Maintenance",
-    tagCls:   "border-amber-400/25 bg-amber-400/8 text-amber-300",
-  },
-  {
-    role: "Customer",
-    username: "customer",
-    password: "Admin@12345",
-    description: "ETA portal, job status and delivery proof",
-    icon: <Users className="h-5 w-5" />,
-    gradient: "from-violet-500/16 to-purple-400/6",
-    border:   "border-violet-400/22",
-    iconBg:   "bg-violet-400/12 border-violet-400/20 text-violet-300",
-    tag:      "Portal",
-    tagCls:   "border-violet-400/25 bg-violet-400/8 text-violet-300",
-  },
-] as const;
+const ROLE_STYLE = {
+  platform_super_admin: { icon: <Shield className="h-5 w-5" />, gradient: "from-cyan-400/20 to-blue-500/10", border: "border-cyan-400/22", iconBg: "bg-cyan-400/12 border-cyan-400/20 text-cyan-300", tag: "Platform", tagCls: "border-cyan-400/25 bg-cyan-400/8 text-cyan-300", description: "Global access across all tenants and modules" },
+  company_admin: { icon: <Shield className="h-5 w-5" />, gradient: "from-teal-400/20 to-blue-500/10", border: "border-teal-400/22", iconBg: "bg-teal-400/12 border-teal-400/20 text-teal-300", tag: "Full Access", tagCls: "border-teal-400/25 bg-teal-400/8 text-teal-300", description: "Full company-level visibility and control" },
+  operations_manager: { icon: <Activity className="h-5 w-5" />, gradient: "from-sky-500/18 to-blue-400/8", border: "border-sky-400/22", iconBg: "bg-sky-400/12 border-sky-400/20 text-sky-300", tag: "Operations", tagCls: "border-sky-400/25 bg-sky-400/8 text-sky-300", description: "Cross-functional operations command and execution" },
+  dispatcher: { icon: <Activity className="h-5 w-5" />, gradient: "from-blue-500/18 to-sky-400/8", border: "border-blue-400/22", iconBg: "bg-blue-400/12 border-blue-400/20 text-blue-300", tag: "Dispatch", tagCls: "border-blue-400/25 bg-blue-400/8 text-blue-300", description: "Dispatch board, loads, assignments and ETA flow" },
+  fleet_manager: { icon: <Truck className="h-5 w-5" />, gradient: "from-emerald-500/16 to-green-400/6", border: "border-emerald-400/22", iconBg: "bg-emerald-400/12 border-emerald-400/20 text-emerald-300", tag: "Fleet", tagCls: "border-emerald-400/25 bg-emerald-400/8 text-emerald-300", description: "Fleet assets, drivers, fuel and uptime oversight" },
+  driver: { icon: <Truck className="h-5 w-5" />, gradient: "from-green-500/16 to-lime-400/6", border: "border-green-400/22", iconBg: "bg-green-400/12 border-green-400/20 text-green-300", tag: "Field", tagCls: "border-green-400/25 bg-green-400/8 text-green-300", description: "Daily jobs, shipments, proof and compliance checks" },
+  safety_compliance_manager: { icon: <Shield className="h-5 w-5" />, gradient: "from-red-500/16 to-rose-400/6", border: "border-red-400/22", iconBg: "bg-red-400/12 border-red-400/20 text-red-300", tag: "Safety", tagCls: "border-red-400/25 bg-red-400/8 text-red-300", description: "Safety events, dashcam workflows and compliance controls" },
+  maintenance_manager: { icon: <Wrench className="h-5 w-5" />, gradient: "from-amber-500/16 to-yellow-400/6", border: "border-amber-400/22", iconBg: "bg-amber-400/12 border-amber-400/20 text-amber-300", tag: "Maintenance", tagCls: "border-amber-400/25 bg-amber-400/8 text-amber-300", description: "Work orders, service history and maintenance planning" },
+  finance_billing_manager: { icon: <Globe className="h-5 w-5" />, gradient: "from-yellow-500/16 to-amber-400/6", border: "border-yellow-400/22", iconBg: "bg-yellow-400/12 border-yellow-400/20 text-yellow-300", tag: "Finance", tagCls: "border-yellow-400/25 bg-yellow-400/8 text-yellow-300", description: "Finance, billing, fuel cost and margin performance" },
+  crm_sales_manager: { icon: <Users className="h-5 w-5" />, gradient: "from-violet-500/16 to-purple-400/6", border: "border-violet-400/22", iconBg: "bg-violet-400/12 border-violet-400/20 text-violet-300", tag: "CRM", tagCls: "border-violet-400/25 bg-violet-400/8 text-violet-300", description: "CRM pipeline, customer growth and campaign execution" },
+  customer_portal_user: { icon: <Users className="h-5 w-5" />, gradient: "from-fuchsia-500/16 to-pink-400/6", border: "border-fuchsia-400/22", iconBg: "bg-fuchsia-400/12 border-fuchsia-400/20 text-fuchsia-300", tag: "Customer", tagCls: "border-fuchsia-400/25 bg-fuchsia-400/8 text-fuchsia-300", description: "Customer portal access for shipment and delivery visibility" },
+  vendor_service_provider: { icon: <Wrench className="h-5 w-5" />, gradient: "from-orange-500/16 to-amber-400/6", border: "border-orange-400/22", iconBg: "bg-orange-400/12 border-orange-400/20 text-orange-300", tag: "Vendor", tagCls: "border-orange-400/25 bg-orange-400/8 text-orange-300", description: "Service-provider access for partner workflows" },
+} as const;
+
+const ROLES = demoUsers.map((user) => ({
+  role: user.roleLabel,
+  username: user.email,
+  password: user.password,
+  ...ROLE_STYLE[user.roleKey],
+}));
 
 /* ── Feature highlights ── */
 const FEATURES = [
@@ -211,7 +171,7 @@ export function LoginPage() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. admin, dispatcher, demo"
+                placeholder="e.g. superadmin@opstrax.com"
                 autoComplete="username"
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-teal-400/50 focus:outline-none focus:ring-1 focus:ring-teal-400/30 transition"
               />
@@ -306,26 +266,22 @@ export function LoginPage() {
             <div className="flex items-start gap-3">
               <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-violet-400" />
               <div className="flex-1">
-                <p className="text-xs font-bold text-violet-300">Client Demo Access</p>
-                <p className="mt-0.5 text-xs text-slate-400">Share these credentials with clients for a full platform tour:</p>
+                <p className="text-xs font-bold text-violet-300">Demo Access</p>
+                <p className="mt-0.5 text-xs text-slate-400">All listed demo users use the same password:</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-mono">
-                    <span className="text-slate-500">user:</span>
-                    <span className="text-white font-semibold">demo</span>
-                  </span>
-                  <span className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-mono">
                     <span className="text-slate-500">pass:</span>
-                    <span className="text-white font-semibold">Demo@2025</span>
+                    <span className="text-white font-semibold">demo123</span>
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => fillCredentials("demo", "Demo@2025")}
+                  onClick={() => fillCredentials("superadmin@opstrax.com", "demo123")}
                   className="mt-2.5 text-[11px] font-bold text-violet-400 hover:text-violet-300 transition"
                 >
-                  {username === "demo" && password === "Demo@2025"
+                  {username === "superadmin@opstrax.com" && password === "demo123"
                     ? "Credentials filled — click Sign In ✓"
-                    : "Fill demo credentials →"}
+                    : "Fill super admin credentials →"}
                 </button>
               </div>
             </div>
