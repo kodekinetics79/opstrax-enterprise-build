@@ -35,6 +35,8 @@ export type ModuleConfig = {
     | "Platform";
   description: string;
   accent: "blue" | "teal" | "amber" | "red" | "green" | "purple";
+  /** Permission key required to see this module. Omit for unrestricted access. */
+  requiredPermission?: string;
 };
 
 export type UserSession = {

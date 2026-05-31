@@ -281,8 +281,15 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const rows = useMemo(() => {
     const source = list.data || [];
     return source.filter((row) => {
-      const matchesStatus = statusFilter === "All" || String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) || (statusFilter === "At Risk" && /high|medium|risk|delayed|maintenance/i.test(JSON.stringify(row)));
-      const matchesSearch = !search.trim() || JSON.stringify(row).toLowerCase().includes(search.toLowerCase());
+      const qLower = search.toLowerCase();
+      const matchesStatus = statusFilter === "All" || 
+        String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) || 
+        (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
+
+      const matchesSearch = !search.trim() || 
+        String(row.vehicleCode || row.driverCode || row.assetCode || row.customerCode || "").toLowerCase().includes(qLower) ||
+        String(row.fullName || row.name || row.plateNumber || "").toLowerCase().includes(qLower);
+
       return matchesStatus && matchesSearch;
     });
   }, [list.data, search, statusFilter]);

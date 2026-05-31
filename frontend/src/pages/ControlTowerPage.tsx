@@ -26,8 +26,10 @@ export function ControlTowerPage() {
   if (isLoading || !data) return <LoadingState />;
   const entities = ((data.entities as AnyRecord[]) || []).filter((entity) => {
     if (activeFilter === "All") return true;
-    const text = JSON.stringify(entity).toLowerCase();
-    return text.includes(activeFilter.toLowerCase());
+    const filterLower = activeFilter.toLowerCase();
+    return String(entity.liveAlert || "").toLowerCase().includes(filterLower) ||
+           String(entity.status || "").toLowerCase().includes(filterLower) ||
+           String(entity.riskLevel || "").toLowerCase().includes(filterLower);
   });
   const geofences = (data.geofences as AnyRecord[]) || [];
   const recommendations = (data.recommendations as AnyRecord[]) || [];

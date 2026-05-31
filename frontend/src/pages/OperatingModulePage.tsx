@@ -1155,9 +1155,15 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
   const rows = useMemo(() => {
     const sourceRows = definition?.rows ?? [];
     const query = search.trim().toLowerCase();
-    return enrichRows(sourceRows).filter((row) => {
-      const textMatch = !query || Object.values(row).some((value) => String(value).toLowerCase().includes(query));
-      const filterMatch = filter === "All" || Object.values(row).some((value) => String(value).toLowerCase().includes(filter.toLowerCase().replace("at risk", "risk")));
+    const enriched = enrichRows(sourceRows);
+    return enriched.filter((row) => {
+      const textMatch = !query || Object.values(row).some((val) => String(val).toLowerCase().includes(query));
+      
+      // Intelligent status detection for CRM and Operations modules
+      const statusVal = String(row.status || row.currentStatus || row.current_status || row.renewalStatus || row.stage || row.reason || "").toLowerCase();
+      const filterLower = filter.toLowerCase().replace("at risk", "risk");
+      const filterMatch = filter === "All" || statusVal.includes(filterLower) || (filter === "Active" && !/closed|delivered|completed|lost/i.test(statusVal));
+
       return textMatch && filterMatch;
     });
   }, [definition, filter, search]);

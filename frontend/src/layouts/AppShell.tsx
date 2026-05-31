@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Bell, Bot, ChevronDown, Languages, LogOut,
@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
+import { useHasPermission } from "@/hooks/usePermission";
 import { useI18n, LOCALES } from "@/i18n";
 import type { LocaleCode } from "@/i18n";
 
@@ -42,6 +43,14 @@ export function AppShell() {
   const { session, logout } = useAuth();
   const { locale, setLocale } = useI18n();
   const location = useLocation();
+  const hasPermission = useHasPermission();
+
+  // Modules visible to this user based on their permissions
+  const visibleModules = useMemo(
+    () => modules.filter((m) => !m.requiredPermission || hasPermission(m.requiredPermission)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session?.permissions],
+  );
 
   // navigation collapse — persist across renders, default all open
   const [collapsed, setCollapsed] = useState<Set<Group>>(new Set());
@@ -101,7 +110,7 @@ export function AppShell() {
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 overflow-y-auto pb-2">
         {GROUPS.map((group) => {
-          const items = modules.filter((m) => m.group === group);
+          const items = visibleModules.filter((m) => m.group === group);
           if (!items.length) return null;
           const isOpen = !collapsed.has(group);
           const meta  = GROUP_META[group];

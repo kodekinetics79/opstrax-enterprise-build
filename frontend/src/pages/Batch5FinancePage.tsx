@@ -179,12 +179,15 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const tabCols  = tabDefs ? (tabDefs[safeTab]?.columns ?? config.columns) : config.columns;
 
   const displayRows = useMemo(() => tabRows.filter((row) => {
-    const text   = JSON.stringify(row).toLowerCase();
-    const status = String(row.status ?? row.approvalStatus ?? row.complianceStatus ?? row.severity ?? row.threshold_status ?? "").toLowerCase();
-    return (
-      (!search || text.includes(search.toLowerCase())) &&
-      (filter === "All" || status.includes(filter.toLowerCase()) || text.includes(filter.toLowerCase()))
-    );
+    const searchLower = search.toLowerCase();
+    const filterLower = filter.toLowerCase();
+    const matchesSearch = !search || 
+      String(row.transactionNumber || row.expenseNumber || row.contractNumber || row.carrierNumber || row.leakageNumber || "").toLowerCase().includes(searchLower) ||
+      String(row.vehicleCode || row.driverName || row.customerName || row.vendorName || "").toLowerCase().includes(searchLower);
+
+    const statusVal = String(row.status ?? row.approvalStatus ?? row.complianceStatus ?? row.severity ?? row.threshold_status ?? "").toLowerCase();
+    const matchesFilter = filter === "All" || statusVal.includes(filterLower);
+    return matchesSearch && matchesFilter;
   }), [tabRows, search, filter]);
 
   if (rowsQ.isLoading) return <LoadingState />;
