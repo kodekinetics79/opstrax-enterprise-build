@@ -63,7 +63,8 @@ public sealed class Batch1SchemaService(Database db)
         new("assets", "geofence_status", "VARCHAR(80) NOT NULL DEFAULT 'Inside authorized zone'"),
         new("assets", "utilization_score", "DECIMAL(6,2) NOT NULL DEFAULT 80"),
         new("assets", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
-        new("assets", "deleted_at", "TIMESTAMP NULL")
+        new("assets", "deleted_at", "TIMESTAMP NULL"),
+        new("users", "password_hash", "VARCHAR(255) NULL")
     ];
 
     private static readonly string[] TableStatements =

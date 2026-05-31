@@ -19,11 +19,11 @@ INSERT INTO roles (name, permissions_json) VALUES
 ('Read-only Auditor',      JSON_ARRAY('audit:view','fleet:view','dashboard:view'));
 
 INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, permissions_json) VALUES
-(1, 2, 'Avery Stone',    'admin@opstrax.com',      'Company Admin',       'Admin@12345', JSON_ARRAY('*')),
-(1, 4, 'Maya Patel',     'dispatcher@opstrax.com', 'Dispatcher',          'Admin@12345', JSON_ARRAY('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
-(1, 5, 'Omar Ali',       'driver@opstrax.com',     'Driver',              'Admin@12345', JSON_ARRAY('driver:portal','jobs:view','dvir:manage')),
-(1, 6, 'Jordan Reyes',   'mechanic@opstrax.com',   'Mechanic',            'Admin@12345', JSON_ARRAY('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
-(1, 10, 'Priya Shah',    'customer@opstrax.com',   'Customer Portal User','Admin@12345', JSON_ARRAY('customer-portal:view'));
+(1, 2, 'Avery Stone',    'admin@opstrax.com',      'Company Admin',       'demo123', JSON_ARRAY('*')),
+(1, 4, 'Maya Patel',     'dispatcher@opstrax.com', 'Dispatcher',          'demo123', JSON_ARRAY('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+(1, 5, 'Omar Ali',       'driver@opstrax.com',     'Driver',              'demo123', JSON_ARRAY('driver:portal','jobs:view','dvir:manage')),
+(1, 6, 'Jordan Reyes',   'mechanic@opstrax.com',   'Mechanic',            'demo123', JSON_ARRAY('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
+(1, 10, 'Priya Shah',    'customer@opstrax.com',   'Customer Portal User','demo123', JSON_ARRAY('customer-portal:view'));
 
 INSERT INTO customers (company_id, customer_code, name, contact_name, email, status, sla_tier) VALUES
 (1,'CUS-001','Prince William Logistics','Nora Lane','nora@pwl.example','Active','Platinum'),

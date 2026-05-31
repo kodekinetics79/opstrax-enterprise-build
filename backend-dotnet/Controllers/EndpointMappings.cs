@@ -1,4 +1,5 @@
 using MySqlConnector;
+using System.Security.Cryptography;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Services;
@@ -7,6 +8,11 @@ namespace Opstrax.Api.Controllers;
 
 public static class EndpointMappings
 {
+    public const string AuthUserIdItemKey = "opstrax.auth.user_id";
+    public const string AuthCompanyIdItemKey = "opstrax.auth.company_id";
+    public const string AuthRoleItemKey = "opstrax.auth.role";
+    public const string AuthPermissionsItemKey = "opstrax.auth.permissions";
+
     public static void MapOpsTraxEndpoints(this WebApplication app)
     {
         app.MapPost("/api/auth/login", Login);
@@ -25,7 +31,7 @@ public static class EndpointMappings
         app.MapGet("/api/vehicles/{id:long}", VehicleDetail);
         app.MapPost("/api/vehicles", CreateVehicle);
         app.MapPut("/api/vehicles/{id:long}", UpdateVehicle);
-        app.MapDelete("/api/vehicles/{id:long}", SoftDelete("vehicles", "vehicle.deleted"));
+        app.MapDelete("/api/vehicles/{id:long}", SoftDeleteWithPermission("vehicles", "vehicle.deleted", "fleet:manage"));
         app.MapGet("/api/vehicles/{id:long}/timeline", Timeline("Vehicle"));
         app.MapGet("/api/vehicles/{id:long}/recommendations", Recommendations("vehicles"));
         app.MapPost("/api/vehicles/{id:long}/assign-driver", ChangeEntityStatus("vehicles", "assigned_driver_id", "vehicle.driver.assigned"));
@@ -36,7 +42,7 @@ public static class EndpointMappings
         app.MapGet("/api/drivers/{id:long}", DriverDetail);
         app.MapPost("/api/drivers", CreateDriver);
         app.MapPut("/api/drivers/{id:long}", UpdateDriver);
-        app.MapDelete("/api/drivers/{id:long}", SoftDelete("drivers", "driver.deleted"));
+        app.MapDelete("/api/drivers/{id:long}", SoftDeleteWithPermission("drivers", "driver.deleted", "fleet:manage"));
         app.MapGet("/api/drivers/{id:long}/timeline", Timeline("Driver"));
         app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers"));
         app.MapPost("/api/drivers/{id:long}/assign-vehicle", ChangeEntityStatus("drivers", "assigned_vehicle_id", "driver.vehicle.assigned"));
@@ -269,7 +275,9 @@ public static class EndpointMappings
         app.MapDelete("/api/expenses/{id:long}", SoftDelete("expenses", "expense.deleted"));
         app.MapPost("/api/expenses/{id:long}/approve", ExpenseApprove);
         app.MapPost("/api/expenses/{id:long}/reject", ExpenseReject);
-        app.MapGet("/api/expenses/categories", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM expense_categories WHERE company_id=1 AND status='Active' ORDER BY category_name", ct: ct));
+        app.MapGet("/api/expenses/categories", (HttpContext http, Database db, CancellationToken ct) =>
+            OkRows(db, "SELECT * FROM expense_categories WHERE company_id=@companyId AND status='Active' ORDER BY category_name",
+                c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/expenses/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='expenses' ORDER BY score DESC LIMIT 8", ct: ct));
         app.MapPost("/api/expenses/import-preview", ExpenseImportPreview);
 
@@ -427,8 +435,8 @@ public static class EndpointMappings
     {
         app.MapGet($"/api/{moduleKey}", (Database db, CancellationToken ct) => LoadModule(moduleKey, db, ct));
         app.MapGet($"/api/{moduleKey}/{{id:long}}", (long id, Database db, CancellationToken ct) => LoadModuleDetail(moduleKey, id, db, ct));
-        app.MapPost($"/api/{moduleKey}", (Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => CreateModuleRecord(moduleKey, body, db, audit, ct));
-        app.MapPut($"/api/{moduleKey}/{{id:long}}", (long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => UpdateModuleRecord(moduleKey, id, body, db, audit, ct));
+        app.MapPost($"/api/{moduleKey}", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => CreateModuleRecord(http, moduleKey, body, db, audit, ct));
+        app.MapPut($"/api/{moduleKey}/{{id:long}}", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => UpdateModuleRecord(http, moduleKey, id, body, db, audit, ct));
     }
 
     private static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
@@ -447,35 +455,116 @@ public static class EndpointMappings
         ["Read-only Auditor"]        = ["audit:view","fleet:view","dashboard:view"],
     };
 
+    public static async Task<string[]> ResolvePermissionsAsync(Dictionary<string, object?> user, Database db, CancellationToken ct)
+    {
+        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        var roleId = user.TryGetValue("roleId", out var roleIdValue) && roleIdValue is not null and not DBNull
+            ? Convert.ToInt64(roleIdValue)
+            : (long?)null;
+        var permsRaw = user["permissionsJson"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(permsRaw))
+        {
+            try
+            {
+                var parsed = System.Text.Json.JsonSerializer.Deserialize<string[]>(permsRaw);
+                if (parsed is { Length: > 0 }) return parsed;
+            }
+            catch { /* fallback below */ }
+        }
+
+        if (roleId is not null)
+        {
+            var rolePerms = await db.QueryAsync(
+                "SELECT permission_key FROM role_permissions WHERE role_id=@id",
+                c => c.Parameters.AddWithValue("@id", roleId.Value), ct);
+            if (rolePerms.Count > 0)
+            {
+                return rolePerms
+                    .Select(static x => x["permissionKey"]?.ToString())
+                    .Where(static x => !string.IsNullOrWhiteSpace(x))
+                    .Cast<string>()
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+        }
+
+        return RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]);
+    }
+
+    public static bool HasPermission(IReadOnlyCollection<string> permissions, string requiredPermission)
+    {
+        if (permissions.Count == 0) return false;
+        if (permissions.Any(static p => string.Equals(p, "*", StringComparison.OrdinalIgnoreCase))) return true;
+        var set = permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return PermissionAliases(requiredPermission).Any(set.Contains);
+    }
+
+    public static IResult? RequirePermission(HttpContext http, string permission)
+    {
+        if (!http.Items.TryGetValue(AuthPermissionsItemKey, out var raw) || raw is not string[] permissions)
+        {
+            return Results.Json(ApiResponse<object>.Fail("Unauthorized"), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!HasPermission(permissions, permission))
+        {
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", $"Missing permission: {permission}"), statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        return null;
+    }
+
+    public static long GetCompanyId(HttpContext http)
+    {
+        if (!http.Items.TryGetValue(AuthCompanyIdItemKey, out var value) || value is null) return 1;
+        return Convert.ToInt64(value);
+    }
+
+    private static IEnumerable<string> PermissionAliases(string permission)
+    {
+        var normalized = permission.ToLowerInvariant();
+        yield return normalized;
+        yield return normalized.Replace('.', ':');
+        yield return normalized.Replace(':', '.');
+        yield return normalized.Replace('-', ':');
+        yield return normalized.Replace('_', '-');
+        yield return normalized.Replace('-', '_');
+    }
+
     private static async Task<IResult> Login(LoginRequest request, Database db, AuditService audit, CancellationToken ct)
     {
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.full_name, u.email, u.role_name, u.permissions_json, c.id company_id, c.name company_name, c.company_code
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.demo_password,
+                     c.id company_id, c.name company_name, c.company_code
               FROM users u JOIN companies c ON c.id = u.company_id
-              WHERE u.email=@email AND u.demo_password=@password LIMIT 1",
+              WHERE u.email=@email LIMIT 1",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@email", request.Email);
-                cmd.Parameters.AddWithValue("@password", request.Password);
             }, ct);
         if (user is null) return Results.Unauthorized();
+
+        var passwordHash = user["passwordHash"]?.ToString();
+        var passwordOk = VerifyPasswordHash(request.Password, passwordHash);
+        var usedLegacyDemoPassword = false;
+
+        // Temporary local/demo fallback only; keeps seeded demo users working while migrating away from plaintext storage.
+        if (!passwordOk)
+        {
+            var legacy = user["demoPassword"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(legacy) && string.Equals(legacy, request.Password, StringComparison.Ordinal))
+            {
+                passwordOk = true;
+                usedLegacyDemoPassword = true;
+            }
+        }
+
+        if (!passwordOk) return Results.Unauthorized();
 
         await audit.LogAsync("user.login", "User", Convert.ToInt64(user["id"]), request.Email, ct);
 
         var role = user["roleName"]?.ToString() ?? "Company Admin";
-
-        // Resolve permissions: prefer permissions_json stored in DB, fall back to role default map
-        string[] permissions;
-        var permsRaw = user["permissionsJson"]?.ToString();
-        if (!string.IsNullOrWhiteSpace(permsRaw))
-        {
-            try { permissions = System.Text.Json.JsonSerializer.Deserialize<string[]>(permsRaw) ?? []; }
-            catch { permissions = RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]); }
-        }
-        else
-        {
-            permissions = RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]);
-        }
+        var permissions = await ResolvePermissionsAsync(user, db, ct);
 
         var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
 
@@ -496,6 +585,22 @@ public static class EndpointMappings
                 }, ct);
         }
         catch { /* non-fatal — session table may not exist on first boot before migrations run */ }
+
+        if (usedLegacyDemoPassword)
+        {
+            try
+            {
+                var newHash = HashPassword(request.Password);
+                await db.ExecuteAsync(
+                    "UPDATE users SET password_hash=@hash WHERE id=@id",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@hash", newHash);
+                        c.Parameters.AddWithValue("@id", user["id"]);
+                    }, ct);
+            }
+            catch { /* do not block login on demo hash upgrade failure */ }
+        }
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -1107,21 +1212,34 @@ public static class EndpointMappings
         return row is null ? Results.NotFound(ApiResponse<object>.Fail("Record not found")) : Results.Ok(ApiResponse<object>.Ok(row));
     }
 
-    private static async Task<IResult> CreateModuleRecord(string moduleKey, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CreateModuleRecord(HttpContext http, string moduleKey, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        if (ModuleWritePermissionByKey.TryGetValue(moduleKey, out var permission))
+        {
+            var denied = RequirePermission(http, permission);
+            if (denied is not null) return denied;
+        }
+
         var definition = ModuleDefinitions.GetValueOrDefault(moduleKey);
         if (definition?.CreateSql is null)
         {
             return await CreateGenericModuleRecord(moduleKey, body, db, audit, ct);
         }
 
-        var id = await db.InsertAsync(definition.CreateSql, c => BindModuleRecord(c, moduleKey, body), ct);
+        var companyId = GetCompanyId(http);
+        var id = await db.InsertAsync(definition.CreateSql, c => BindModuleRecord(c, moduleKey, body, companyId), ct);
         await audit.LogAsync($"{moduleKey}.created", moduleKey, id, ct: ct);
         return Results.Created($"/api/{moduleKey}/{id}", ApiResponse<object>.Ok(new { id }, "Record created"));
     }
 
-    private static async Task<IResult> UpdateModuleRecord(string moduleKey, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> UpdateModuleRecord(HttpContext http, string moduleKey, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        if (ModuleWritePermissionByKey.TryGetValue(moduleKey, out var permission))
+        {
+            var denied = RequirePermission(http, permission);
+            if (denied is not null) return denied;
+        }
+
         var definition = ModuleDefinitions.GetValueOrDefault(moduleKey);
         if (definition?.UpdateSql is null)
         {
@@ -1131,7 +1249,7 @@ public static class EndpointMappings
         await db.ExecuteAsync(definition.UpdateSql, c =>
         {
             c.Parameters.AddWithValue("@id", id);
-            BindModuleRecord(c, moduleKey, body);
+            BindModuleRecord(c, moduleKey, body, GetCompanyId(http));
         }, ct);
         await audit.LogAsync($"{moduleKey}.updated", moduleKey, id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Record updated"));
@@ -1172,40 +1290,60 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { id }));
     }
 
-    private static async Task<IResult> CreateVehicle(Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CreateVehicle(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
+        var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, readiness_score, data_quality_score)
-            VALUES (1, @code, @type, @make, @model, @year, @vin, @plate, @status, 92, 96)", c => BindVehicle(c, body), ct);
+            VALUES (@companyId, @code, @type, @make, @model, @year, @vin, @plate, @status, 92, 96)", c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                BindVehicle(c, body);
+            }, ct);
         await audit.LogAsync("vehicle.created", "Vehicle", id, ct: ct);
         return Results.Created($"/api/vehicles/{id}", ApiResponse<object>.Ok(new { id }));
     }
 
-    private static async Task<IResult> UpdateVehicle(long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> UpdateVehicle(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
         await db.ExecuteAsync(@"UPDATE vehicles SET vehicle_code=COALESCE(@code,vehicle_code), type=COALESCE(@type,type), make=COALESCE(@make,make),
-            model=COALESCE(@model,model), year=COALESCE(@year,year), vin=COALESCE(@vin,vin), plate_number=COALESCE(@plate,plate_number), status=COALESCE(@status,status) WHERE id=@id", c =>
+            model=COALESCE(@model,model), year=COALESCE(@year,year), vin=COALESCE(@vin,vin), plate_number=COALESCE(@plate,plate_number), status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
+            c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
             BindVehicle(c, body);
         }, ct);
         await audit.LogAsync("vehicle.updated", "Vehicle", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }));
     }
 
-    private static async Task<IResult> CreateDriver(Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CreateDriver(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
+        var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, status, safety_score, readiness_score)
-            VALUES (1, @code, @name, @phone, @email, @license, @status, 92, 93)", c => BindDriver(c, body), ct);
+            VALUES (@companyId, @code, @name, @phone, @email, @license, @status, 92, 93)", c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                BindDriver(c, body);
+            }, ct);
         await audit.LogAsync("driver.created", "Driver", id, ct: ct);
         return Results.Created($"/api/drivers/{id}", ApiResponse<object>.Ok(new { id }));
     }
 
-    private static async Task<IResult> UpdateDriver(long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> UpdateDriver(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
         await db.ExecuteAsync(@"UPDATE drivers SET driver_code=COALESCE(@code,driver_code), full_name=COALESCE(@name,full_name), phone=COALESCE(@phone,phone),
-            email=COALESCE(@email,email), license_number=COALESCE(@license,license_number), status=COALESCE(@status,status) WHERE id=@id", c =>
+            email=COALESCE(@email,email), license_number=COALESCE(@license,license_number), status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
+            c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
             BindDriver(c, body);
         }, ct);
         await audit.LogAsync("driver.updated", "Driver", id, ct: ct);
@@ -1454,8 +1592,10 @@ public static class EndpointMappings
         => OkRows(db, @"SELECT v.*, ROUND((v.readiness_score+v.data_quality_score+(100-v.risk_score))/3,1) match_readiness
                         FROM vehicles v WHERE v.deleted_at IS NULL AND v.status IN ('Available','Idle','Active') ORDER BY match_readiness DESC", ct: ct);
 
-    private static async Task<IResult> DispatchAssign(Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> DispatchAssign(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "dispatch:manage");
+        if (denied is not null) return denied;
         var jobId = Convert.ToInt64(Get(body, "jobId"));
         var result = await AssignJob(jobId, body, db, audit, ct);
         await audit.LogAsync("dispatch.recommendation.accepted", "Dispatch", jobId, ct: ct);
@@ -2588,6 +2728,39 @@ public static class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Deleted"));
         };
 
+    private static Func<HttpContext, long, Database, AuditService, CancellationToken, Task<IResult>> SoftDeleteWithPermission(string table, string action, string permission)
+        => async (http, id, db, audit, ct) =>
+        {
+            var denied = RequirePermission(http, permission);
+            if (denied is not null) return denied;
+
+            var companyId = GetCompanyId(http);
+            var affected = await db.ExecuteAsync(
+                $"UPDATE {table} SET deleted_at=CURRENT_TIMESTAMP, status='Deleted' WHERE id=@id AND company_id=@companyId",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+
+            if (affected == 0)
+            {
+                return Results.NotFound(ApiResponse<object>.Fail("Record not found"));
+            }
+
+            var entityName = table switch
+            {
+                "vehicles" => "Vehicle",
+                "drivers" => "Driver",
+                "customers" => "Customer",
+                "assets" => "Asset",
+                _ => table
+            };
+            await audit.LogAsync(action, entityName, id, ct: ct);
+            await AddTimeline(db, entityName, id, action, $"{entityName} deleted", ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id }, "Deleted"));
+        };
+
     private static Task<List<Dictionary<string, object?>>> EntityTimeline(Database db, string entityType, long id, CancellationToken ct)
         => db.QueryAsync(
             @"SELECT id, entity_type, entity_id, event_type, title, body, severity, created_at event_time
@@ -2646,9 +2819,10 @@ public static class EndpointMappings
     private static Action<MySqlCommand>? BindModule(string moduleKey, ModuleDefinition definition)
         => definition.RequiresModuleKey ? c => c.Parameters.AddWithValue("@key", moduleKey) : null;
 
-    private static void BindModuleRecord(MySqlCommand c, string moduleKey, Dictionary<string, object?> body)
+    private static void BindModuleRecord(MySqlCommand c, string moduleKey, Dictionary<string, object?> body, long companyId)
     {
         c.Parameters.AddWithValue("@key", moduleKey);
+        c.Parameters.AddWithValue("@companyId", companyId);
         c.Parameters.AddWithValue("@title", Get(body, "title"));
         c.Parameters.AddWithValue("@status", Get(body, "status"));
         c.Parameters.AddWithValue("@owner", Get(body, "ownerName"));
@@ -2680,7 +2854,7 @@ public static class EndpointMappings
               ORDER BY r.id DESC",
             @"SELECT r.*, v.vehicle_code, d.full_name driver_name FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id LEFT JOIN drivers d ON d.id=r.assigned_driver_id WHERE r.id=@id",
             "SELECT COUNT(*) total, SUM(status IN ('Active','Planned')) active, SUM(status IN ('At Risk','Delayed')) risk_items FROM routes",
-            CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (1, CONCAT('RTE-', UUID_SHORT()), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
+            CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (@companyId, CONCAT('RTE-', UUID_SHORT()), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
             UpdateSql: "UPDATE routes SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status) WHERE id=@id"),
 
         ["leads"] = new(
@@ -2717,7 +2891,7 @@ public static class EndpointMappings
               FROM assets a LEFT JOIN vehicles v ON v.id=a.assigned_vehicle_id ORDER BY a.asset_code",
             "SELECT a.*, v.vehicle_code assigned_vehicle FROM assets a LEFT JOIN vehicles v ON v.id=a.assigned_vehicle_id WHERE a.id=@id",
             "SELECT COUNT(*) total, SUM(status IN ('Available','Assigned')) active, SUM(status IN ('Maintenance','At Risk')) risk_items FROM assets",
-            CreateSql: @"INSERT INTO assets (company_id, asset_code, asset_type, name, status, current_location) VALUES (1, CONCAT('AST-', UUID_SHORT()), 'Equipment', @title, COALESCE(NULLIF(@status,''),'Available'), @location)",
+            CreateSql: @"INSERT INTO assets (company_id, asset_code, asset_type, name, status, current_location) VALUES (@companyId, CONCAT('AST-', UUID_SHORT()), 'Equipment', @title, COALESCE(NULLIF(@status,''),'Available'), @location)",
             UpdateSql: "UPDATE assets SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status), current_location=COALESCE(NULLIF(@location,''), current_location) WHERE id=@id"),
 
         ["maintenance"] = new(
@@ -2726,7 +2900,7 @@ public static class EndpointMappings
               FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id ORDER BY mi.due_date, mi.id DESC",
             "SELECT mi.*, v.vehicle_code FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id WHERE mi.id=@id",
             "SELECT COUNT(*) total, SUM(status IN ('Open','Scheduled','In Progress')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM maintenance_items",
-            CreateSql: @"INSERT INTO maintenance_items (company_id, title, category, status, risk_level, due_date) VALUES (1, @title, 'General', COALESCE(NULLIF(@status,''),'Open'), COALESCE(NULLIF(@risk,''),'Medium'), DATE_ADD(CURDATE(), INTERVAL 7 DAY))",
+            CreateSql: @"INSERT INTO maintenance_items (company_id, title, category, status, risk_level, due_date) VALUES (@companyId, @title, 'General', COALESCE(NULLIF(@status,''),'Open'), COALESCE(NULLIF(@risk,''),'Medium'), DATE_ADD(CURDATE(), INTERVAL 7 DAY))",
             UpdateSql: "UPDATE maintenance_items SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), risk_level=COALESCE(NULLIF(@risk,''), risk_level) WHERE id=@id"),
 
         ["work-orders"] = new(
@@ -2735,7 +2909,7 @@ public static class EndpointMappings
               FROM work_orders wo LEFT JOIN vehicles v ON v.id=wo.vehicle_id ORDER BY FIELD(wo.priority,'Critical','High','Normal','Low'), wo.due_date",
             "SELECT wo.*, v.vehicle_code FROM work_orders wo LEFT JOIN vehicles v ON v.id=wo.vehicle_id WHERE wo.id=@id",
             "SELECT COUNT(*) total, SUM(status IN ('Open','Scheduled','In Progress','Waiting Parts')) active, SUM(priority IN ('High','Critical')) risk_items FROM work_orders",
-            CreateSql: @"INSERT INTO work_orders (company_id, work_order_code, title, priority, status, due_date, estimated_cost) VALUES (1, CONCAT('WO-', UUID_SHORT()), @title, COALESCE(NULLIF(@risk,''),'Normal'), COALESCE(NULLIF(@status,''),'Open'), DATE_ADD(CURDATE(), INTERVAL 5 DAY), NULLIF(@amount,''))",
+            CreateSql: @"INSERT INTO work_orders (company_id, work_order_code, title, priority, status, due_date, estimated_cost) VALUES (@companyId, CONCAT('WO-', UUID_SHORT()), @title, COALESCE(NULLIF(@risk,''),'Normal'), COALESCE(NULLIF(@status,''),'Open'), DATE_ADD(CURDATE(), INTERVAL 5 DAY), NULLIF(@amount,''))",
             UpdateSql: "UPDATE work_orders SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), priority=COALESCE(NULLIF(@risk,''), priority), estimated_cost=COALESCE(NULLIF(@amount,''), estimated_cost) WHERE id=@id"),
 
         ["fuel-idling"] = new(
@@ -2794,7 +2968,7 @@ public static class EndpointMappings
             "SELECT id, customer_code customer_code, name title, contact_name owner_name, email, status, sla_tier risk_level FROM customers ORDER BY name",
             "SELECT * FROM customers WHERE id=@id",
             "SELECT COUNT(*) total, SUM(status='Active') active, SUM(sla_tier='Platinum') risk_items FROM customers",
-            CreateSql: @"INSERT INTO customers (company_id, customer_code, name, contact_name, status, sla_tier) VALUES (1, CONCAT('CUS-', UUID_SHORT()), @title, @owner, COALESCE(NULLIF(@status,''),'Active'), COALESCE(NULLIF(@risk,''),'Standard'))",
+            CreateSql: @"INSERT INTO customers (company_id, customer_code, name, contact_name, status, sla_tier) VALUES (@companyId, CONCAT('CUS-', UUID_SHORT()), @title, @owner, COALESCE(NULLIF(@status,''),'Active'), COALESCE(NULLIF(@risk,''),'Standard'))",
             UpdateSql: "UPDATE customers SET name=COALESCE(NULLIF(@title,''), name), contact_name=COALESCE(NULLIF(@owner,''), contact_name), status=COALESCE(NULLIF(@status,''), status), sla_tier=COALESCE(NULLIF(@risk,''), sla_tier) WHERE id=@id"),
 
         ["contracts-rates"] = new(
@@ -2882,6 +3056,49 @@ public static class EndpointMappings
             CreateSql: @"INSERT INTO module_records (module_key, title, status, owner_name, location_name, risk_level, amount, metadata_json) VALUES (@key, @title, COALESCE(NULLIF(@status,''),'Open'), @owner, @location, COALESCE(NULLIF(@risk,''),'Medium'), NULLIF(@amount,''), JSON_OBJECT('source','api'))",
             UpdateSql: "UPDATE module_records SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), owner_name=COALESCE(NULLIF(@owner,''), owner_name), location_name=COALESCE(NULLIF(@location,''), location_name), risk_level=COALESCE(NULLIF(@risk,''), risk_level), amount=COALESCE(NULLIF(@amount,''), amount) WHERE id=@id AND module_key=@key")
     };
+
+    private static readonly Dictionary<string, string> ModuleWritePermissionByKey = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["user-management"] = "users:manage",
+        ["settings"] = "settings:manage",
+        ["integrations"] = "settings:manage",
+        ["companies"] = "users:manage",
+        ["billing"] = "finance:manage",
+        ["contracts-rates"] = "finance:manage",
+        ["carrier-management"] = "finance:manage",
+        ["expenses"] = "finance:manage",
+    };
+
+    private const int PasswordHashIterations = 100_000;
+    private const int PasswordSaltLength = 16;
+    private const int PasswordSubkeyLength = 32;
+
+    private static string HashPassword(string password)
+    {
+        var salt = RandomNumberGenerator.GetBytes(PasswordSaltLength);
+        var subkey = Rfc2898DeriveBytes.Pbkdf2(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256, PasswordSubkeyLength);
+        return $"PBKDF2${PasswordHashIterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(subkey)}";
+    }
+
+    private static bool VerifyPasswordHash(string password, string? storedHash)
+    {
+        if (string.IsNullOrWhiteSpace(storedHash)) return false;
+        var parts = storedHash.Split('$');
+        if (parts.Length != 4 || !string.Equals(parts[0], "PBKDF2", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!int.TryParse(parts[1], out var iterations)) return false;
+
+        try
+        {
+            var salt = Convert.FromBase64String(parts[2]);
+            var expected = Convert.FromBase64String(parts[3]);
+            var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
+            return CryptographicOperations.FixedTimeEquals(actual, expected);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static string StageFor(string? status) => status switch
     {

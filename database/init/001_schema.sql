@@ -25,6 +25,7 @@ CREATE TABLE users (
   email VARCHAR(220) NOT NULL UNIQUE,
   role_name VARCHAR(100) NOT NULL,
   demo_password VARCHAR(120) NOT NULL DEFAULT 'Admin@12345',
+  password_hash VARCHAR(255) NULL,
   permissions_json JSON NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

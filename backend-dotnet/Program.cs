@@ -1,7 +1,9 @@
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
+using Opstrax.Api.DTOs;
 using Opstrax.Api.Middleware;
 using Opstrax.Api.Services;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,6 +44,94 @@ using (var scope = app.Services.CreateScope())
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseCors("OpsTraxCors");
 app.UseSwagger();
+app.UseWhen(
+    context => context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase),
+    branch =>
+    {
+        branch.Use(async (context, next) =>
+        {
+            var path = context.Request.Path.Value ?? string.Empty;
+            if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)))
+            {
+                await next();
+                return;
+            }
+
+            var authHeader = context.Request.Headers.Authorization.ToString();
+            if (string.IsNullOrWhiteSpace(authHeader) ||
+                !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Unauthorized", "Missing bearer token"));
+                return;
+            }
+
+            var token = authHeader["Bearer ".Length..].Trim();
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Unauthorized", "Invalid bearer token"));
+                return;
+            }
+
+            var db = context.RequestServices.GetRequiredService<Database>();
+            var session = await db.QuerySingleAsync(
+                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.permissions_json, r.permissions_json role_permissions_json
+                  FROM user_sessions s
+                  JOIN users u ON u.id = s.user_id
+                  LEFT JOIN roles r ON r.id = u.role_id
+                  WHERE s.session_token=@token
+                    AND s.expires_at > NOW()
+                    AND u.status='Active'
+                  LIMIT 1",
+                c => c.Parameters.AddWithValue("@token", token));
+
+            if (session is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Unauthorized", "Session expired or invalid"));
+                return;
+            }
+
+            var userId = Convert.ToInt64(session["userId"]);
+            var companyId = Convert.ToInt64(session["companyId"]);
+            var roleName = session["roleName"]?.ToString() ?? string.Empty;
+            var roleId = session.TryGetValue("roleId", out var rid) && rid is not null && rid is not DBNull ? Convert.ToInt64(rid) : 0;
+
+            var permissions = ParsePermissions(session.GetValueOrDefault("permissionsJson"))
+                .Concat(ParsePermissions(session.GetValueOrDefault("rolePermissionsJson")))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (roleId > 0)
+            {
+                var rows = await db.QueryAsync(
+                    "SELECT permission_key FROM role_permissions WHERE role_id=@roleId",
+                    c => c.Parameters.AddWithValue("@roleId", roleId));
+                foreach (var row in rows)
+                {
+                    var key = row.GetValueOrDefault("permissionKey")?.ToString();
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        permissions.Add(key.Trim());
+                    }
+                }
+            }
+
+            if (permissions.Count == 0 && string.Equals(roleName, "Super Admin", StringComparison.OrdinalIgnoreCase))
+            {
+                permissions.Add("*");
+            }
+
+            context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
+            context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
+            context.Items[EndpointMappings.AuthRoleItemKey] = roleName;
+            context.Items[EndpointMappings.AuthPermissionsItemKey] = permissions.ToArray();
+
+            await next();
+        });
+    });
 app.MapGet("/swagger", () => Results.Content(SwaggerHtml(), "text/html"));
 app.MapGet("/swagger/index.html", () => Results.Content(SwaggerHtml(), "text/html"));
 
@@ -49,6 +139,53 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "opst
 app.MapOpsTraxEndpoints();
 
 app.Run();
+
+static IEnumerable<string> ParsePermissions(object? source)
+{
+    if (source is null or DBNull) yield break;
+
+    if (source is byte[] bytes)
+    {
+        source = System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
+    if (source is JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Array) yield break;
+        foreach (var item in json.EnumerateArray())
+        {
+            var key = item.GetString();
+            if (!string.IsNullOrWhiteSpace(key)) yield return key.Trim();
+        }
+        yield break;
+    }
+
+    if (source is string str && !string.IsNullOrWhiteSpace(str))
+    {
+        str = str.Trim();
+        if (str.StartsWith("[", StringComparison.Ordinal))
+        {
+            List<string>? values = null;
+            try
+            {
+                values = JsonSerializer.Deserialize<List<string>>(str);
+            }
+            catch
+            {
+                yield break;
+            }
+
+            if (values is null) yield break;
+            foreach (var value in values.Where(v => !string.IsNullOrWhiteSpace(v)))
+            {
+                yield return value.Trim();
+            }
+            yield break;
+        }
+
+        yield return str;
+    }
+}
 
 static string SwaggerHtml() => """
 <!doctype html>
