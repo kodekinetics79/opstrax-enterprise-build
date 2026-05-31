@@ -12,33 +12,33 @@ const usernameToEmail: Record<string, string> = {
 
 const demoUsers: Record<string, { name: string; role: string; permissions: string[]; password: string }> = {
   "admin@opstrax.com": {
-    name: "OpsTrax Admin",
+    name: "Avery Stone",
     role: "Company Admin",
     permissions: ["*"],
     password: "Admin@12345",
   },
   "dispatcher@opstrax.com": {
-    name: "Dana Dispatcher",
+    name: "Maya Patel",
     role: "Dispatcher",
-    permissions: ["dispatch:view", "dispatch:update", "jobs:view", "jobs:update", "map:view"],
+    permissions: ["dashboard:view","dispatch:view","dispatch:manage","fleet:view","jobs:view","jobs:manage","map:view","customers:view"],
     password: "Admin@12345",
   },
   "driver@opstrax.com": {
-    name: "Dylan Driver",
+    name: "Omar Ali",
     role: "Driver",
-    permissions: ["driver:portal", "jobs:view", "dvir:update"],
+    permissions: ["driver:portal","jobs:view","dvir:manage"],
     password: "Admin@12345",
   },
   "mechanic@opstrax.com": {
-    name: "Maya Mechanic",
+    name: "Jordan Reyes",
     role: "Mechanic",
-    permissions: ["maintenance:view", "maintenance:update", "workorders:update", "dvir:review"],
+    permissions: ["maintenance:view","maintenance:manage","dvir:review","fleet:view"],
     password: "Admin@12345",
   },
   "customer@opstrax.com": {
-    name: "Casey Customer",
+    name: "Priya Shah",
     role: "Customer Portal User",
-    permissions: ["customer-eta:view", "shipments:view"],
+    permissions: ["customer-portal:view"],
     password: "Admin@12345",
   },
   "demo@opstrax.com": {

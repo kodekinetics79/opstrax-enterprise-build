@@ -35,7 +35,13 @@ export function JobsPage() {
   });
 
   const rows = useMemo(() => (jobs.data || []).filter((row) => {
-    const matchesText = !query || JSON.stringify(row).toLowerCase().includes(query.toLowerCase());
+    const qLower = query.toLowerCase();
+    const matchesText = !query || 
+      String(row.jobNumber || row.jobCode || "").toLowerCase().includes(qLower) ||
+      String(row.customerName || "").toLowerCase().includes(qLower) ||
+      String(row.driverName || row.vehicleCode || "").toLowerCase().includes(qLower) ||
+      String(row.pickupAddress || row.dropoffAddress || "").toLowerCase().includes(qLower);
+
     const matchesStatus = status === "All" || String(row.status) === status || (status === "SLA At Risk" && row.slaStatus === "At Risk");
     const matchesPriority = priority === "All" || String(row.priority) === priority;
     return matchesText && matchesStatus && matchesPriority;

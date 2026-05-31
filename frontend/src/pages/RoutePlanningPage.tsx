@@ -24,7 +24,14 @@ export function RoutePlanningPage() {
   const saveStop = useMutation({ mutationFn: (payload: AnyRecord) => routesApi.createStop(String(selected?.id), payload), onSuccess: async () => { setStopEditing(null); await qc.invalidateQueries({ queryKey: ["routes", "detail", selected?.id] }); } });
   const optimize = useMutation({ mutationFn: (id: string | number) => routesApi.optimizePreview(id), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ["routes", "detail", selected?.id] }); } });
 
-  const rows = useMemo(() => (routes.data || []).filter((row) => (!query || JSON.stringify(row).toLowerCase().includes(query.toLowerCase())) && (status === "All" || String(row.status) === status)), [query, routes.data, status]);
+  const rows = useMemo(() => (routes.data || []).filter((row) => {
+    const qLower = query.toLowerCase();
+    const matchesQuery = !query || 
+      String(row.routeCode || row.routeName || row.name || "").toLowerCase().includes(qLower) ||
+      String(row.region || row.driverName || row.vehicleCode || "").toLowerCase().includes(qLower);
+    const matchesStatus = status === "All" || String(row.status) === status;
+    return matchesQuery && matchesStatus;
+  }), [query, routes.data, status]);
   if (routes.isLoading) return <LoadingState />;
   const s = summary.data || {};
 

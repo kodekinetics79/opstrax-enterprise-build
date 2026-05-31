@@ -79,9 +79,16 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const save = useMutation({ mutationFn: (payload: AnyRecord) => payload.id ? config.api.update(payload.id as string | number, payload) : config.api.create(payload), onSuccess: async () => { setEditing(null); await invalidate(); } });
   const action = useMutation({ mutationFn: ({ type, row }: { type: string; row: AnyRecord }) => runAction(kind, type, row), onSuccess: invalidate });
   const rows = useMemo(() => (rowsQuery.data || []).filter((row) => {
-    const text = JSON.stringify(row).toLowerCase();
-    const status = String(row.status || row.reviewStatus || row.severity || "").toLowerCase();
-    return (!search || text.includes(search.toLowerCase())) && (filter === "All" || status.includes(filter.toLowerCase()) || text.includes(filter.toLowerCase()));
+    const searchLower = search.toLowerCase();
+    const filterLower = filter.toLowerCase();
+    const matchesSearch = !search || 
+      String(row.eventNumber || row.taskNumber || row.incidentNumber || row.packageNumber || "").toLowerCase().includes(searchLower) ||
+      String(row.driverName || row.vehicleCode || row.jobNumber || row.routeCode || "").toLowerCase().includes(searchLower) ||
+      String(row.eventType || row.coachingType || row.incidentType || "").toLowerCase().includes(searchLower);
+
+    const statusVal = String(row.status || row.reviewStatus || row.severity || "").toLowerCase();
+    const matchesFilter = filter === "All" || statusVal.includes(filterLower);
+    return matchesSearch && matchesFilter;
   }), [rowsQuery.data, search, filter]);
   if (rowsQuery.isLoading) return <LoadingState />;
   const s = summary.data || {};

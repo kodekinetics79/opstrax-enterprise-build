@@ -5,25 +5,25 @@ INSERT INTO companies (id, company_code, name, industry, timezone) VALUES
 (2, 'NOVA-HAUL', 'Northern Virginia Haulage', 'Regional Carrier', 'America/New_York');
 
 INSERT INTO roles (name, permissions_json) VALUES
-('Super Admin', JSON_ARRAY('*')),
-('Company Admin', JSON_ARRAY('admin','operate','read')),
-('Fleet Manager', JSON_ARRAY('fleet','maintenance','read')),
-('Dispatcher', JSON_ARRAY('dispatch','jobs','read')),
-('Driver', JSON_ARRAY('driver','read')),
-('Mechanic', JSON_ARRAY('maintenance','read')),
-('Safety Manager', JSON_ARRAY('safety','read')),
-('Compliance Manager', JSON_ARRAY('compliance','read')),
-('Customer Service', JSON_ARRAY('customers','eta','read')),
-('Customer Portal User', JSON_ARRAY('portal','read')),
-('Reseller / Partner Admin', JSON_ARRAY('partner','read')),
-('Read-only Auditor', JSON_ARRAY('audit','read'));
+('Super Admin',            JSON_ARRAY('*')),
+('Company Admin',          JSON_ARRAY('*')),
+('Fleet Manager',          JSON_ARRAY('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
+('Dispatcher',             JSON_ARRAY('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+('Driver',                 JSON_ARRAY('driver:portal','jobs:view','dvir:manage')),
+('Mechanic',               JSON_ARRAY('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
+('Safety Manager',         JSON_ARRAY('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
+('Compliance Manager',     JSON_ARRAY('dashboard:view','compliance:view','compliance:manage','audit:view','fleet:view','intelligence:view')),
+('Customer Service',       JSON_ARRAY('customers:view','customer-portal:view','dispatch:view','crm:view')),
+('Customer Portal User',   JSON_ARRAY('customer-portal:view')),
+('Reseller / Partner Admin', JSON_ARRAY('*')),
+('Read-only Auditor',      JSON_ARRAY('audit:view','fleet:view','dashboard:view'));
 
 INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, permissions_json) VALUES
-(1, 2, 'Avery Stone', 'admin@opstrax.com', 'Company Admin', 'Admin@12345', JSON_ARRAY('*')),
-(1, 4, 'Maya Patel', 'dispatcher@opstrax.com', 'Dispatcher', 'Admin@12345', JSON_ARRAY('dispatch','jobs','read')),
-(1, 5, 'Omar Ali', 'driver@opstrax.com', 'Driver', 'Admin@12345', JSON_ARRAY('driver','read')),
-(1, 6, 'Jordan Reyes', 'mechanic@opstrax.com', 'Mechanic', 'Admin@12345', JSON_ARRAY('maintenance','read')),
-(1, 10, 'Priya Shah', 'customer@opstrax.com', 'Customer Portal User', 'Admin@12345', JSON_ARRAY('portal','read'));
+(1, 2, 'Avery Stone',    'admin@opstrax.com',      'Company Admin',       'Admin@12345', JSON_ARRAY('*')),
+(1, 4, 'Maya Patel',     'dispatcher@opstrax.com', 'Dispatcher',          'Admin@12345', JSON_ARRAY('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+(1, 5, 'Omar Ali',       'driver@opstrax.com',     'Driver',              'Admin@12345', JSON_ARRAY('driver:portal','jobs:view','dvir:manage')),
+(1, 6, 'Jordan Reyes',   'mechanic@opstrax.com',   'Mechanic',            'Admin@12345', JSON_ARRAY('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
+(1, 10, 'Priya Shah',    'customer@opstrax.com',   'Customer Portal User','Admin@12345', JSON_ARRAY('customer-portal:view'));
 
 INSERT INTO customers (company_id, customer_code, name, contact_name, email, status, sla_tier) VALUES
 (1,'CUS-001','Prince William Logistics','Nora Lane','nora@pwl.example','Active','Platinum'),
@@ -327,3 +327,86 @@ ELT((n%4)+1,'Low','Medium','High','Critical'),
 ROUND(100 + n*37.5, 2),
 JSON_OBJECT('seeded', true, 'index', n)
 FROM seq;
+
+-- =====================================================================
+-- RBAC: permissions catalogue
+-- =====================================================================
+INSERT INTO permissions (permission_key, label, module_group, description) VALUES
+('*',                   'Super Admin — All Access',          'System',           'Grants unrestricted access to every module and action'),
+('dashboard:view',      'Dashboard',                         'Control Tower',    'Live dashboard, command center, control tower views'),
+('map:view',            'Map View',                         'Control Tower',    'Fleet 360 live map and location feeds'),
+('dispatch:view',       'Dispatch — View',                  'Transport Ops',    'View dispatch board, jobs, assignments'),
+('dispatch:manage',     'Dispatch — Manage',                'Transport Ops',    'Assign, reassign, and update dispatch records'),
+('jobs:view',           'Jobs — View',                      'Transport Ops',    'View job records and status'),
+('jobs:manage',         'Jobs — Manage',                    'Transport Ops',    'Create, update, and delete jobs'),
+('fleet:view',          'Fleet — View',                     'Fleet',            'View vehicles, drivers, assets, assignments'),
+('fleet:manage',        'Fleet — Manage',                   'Fleet',            'Create, update, and delete fleet entities'),
+('telematics:view',     'Telematics & IoT',                 'Telematics',       'GPS tracking, IoT devices, OBD, cold chain, sensor health'),
+('safety:view',         'Safety — View',                    'Safety',           'View safety events, dashcam, coaching, incidents'),
+('safety:manage',       'Safety — Manage',                  'Safety',           'Manage coaching tasks, incidents, evidence packages'),
+('maintenance:view',    'Maintenance — View',               'Maintenance',      'View maintenance items, work orders, DVIR, service history'),
+('maintenance:manage',  'Maintenance — Manage',             'Maintenance',      'Create and update maintenance items, work orders, DVIR'),
+('dvir:manage',         'DVIR — Submit & Update',           'Maintenance',      'Driver can submit and update DVIR reports'),
+('dvir:review',         'DVIR — Mechanic Review',           'Maintenance',      'Mechanic can review and certify DVIR reports'),
+('compliance:view',     'Compliance — View',                'Compliance',       'View HOS/ELD, compliance profiles, violations'),
+('compliance:manage',   'Compliance — Manage',              'Compliance',       'Manage compliance profiles, violations, audit packages'),
+('finance:view',        'Finance — View',                   'Financials',       'View fuel, expenses, invoices, cost margin'),
+('finance:manage',      'Finance — Manage',                 'Financials',       'Approve expenses, manage invoices and cost records'),
+('customers:view',      'Customers & Commercial — View',    'Commercial',       'View customers, contracts, rate cards, quotations'),
+('crm:view',            'CRM & Growth — View',              'CRM',              'View leads, pipeline, campaigns, account health'),
+('customer-portal:view','Customer Portal',                  'Portal',           'Customer self-service ETA and delivery portal'),
+('intelligence:view',   'Intelligence & Reports',           'Intelligence',     'AI copilot, reports analytics, executive views'),
+('audit:view',          'Audit Logs',                       'Governance',       'View immutable audit log and export requests'),
+('governance:manage',   'Governance & Admin',               'Governance',       'Manage users, roles, feature flags, integrations'),
+('driver:portal',       'Driver Portal',                    'Driver',           'Driver mobile-style portal for jobs, HOS, DVIR');
+
+-- =====================================================================
+-- RBAC: role_permissions mapping
+-- =====================================================================
+-- Super Admin (role_id=1): wildcard covers all
+INSERT INTO role_permissions (role_id, permission_key) VALUES (1,'*');
+
+-- Company Admin (role_id=2): full access
+INSERT INTO role_permissions (role_id, permission_key) VALUES (2,'*');
+
+-- Fleet Manager (role_id=3)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(3,'dashboard:view'),(3,'fleet:view'),(3,'fleet:manage'),(3,'maintenance:view'),
+(3,'maintenance:manage'),(3,'telematics:view'),(3,'dispatch:view'),(3,'intelligence:view'),(3,'map:view');
+
+-- Dispatcher (role_id=4)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(4,'dashboard:view'),(4,'dispatch:view'),(4,'dispatch:manage'),(4,'fleet:view'),
+(4,'jobs:view'),(4,'jobs:manage'),(4,'map:view'),(4,'customers:view');
+
+-- Driver (role_id=5)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(5,'driver:portal'),(5,'jobs:view'),(5,'dvir:manage');
+
+-- Mechanic (role_id=6)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(6,'maintenance:view'),(6,'maintenance:manage'),(6,'dvir:review'),(6,'fleet:view');
+
+-- Safety Manager (role_id=7)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(7,'dashboard:view'),(7,'safety:view'),(7,'safety:manage'),(7,'compliance:view'),
+(7,'fleet:view'),(7,'telematics:view'),(7,'intelligence:view');
+
+-- Compliance Manager (role_id=8)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(8,'dashboard:view'),(8,'compliance:view'),(8,'compliance:manage'),(8,'audit:view'),
+(8,'fleet:view'),(8,'intelligence:view');
+
+-- Customer Service (role_id=9)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(9,'customers:view'),(9,'customer-portal:view'),(9,'dispatch:view'),(9,'crm:view');
+
+-- Customer Portal User (role_id=10)
+INSERT INTO role_permissions (role_id, permission_key) VALUES (10,'customer-portal:view');
+
+-- Reseller / Partner Admin (role_id=11)
+INSERT INTO role_permissions (role_id, permission_key) VALUES (11,'*');
+
+-- Read-only Auditor (role_id=12)
+INSERT INTO role_permissions (role_id, permission_key) VALUES
+(12,'audit:view'),(12,'fleet:view'),(12,'dashboard:view');

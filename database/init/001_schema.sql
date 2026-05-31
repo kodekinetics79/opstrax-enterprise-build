@@ -637,3 +637,858 @@ CREATE INDEX ix_asset_documents_asset_status ON asset_documents(asset_id, status
 CREATE INDEX ix_customer_contacts_customer ON customer_contacts(customer_id);
 CREATE INDEX ix_customer_addresses_customer ON customer_addresses(customer_id);
 CREATE INDEX ix_driver_certifications_driver_status ON driver_certifications(driver_id, status);
+
+-- =====================================================================
+-- RBAC: permissions, role_permissions, user_sessions
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS permissions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  permission_key VARCHAR(100) NOT NULL UNIQUE,
+  label VARCHAR(160) NOT NULL,
+  module_group VARCHAR(100) NULL,
+  description TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  role_id BIGINT NOT NULL,
+  permission_key VARCHAR(100) NOT NULL,
+  CONSTRAINT fk_rp_role FOREIGN KEY (role_id) REFERENCES roles(id),
+  UNIQUE KEY uq_role_permission (role_id, permission_key)
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  company_id BIGINT NOT NULL,
+  session_token VARCHAR(128) NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX ix_user_sessions_token (session_token),
+  INDEX ix_user_sessions_user (user_id),
+  CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- =====================================================================
+-- BATCH 2: Jobs/Dispatch/Routes enrichment tables
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS job_status_events (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  job_id BIGINT NOT NULL,
+  previous_status VARCHAR(60) NULL,
+  new_status VARCHAR(60) NOT NULL,
+  event_title VARCHAR(180) NOT NULL,
+  event_description TEXT NULL,
+  occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS route_paths (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  route_id BIGINT NOT NULL,
+  encoded_polyline TEXT NULL,
+  total_distance_km DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_duration_minutes INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS route_recommendations (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  route_id BIGINT NULL,
+  recommendation_type VARCHAR(120) NOT NULL,
+  title VARCHAR(220) NOT NULL,
+  body TEXT NOT NULL,
+  score DECIMAL(6,2) NOT NULL DEFAULT 80,
+  status VARCHAR(50) NOT NULL DEFAULT 'Recommended',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_eta_links (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  job_id BIGINT NOT NULL,
+  customer_id BIGINT NULL,
+  tracking_code VARCHAR(80) NOT NULL UNIQUE,
+  eta DATETIME NULL,
+  status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  expires_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_feedback (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  job_id BIGINT NOT NULL,
+  customer_id BIGINT NULL,
+  rating INT NOT NULL DEFAULT 5,
+  comment TEXT NULL,
+  feedback_type VARCHAR(80) NOT NULL DEFAULT 'Delivery',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- BATCH 3: Maintenance, DVIR, Documents enrichment tables
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS maintenance_schedules (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  vehicle_id BIGINT NULL,
+  asset_id BIGINT NULL,
+  service_type VARCHAR(120) NOT NULL,
+  trigger_type VARCHAR(80) NOT NULL DEFAULT 'Date',
+  interval_miles INT NULL,
+  interval_engine_hours INT NULL,
+  interval_days INT NULL,
+  last_service_date DATE NULL,
+  last_service_odometer INT NULL,
+  next_due_date DATE NULL,
+  next_due_odometer INT NULL,
+  next_due_engine_hours INT NULL,
+  priority VARCHAR(40) NOT NULL DEFAULT 'Medium',
+  status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  estimated_cost DECIMAL(12,2) NULL,
+  vendor_id BIGINT NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_order_labor (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  work_order_id BIGINT NOT NULL,
+  technician_name VARCHAR(160) NOT NULL,
+  labor_hours DECIMAL(8,2) NOT NULL DEFAULT 0,
+  labor_rate DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS work_order_parts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  work_order_id BIGINT NOT NULL,
+  part_name VARCHAR(180) NOT NULL,
+  part_number VARCHAR(100) NULL,
+  quantity DECIMAL(8,2) NOT NULL DEFAULT 1,
+  unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(80) NOT NULL DEFAULT 'Needed',
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS work_order_status_events (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  work_order_id BIGINT NOT NULL,
+  previous_status VARCHAR(80) NULL,
+  new_status VARCHAR(80) NOT NULL,
+  event_title VARCHAR(180) NOT NULL,
+  event_description TEXT NULL,
+  occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dvir_reports (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  report_number VARCHAR(80) NOT NULL,
+  driver_id BIGINT NOT NULL,
+  vehicle_id BIGINT NOT NULL,
+  country_code VARCHAR(12) NULL,
+  inspection_type VARCHAR(80) NOT NULL,
+  inspection_status VARCHAR(80) NOT NULL DEFAULT 'Submitted',
+  defects_found INT NOT NULL DEFAULT 0,
+  safe_to_operate BOOLEAN NOT NULL DEFAULT TRUE,
+  driver_signature_status VARCHAR(80) NOT NULL DEFAULT 'Pending',
+  mechanic_review_status VARCHAR(80) NOT NULL DEFAULT 'Pending',
+  repair_certification_status VARCHAR(80) NOT NULL DEFAULT 'Pending',
+  submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  mechanic_reviewed_at DATETIME NULL,
+  repair_certified_at DATETIME NULL,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 30,
+  recommended_action VARCHAR(240) NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS dvir_defects (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  dvir_report_id BIGINT NOT NULL,
+  defect_category VARCHAR(120) NOT NULL,
+  defect_description TEXT NOT NULL,
+  severity VARCHAR(40) NOT NULL DEFAULT 'Minor',
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  linked_work_order_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dvir_templates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  template_name VARCHAR(180) NOT NULL,
+  country_code VARCHAR(12) NULL,
+  vehicle_type VARCHAR(80) NULL,
+  inspection_type VARCHAR(80) NOT NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS inspection_checklist_items (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  template_id BIGINT NOT NULL,
+  item_label VARCHAR(220) NOT NULL,
+  item_category VARCHAR(120) NOT NULL,
+  required BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 1,
+  status VARCHAR(80) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS document_timeline_events (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  document_id BIGINT NOT NULL,
+  event_title VARCHAR(180) NOT NULL,
+  event_description TEXT NULL,
+  occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- BATCH 4: Safety, Coaching, Incidents, Evidence
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS coaching_tasks (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  task_number VARCHAR(80) NOT NULL,
+  driver_id BIGINT NOT NULL,
+  safety_event_id BIGINT NULL,
+  dashcam_event_id BIGINT NULL,
+  assigned_to_user_id BIGINT NULL,
+  coaching_type VARCHAR(120) NOT NULL,
+  priority VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  status VARCHAR(80) NOT NULL DEFAULT 'Draft',
+  title VARCHAR(220) NOT NULL,
+  description TEXT NULL,
+  ai_script TEXT NULL,
+  driver_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+  acknowledged_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  before_safety_score DECIMAL(6,2) NULL,
+  after_safety_score DECIMAL(6,2) NULL,
+  effectiveness_score DECIMAL(6,2) NULL,
+  due_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS coaching_notes (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  coaching_task_id BIGINT NOT NULL,
+  note_type VARCHAR(80) NOT NULL DEFAULT 'Manager Note',
+  note_text TEXT NOT NULL,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS incidents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  incident_number VARCHAR(80) NOT NULL,
+  safety_event_id BIGINT NULL,
+  dashcam_event_id BIGINT NULL,
+  driver_id BIGINT NULL,
+  vehicle_id BIGINT NULL,
+  job_id BIGINT NULL,
+  route_id BIGINT NULL,
+  incident_type VARCHAR(120) NOT NULL,
+  severity VARCHAR(50) NOT NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'New',
+  location_description VARCHAR(220) NULL,
+  latitude DECIMAL(10,7) NULL,
+  longitude DECIMAL(10,7) NULL,
+  occurred_at DATETIME NULL,
+  driver_statement TEXT NULL,
+  witness_statement TEXT NULL,
+  customer_statement TEXT NULL,
+  ai_summary TEXT NULL,
+  recommended_action VARCHAR(260) NULL,
+  insurance_report_status VARCHAR(80) NOT NULL DEFAULT 'Not Created',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS incident_evidence (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  incident_id BIGINT NOT NULL,
+  evidence_type VARCHAR(120) NOT NULL,
+  evidence_title VARCHAR(220) NOT NULL,
+  evidence_url VARCHAR(400) NULL,
+  evidence_json JSON NULL,
+  source_entity_type VARCHAR(100) NULL,
+  source_entity_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS evidence_packages (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  package_number VARCHAR(80) NOT NULL,
+  incident_id BIGINT NULL,
+  safety_event_id BIGINT NULL,
+  dashcam_event_id BIGINT NULL,
+  driver_id BIGINT NULL,
+  vehicle_id BIGINT NULL,
+  job_id BIGINT NULL,
+  package_type VARCHAR(120) NOT NULL DEFAULT 'Insurance Evidence',
+  status VARCHAR(80) NOT NULL DEFAULT 'Draft',
+  locked BOOLEAN NOT NULL DEFAULT FALSE,
+  export_url VARCHAR(400) NULL,
+  summary TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS evidence_package_items (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  package_id BIGINT NOT NULL,
+  item_type VARCHAR(120) NOT NULL,
+  item_title VARCHAR(220) NOT NULL,
+  item_url VARCHAR(400) NULL,
+  source_entity_type VARCHAR(100) NULL,
+  source_entity_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS insurance_reports (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  incident_id BIGINT NOT NULL,
+  report_number VARCHAR(80) NOT NULL,
+  insurer_name VARCHAR(180) NULL,
+  claim_number VARCHAR(120) NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'Draft',
+  estimated_claim DECIMAL(12,2) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS driver_safety_scorecards (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  driver_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  overall_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  speeding_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  harsh_braking_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  harsh_acceleration_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  phone_use_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  seatbelt_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  events_count INT NOT NULL DEFAULT 0,
+  incidents_count INT NOT NULL DEFAULT 0,
+  coaching_tasks_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vehicle_safety_scorecards (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  vehicle_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  overall_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  events_count INT NOT NULL DEFAULT 0,
+  incidents_count INT NOT NULL DEFAULT 0,
+  maintenance_risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS safety_trends (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  total_events INT NOT NULL DEFAULT 0,
+  critical_events INT NOT NULL DEFAULT 0,
+  coaching_completion_rate DECIMAL(6,2) NOT NULL DEFAULT 80,
+  fleet_safety_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  trend_direction VARCHAR(40) NOT NULL DEFAULT 'Stable',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- BATCH 5: Finance, Fuel, Carriers, Cost Margin
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS idling_events (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  event_number VARCHAR(80) NOT NULL,
+  vehicle_id BIGINT NOT NULL,
+  driver_id BIGINT NULL,
+  job_id BIGINT NULL,
+  route_id BIGINT NULL,
+  location_description VARCHAR(220) NULL,
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ended_at DATETIME NULL,
+  duration_minutes DECIMAL(8,2) NOT NULL DEFAULT 0,
+  estimated_fuel_burn DECIMAL(10,3) NOT NULL DEFAULT 0,
+  estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  reviewed_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS fuel_anomalies (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  fuel_transaction_id BIGINT NULL,
+  vehicle_id BIGINT NULL,
+  driver_id BIGINT NULL,
+  anomaly_type VARCHAR(120) NOT NULL,
+  severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  description TEXT NULL,
+  estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  reviewed_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  category_name VARCHAR(120) NOT NULL,
+  category_type VARCHAR(80) NOT NULL DEFAULT 'Operating',
+  status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS contract_rates (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  contract_id BIGINT NOT NULL,
+  rate_code VARCHAR(80) NOT NULL,
+  rate_type VARCHAR(80) NOT NULL DEFAULT 'Per Mile',
+  origin_zone VARCHAR(120) NULL,
+  destination_zone VARCHAR(120) NULL,
+  vehicle_type VARCHAR(80) NULL,
+  base_rate DECIMAL(12,4) NOT NULL DEFAULT 0,
+  minimum_charge DECIMAL(12,2) NULL,
+  fuel_surcharge_percent DECIMAL(6,2) NULL,
+  accessorial_type VARCHAR(120) NULL,
+  effective_date DATE NULL,
+  expiry_date DATE NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS carrier_documents (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  carrier_id BIGINT NOT NULL,
+  document_type VARCHAR(120) NOT NULL,
+  document_number VARCHAR(120) NULL,
+  expiry_date DATE NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  file_url VARCHAR(400) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS carrier_performance (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  carrier_id BIGINT NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  jobs_handled INT NOT NULL DEFAULT 0,
+  on_time_percent DECIMAL(6,2) NOT NULL DEFAULT 90,
+  incident_count INT NOT NULL DEFAULT 0,
+  expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cost_margin_records (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  entity_type VARCHAR(80) NOT NULL,
+  entity_id BIGINT NOT NULL,
+  customer_id BIGINT NULL,
+  job_id BIGINT NULL,
+  route_id BIGINT NULL,
+  vehicle_id BIGINT NULL,
+  driver_id BIGINT NULL,
+  revenue_estimate DECIMAL(12,2) NOT NULL DEFAULT 0,
+  fuel_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  driver_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  maintenance_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  overhead_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  gross_margin DECIMAL(12,2) NOT NULL DEFAULT 0,
+  gross_margin_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
+  status VARCHAR(60) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cost_margin_predictions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  entity_type VARCHAR(80) NOT NULL,
+  entity_id BIGINT NOT NULL,
+  prediction_type VARCHAR(80) NOT NULL DEFAULT 'Margin Forecast',
+  predicted_revenue DECIMAL(12,2) NOT NULL DEFAULT 0,
+  predicted_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  predicted_margin DECIMAL(12,2) NOT NULL DEFAULT 0,
+  predicted_margin_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
+  confidence_level VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  risk_level VARCHAR(50) NOT NULL DEFAULT 'Low',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cost_leakage_items (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  leakage_number VARCHAR(80) NOT NULL,
+  category VARCHAR(120) NOT NULL,
+  entity_type VARCHAR(80) NULL,
+  entity_id BIGINT NULL,
+  title VARCHAR(220) NOT NULL,
+  description TEXT NULL,
+  estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  projected_monthly_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 40,
+  recommended_action VARCHAR(260) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS cost_leakage_actions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  company_id BIGINT NOT NULL DEFAULT 1,
+  cost_leakage_item_id BIGINT NOT NULL,
+  action_title VARCHAR(220) NOT NULL,
+  action_description TEXT NULL,
+  estimated_savings DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  assigned_to_user_id BIGINT NULL,
+  due_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- BATCH 6: Compliance, HOS/ELD, Localization
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS countries (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(10) NOT NULL UNIQUE,
+  name VARCHAR(200) NOT NULL,
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+  distance_unit VARCHAR(20) NOT NULL DEFAULT 'Miles',
+  volume_unit VARCHAR(20) NOT NULL DEFAULT 'Gallons',
+  status VARCHAR(40) NOT NULL DEFAULT 'Active'
+);
+
+CREATE TABLE IF NOT EXISTS languages (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(10) NOT NULL UNIQUE,
+  name VARCHAR(100) NOT NULL,
+  native_name VARCHAR(100) NOT NULL,
+  country_code VARCHAR(10) NULL,
+  rtl TINYINT(1) NOT NULL DEFAULT 0,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active'
+);
+
+CREATE TABLE IF NOT EXISTS tenant_locale_settings (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NULL,
+  default_language VARCHAR(10) NOT NULL DEFAULT 'en-US',
+  default_country VARCHAR(10) NOT NULL DEFAULT 'US',
+  timezone VARCHAR(80) NOT NULL DEFAULT 'America/New_York',
+  date_format VARCHAR(40) NOT NULL DEFAULT 'MM/DD/YYYY',
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+  distance_unit VARCHAR(20) NOT NULL DEFAULT 'Miles',
+  volume_unit VARCHAR(20) NOT NULL DEFAULT 'Gallons',
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_locale_preferences (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NULL,
+  language VARCHAR(10) NOT NULL DEFAULT 'en-US',
+  country_code VARCHAR(10) NULL,
+  timezone VARCHAR(80) NULL,
+  date_format VARCHAR(40) NULL,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS compliance_profiles (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  country_code VARCHAR(10) NOT NULL,
+  profile_name VARCHAR(200) NOT NULL,
+  authority VARCHAR(200) NULL,
+  hos_ruleset VARCHAR(80) NULL,
+  eld_required TINYINT(1) NOT NULL DEFAULT 0,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS compliance_rules (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  profile_id BIGINT NOT NULL,
+  rule_code VARCHAR(80) NOT NULL,
+  rule_name VARCHAR(200) NOT NULL,
+  category VARCHAR(80) NOT NULL DEFAULT 'HOS',
+  description TEXT NULL,
+  max_value DECIMAL(10,2) NULL,
+  unit VARCHAR(40) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active'
+);
+
+CREATE TABLE IF NOT EXISTS driver_compliance_status (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  driver_id BIGINT NOT NULL,
+  country_code VARCHAR(10) NOT NULL DEFAULT 'US',
+  profile_id BIGINT NULL,
+  overall_status VARCHAR(80) NOT NULL DEFAULT 'Compliant',
+  license_valid TINYINT(1) NOT NULL DEFAULT 1,
+  medical_cert_valid TINYINT(1) NOT NULL DEFAULT 1,
+  hos_status VARCHAR(80) NOT NULL DEFAULT 'Compliant',
+  violations_count INT NOT NULL DEFAULT 0,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 10,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vehicle_compliance_status (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  vehicle_id BIGINT NOT NULL,
+  country_code VARCHAR(10) NOT NULL DEFAULT 'US',
+  profile_id BIGINT NULL,
+  overall_status VARCHAR(80) NOT NULL DEFAULT 'Compliant',
+  registration_valid TINYINT(1) NOT NULL DEFAULT 1,
+  inspection_valid TINYINT(1) NOT NULL DEFAULT 1,
+  eld_status VARCHAR(80) NOT NULL DEFAULT 'Compliant',
+  violations_count INT NOT NULL DEFAULT 0,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 10,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS hos_clocks (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  driver_id BIGINT NOT NULL,
+  country_code VARCHAR(10) NOT NULL DEFAULT 'US',
+  profile_id BIGINT NULL,
+  cycle_type VARCHAR(80) NOT NULL DEFAULT '70hr/8day',
+  drive_time_remaining_minutes INT NOT NULL DEFAULT 660,
+  shift_time_remaining_minutes INT NOT NULL DEFAULT 840,
+  cycle_time_remaining_minutes INT NOT NULL DEFAULT 4200,
+  duty_status VARCHAR(80) NOT NULL DEFAULT 'Off Duty',
+  status VARCHAR(80) NOT NULL DEFAULT 'Compliant',
+  last_synced_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS eld_devices (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  device_serial VARCHAR(120) NOT NULL UNIQUE,
+  device_model VARCHAR(120) NULL,
+  provider VARCHAR(120) NULL,
+  vehicle_id BIGINT NULL,
+  driver_id BIGINT NULL,
+  firmware_version VARCHAR(80) NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'Active',
+  last_heartbeat_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS compliance_violations (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  violation_code VARCHAR(80) NOT NULL,
+  rule_id BIGINT NULL,
+  profile_id BIGINT NULL,
+  country_code VARCHAR(10) NOT NULL DEFAULT 'US',
+  driver_id BIGINT NULL,
+  vehicle_id BIGINT NULL,
+  severity VARCHAR(40) NOT NULL DEFAULT 'Medium',
+  description TEXT NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS compliance_audit_packages (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  package_code VARCHAR(80) NOT NULL UNIQUE,
+  country_code VARCHAR(10) NOT NULL DEFAULT 'US',
+  profile_id BIGINT NULL,
+  created_by VARCHAR(120) NULL,
+  status VARCHAR(80) NOT NULL DEFAULT 'Draft',
+  date_from DATE NULL,
+  date_to DATE NULL,
+  export_url VARCHAR(400) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- BATCH 7: Reports, KPIs, SLA, Executive, Audit
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS report_catalog (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NULL,
+  report_key VARCHAR(100) NOT NULL UNIQUE,
+  report_name VARCHAR(220) NOT NULL,
+  report_category VARCHAR(100) NOT NULL,
+  description TEXT NULL,
+  default_filters_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS report_runs (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  report_key VARCHAR(100) NOT NULL,
+  report_name VARCHAR(220) NOT NULL,
+  filters_json JSON NULL,
+  run_by_user_id BIGINT NULL,
+  run_by_name VARCHAR(160) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Completed',
+  row_count INT NULL,
+  result_summary_json JSON NULL,
+  started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_reports (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  report_key VARCHAR(100) NOT NULL,
+  report_name VARCHAR(220) NOT NULL,
+  schedule_name VARCHAR(200) NOT NULL,
+  frequency VARCHAR(40) NOT NULL DEFAULT 'Weekly',
+  recipients_json JSON NULL,
+  filters_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  next_run_at TIMESTAMP NULL,
+  last_run_at TIMESTAMP NULL,
+  created_by_user_id BIGINT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS report_exports (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  report_run_id BIGINT NULL,
+  report_key VARCHAR(100) NOT NULL,
+  export_type VARCHAR(40) NOT NULL DEFAULT 'CSV',
+  status VARCHAR(40) NOT NULL DEFAULT 'Pending',
+  export_url VARCHAR(500) NULL,
+  requested_by_user_id BIGINT NULL,
+  requested_by_name VARCHAR(160) NULL,
+  requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS kpi_metrics (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  kpi_code VARCHAR(80) NOT NULL,
+  kpi_name VARCHAR(220) NOT NULL,
+  category VARCHAR(80) NOT NULL,
+  target_value DECIMAL(12,4) NULL,
+  actual_value DECIMAL(12,4) NOT NULL DEFAULT 0,
+  unit VARCHAR(40) NOT NULL DEFAULT '%',
+  trend VARCHAR(20) NOT NULL DEFAULT 'stable',
+  status VARCHAR(40) NOT NULL DEFAULT 'On Target',
+  owner_role VARCHAR(80) NULL,
+  recommendation TEXT NULL,
+  last_calculated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS kpi_targets (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  kpi_code VARCHAR(80) NOT NULL,
+  target_value DECIMAL(12,4) NOT NULL,
+  unit VARCHAR(40) NOT NULL DEFAULT '%',
+  effective_date DATE NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sla_breaches (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  sla_record_id BIGINT NOT NULL,
+  breach_type VARCHAR(80) NOT NULL DEFAULT 'Delivery Delay',
+  severity VARCHAR(40) NOT NULL DEFAULT 'Medium',
+  description TEXT NULL,
+  root_cause_placeholder VARCHAR(200) NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Open',
+  detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS executive_snapshots (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  snapshot_date DATE NOT NULL,
+  operations_health_score DECIMAL(5,2) NOT NULL DEFAULT 80,
+  cost_health_score DECIMAL(5,2) NOT NULL DEFAULT 75,
+  safety_health_score DECIMAL(5,2) NOT NULL DEFAULT 85,
+  compliance_health_score DECIMAL(5,2) NOT NULL DEFAULT 88,
+  customer_sla_score DECIMAL(5,2) NOT NULL DEFAULT 82,
+  fleet_readiness_score DECIMAL(5,2) NOT NULL DEFAULT 79,
+  dispatch_readiness_score DECIMAL(5,2) NOT NULL DEFAULT 86,
+  top_risks_json JSON NULL,
+  top_savings_json JSON NULL,
+  ai_brief TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audit_export_requests (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
+  requested_by_user_id BIGINT NULL,
+  requested_by_name VARCHAR(160) NULL,
+  date_from DATE NULL,
+  date_to DATE NULL,
+  filters_json JSON NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'Pending',
+  export_url VARCHAR(500) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL
+);

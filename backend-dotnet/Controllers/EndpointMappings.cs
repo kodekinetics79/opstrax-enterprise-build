@@ -431,10 +431,26 @@ public static class EndpointMappings
         app.MapPut($"/api/{moduleKey}/{{id:long}}", (long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => UpdateModuleRecord(moduleKey, id, body, db, audit, ct));
     }
 
+    private static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Super Admin"]              = ["*"],
+        ["Company Admin"]            = ["*"],
+        ["Fleet Manager"]            = ["dashboard:view","fleet:view","fleet:manage","maintenance:view","maintenance:manage","telematics:view","dispatch:view","intelligence:view","map:view"],
+        ["Dispatcher"]               = ["dashboard:view","dispatch:view","dispatch:manage","fleet:view","jobs:view","jobs:manage","map:view","customers:view"],
+        ["Driver"]                   = ["driver:portal","jobs:view","dvir:manage"],
+        ["Mechanic"]                 = ["maintenance:view","maintenance:manage","dvir:review","fleet:view"],
+        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:manage","compliance:view","fleet:view","telematics:view","intelligence:view"],
+        ["Compliance Manager"]       = ["dashboard:view","compliance:view","compliance:manage","audit:view","fleet:view","intelligence:view"],
+        ["Customer Service"]         = ["customers:view","customer-portal:view","dispatch:view","crm:view"],
+        ["Customer Portal User"]     = ["customer-portal:view"],
+        ["Reseller / Partner Admin"] = ["*"],
+        ["Read-only Auditor"]        = ["audit:view","fleet:view","dashboard:view"],
+    };
+
     private static async Task<IResult> Login(LoginRequest request, Database db, AuditService audit, CancellationToken ct)
     {
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.full_name, u.email, u.role_name, u.permissions_json, c.name company_name, c.company_code
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.permissions_json, c.id company_id, c.name company_name, c.company_code
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.email=@email AND u.demo_password=@password LIMIT 1",
             cmd =>
@@ -443,15 +459,56 @@ public static class EndpointMappings
                 cmd.Parameters.AddWithValue("@password", request.Password);
             }, ct);
         if (user is null) return Results.Unauthorized();
+
         await audit.LogAsync("user.login", "User", Convert.ToInt64(user["id"]), request.Email, ct);
+
         var role = user["roleName"]?.ToString() ?? "Company Admin";
+
+        // Resolve permissions: prefer permissions_json stored in DB, fall back to role default map
+        string[] permissions;
+        var permsRaw = user["permissionsJson"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(permsRaw))
+        {
+            try { permissions = System.Text.Json.JsonSerializer.Deserialize<string[]>(permsRaw) ?? []; }
+            catch { permissions = RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]); }
+        }
+        else
+        {
+            permissions = RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]);
+        }
+
+        var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+
+        // Persist session so the token can be validated later if needed
+        try
+        {
+            var userId = Convert.ToInt64(user["id"]);
+            var companyId = Convert.ToInt64(user["companyId"]);
+            await db.ExecuteAsync(
+                @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
+                  VALUES (@uid, @cid, @tok, DATE_ADD(NOW(), INTERVAL 8 HOUR))
+                  ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@tok", token);
+                }, ct);
+        }
+        catch { /* non-fatal — session table may not exist on first boot before migrations run */ }
+
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            token = Convert.ToBase64String(Guid.NewGuid().ToByteArray()),
-            user,
+            token,
+            user = new
+            {
+                id    = user["id"],
+                email = user["email"],
+                name  = user["fullName"],
+            },
             role,
             company = new { name = user["companyName"], code = user["companyCode"] },
-            permissions = role.Contains("Admin", StringComparison.OrdinalIgnoreCase) ? new[] { "*" } : new[] { "read", "operate" }
+            permissions,
         }, "Login successful"));
     }
 
@@ -488,32 +545,33 @@ public static class EndpointMappings
     private static async Task<IResult> ControlTowerSummary(Database db, CancellationToken ct)
     {
         var entities = await db.QueryAsync(
-            @"SELECT le.id, le.vehicle_id, le.driver_id, le.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
-                     le.lat, le.lng, le.speed_mph, le.heading, le.event_type, le.event_time, v.type vehicle_type, v.device_status, v.camera_status,
-                     v.readiness_score, v.data_quality_score, v.risk_score, d.full_name driver_name,
+            @"SELECT v.id, v.id vehicleId, v.assigned_driver_id driverId, v.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
+                     le.lat, le.lng, le.speed_mph speedMph, le.heading, le.event_type eventType, le.event_time eventTime, v.type vehicleType, v.device_status deviceStatus, v.camera_status cameraStatus,
+                     v.readiness_score readinessScore, v.data_quality_score dataQualityScore, v.risk_score riskScore, d.full_name driverName,
                      CASE WHEN le.speed_mph > 65 THEN 'Speeding watch'
                           WHEN v.device_status <> 'Online' THEN 'Device offline'
                           WHEN v.camera_status <> 'Online' THEN 'Camera offline'
                           WHEN v.risk_score >= 70 THEN 'Fleet risk'
                           ELSE 'Normal' END live_alert,
                      CASE WHEN v.risk_score >= 70 OR le.speed_mph > 65 THEN 'High' WHEN v.device_status <> 'Online' OR v.camera_status <> 'Online' THEN 'Medium' ELSE 'Low' END risk_level
-              FROM location_events le
-              LEFT JOIN vehicles v ON v.id=le.vehicle_id
-              LEFT JOIN drivers d ON d.id=le.driver_id
-              ORDER BY le.event_time DESC LIMIT 20", ct: ct);
+              FROM vehicles v
+              INNER JOIN (SELECT le1.* FROM location_events le1 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events GROUP BY vehicle_id) le2 ON le1.id=le2.max_id) le ON v.id=le.vehicle_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
+              WHERE v.deleted_at IS NULL
+              ORDER BY le.event_time DESC LIMIT 24", ct: ct);
         var geofences = await db.QueryAsync("SELECT * FROM geofences ORDER BY name", ct: ct);
         var events = await db.QueryAsync("SELECT * FROM operational_events ORDER BY event_time DESC LIMIT 20", ct: ct);
         var recommendations = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key='control-tower' ORDER BY score DESC LIMIT 6", ct: ct);
         var kpis = await db.QuerySingleAsync(
-            @"SELECT COUNT(*) tracked_entities,
+            @"SELECT (SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL) tracked_entities,
                      SUM(v.device_status='Online') online_devices,
                      SUM(v.camera_status='Online') online_cameras,
                      SUM(v.status IN ('Available','Active','On Route','Idle')) active_units,
                      SUM(v.risk_score >= 70) high_risk_units,
-                     SUM(le.speed_mph > 65) speed_alerts,
+                     (SELECT COUNT(*) FROM location_events le2 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events GROUP BY vehicle_id) latest ON le2.id=latest.max_id WHERE le2.speed_mph > 65) speed_alerts,
                      ROUND(AVG(v.data_quality_score),1) telemetry_quality,
                      ROUND(AVG(v.readiness_score),1) fleet_readiness
-              FROM location_events le LEFT JOIN vehicles v ON v.id=le.vehicle_id", ct: ct);
+              FROM vehicles v WHERE v.deleted_at IS NULL", ct: ct);
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.status, j.priority, j.sla_status, j.eta,
                      c.name customer_name, v.vehicle_code, d.full_name driver_name,
@@ -580,11 +638,15 @@ public static class EndpointMappings
     private static async Task<IResult> ControlTowerEntities(Database db, CancellationToken ct)
     {
         var rows = await db.QueryAsync(
-            @"SELECT le.id, le.vehicle_id, le.vehicle_code label, 'vehicle' entity_type, le.lat, le.lng, le.speed_mph, le.event_type, v.status, d.full_name driver_name
-              FROM location_events le
-              LEFT JOIN vehicles v ON v.id=le.vehicle_id
-              LEFT JOIN drivers d ON d.id=le.driver_id
-              ORDER BY le.event_time DESC LIMIT 30", ct: ct);
+            @"SELECT v.id, v.id vehicleId, v.vehicle_code label, 'vehicle' entity_type, le.lat, le.lng, le.speed_mph speedMph, le.event_type eventType, v.status, d.full_name driverName
+              FROM vehicles v
+              INNER JOIN (
+                SELECT le1.* FROM location_events le1
+                INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events GROUP BY vehicle_id) le2 ON le1.id=le2.max_id
+              ) le ON v.id=le.vehicle_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
+              WHERE v.deleted_at IS NULL
+              ORDER BY le.event_time DESC", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -2621,6 +2683,34 @@ public static class EndpointMappings
             CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (1, CONCAT('RTE-', UUID_SHORT()), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
             UpdateSql: "UPDATE routes SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status) WHERE id=@id"),
 
+        ["leads"] = new(
+            "module_records",
+            "SELECT * FROM module_records WHERE module_key='leads' ORDER BY id DESC",
+            "SELECT * FROM module_records WHERE module_key='leads' AND id=@id",
+            "SELECT COUNT(*) total, SUM(status IN ('Qualified','Proposal Needed','New')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='leads'",
+            RequiresModuleKey: true),
+
+        ["sales-pipeline"] = new(
+            "module_records",
+            "SELECT * FROM module_records WHERE module_key='sales-pipeline' ORDER BY amount DESC",
+            "SELECT * FROM module_records WHERE module_key='sales-pipeline' AND id=@id",
+            "SELECT COUNT(*) total, SUM(status IN ('Negotiation','Contracting','Discovery')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='sales-pipeline'",
+            RequiresModuleKey: true),
+
+        ["opportunities"] = new(
+            "module_records",
+            "SELECT * FROM module_records WHERE module_key='opportunities' ORDER BY id DESC",
+            "SELECT * FROM module_records WHERE module_key='opportunities' AND id=@id",
+            "SELECT COUNT(*) total, SUM(status NOT IN ('Closed Won','Closed Lost')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='opportunities'",
+            RequiresModuleKey: true),
+
+        ["campaigns"] = new(
+            "module_records",
+            "SELECT * FROM module_records WHERE module_key='campaigns' ORDER BY id DESC",
+            "SELECT * FROM module_records WHERE module_key='campaigns' AND id=@id",
+            "SELECT COUNT(*) total, SUM(status='Active') active, 0 risk_items FROM module_records WHERE module_key='campaigns'",
+            RequiresModuleKey: true),
+
         ["assets"] = new(
             "assets",
             @"SELECT a.id, a.asset_code asset_code, a.name title, a.asset_type asset_type, a.status, a.current_location location_name, v.vehicle_code assigned_vehicle
@@ -4263,13 +4353,19 @@ public static class EndpointMappings
         var severity  = req.Query["severity"].FirstOrDefault();
         var search    = req.Query["search"].FirstOrDefault();
 
-        var where  = "WHERE 1=1";
-        if (!string.IsNullOrWhiteSpace(module))   where += $" AND module_key='{module.Replace("'", "")}'";
-        if (!string.IsNullOrWhiteSpace(action))   where += $" AND action_name LIKE '%{action.Replace("'", "")}%'";
-        if (!string.IsNullOrWhiteSpace(severity)) where += $" AND severity='{severity.Replace("'", "")}'";
-        if (!string.IsNullOrWhiteSpace(search))   where += $" AND (actor_name LIKE '%{search.Replace("'", "")}%' OR entity_name LIKE '%{search.Replace("'", "")}%' OR action_name LIKE '%{search.Replace("'", "")}%')";
-
-        var logs = await db.QueryAsync($"SELECT * FROM audit_logs {where} ORDER BY created_at DESC LIMIT 100", ct: ct);
+        var logs = await db.QueryAsync(
+            @"SELECT * FROM audit_logs 
+              WHERE (@module IS NULL OR module_key = @module)
+              AND (@action IS NULL OR action_name LIKE CONCAT('%', @action, '%'))
+              AND (@severity IS NULL OR severity = @severity)
+              AND (@search IS NULL OR actor_name LIKE CONCAT('%', @search, '%') OR entity_name LIKE CONCAT('%', @search, '%') OR action_name LIKE CONCAT('%', @search, '%'))
+              ORDER BY created_at DESC LIMIT 100",
+            c => {
+                c.Parameters.AddWithValue("@module", string.IsNullOrWhiteSpace(module) ? DBNull.Value : module);
+                c.Parameters.AddWithValue("@action", string.IsNullOrWhiteSpace(action) ? DBNull.Value : action);
+                c.Parameters.AddWithValue("@severity", string.IsNullOrWhiteSpace(severity) ? DBNull.Value : severity);
+                c.Parameters.AddWithValue("@search", string.IsNullOrWhiteSpace(search) ? DBNull.Value : search);
+            }, ct);
         return Results.Ok(ApiResponse<object>.Ok(logs, "Audit logs"));
     }
 
