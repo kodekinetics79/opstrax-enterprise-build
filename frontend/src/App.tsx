@@ -82,87 +82,87 @@ export default function App() {
         <Route index element={<Navigate to="/live-dashboard" replace />} />
 
         {/* ── Control Tower ── */}
-        <Route path="/live-dashboard" element={<PermissionGuard permission="dashboard:view"><OperatingModulePage moduleKey="live-dashboard" /></PermissionGuard>} />
-        <Route path="/active-shipments" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="active-shipments" /></PermissionGuard>} />
-        <Route path="/alerts" element={<PermissionGuard permission="fleet:view"><OperatingModulePage moduleKey="alerts" /></PermissionGuard>} />
-        <Route path="/map-view" element={<PermissionGuard permission="map:view"><OperatingModulePage moduleKey="map-view" /></PermissionGuard>} />
+        <Route path="/live-dashboard" element={<PermissionGuard permission="dashboard.view"><OperatingModulePage moduleKey="live-dashboard" /></PermissionGuard>} />
+        <Route path="/active-shipments" element={<PermissionGuard permission="dispatch.view"><OperatingModulePage moduleKey="active-shipments" /></PermissionGuard>} />
+        <Route path="/alerts" element={<PermissionGuard permission="fleet.view"><OperatingModulePage moduleKey="alerts" /></PermissionGuard>} />
+        <Route path="/map-view" element={<PermissionGuard permission="map.view"><OperatingModulePage moduleKey="map-view" /></PermissionGuard>} />
 
         {/* ── Intelligence ── */}
-        <Route path="/command-center" element={<PermissionGuard permission="dashboard:view"><CommandCenterPage /></PermissionGuard>} />
-        <Route path="/control-tower" element={<PermissionGuard permission="dashboard:view"><ControlTowerPage /></PermissionGuard>} />
-        <Route path="/ai-copilot" element={<PermissionGuard permission="intelligence:view"><AiCopilotPage /></PermissionGuard>} />
-        <Route path="/reports-analytics" element={<PermissionGuard permission="intelligence:view"><ReportsPage /></PermissionGuard>} />
-        <Route path="/reports" element={<PermissionGuard permission="intelligence:view"><ReportsPage /></PermissionGuard>} />
-        <Route path="/executive" element={<PermissionGuard permission="dashboard:view"><ExecutivePage /></PermissionGuard>} />
+        <Route path="/command-center" element={<PermissionGuard permission="dashboard.view"><CommandCenterPage /></PermissionGuard>} />
+        <Route path="/control-tower" element={<PermissionGuard permission="dashboard.view"><ControlTowerPage /></PermissionGuard>} />
+        <Route path="/ai-copilot" element={<PermissionGuard permission="reports.view"><AiCopilotPage /></PermissionGuard>} />
+        <Route path="/reports-analytics" element={<PermissionGuard permission="reports.view"><ReportsPage /></PermissionGuard>} />
+        <Route path="/reports" element={<PermissionGuard permission="reports.view"><ReportsPage /></PermissionGuard>} />
+        <Route path="/executive" element={<PermissionGuard permission="dashboard.view"><ExecutivePage /></PermissionGuard>} />
 
         {/* ── Fleet ── */}
-        <Route path="/vehicles" element={<PermissionGuard permission="fleet:view"><EntityListPage kind="vehicles" /></PermissionGuard>} />
-        <Route path="/drivers" element={<PermissionGuard permission="fleet:view"><EntityListPage kind="drivers" /></PermissionGuard>} />
-        <Route path="/assets" element={<PermissionGuard permission="fleet:view"><EntityListPage kind="assets" /></PermissionGuard>} />
-        <Route path="/documents" element={<PermissionGuard permission="fleet:view"><Batch3OperationsPage kind="documents" /></PermissionGuard>} />
+        <Route path="/vehicles" element={<PermissionGuard permission="fleet.view"><EntityListPage kind="vehicles" /></PermissionGuard>} />
+        <Route path="/drivers" element={<PermissionGuard permission="drivers.view"><EntityListPage kind="drivers" /></PermissionGuard>} />
+        <Route path="/assets" element={<PermissionGuard permission="fleet.view"><EntityListPage kind="assets" /></PermissionGuard>} />
+        <Route path="/documents" element={<PermissionGuard permission="fleet.view"><Batch3OperationsPage kind="documents" /></PermissionGuard>} />
 
         {/* ── Dispatch / Transport Ops ── */}
-        <Route path="/dispatch" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="dispatch-board" /></PermissionGuard>} />
-        <Route path="/jobs" element={<PermissionGuard permission="jobs:view"><JobsPage /></PermissionGuard>} />
-        <Route path="/routes" element={<PermissionGuard permission="dispatch:view"><RoutePlanningPage /></PermissionGuard>} />
-        <Route path="/route-planning" element={<PermissionGuard permission="dispatch:view"><RoutePlanningPage /></PermissionGuard>} />
-        <Route path="/shipments" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="shipments" /></PermissionGuard>} />
-        <Route path="/load-bookings" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="load-bookings" /></PermissionGuard>} />
-        <Route path="/route-plans" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="route-plans" /></PermissionGuard>} />
-        <Route path="/proof-of-delivery" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="proof-of-delivery" /></PermissionGuard>} />
-        <Route path="/last-mile-delivery" element={<PermissionGuard permission="dispatch:view"><OperatingModulePage moduleKey="last-mile-delivery" /></PermissionGuard>} />
+        <Route path="/dispatch" element={<PermissionGuard permission="dispatch.view"><OperatingModulePage moduleKey="dispatch-board" /></PermissionGuard>} />
+        <Route path="/jobs" element={<PermissionGuard permission="orders.view"><JobsPage /></PermissionGuard>} />
+        <Route path="/routes" element={<PermissionGuard permission="dispatch.view"><RoutePlanningPage /></PermissionGuard>} />
+        <Route path="/route-planning" element={<PermissionGuard permission="dispatch.view"><RoutePlanningPage /></PermissionGuard>} />
+        <Route path="/shipments" element={<PermissionGuard permission="shipments.view"><OperatingModulePage moduleKey="shipments" /></PermissionGuard>} />
+        <Route path="/load-bookings" element={<PermissionGuard permission="orders.view"><OperatingModulePage moduleKey="load-bookings" /></PermissionGuard>} />
+        <Route path="/route-plans" element={<PermissionGuard permission="dispatch.view"><OperatingModulePage moduleKey="route-plans" /></PermissionGuard>} />
+        <Route path="/proof-of-delivery" element={<PermissionGuard permission="pod.view"><OperatingModulePage moduleKey="proof-of-delivery" /></PermissionGuard>} />
+        <Route path="/last-mile-delivery" element={<PermissionGuard permission="dispatch.view"><OperatingModulePage moduleKey="last-mile-delivery" /></PermissionGuard>} />
 
         {/* ── Customer Portal ── */}
-        <Route path="/customer-eta" element={<PermissionGuard permission="customer-portal:view"><CustomerEtaPage /></PermissionGuard>} />
-        <Route path="/customer-portal" element={<PermissionGuard permission="customer-portal:view"><CustomerEtaPage /></PermissionGuard>} />
+        <Route path="/customer-eta" element={<PermissionGuard permission="customer_portal.view"><CustomerEtaPage /></PermissionGuard>} />
+        <Route path="/customer-portal" element={<PermissionGuard permission="customer_portal.view"><CustomerEtaPage /></PermissionGuard>} />
 
         {/* ── Maintenance ── */}
-        <Route path="/maintenance" element={<PermissionGuard permission="maintenance:view"><Batch3OperationsPage kind="maintenance" /></PermissionGuard>} />
-        <Route path="/work-orders" element={<PermissionGuard permission="maintenance:view"><Batch3OperationsPage kind="work-orders" /></PermissionGuard>} />
-        <Route path="/dvir-inspections" element={<PermissionGuard permission="maintenance:view"><Batch3OperationsPage kind="dvir" /></PermissionGuard>} />
-        <Route path="/inspections" element={<PermissionGuard permission="maintenance:view"><Batch3OperationsPage kind="dvir" /></PermissionGuard>} />
+        <Route path="/maintenance" element={<PermissionGuard permission="maintenance.view"><Batch3OperationsPage kind="maintenance" /></PermissionGuard>} />
+        <Route path="/work-orders" element={<PermissionGuard permission="maintenance.view"><Batch3OperationsPage kind="work-orders" /></PermissionGuard>} />
+        <Route path="/dvir-inspections" element={<PermissionGuard permission="maintenance.view"><Batch3OperationsPage kind="dvir" /></PermissionGuard>} />
+        <Route path="/inspections" element={<PermissionGuard permission="maintenance.view"><Batch3OperationsPage kind="dvir" /></PermissionGuard>} />
 
         {/* ── Safety ── */}
-        <Route path="/safety" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="safety" /></PermissionGuard>} />
-        <Route path="/dashcam" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="dashcam" /></PermissionGuard>} />
-        <Route path="/ai-dashcam" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="dashcam" /></PermissionGuard>} />
-        <Route path="/coaching" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="coaching" /></PermissionGuard>} />
-        <Route path="/incidents" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="incidents" /></PermissionGuard>} />
-        <Route path="/evidence-packages" element={<PermissionGuard permission="safety:view"><Batch4SafetyPage kind="evidence" /></PermissionGuard>} />
+        <Route path="/safety" element={<PermissionGuard permission="safety.view"><Batch4SafetyPage kind="safety" /></PermissionGuard>} />
+        <Route path="/dashcam" element={<PermissionGuard permission="dashcam.view"><Batch4SafetyPage kind="dashcam" /></PermissionGuard>} />
+        <Route path="/ai-dashcam" element={<PermissionGuard permission="dashcam.view"><Batch4SafetyPage kind="dashcam" /></PermissionGuard>} />
+        <Route path="/coaching" element={<PermissionGuard permission="safety.view"><Batch4SafetyPage kind="coaching" /></PermissionGuard>} />
+        <Route path="/incidents" element={<PermissionGuard permission="safety.view"><Batch4SafetyPage kind="incidents" /></PermissionGuard>} />
+        <Route path="/evidence-packages" element={<PermissionGuard permission="safety.view"><Batch4SafetyPage kind="evidence" /></PermissionGuard>} />
 
         {/* ── Commercial / CRM ── */}
-        <Route path="/customers" element={<PermissionGuard permission="customers:view"><OperatingModulePage moduleKey="customers" /></PermissionGuard>} />
-        <Route path="/contracts" element={<PermissionGuard permission="customers:view"><OperatingModulePage moduleKey="contracts" /></PermissionGuard>} />
-        <Route path="/rate-cards" element={<PermissionGuard permission="customers:view"><OperatingModulePage moduleKey="rate-cards" /></PermissionGuard>} />
-        <Route path="/price-simulation" element={<PermissionGuard permission="customers:view"><OperatingModulePage moduleKey="price-simulation" /></PermissionGuard>} />
-        <Route path="/quotations" element={<PermissionGuard permission="customers:view"><OperatingModulePage moduleKey="quotations" /></PermissionGuard>} />
-        <Route path="/leads" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="leads" /></PermissionGuard>} />
-        <Route path="/sales-pipeline" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="sales-pipeline" /></PermissionGuard>} />
-        <Route path="/opportunities" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="opportunities" /></PermissionGuard>} />
-        <Route path="/campaigns" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="campaigns" /></PermissionGuard>} />
-        <Route path="/account-health" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="account-health" /></PermissionGuard>} />
-        <Route path="/follow-ups" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="follow-ups" /></PermissionGuard>} />
-        <Route path="/support-tickets" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="support-tickets" /></PermissionGuard>} />
-        <Route path="/renewals" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="renewals" /></PermissionGuard>} />
-        <Route path="/upsell-opportunities" element={<PermissionGuard permission="crm:view"><OperatingModulePage moduleKey="upsell-opportunities" /></PermissionGuard>} />
+        <Route path="/customers" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="customers" /></PermissionGuard>} />
+        <Route path="/contracts" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="contracts" /></PermissionGuard>} />
+        <Route path="/rate-cards" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="rate-cards" /></PermissionGuard>} />
+        <Route path="/price-simulation" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="price-simulation" /></PermissionGuard>} />
+        <Route path="/quotations" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="quotations" /></PermissionGuard>} />
+        <Route path="/leads" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="leads" /></PermissionGuard>} />
+        <Route path="/sales-pipeline" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="sales-pipeline" /></PermissionGuard>} />
+        <Route path="/opportunities" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="opportunities" /></PermissionGuard>} />
+        <Route path="/campaigns" element={<PermissionGuard permission="campaigns.view"><OperatingModulePage moduleKey="campaigns" /></PermissionGuard>} />
+        <Route path="/account-health" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="account-health" /></PermissionGuard>} />
+        <Route path="/follow-ups" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="follow-ups" /></PermissionGuard>} />
+        <Route path="/support-tickets" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="support-tickets" /></PermissionGuard>} />
+        <Route path="/renewals" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="renewals" /></PermissionGuard>} />
+        <Route path="/upsell-opportunities" element={<PermissionGuard permission="crm.view"><OperatingModulePage moduleKey="upsell-opportunities" /></PermissionGuard>} />
 
         {/* ── Finance ── */}
-        <Route path="/fuel-idling" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="fuel" /></PermissionGuard>} />
-        <Route path="/expenses" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="expenses" /></PermissionGuard>} />
-        <Route path="/contracts-rates" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="contracts" /></PermissionGuard>} />
-        <Route path="/carrier-management" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="carriers" /></PermissionGuard>} />
-        <Route path="/predictive-margin" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="cost-margin" /></PermissionGuard>} />
-        <Route path="/cost-leakage" element={<PermissionGuard permission="finance:view"><Batch5FinancePage kind="cost-leakage" /></PermissionGuard>} />
+        <Route path="/fuel-idling" element={<PermissionGuard permission="fuel.view"><Batch5FinancePage kind="fuel" /></PermissionGuard>} />
+        <Route path="/expenses" element={<PermissionGuard permission="finance.view"><Batch5FinancePage kind="expenses" /></PermissionGuard>} />
+        <Route path="/contracts-rates" element={<PermissionGuard permission="finance.view"><Batch5FinancePage kind="contracts" /></PermissionGuard>} />
+        <Route path="/carrier-management" element={<PermissionGuard permission="finance.view"><Batch5FinancePage kind="carriers" /></PermissionGuard>} />
+        <Route path="/predictive-margin" element={<PermissionGuard permission="finance.view"><Batch5FinancePage kind="cost-margin" /></PermissionGuard>} />
+        <Route path="/cost-leakage" element={<PermissionGuard permission="finance.view"><Batch5FinancePage kind="cost-leakage" /></PermissionGuard>} />
 
         {/* ── Compliance / Governance ── */}
-        <Route path="/compliance" element={<PermissionGuard permission="compliance:view"><CompliancePage /></PermissionGuard>} />
-        <Route path="/hos-eld" element={<PermissionGuard permission="compliance:view"><HosEldPage /></PermissionGuard>} />
-        <Route path="/audit-logs" element={<PermissionGuard permission="audit:view"><AuditLogsPage /></PermissionGuard>} />
-        <Route path="/sla-kpi" element={<PermissionGuard permission="intelligence:view"><SlaKpiPage /></PermissionGuard>} />
+        <Route path="/compliance" element={<PermissionGuard permission="compliance.view"><CompliancePage /></PermissionGuard>} />
+        <Route path="/hos-eld" element={<PermissionGuard permission="compliance.view"><HosEldPage /></PermissionGuard>} />
+        <Route path="/audit-logs" element={<PermissionGuard permission="reports.manage"><AuditLogsPage /></PermissionGuard>} />
+        <Route path="/sla-kpi" element={<PermissionGuard permission="reports.view"><SlaKpiPage /></PermissionGuard>} />
 
         {/* ── Settings / Platform (accessible to all authenticated users) ── */}
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/about" element={<AboutPage />} />
+        <Route path="/settings" element={<PermissionGuard permission="settings.view"><SettingsPage /></PermissionGuard>} />
+        <Route path="/about" element={<PermissionGuard permission="settings.view"><AboutPage /></PermissionGuard>} />
 
         {/* ── Remaining module routes (permission from moduleConfig) ── */}
         {modules
