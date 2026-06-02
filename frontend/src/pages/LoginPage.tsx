@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Activity, Bot, ChevronRight, Eye, EyeOff, Globe,
+  Activity, Bot, Eye, EyeOff, Globe,
   Lock, Shield, ShieldCheck, Sparkles,
   Truck, Users, Wrench, Zap,
 } from "lucide-react";
@@ -56,6 +56,7 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [selectedRoleEmail, setSelectedRoleEmail] = useState<string>(demoUsers[0]?.email ?? "");
 
   const login = useMutation({
     mutationFn: ({ user, pass }: { user: string; pass: string }) =>
@@ -73,9 +74,12 @@ export function LoginPage() {
   };
 
   const fillCredentials = (roleUsername: string, rolePassword: string) => {
+    setSelectedRoleEmail(roleUsername);
     setUsername(roleUsername);
     setPassword(rolePassword);
   };
+
+  const selectedRole = ROLES.find((r) => r.username === selectedRoleEmail) ?? ROLES[0];
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f8fafc] text-slate-900">
@@ -90,10 +94,10 @@ export function LoginPage() {
       <div className="orb-violet pointer-events-none absolute bottom-[15%] left-[30%] h-56 w-56 rounded-full anim-float anim-delay-4s" />
 
       {/* ── Main Layout ── */}
-      <div className="relative mx-auto grid min-h-screen max-w-[1320px] items-center gap-10 px-6 py-14 lg:grid-cols-[1.15fr_0.9fr] xl:gap-16">
+      <div className="relative mx-auto grid min-h-screen max-w-[1320px] items-center gap-10 px-6 py-14 lg:grid-cols-[minmax(0,1fr)_560px] xl:gap-16">
 
         {/* ── Left: Hero ── */}
-        <section className="anim-fade-up flex flex-col gap-8">
+        <section className="anim-fade-up flex max-w-3xl flex-col gap-8">
 
           {/* Brand mark */}
           <div className="flex items-center gap-3">
@@ -123,7 +127,7 @@ export function LoginPage() {
           </div>
 
           {/* Stats */}
-          <div className="flex items-center gap-8">
+          <div className="flex flex-wrap items-center gap-8">
             {STATS.map(({ value, label }) => (
               <div key={label}>
                 <p className="text-2xl font-extrabold text-slate-900">{value}</p>
@@ -147,7 +151,7 @@ export function LoginPage() {
         </section>
 
         {/* ── Right: Login Panel ── */}
-        <section className="panel panel-glow anim-fade-up anim-delay-08 p-0 overflow-hidden">
+        <section className="panel panel-glow anim-fade-up anim-delay-08 w-full max-w-[560px] justify-self-center overflow-hidden p-0 lg:justify-self-end">
 
           {/* Panel header */}
           <div className="border-b border-white/[0.08] px-6 pt-6 pb-5">
@@ -163,23 +167,23 @@ export function LoginPage() {
           </div>
 
           {/* ── Login Form ── */}
-          <form onSubmit={handleSubmit} className="px-5 pt-5 pb-4 space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-3.5 px-6 pb-4 pt-5">
             {/* Username field */}
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Username</label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Username</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="e.g. superadmin@opstrax.com"
                 autoComplete="username"
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-teal-400/50 focus:outline-none focus:ring-1 focus:ring-teal-400/30 transition"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-400/50 focus:outline-none focus:ring-2 focus:ring-teal-400/20 transition"
               />
             </div>
 
             {/* Password field */}
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Password</label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -187,12 +191,12 @@ export function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter password"
                   autoComplete="current-password"
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-11 text-sm text-white placeholder:text-slate-500 focus:border-teal-400/50 focus:outline-none focus:ring-1 focus:ring-teal-400/30 transition"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-11 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-400/50 focus:outline-none focus:ring-2 focus:ring-teal-400/20 transition"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition"
                 >
                   {showPassword
                     ? <EyeOff className="h-4 w-4" />
@@ -215,54 +219,76 @@ export function LoginPage() {
           </form>
 
           {/* Divider */}
-          <div className="flex items-center gap-3 px-5 pb-3">
+          <div className="flex items-center gap-3 px-6 pb-3">
             <div className="h-px flex-1 bg-white/[0.07]" />
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">or quick access</span>
             <div className="h-px flex-1 bg-white/[0.07]" />
           </div>
 
-          {/* Role cards */}
-          <div className="stagger space-y-2 px-5 pb-4">
-            {ROLES.map(({ role, username: roleUsername, password: rolePassword, description, icon, gradient, border, iconBg, tag, tagCls }) => {
-              const isFilled = username === roleUsername && password === rolePassword;
-              return (
+          {/* Compact role selector */}
+          <div className="stagger px-6 pb-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Demo Personas</p>
+              <p className="text-[11px] text-slate-500">{ROLES.length} roles</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {ROLES.map(({ role, username: roleUsername, icon, iconBg, tag, tagCls }) => {
+                const isSelected = selectedRoleEmail === roleUsername;
+                const isFilled = username === roleUsername && password === "demo123";
+                return (
+                  <button
+                    key={roleUsername}
+                    type="button"
+                    onClick={() => setSelectedRoleEmail(roleUsername)}
+                    className={`rounded-xl border px-2.5 py-2 text-left transition ${
+                      isSelected
+                        ? "border-teal-400/40 bg-teal-500/10 ring-1 ring-teal-400/30"
+                        : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10"
+                    }`}
+                  >
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className={`flex h-7 w-7 items-center justify-center rounded-lg border ${iconBg}`}>{icon}</span>
+                      {isFilled ? (
+                        <span className="text-[10px] font-bold text-teal-400">Filled</span>
+                      ) : (
+                        <span className={`rounded-full border px-1.5 py-px text-[9px] font-bold ${tagCls}`}>{tag}</span>
+                      )}
+                    </div>
+                    <p className="line-clamp-1 text-xs font-semibold text-white">{role}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border ${selectedRole.iconBg}`}>
+                  {selectedRole.icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-white">{selectedRole.role}</p>
+                    <span className={`rounded-full border px-2 py-px text-[10px] font-bold ${selectedRole.tagCls}`}>{selectedRole.tag}</span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500">{selectedRole.description}</p>
+                  <p className="mt-1.5 truncate text-[11px] font-mono text-slate-500">
+                    {selectedRole.username}
+                  </p>
+                </div>
                 <button
-                  key={roleUsername}
                   type="button"
-                  className={`role-card w-full bg-gradient-to-r ${gradient} ${border} ${isFilled ? "ring-2 ring-teal-400/40" : ""}`}
-                  onClick={() => fillCredentials(roleUsername, rolePassword)}
+                  onClick={() => fillCredentials(selectedRole.username, selectedRole.password)}
+                  className="rounded-lg border border-teal-400/30 bg-teal-500/10 px-2.5 py-1 text-[11px] font-bold text-teal-300 hover:bg-teal-500/20 transition"
                 >
-                  {/* Icon */}
-                  <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border ${iconBg}`}>
-                    {icon}
-                  </div>
-
-                  {/* Text */}
-                  <div className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center gap-2">
-                      <p className="font-bold text-white">{role}</p>
-                      <span className={`rounded-full border px-2 py-px text-[10px] font-bold ${tagCls}`}>{tag}</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-xs text-slate-400 truncate">{description}</p>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
-                      user: <span className="text-slate-300">{roleUsername}</span>
-                      {" · "}pass: <span className="text-slate-300">{rolePassword}</span>
-                    </p>
-                  </div>
-
-                  {/* Arrow / filled indicator */}
-                  {isFilled
-                    ? <span className="text-[10px] font-bold text-teal-400 flex-shrink-0">Filled ✓</span>
-                    : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-500 transition group-hover:translate-x-0.5" />}
+                  Use
                 </button>
-              );
-            })}
+              </div>
+            </div>
           </div>
 
           {/* ── Client Demo Credentials ── */}
-          <div className="mx-5 mb-4 rounded-2xl border border-violet-400/30 bg-violet-500/8 p-4">
+          <div className="mx-6 mb-4 rounded-2xl border border-violet-400/30 bg-violet-500/8 p-4">
             <div className="flex items-start gap-3">
               <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-violet-400" />
               <div className="flex-1">
@@ -288,7 +314,7 @@ export function LoginPage() {
           </div>
 
           {/* Security footer */}
-          <div className="mx-5 mb-5 flex items-start gap-3 rounded-2xl border border-emerald-300/40 bg-emerald-50 p-4">
+          <div className="mx-6 mb-5 flex items-start gap-3 rounded-2xl border border-emerald-300/40 bg-emerald-50 p-4">
             <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" />
             <div>
               <p className="text-xs font-semibold text-emerald-300">Enterprise security active</p>
@@ -299,7 +325,7 @@ export function LoginPage() {
           </div>
 
           {login.isError && (
-            <div className="mx-5 mb-5 flex items-center gap-2 rounded-xl border border-red-300/50 bg-red-50 p-3 text-sm text-red-700">
+            <div className="mx-6 mb-5 flex items-center gap-2 rounded-xl border border-red-300/50 bg-red-50 p-3 text-sm text-red-700">
               <Lock className="h-4 w-4 flex-shrink-0" />
               Invalid credentials — check the username and password or use a quick access role.
             </div>
