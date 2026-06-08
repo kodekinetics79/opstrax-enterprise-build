@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -nA22 \"class AppraisalCycle\" Models/Performance.cs)"
+    ]
+  }
+}

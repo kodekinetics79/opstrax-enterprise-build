@@ -324,11 +324,11 @@ public class AuthSeeder : IAuthSeeder
             company = new Company
             {
                 TenantId = tenantId,
-                LegalNameEn = "Zayra Workforce AI",
-                LegalNameAr = "زيرا لإدارة القوى العاملة",
-                TradeName = "Zayra",
+                LegalNameEn = "KynexOne Technologies FZ-LLC",
+                LegalNameAr = "كينكس ون للتقنية",
+                TradeName = "KynexOne",
                 CountryCode = "UAE",
-                RegistrationNumber = "ZAYRA-DEMO",
+                RegistrationNumber = "KNX-DEMO",
                 DefaultCurrency = "AED"
             };
             _db.Companies.Add(company);
@@ -486,5 +486,243 @@ public class AuthSeeder : IAuthSeeder
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await EnsureDemoOperationalData(tenantId, company.Id, branch.Id, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Seed] Demo operational data skipped: {ex.Message}");
+        }
+    }
+
+    private record DemoPerson(string Code, string Name, string Dept, string Title, string Type, string Gender, string Nationality, decimal Basic);
+
+    private async Task EnsureDemoOperationalData(Guid tenantId, Guid companyId, Guid branchId, CancellationToken ct)
+    {
+        // Idempotent: if attendance already seeded for this tenant, assume demo data exists.
+        if (await _db.AttendanceRecords.AnyAsync(x => x.TenantId == tenantId, ct)) return;
+
+        // ── Departments (beyond HR) ──────────────────────────────────────────────
+        var deptDefs = new (string Code, string En, string Ar)[]
+        {
+            ("ENG", "Engineering", "الهندسة"),
+            ("FIN", "Finance", "المالية"),
+            ("OPS", "Operations", "العمليات"),
+            ("SAL", "Sales", "المبيعات"),
+        };
+        foreach (var d in deptDefs)
+        {
+            if (!await _db.Departments.AnyAsync(x => x.TenantId == tenantId && x.Code == d.Code, ct))
+                _db.Departments.Add(new Department { TenantId = tenantId, BranchId = branchId, Code = d.Code, NameEn = d.En, NameAr = d.Ar });
+        }
+        await _db.SaveChangesAsync(ct);
+
+        // ── Employees ────────────────────────────────────────────────────────────
+        var people = new[]
+        {
+            new DemoPerson("KNX-0001", "Aisha Al Mansoori", "Human Resources", "HR Director", "Full-time", "Female", "Emirati", 24000m),
+            new DemoPerson("KNX-0002", "Omar Khalifa", "Engineering", "Engineering Manager", "Full-time", "Male", "Emirati", 22000m),
+            new DemoPerson("KNX-0003", "Priya Nair", "Finance", "Finance Manager", "Full-time", "Female", "Indian", 19000m),
+            new DemoPerson("KNX-0004", "James Carter", "Engineering", "Senior Software Engineer", "Full-time", "Male", "British", 18000m),
+            new DemoPerson("KNX-0005", "Fatima Al Hashimi", "Human Resources", "HR Officer", "Full-time", "Female", "Emirati", 12000m),
+            new DemoPerson("KNX-0006", "Rahul Mehta", "Operations", "Operations Lead", "Full-time", "Male", "Indian", 14000m),
+            new DemoPerson("KNX-0007", "Sara Abdullah", "Sales", "Account Executive", "Contract", "Female", "Saudi", 13000m),
+            new DemoPerson("KNX-0008", "Daniel Okoro", "Operations", "Logistics Coordinator", "Part-time", "Male", "Nigerian", 9000m),
+        };
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var employees = new List<Employee>();
+        foreach (var (p, i) in people.Select((p, i) => (p, i)))
+        {
+            var existing = await _db.Employees.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeCode == p.Code, ct);
+            if (existing is not null) { employees.Add(existing); continue; }
+            var emp = new Employee
+            {
+                TenantId = tenantId,
+                CompanyId = companyId,
+                BranchId = branchId,
+                EmployeeCode = p.Code,
+                FullName = p.Name,
+                EnglishName = p.Name,
+                WorkEmail = $"{p.Name.Split(' ')[0].ToLowerInvariant()}.{p.Name.Split(' ')[^1].ToLowerInvariant()}@kynexone.com",
+                Phone = $"+9715{(50000000 + i):00000000}",
+                Gender = p.Gender,
+                Nationality = p.Nationality,
+                CountryCode = "UAE",
+                Department = p.Dept,
+                Designation = p.Title,
+                JobTitle = p.Title,
+                EmploymentType = p.Type,
+                ContractType = p.Type == "Contract" ? "Fixed-term" : "Permanent",
+                WorkLocation = "Dubai HQ",
+                Status = "Active",
+                JoiningDate = DateTime.UtcNow.AddDays(-(40 + i * 35)),
+            };
+            // make a couple of them joined this month for "new joiners" signal
+            if (i >= 6) emp.JoiningDate = DateTime.UtcNow.AddDays(-8);
+            _db.Employees.Add(emp);
+            employees.Add(emp);
+        }
+        await _db.SaveChangesAsync(ct);
+
+        // ── Attendance (last ~4 months of working days) ──────────────────────────
+        var rng = new Random(42);
+        var attendance = new List<AttendanceRecord>();
+        for (var offset = 0; offset <= 120; offset++)
+        {
+            var date = today.AddDays(-offset);
+            if (date.DayOfWeek is DayOfWeek.Friday or DayOfWeek.Saturday) continue; // GCC weekend
+            foreach (var emp in employees)
+            {
+                var roll = rng.Next(100);
+                var status = roll < 85 ? "Present" : roll < 92 ? "Late" : roll < 97 ? "Leave" : "Absent";
+                attendance.Add(new AttendanceRecord
+                {
+                    TenantId = tenantId,
+                    EmployeeId = emp.Id,
+                    WorkDate = date,
+                    Status = status,
+                    OvertimeHours = status == "Present" && rng.Next(100) < 20 ? rng.Next(1, 4) : 0,
+                    Notes = string.Empty,
+                });
+            }
+        }
+        _db.AttendanceRecords.AddRange(attendance);
+        await _db.SaveChangesAsync(ct);
+
+        // ── Leave types ──────────────────────────────────────────────────────────
+        var leaveTypeDefs = new (string Code, string En, string Ar, string Cat, bool Paid)[]
+        {
+            ("ANNUAL", "Annual Leave", "إجازة سنوية", "Annual", true),
+            ("SICK", "Sick Leave", "إجازة مرضية", "Sick", true),
+            ("CASUAL", "Casual Leave", "إجازة عارضة", "Casual", true),
+            ("MATERNITY", "Maternity Leave", "إجازة أمومة", "Maternity", true),
+            ("UNPAID", "Unpaid Leave", "إجازة بدون راتب", "Unpaid", false),
+        };
+        var leaveTypes = new List<LeaveType>();
+        var ltSort = 0;
+        foreach (var lt in leaveTypeDefs)
+        {
+            var existing = await _db.LeaveTypes.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Code == lt.Code, ct);
+            if (existing is not null) { leaveTypes.Add(existing); continue; }
+            var entity = new LeaveType { TenantId = tenantId, Code = lt.Code, NameEn = lt.En, NameAr = lt.Ar, Category = lt.Cat, IsPaid = lt.Paid, IsActive = true, SortOrder = ltSort++ };
+            _db.LeaveTypes.Add(entity);
+            leaveTypes.Add(entity);
+        }
+        await _db.SaveChangesAsync(ct);
+
+        // ── Leave requests (mix of pending + approved) ───────────────────────────
+        var annual = leaveTypes.First(x => x.Code == "ANNUAL");
+        var sick = leaveTypes.First(x => x.Code == "SICK");
+        _db.LeaveRequests.AddRange(
+            new LeaveRequest { TenantId = tenantId, EmployeeId = employees[3].Id, EmployeeName = employees[3].FullName, DepartmentName = employees[3].Department, LeaveTypeId = annual.Id, LeaveTypeName = annual.NameEn, StartDate = today.AddDays(5), EndDate = today.AddDays(9), DayType = "Full", Reason = "Family vacation", Status = "Submitted", SubmittedAtUtc = DateTime.UtcNow.AddDays(-1) },
+            new LeaveRequest { TenantId = tenantId, EmployeeId = employees[5].Id, EmployeeName = employees[5].FullName, DepartmentName = employees[5].Department, LeaveTypeId = sick.Id, LeaveTypeName = sick.NameEn, StartDate = today.AddDays(-2), EndDate = today.AddDays(-1), DayType = "Full", Reason = "Flu", Status = "Approved", SubmittedAtUtc = DateTime.UtcNow.AddDays(-3), DecidedAtUtc = DateTime.UtcNow.AddDays(-2) },
+            new LeaveRequest { TenantId = tenantId, EmployeeId = employees[6].Id, EmployeeName = employees[6].FullName, DepartmentName = employees[6].Department, LeaveTypeId = annual.Id, LeaveTypeName = annual.NameEn, StartDate = today.AddDays(12), EndDate = today.AddDays(14), DayType = "Full", Reason = "Personal", Status = "Submitted", SubmittedAtUtc = DateTime.UtcNow.AddHours(-6) }
+        );
+        await _db.SaveChangesAsync(ct);
+
+        // ── Payroll run for last month + slips ───────────────────────────────────
+        var lastMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(-1);
+        var run = new PayrollRun
+        {
+            TenantId = tenantId, Year = lastMonth.Year, Month = lastMonth.Month, Status = "Completed",
+            CreatedAtUtc = DateTime.UtcNow.AddDays(-10), ProcessedAtUtc = DateTime.UtcNow.AddDays(-8),
+        };
+        decimal totalGross = 0, totalDed = 0, totalNet = 0;
+        var slips = new List<PayrollSlip>();
+        foreach (var emp in employees)
+        {
+            var person = people.First(p => p.Code == emp.EmployeeCode);
+            var basic = person.Basic;
+            var housing = Math.Round(basic * 0.25m);
+            var transport = 1000m;
+            var gross = basic + housing + transport;
+            var deductions = Math.Round(gross * 0.05m); // sample social/insurance
+            var net = gross - deductions;
+            totalGross += gross; totalDed += deductions; totalNet += net;
+            slips.Add(new PayrollSlip
+            {
+                TenantId = tenantId, RunId = run.Id, EmployeeId = emp.Id, EmployeeCode = emp.EmployeeCode,
+                EmployeeName = emp.FullName, Department = emp.Department, BasicSalary = basic,
+                HousingAllowance = housing, TransportAllowance = transport, OtherAllowances = 0,
+                GrossSalary = gross, Deductions = deductions, NetSalary = net, Status = "Paid",
+            });
+        }
+        run.TotalGrossSalary = totalGross; run.TotalDeductions = totalDed; run.TotalNetSalary = totalNet; run.EmployeeCount = slips.Count;
+        _db.PayrollRuns.Add(run);
+        _db.PayrollSlips.AddRange(slips);
+        await _db.SaveChangesAsync(ct);
+
+        // ── Pending approvals ────────────────────────────────────────────────────
+        var workflowId = (await _db.ApprovalWorkflows.FirstOrDefaultAsync(x => x.TenantId == tenantId, ct))?.Id ?? Guid.NewGuid();
+        _db.ApprovalRequests.AddRange(
+            new ApprovalRequest { TenantId = tenantId, WorkflowId = workflowId, EntityName = "LeaveRequest", EntityId = Guid.NewGuid().ToString(), Title = $"Annual leave — {employees[3].FullName}", Status = "Pending", CurrentStepOrder = 1, CreatedAtUtc = DateTime.UtcNow.AddDays(-1) },
+            new ApprovalRequest { TenantId = tenantId, WorkflowId = workflowId, EntityName = "PayrollRun", EntityId = run.Id.ToString(), Title = $"Payroll approval — {lastMonth:MMM yyyy}", Status = "Pending", CurrentStepOrder = 1, CreatedAtUtc = DateTime.UtcNow.AddHours(-20) },
+            new ApprovalRequest { TenantId = tenantId, WorkflowId = workflowId, EntityName = "EmployeeTransferRequest", EntityId = Guid.NewGuid().ToString(), Title = $"Transfer request — {employees[5].FullName}", Status = "Pending", CurrentStepOrder = 1, CreatedAtUtc = DateTime.UtcNow.AddHours(-8) },
+            new ApprovalRequest { TenantId = tenantId, WorkflowId = workflowId, EntityName = "LeaveRequest", EntityId = Guid.NewGuid().ToString(), Title = $"Annual leave — {employees[6].FullName}", Status = "Pending", CurrentStepOrder = 1, CreatedAtUtc = DateTime.UtcNow.AddHours(-4) }
+        );
+        await _db.SaveChangesAsync(ct);
+
+        // ── Compliance records nearing expiry (powers dashboard alerts) ──────────
+        _db.EmployeeComplianceRecords.AddRange(
+            new EmployeeComplianceRecord { TenantId = tenantId, EmployeeId = employees[1].Id, CountryCode = "UAE", FieldKey = "passport", FieldLabel = "Passport", FieldValue = "P1234567", ExpiryDate = today.AddDays(18), IsRequired = true },
+            new EmployeeComplianceRecord { TenantId = tenantId, EmployeeId = employees[3].Id, CountryCode = "UAE", FieldKey = "visa", FieldLabel = "Residence Visa", FieldValue = "V998877", ExpiryDate = today.AddDays(45), IsRequired = true },
+            new EmployeeComplianceRecord { TenantId = tenantId, EmployeeId = employees[6].Id, CountryCode = "UAE", FieldKey = "emirates_id", FieldLabel = "Emirates ID", FieldValue = "784-XXXX", ExpiryDate = today.AddDays(-3), IsRequired = true }
+        );
+        await _db.SaveChangesAsync(ct);
+
+        // ── Recruitment: job openings + candidates ───────────────────────────────
+        _db.JobOpenings.AddRange(
+            new JobOpening { TenantId = tenantId, JobCode = "JOB-2026-0001", Title = "Senior Software Engineer", DepartmentName = "Engineering", EmploymentType = "Full-Time", HeadCount = 2, FilledCount = 0, Location = "Dubai HQ", SalaryFrom = 18000, SalaryTo = 26000, Status = "Open", Description = "Build and scale KynexOne platform services.", PublishedAtUtc = DateTime.UtcNow.AddDays(-12) },
+            new JobOpening { TenantId = tenantId, JobCode = "JOB-2026-0002", Title = "Payroll Specialist", DepartmentName = "Finance", EmploymentType = "Full-Time", HeadCount = 1, FilledCount = 0, Location = "Dubai HQ", SalaryFrom = 11000, SalaryTo = 15000, Status = "Open", Description = "Own monthly WPS payroll processing.", PublishedAtUtc = DateTime.UtcNow.AddDays(-6) },
+            new JobOpening { TenantId = tenantId, JobCode = "JOB-2026-0003", Title = "Sales Account Executive", DepartmentName = "Sales", EmploymentType = "Full-Time", HeadCount = 3, FilledCount = 1, Location = "Abu Dhabi", SalaryFrom = 12000, SalaryTo = 18000, Status = "InProgress", Description = "Drive enterprise SaaS sales across the GCC.", PublishedAtUtc = DateTime.UtcNow.AddDays(-20) }
+        );
+        _db.Candidates.AddRange(
+            new Candidate { TenantId = tenantId, FirstName = "Layla", LastName = "Haddad", Email = "layla.haddad@example.com", Phone = "+971551110001", CurrentJobTitle = "Software Engineer", CurrentCompany = "Tech Co", TotalExperienceYears = 6, EducationLevel = "Bachelor", Nationality = "Lebanese", Source = "LinkedIn", Status = "Active" },
+            new Candidate { TenantId = tenantId, FirstName = "Mohammed", LastName = "Raza", Email = "m.raza@example.com", Phone = "+971551110002", CurrentJobTitle = "Payroll Analyst", CurrentCompany = "Finance Ltd", TotalExperienceYears = 4, EducationLevel = "Bachelor", Nationality = "Pakistani", Source = "Referral", Status = "Active" },
+            new Candidate { TenantId = tenantId, FirstName = "Elena", LastName = "Petrova", Email = "elena.p@example.com", Phone = "+971551110003", CurrentJobTitle = "Account Executive", CurrentCompany = "SaaS Inc", TotalExperienceYears = 8, EducationLevel = "Master", Nationality = "Russian", Source = "Agency", Status = "Active" },
+            new Candidate { TenantId = tenantId, FirstName = "Yousef", LastName = "Salem", Email = "yousef.salem@example.com", Phone = "+971551110004", CurrentJobTitle = "Backend Engineer", CurrentCompany = "Cloud Co", TotalExperienceYears = 5, EducationLevel = "Bachelor", Nationality = "Jordanian", Source = "JobBoard", Status = "Active" }
+        );
+        await _db.SaveChangesAsync(ct);
+
+        // ── Performance: appraisal reviews ────────────────────────────────────────
+        var cycleId = Guid.NewGuid();
+        var ratings = new[] { "Exceeds Expectations", "Meets Expectations", "Meets Expectations", "Outstanding", "Meets Expectations" };
+        var reviews = employees.Take(5).Select((emp, i) =>
+        {
+            var kpi = 3.5m + (i % 3) * 0.4m;
+            var comp = 3.2m + (i % 4) * 0.3m;
+            var final = Math.Round((kpi + comp) / 2m, 2);
+            return new AppraisalReview
+            {
+                TenantId = tenantId, CycleId = cycleId, CycleName = "H1 2026 Performance Review",
+                ScorecardTemplateId = Guid.NewGuid(), EmployeeId = emp.Id, EmployeeName = emp.FullName,
+                DepartmentName = emp.Department, DesignationTitle = emp.Designation,
+                KpiScore = kpi, CompetencyScore = comp, AttendanceScore = 4.2m, ProductivityScore = 3.8m,
+                FinalScore = final, FinalRating = ratings[i % ratings.Length], Status = "Published",
+                PublishedAt = DateTime.UtcNow.AddDays(-5),
+            };
+        }).ToList();
+        _db.AppraisalReviews.AddRange(reviews);
+        await _db.SaveChangesAsync(ct);
+
+        // ── Notifications for the admin + AI insights ────────────────────────────
+        var adminUserId = (await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId, ct))?.Id;
+        if (adminUserId is not null)
+        {
+            _db.Notifications.AddRange(
+                new Notification { TenantId = tenantId, UserId = adminUserId, Title = "Payroll ready for approval", Message = $"{lastMonth:MMMM yyyy} payroll run is awaiting your approval.", EntityName = "PayrollRun", Status = "Unread" },
+                new Notification { TenantId = tenantId, UserId = adminUserId, Title = "Document expiring", Message = "An Emirates ID has expired and needs renewal.", EntityName = "Compliance", Status = "Unread" },
+                new Notification { TenantId = tenantId, UserId = adminUserId, Title = "New leave request", Message = $"{employees[3].FullName} submitted an annual leave request.", EntityName = "LeaveRequest", Status = "Unread" }
+            );
+        }
+        _db.AIInsights.AddRange(
+            new AIInsight { TenantId = tenantId, Module = "Attendance", InsightType = "AbsenteeismPattern", Severity = "Warning", Title = "Rising absenteeism in Operations", Summary = "Operations shows a 12% higher unplanned-absence rate over the last two weeks versus the company average.", GeneratedBy = "System" },
+            new AIInsight { TenantId = tenantId, Module = "Compliance", InsightType = "DocumentExpiry", Severity = "Critical", Title = "1 document expired, 2 expiring soon", Summary = "An Emirates ID has expired and a passport/visa expire within 45 days. Initiate renewals to avoid compliance gaps.", GeneratedBy = "System" },
+            new AIInsight { TenantId = tenantId, Module = "Payroll", InsightType = "PayrollVariance", Severity = "Info", Title = "Payroll stable month-over-month", Summary = "Net payroll is within 2% of the prior period with no unusual variances detected.", GeneratedBy = "System" }
+        );
+        await _db.SaveChangesAsync(ct);
     }
 }
