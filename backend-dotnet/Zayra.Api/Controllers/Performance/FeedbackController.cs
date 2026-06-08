@@ -94,8 +94,13 @@ public class FeedbackController : ControllerBase
     {
         var tenantId = this.GetTenantId()!.Value;
 
+        // Ensure the target review belongs to this tenant before accepting feedback.
+        var reviewExists = await _db.AppraisalReviews
+            .AnyAsync(r => r.Id == req.ReviewId && r.TenantId == tenantId, ct);
+        if (!reviewExists) return NotFound(new { message = "Review not found." });
+
         var existing = await _db.Feedback360
-            .AnyAsync(f => f.ReviewId == req.ReviewId && f.ReviewerEmployeeId == req.ReviewerEmployeeId, ct);
+            .AnyAsync(f => f.TenantId == tenantId && f.ReviewId == req.ReviewId && f.ReviewerEmployeeId == req.ReviewerEmployeeId, ct);
         if (existing) return Conflict(new { message = "Feedback already submitted for this review." });
 
         _db.Feedback360.Add(new Feedback360

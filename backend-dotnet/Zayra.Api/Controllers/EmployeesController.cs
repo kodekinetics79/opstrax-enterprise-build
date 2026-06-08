@@ -419,7 +419,7 @@ public class EmployeesController : ControllerBase
         var tenantId = RequireTenant();
         var transfer = await _db.EmployeeTransferRequests.FirstOrDefaultAsync(x => x.Id == transferId && x.TenantId == tenantId, cancellationToken);
         if (transfer is null) return NotFound();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == transfer.EmployeeId, cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == transfer.EmployeeId && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         employee.Department = transfer.NewDepartment;
         employee.Branch = transfer.NewBranch;

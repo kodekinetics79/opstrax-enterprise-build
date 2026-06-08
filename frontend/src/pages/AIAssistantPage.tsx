@@ -186,7 +186,7 @@ export default function AIAssistantPage() {
                     {msg.role === 'assistant' && (
                       <div className="flex items-center gap-1.5 mb-1.5">
                         <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-600 to-indigo-600"></div>
-                        <span className="text-xs font-semibold text-purple-700">Zayra AI</span>
+                        <span className="text-xs font-semibold text-purple-700">KynexOne AI</span>
                         <span className="text-xs text-gray-400 ml-auto">Advisory</span>
                       </div>
                     )}

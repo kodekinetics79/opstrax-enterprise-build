@@ -5,7 +5,6 @@ import {
   CalendarCheck,
   ClipboardList,
   Clock3,
-  FileText,
   Gauge,
   Headphones,
   Landmark,
@@ -28,7 +27,7 @@ export const navigationGroups: NavGroup[] = [
       { label: 'Executive Dashboard', icon: Gauge, path: '/dashboard', requiredPermissions: ['dashboard.read'] },
       { label: 'Employee Self-Service', icon: UserCircle2, path: '/ess', requiredPermissions: ['ess.read'] },
       { label: 'People', icon: UsersRound, path: '/people', requiredPermissions: ['employees.read'] },
-      { label: 'Attendance', icon: Clock3, badge: 12, path: '/attendance', requiredPermissions: ['attendance.read', 'attendance.write', 'attendance.kiosk'] },
+      { label: 'Attendance', icon: Clock3, path: '/attendance', requiredPermissions: ['attendance.read', 'attendance.write', 'attendance.kiosk'] },
       { label: 'Leave Management', icon: ClipboardList, path: '/leave', requiredPermissions: ['leave.read', 'leave.write'] },
       { label: 'Shifts & Rosters', icon: CalendarCheck, path: '/shifts', requiredPermissions: ['attendance.read'] },
     ],
@@ -42,7 +41,7 @@ export const navigationGroups: NavGroup[] = [
   {
     label: 'Finance',
     items: [
-      { label: 'Payroll', icon: WalletCards, badge: 4, path: '/payroll', requiredPermissions: ['payroll.read'] },
+      { label: 'Payroll', icon: WalletCards, path: '/payroll', requiredPermissions: ['payroll.read'] },
       { label: 'Loans & Advances', icon: Landmark, path: '/loans', requiredPermissions: ['loans.read', 'loans.write'] },
     ],
   },
@@ -52,13 +51,12 @@ export const navigationGroups: NavGroup[] = [
       { label: 'Recruitment', icon: BriefcaseBusiness, path: '/recruitment', requiredPermissions: ['recruitment.read', 'recruitment.write'] },
       { label: 'Performance & Appraisals', icon: BarChart3, path: '/performance', requiredPermissions: ['performance.read', 'performance.write'] },
       { label: 'Compliance & Contracts', icon: ShieldCheck, path: '/compliance', requiredPermissions: ['compliance.read', 'compliance.write'] },
-      { label: 'Documents & Letters', icon: FileText, path: '/documents', requiredPermissions: ['employees.documents'] },
     ],
   },
   {
     label: 'Intelligence',
     items: [
-      { label: 'AI HR Assistant', icon: Bot, path: '/ai-assistant' },
+      { label: 'AI HR Assistant', icon: Bot, path: '/ai-assistant', requiredPermissions: ['ai.query', 'ai.insights_view'] },
       { label: 'Reports & Analytics', icon: Layers3, path: '/reports', requiredPermissions: ['reports.read', 'reports.schedule'] },
     ],
   },
@@ -71,7 +69,7 @@ export const navigationGroups: NavGroup[] = [
   {
     label: 'Admin',
     items: [
-      { label: 'Approval Center', icon: ShieldCheck, badge: 18, path: '/approvals', requiredPermissions: ['approvals.read', 'approvals.decide'] },
+      { label: 'Approval Center', icon: ShieldCheck, path: '/approvals', requiredPermissions: ['approvals.read', 'approvals.decide'] },
       { label: 'User Management & Access Control', icon: KeyRound, path: '/user-management', requiredPermissions: ['users.manage', 'roles.manage', 'security.manage'] },
       { label: 'Tenant Administration', icon: Settings2, path: '/tenant-admin', requiredPermissions: ['security.manage'] },
       { label: 'Setup & Administration', icon: UserRoundCog, path: '/setup', requiredPermissions: ['organization.write'] },

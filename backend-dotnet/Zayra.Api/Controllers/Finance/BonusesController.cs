@@ -165,7 +165,7 @@ public class BonusesController : ControllerBase
         var uid = GetUserId();
         var eb = await _db.EmployeeBonuses.FirstOrDefaultAsync(x => x.Id == bonusId && x.BonusBatchId == batchId && x.TenantId == tid, ct);
         if (eb == null) return NotFound();
-        var batch = await _db.BonusBatches.FirstAsync(x => x.Id == batchId, ct);
+        var batch = await _db.BonusBatches.FirstAsync(x => x.Id == batchId && x.TenantId == tid, ct);
         if (batch.Status != "Draft") return BadRequest("Cannot remove employees from non-Draft batch.");
         eb.IsDeleted = true; eb.UpdatedAtUtc = DateTime.UtcNow;
         batch.TotalAmount -= eb.BonusAmount; batch.EmployeeCount--;

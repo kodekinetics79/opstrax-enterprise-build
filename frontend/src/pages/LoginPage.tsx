@@ -39,7 +39,7 @@ export function LoginPage() {
         <div className="surface p-8">
           <h1 className="mb-1 text-xl font-bold text-slate-900 dark:text-white">Sign in</h1>
           <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-            Welcome back to Zayra Workforce
+            Welcome back to KynexOne
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -87,7 +87,7 @@ export function LoginPage() {
                 required
               />
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                Your company's Zayra workspace identifier
+                Your company's KynexOne workspace identifier
               </p>
             </div>
 
@@ -115,7 +115,7 @@ export function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
-          Zayra AI Workforce Intelligence · GCC Edition
+          KynexOne · One Platform for Every Workforce Operation
         </p>
       </div>
     </div>

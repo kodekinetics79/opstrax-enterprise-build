@@ -186,7 +186,7 @@ public class LoansController : ControllerBase
         approval.ApprovedBy = uid; approval.ApprovedByName = GetUserName();
         approval.DecidedAtUtc = DateTime.UtcNow;
 
-        var loan = await _db.EmployeeLoans.FirstAsync(x => x.Id == id, ct);
+        var loan = await _db.EmployeeLoans.FirstAsync(x => x.Id == id && x.TenantId == tid, ct);
         if (req.Decision == "Rejected")
         {
             loan.Status = "Rejected"; loan.RejectionReason = req.Comments;

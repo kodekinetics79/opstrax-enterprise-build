@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
@@ -7,7 +9,19 @@ namespace Zayra.Api.Data;
 
 public class ZayraDbContext : DbContext
 {
-    public ZayraDbContext(DbContextOptions<ZayraDbContext> options) : base(options) { }
+    /// <summary>
+    /// Current request's tenant, resolved from the authenticated user's `tenant_id` claim.
+    /// Null when there is no HTTP context (startup seeding, login/refresh before auth,
+    /// background work) — in that case the global tenant query filter is bypassed.
+    /// </summary>
+    private readonly Guid? _tenantId;
+
+    public ZayraDbContext(DbContextOptions<ZayraDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
+        : base(options)
+    {
+        var claim = httpContextAccessor?.HttpContext?.User?.FindFirst("tenant_id")?.Value;
+        if (Guid.TryParse(claim, out var tid)) _tenantId = tid;
+    }
 
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
@@ -1897,7 +1911,45 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.ReportKey });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
         });
+
+        ApplyTenantQueryFilters(modelBuilder);
     }
+
+    private static readonly MethodInfo _setTenantFilterNonNull =
+        typeof(ZayraDbContext).GetMethod(nameof(SetTenantFilterNonNull), BindingFlags.Instance | BindingFlags.NonPublic)!;
+    private static readonly MethodInfo _setTenantFilterNullable =
+        typeof(ZayraDbContext).GetMethod(nameof(SetTenantFilterNullable), BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    /// <summary>
+    /// Defence-in-depth tenant isolation: every entity exposing a `TenantId` property gets a
+    /// global query filter so a forgotten <c>.Where(x =&gt; x.TenantId == ...)</c> cannot leak
+    /// across tenants. The filter is bypassed when <see cref="_tenantId"/> is null (seeding,
+    /// login/refresh, background work — see the field doc).
+    /// </summary>
+    private void ApplyTenantQueryFilters(ModelBuilder modelBuilder)
+    {
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            if (entityType.IsOwned() || entityType.BaseType is not null) continue;
+            var clr = entityType.ClrType;
+            var prop = clr.GetProperty("TenantId", BindingFlags.Public | BindingFlags.Instance);
+            if (prop is null) continue;
+            if (prop.PropertyType == typeof(Guid))
+                _setTenantFilterNonNull.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
+            else if (prop.PropertyType == typeof(Guid?))
+                _setTenantFilterNullable.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
+        }
+    }
+
+    // The lambdas close over the instance field _tenantId so EF Core re-parameterises it
+    // per request (the compiled model is shared; only the parameter value changes).
+    private void SetTenantFilterNonNull<TEntity>(ModelBuilder modelBuilder) where TEntity : class
+        => modelBuilder.Entity<TEntity>().HasQueryFilter(
+            e => _tenantId == null || EF.Property<Guid>(e, "TenantId") == _tenantId);
+
+    private void SetTenantFilterNullable<TEntity>(ModelBuilder modelBuilder) where TEntity : class
+        => modelBuilder.Entity<TEntity>().HasQueryFilter(
+            e => _tenantId == null || EF.Property<Guid?>(e, "TenantId") == _tenantId);
 
     private static void ApplySnakeCaseColumns(ModelBuilder modelBuilder)
     {
