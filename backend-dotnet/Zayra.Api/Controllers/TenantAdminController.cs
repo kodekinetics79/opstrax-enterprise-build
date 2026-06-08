@@ -237,6 +237,32 @@ public class TenantAdminController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return Created($"/api/tenant-admin/country-rules/{rule.Id}", rule);
     }
+
+    [HttpDelete("country-rules/{id:guid}")]
+    public async Task<IActionResult> DeleteCountryRule(Guid id, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var rule = await _db.CountryPayrollRules.FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
+        if (rule is null) return NotFound();
+        _db.CountryPayrollRules.Remove(rule);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    /// <summary>Delete an entire country pack (all rules for a country). Defaults are deletable.</summary>
+    [HttpDelete("country-rules/country/{countryCode}")]
+    public async Task<IActionResult> DeleteCountryPack(string countryCode, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var code = countryCode.ToUpperInvariant();
+        var rules = await _db.CountryPayrollRules.Where(r => r.TenantId == tenantId && r.CountryCode == code).ToListAsync(ct);
+        if (rules.Count == 0) return NotFound();
+        _db.CountryPayrollRules.RemoveRange(rules);
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { deleted = rules.Count, countryCode = code });
+    }
 }
 
 public record UpsertSubscriptionRequest(
