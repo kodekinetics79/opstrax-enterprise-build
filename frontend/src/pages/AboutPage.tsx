@@ -69,7 +69,7 @@ export function AboutPage() {
             </div>
             <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
               <span className="live-dot h-[6px] w-[6px]" />
-              <span className="text-xs font-bold text-teal-300">Live Demo Active</span>
+              <span className="text-xs font-bold text-teal-300">Live Tenant Active</span>
             </div>
           </div>
           <p className="max-w-3xl text-base text-slate-300 leading-relaxed">
@@ -89,8 +89,8 @@ export function AboutPage() {
             { label: "Database",     ok: true,  value: String(health.databaseStatus ?? "Connected") },
             { label: "Node Events",  ok: true,  value: String(health.nodeEventsStatus ?? "Connected") },
             { label: "Modules",      ok: true,  value: String(health.moduleCount ?? "35+") },
-            { label: "Version",      ok: true,  value: String(health.version ?? "Enterprise Demo") },
-            { label: "Environment",  ok: false, value: String(health.environment ?? "Local / Demo") },
+            { label: "Version",      ok: true,  value: String(health.version ?? "Enterprise Build") },
+            { label: "Environment",  ok: false, value: String(health.environment ?? "Local / Seeded") },
           ].map((item) => (
             <div key={item.label} className="panel p-3 text-center">
               <div className="flex items-center justify-center gap-1.5 mb-1">
@@ -192,8 +192,8 @@ export function AboutPage() {
           {[
             ["Product",     String(platform?.fullProductName ?? "OpsTrax Transport Management Solution")],
             ["Developer",   String(platform?.developer       ?? "Kode Kinetics")],
-            ["Version",     String(platform?.version         ?? "Enterprise Demo Build")],
-            ["Environment", String(platform?.environment     ?? "Local / Demo")],
+            ["Version",     String(platform?.version         ?? "Enterprise Build")],
+            ["Environment", String(platform?.environment     ?? "Local / Seeded")],
           ].map(([k, v]) => (
             <div key={k}>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest">{k}</p>

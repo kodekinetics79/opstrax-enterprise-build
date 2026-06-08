@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell, Bot, ChevronDown, Languages, LogOut,
   Menu, Search, Sparkles, X, Zap,
@@ -10,27 +10,70 @@ import { useHasPermission } from "@/hooks/usePermission";
 import { useI18n, LOCALES } from "@/i18n";
 import type { LocaleCode } from "@/i18n";
 
-const GROUPS = [
-  "Control Tower", "CRM & Growth", "Commercial", "Transport Operations",
-  "Fleet", "Telematics & IoT", "Safety & Compliance", "Maintenance",
-  "Financials", "Governance", "Intelligence",
+const NAV_SECTIONS = [
+  {
+    label: "Dashboard",
+    color: "text-blue-700",
+    items: ["command-center", "live-dashboard", "control-tower", "executive"],
+  },
+  {
+    label: "Fleet",
+    color: "text-indigo-700",
+    items: ["map-view", "assets", "iot-devices", "gps-tracking", "obd-j1939", "cold-chain", "sensor-health"],
+  },
+  {
+    label: "Vehicles",
+    color: "text-sky-700",
+    items: ["vehicles"],
+  },
+  {
+    label: "Drivers",
+    color: "text-emerald-700",
+    items: ["drivers"],
+  },
+  {
+    label: "Dispatch / Trips",
+    color: "text-cyan-700",
+    items: ["dispatch-board", "dispatch", "routes", "route-planning", "route-plans", "last-mile-delivery"],
+  },
+  {
+    label: "Shipments / Jobs",
+    color: "text-teal-700",
+    items: ["active-shipments", "jobs", "shipments", "load-bookings", "proof-of-delivery"],
+  },
+  {
+    label: "Customers",
+    color: "text-violet-700",
+    items: ["customers", "customer-portal", "customer-eta", "leads", "sales-pipeline", "opportunities", "follow-ups", "renewals", "upsell-opportunities", "campaigns", "account-health", "support-tickets"],
+  },
+  {
+    label: "Safety",
+    color: "text-red-700",
+    items: ["alerts", "safety", "incidents", "coaching", "dashcam", "evidence-packages"],
+  },
+  {
+    label: "Maintenance",
+    color: "text-amber-700",
+    items: ["maintenance", "work-orders", "service-history", "preventive-maintenance", "dvir-inspections", "downtime"],
+  },
+  {
+    label: "Compliance",
+    color: "text-slate-600",
+    items: ["compliance", "hos-eld", "audit-logs"],
+  },
+  {
+    label: "Reports",
+    color: "text-purple-700",
+    items: ["reports", "reports-analytics", "sla-kpi"],
+  },
+  {
+    label: "Admin / Settings",
+    color: "text-slate-600",
+    items: ["settings", "user-management", "integrations", "feature-flags", "about"],
+  },
 ] as const;
 
-type Group = typeof GROUPS[number];
-
-const GROUP_META: Record<Group, { color: string }> = {
-  "Control Tower":       { color: "text-blue-700" },
-  "CRM & Growth":        { color: "text-emerald-700" },
-  Commercial:            { color: "text-teal-700" },
-  "Transport Operations":{ color: "text-sky-700" },
-  Fleet:                 { color: "text-indigo-700" },
-  "Telematics & IoT":    { color: "text-cyan-700" },
-  "Safety & Compliance": { color: "text-red-700" },
-  Maintenance:           { color: "text-amber-700" },
-  Financials:            { color: "text-yellow-700" },
-  Governance:            { color: "text-slate-600" },
-  Intelligence:          { color: "text-violet-700" },
-};
+type Group = typeof NAV_SECTIONS[number]["label"];
 
 const NOTIFS = [
   { text: "Safety event — TRK-104 harsh braking",     time: "2m ago",  type: "danger" },
@@ -43,14 +86,8 @@ export function AppShell() {
   const { session, logout } = useAuth();
   const { locale, setLocale } = useI18n();
   const location = useLocation();
+  const navigate = useNavigate();
   const hasPermission = useHasPermission();
-
-  // Modules visible to this user based on their permissions
-  const visibleModules = useMemo(
-    () => modules.filter((m) => !m.requiredPermission || hasPermission(m.requiredPermission)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session?.permissions],
-  );
 
   // navigation collapse — persist across renders, default all open
   const [collapsed, setCollapsed] = useState<Set<Group>>(new Set());
@@ -85,6 +122,16 @@ export function AppShell() {
 
   const initials = (session?.role || "A")[0].toUpperCase();
 
+  const visibleSections = useMemo(
+    () => NAV_SECTIONS.map((section) => ({
+      ...section,
+      items: section.items
+        .map((key) => modules.find((module) => module.key === key || module.route === key || module.route === `/${key}`))
+        .filter((module): module is (typeof modules)[number] => Boolean(module && (!module.requiredPermission || hasPermission(module.requiredPermission)))),
+    })).filter((section) => section.items.length > 0),
+    [hasPermission, session?.permissions],
+  );
+
   /* ── Sidebar nav content (shared between desktop + mobile) ── */
   const navContent = (
     <div className="flex h-full flex-col gap-4">
@@ -103,28 +150,25 @@ export function AppShell() {
         </div>
         <div className="relative mt-3 flex items-center gap-2">
           <span className="live-dot" />
-          <span className="text-[11px] font-semibold text-emerald-700">Live Simulation Active</span>
+          <span className="text-[11px] font-semibold text-emerald-700">Live tenant context active</span>
         </div>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 overflow-y-auto pb-2">
-        {GROUPS.map((group) => {
-          const items = visibleModules.filter((m) => m.group === group);
-          if (!items.length) return null;
-          const isOpen = !collapsed.has(group);
-          const meta  = GROUP_META[group];
+        {visibleSections.map((section) => {
+          const isOpen = !collapsed.has(section.label);
 
           return (
-            <div key={group}>
+            <div key={section.label}>
               {/* Group header */}
               <button
                 className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition-colors hover:bg-slate-100"
-                onClick={() => toggleGroup(group)}
+                onClick={() => toggleGroup(section.label)}
               >
                 <span className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold uppercase tracking-[0.22em] ${meta.color} opacity-70`}>
-                    {group}
+                  <span className={`text-[10px] font-bold uppercase tracking-[0.22em] ${section.color} opacity-70`}>
+                    {section.label}
                   </span>
                 </span>
                 <ChevronDown
@@ -136,7 +180,7 @@ export function AppShell() {
               {/* Group items */}
               {isOpen && (
                 <div className="mt-0.5 space-y-px pb-1">
-                  {items.map((module) => {
+                  {section.items.map((module) => {
                     const Icon = moduleIcons[module.key];
                     return (
                       <NavLink
@@ -149,18 +193,18 @@ export function AppShell() {
                               : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
                           }`
                         }
-                      >
-                        {({ isActive }) => (
-                          <>
-                            {isActive && <span className="nav-active-bar" />}
-                            <Icon
-                              className={`h-4 w-4 flex-shrink-0 transition-colors ${
-                                isActive ? meta.color : "text-slate-400"
-                              }`}
-                            />
-                            <span className="truncate font-medium">{module.title}</span>
-                          </>
-                        )}
+                        >
+                          {({ isActive }) => (
+                            <>
+                              {isActive && <span className="nav-active-bar" />}
+                              <Icon
+                                className={`h-4 w-4 flex-shrink-0 transition-colors ${
+                                isActive ? section.color : "text-slate-400"
+                                }`}
+                              />
+                              <span className="truncate font-medium">{module.title}</span>
+                            </>
+                          )}
                       </NavLink>
                     );
                   })}
@@ -179,7 +223,7 @@ export function AppShell() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-slate-900">{session?.role || "Company Admin"}</p>
-            <p className="truncate text-xs text-slate-500">{String(session?.company?.name || "OpsTrax Demo")}</p>
+            <p className="truncate text-xs text-slate-500">{String(session?.company?.name || "OpsTrax Tenant")}</p>
           </div>
           <button
             className="icon-btn flex-shrink-0"
@@ -268,7 +312,7 @@ export function AppShell() {
                 {/* AI Copilot icon */}
                 <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
                   <Bot className="h-3 w-3 text-violet-400" />
-                  <span className="max-w-[100px] truncate">{String(session?.company?.name || "OpsTrax Demo")}</span>
+                  <span className="max-w-[100px] truncate">{String(session?.company?.name || "OpsTrax Tenant")}</span>
                 </div>
 
                 {/* Language selector */}
@@ -332,7 +376,11 @@ export function AppShell() {
                         ))}
                       </div>
                       <div className="border-t border-slate-200 px-4 py-2.5">
-                        <button className="text-xs font-semibold text-teal-700 hover:text-teal-600 transition">
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-teal-700 hover:text-teal-600 transition"
+                          onClick={() => navigate("/audit-logs")}
+                        >
                           View all notifications
                         </button>
                       </div>

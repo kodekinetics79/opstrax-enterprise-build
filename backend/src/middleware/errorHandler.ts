@@ -6,10 +6,11 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ) {
-  console.error(error);
+  console.error(`[fleet-backend] ${req.method} ${req.path}`, error);
 
   res.status(500).json({
     success: false,
     message: "Internal server error.",
+    errors: ["An unexpected server error occurred."],
   });
 }

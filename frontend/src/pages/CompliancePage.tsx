@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle, FileText, Globe, Package, Shield, ShieldAlert, Wifi, WifiOff, X, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle, Download, FileText, Globe, Package, Shield, ShieldAlert, Wifi, WifiOff, X, Zap } from "lucide-react";
 import {
   useAcknowledgeViolation,
   useAuditPackages,
@@ -12,6 +12,8 @@ import {
   useResolveViolation,
   useVehicleComplianceStatus,
 } from "@/hooks/useBatch6";
+import { EmptyState, LoadingState } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
 import { useI18n } from "@/i18n";
 import type { AnyRecord } from "@/types";
 import { formatDate } from "@/utils/formatters";
@@ -63,6 +65,16 @@ function CountryBadge({ code }: { code: string }) {
   return <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-bold text-slate-300">{labels[code] ?? code}</span>;
 }
 
+function exportCsv(name: string, rows: AnyRecord[]) {
+  if (!rows.length) return;
+  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
+  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `opstrax-${name}.csv`;
+  a.click();
+}
+
 function Disclaimer() {
   return (
     <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-[11px] text-amber-200/80 leading-relaxed">
@@ -74,6 +86,9 @@ function Disclaimer() {
 
 export function CompliancePage() {
   const { t } = useI18n();
+  const hasPermission = useHasPermission();
+  const canExport = hasPermission("compliance:export");
+  const canUpdate = hasPermission("compliance:update");
   const [tab, setTab] = useState<TabId>("overview");
   const [drawer, setDrawer] = useState<AnyRecord | null>(null);
 
@@ -109,6 +124,12 @@ export function CompliancePage() {
   const crossBorder = (crossQ.data as AnyRecord[] | undefined) ?? [];
   const aiRecs      = (aiQ.data as AnyRecord[] | undefined) ?? [];
 
+  const isLoading = summaryQ.isLoading || violationsQ.isLoading || driversQ.isLoading || vehiclesQ.isLoading || auditQ.isLoading || crossQ.isLoading || aiQ.isLoading;
+  const hasError = summaryQ.isError || violationsQ.isError || driversQ.isError || vehiclesQ.isError || auditQ.isError || crossQ.isError || aiQ.isError;
+
+  if (isLoading) return <LoadingState />;
+  if (hasError) return <EmptyState title="Compliance unavailable" subtitle="Unable to load compliance records right now. Refresh to try again." />;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -118,6 +139,14 @@ export function CompliancePage() {
           <p className="text-xs text-slate-500 mt-0.5">Multi-country compliance monitoring, HOS tracking, and audit-readiness</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="btn-ghost py-2 text-xs"
+            disabled={!canExport}
+            title={!canExport ? "You do not have permission to perform this action." : "Export compliance records."}
+            onClick={() => exportCsv("compliance", [...violations, ...audits])}
+          >
+            <Download className="h-4 w-4" /> Export
+          </button>
           {(summary?.countries as AnyRecord[] | undefined)?.map(c => (
             <CountryBadge key={String(c.code)} code={String(c.code)} />
           ))}
@@ -221,10 +250,24 @@ export function CompliancePage() {
                   <td className="py-2">
                     <div className="flex gap-1">
                       {String(v.status) === "Open" && (
-                        <button className="rounded border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300 hover:bg-amber-400/20" onClick={e => { e.stopPropagation(); ackMut.mutate(Number(v.id)); }}>Ack</button>
+                        <button
+                          className="rounded border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300 hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={!canUpdate}
+                          title={!canUpdate ? "You do not have permission to perform this action." : "Acknowledge this violation."}
+                          onClick={e => { e.stopPropagation(); ackMut.mutate(Number(v.id)); }}
+                        >
+                          Ack
+                        </button>
                       )}
                       {["Open","Acknowledged","Under Review"].includes(String(v.status)) && (
-                        <button className="rounded border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-400/20" onClick={e => { e.stopPropagation(); resolveMut.mutate(Number(v.id)); }}>Resolve</button>
+                        <button
+                          className="rounded border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={!canUpdate}
+                          title={!canUpdate ? "You do not have permission to perform this action." : "Resolve this violation."}
+                          onClick={e => { e.stopPropagation(); resolveMut.mutate(Number(v.id)); }}
+                        >
+                          Resolve
+                        </button>
                       )}
                     </div>
                   </td>
@@ -334,7 +377,9 @@ export function CompliancePage() {
                 {!!a.notes && <p className="text-xs text-slate-400 leading-snug">{String(a.notes)}</p>}
                 {String(a.status) === "Draft" || String(a.status) === "In Progress" ? (
                   <button
-                    className="w-full rounded-lg border border-emerald-400/20 bg-emerald-400/10 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-400/20 transition"
+                    className="w-full rounded-lg border border-emerald-400/20 bg-emerald-400/10 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-400/20 transition disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!canUpdate}
+                    title={!canUpdate ? "You do not have permission to perform this action." : "Finalize this audit package."}
                     onClick={() => finalizeMut.mutate(Number(a.id))}
                   >
                     <Package className="h-3 w-3 inline-block mr-1" />Finalize Package
@@ -432,10 +477,24 @@ export function CompliancePage() {
               ))}
               <div className="flex gap-2 pt-2">
                 {String(drawer.status) === "Open" && (
-                  <button className="flex-1 rounded-lg border border-amber-400/20 bg-amber-400/10 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-400/20" onClick={() => { ackMut.mutate(Number(drawer.id)); setDrawer(null); }}>Acknowledge</button>
+                  <button
+                    className="flex-1 rounded-lg border border-amber-400/20 bg-amber-400/10 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!canUpdate}
+                    title={!canUpdate ? "You do not have permission to perform this action." : "Acknowledge this violation."}
+                    onClick={() => { ackMut.mutate(Number(drawer.id)); setDrawer(null); }}
+                  >
+                    Acknowledge
+                  </button>
                 )}
                 {["Open","Acknowledged","Under Review"].includes(String(drawer.status)) && (
-                  <button className="flex-1 rounded-lg border border-emerald-400/20 bg-emerald-400/10 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-400/20" onClick={() => { resolveMut.mutate(Number(drawer.id)); setDrawer(null); }}>Resolve</button>
+                  <button
+                    className="flex-1 rounded-lg border border-emerald-400/20 bg-emerald-400/10 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!canUpdate}
+                    title={!canUpdate ? "You do not have permission to perform this action." : "Resolve this violation."}
+                    onClick={() => { resolveMut.mutate(Number(drawer.id)); setDrawer(null); }}
+                  >
+                    Resolve
+                  </button>
                 )}
               </div>
             </div>

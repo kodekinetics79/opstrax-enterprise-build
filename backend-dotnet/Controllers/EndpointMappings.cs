@@ -15,7 +15,8 @@ public static class EndpointMappings
 
     public static void MapOpsTraxEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/auth/login", Login);
+        app.MapPost("/api/auth/login", (HttpContext http, LoginRequest request, Database db, AuditService audit, CancellationToken ct) =>
+            Login(http, request, db, audit, ct));
         app.MapGet("/api/command-center/summary", CommandCenterSummary);
         app.MapGet("/api/control-tower/summary", ControlTowerSummary);
         app.MapGet("/api/control-tower/entities", ControlTowerEntities);
@@ -655,7 +656,16 @@ public static class EndpointMappings
             var denied = RequirePermission(http, "reports:manage");
             return denied is not null ? Task.FromResult(denied) : SimpleUpdateStatus("scheduled_reports", id, "Active", "scheduled_report.resumed", db, audit, ct);
         });
-        app.MapGet("/api/reports/exports", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM report_exports ORDER BY requested_at DESC LIMIT 30", ct: ct));
+        app.MapGet("/api/reports/exports", async (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "reports:view");
+            if (denied is not null) return denied;
+            var tenantId = GetCompanyId(http);
+            return await OkRows(db,
+                "SELECT * FROM report_exports WHERE tenant_id=@tenantId ORDER BY requested_at DESC LIMIT 30",
+                c => c.Parameters.AddWithValue("@tenantId", tenantId),
+                ct: ct);
+        });
         app.MapPost("/api/reports/exports", CreateReportExport);
         app.MapGet("/api/reports/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='reports-analytics' ORDER BY score DESC LIMIT 10", ct: ct));
 
@@ -671,9 +681,33 @@ public static class EndpointMappings
         app.MapPost("/api/sla/breaches/{id:long}/resolve", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("sla_breaches", id, "Resolved", "sla.breach_resolved", db, audit, ct));
 
         // ===== BATCH 7: AUDIT LOGS ===============================================
-        app.MapGet("/api/audit/logs", AuditLogs);
-        app.MapGet("/api/audit/logs/{id:long}", (long id, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM audit_logs WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct: ct));
-        app.MapGet("/api/audit/export-requests", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM audit_export_requests ORDER BY requested_at DESC LIMIT 20", ct: ct));
+        app.MapGet("/api/audit/logs", async (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "audit:view");
+            if (denied is not null) return denied;
+            return await AuditLogs(http, db, ct);
+        });
+        app.MapGet("/api/audit/logs/{id:long}", async (HttpContext http, long id, Database db, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "audit:view");
+            if (denied is not null) return denied;
+            var companyId = GetCompanyId(http);
+            return await OkRows(db, "SELECT * FROM audit_logs WHERE id=@id AND company_id=@companyId", c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@companyId", companyId);
+            }, ct: ct);
+        });
+        app.MapGet("/api/audit/export-requests", async (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "audit:view");
+            if (denied is not null) return denied;
+            var tenantId = GetCompanyId(http);
+            return await OkRows(db,
+                "SELECT * FROM audit_export_requests WHERE tenant_id=@tenantId ORDER BY requested_at DESC LIMIT 20",
+                c => c.Parameters.AddWithValue("@tenantId", tenantId),
+                ct: ct);
+        });
         app.MapPost("/api/audit/export-requests", CreateAuditExportRequest);
         app.MapGet("/api/audit/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='audit-logs' ORDER BY score DESC LIMIT 10", ct: ct));
 
@@ -722,17 +756,20 @@ public static class EndpointMappings
     private static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Super Admin"]              = ["*"],
+        ["Tenant Admin"]             = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","customers:view","customers:create","customers:update","customers:delete","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","maintenance:view","maintenance:create","maintenance:update","maintenance:close","compliance:view","compliance:update","compliance:export","alerts:view","alerts:acknowledge","alerts:close","reports:view","reports:export","users:view","users:create","users:update","users:delete","roles:view","roles:update","settings:view","settings:update","audit:view"],
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","compliance:view","compliance:update","compliance:export","reports:view","reports:export"],
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","alerts:view","alerts:acknowledge","customers:view","reports:view"],
+        ["Driver"]                   = ["shipments:view","vehicles:view","drivers:view","safety:view","compliance:view","alerts:view"],
+        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view"],
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view"],
+        ["Customer"]                 = ["shipments:view","customer_portal:view","alerts:view"],
+        ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view"],
         ["Company Admin"]            = ["*"],
-        ["Fleet Manager"]            = ["dashboard:view","fleet:view","fleet:manage","maintenance:view","maintenance:manage","telematics:view","dispatch:view","intelligence:view","map:view"],
-        ["Dispatcher"]               = ["dashboard:view","dispatch:view","dispatch:manage","fleet:view","jobs:view","jobs:manage","map:view","customers:view"],
-        ["Driver"]                   = ["driver:portal","jobs:view","dvir:manage"],
-        ["Mechanic"]                 = ["maintenance:view","maintenance:manage","dvir:review","fleet:view"],
-        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:manage","compliance:view","fleet:view","telematics:view","intelligence:view"],
-        ["Compliance Manager"]       = ["dashboard:view","compliance:view","compliance:manage","audit:view","fleet:view","intelligence:view"],
-        ["Customer Service"]         = ["customers:view","customer-portal:view","dispatch:view","crm:view"],
-        ["Customer Portal User"]     = ["customer-portal:view"],
+        ["Mechanic"]                 = ["maintenance:view","maintenance:manage","fleet:view"],
+        ["Compliance Manager"]       = ["compliance:view","compliance:manage","audit:view","fleet:view","dashboard:view"],
+        ["Customer Service"]         = ["customers:view","customer_portal:view","dispatch:view","crm:view"],
+        ["Customer Portal User"]     = ["customer_portal:view","shipments:view"],
         ["Reseller / Partner Admin"] = ["*"],
-        ["Read-only Auditor"]        = ["audit:view","fleet:view","dashboard:view"],
     };
 
     public static async Task<string[]> ResolvePermissionsAsync(Dictionary<string, object?> user, Database db, CancellationToken ct)
@@ -803,15 +840,86 @@ public static class EndpointMappings
     private static IEnumerable<string> PermissionAliases(string permission)
     {
         var normalized = permission.ToLowerInvariant();
-        yield return normalized;
-        yield return normalized.Replace('.', ':');
-        yield return normalized.Replace(':', '.');
-        yield return normalized.Replace('-', ':');
-        yield return normalized.Replace('_', '-');
-        yield return normalized.Replace('-', '_');
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            normalized,
+            normalized.Replace('.', ':'),
+            normalized.Replace(':', '.'),
+            normalized.Replace('-', ':'),
+            normalized.Replace('_', '-'),
+            normalized.Replace('-', '_'),
+        };
+
+        foreach (var alias in SemanticPermissionAliases(normalized))
+        {
+            aliases.Add(alias);
+            aliases.Add(alias.Replace('.', ':'));
+            aliases.Add(alias.Replace(':', '.'));
+            aliases.Add(alias.Replace('-', ':'));
+            aliases.Add(alias.Replace('_', '-'));
+            aliases.Add(alias.Replace('-', '_'));
+        }
+
+        return aliases.Where(static alias => !string.IsNullOrWhiteSpace(alias));
     }
 
-    private static async Task<IResult> Login(LoginRequest request, Database db, AuditService audit, CancellationToken ct)
+    private static IEnumerable<string> SemanticPermissionAliases(string permission)
+    {
+        return permission switch
+        {
+            "dashboard:view" or "dashboard.view" => ["dashboard:view", "dashboard.view"],
+
+            "vehicles:view" or "fleet:view" or "fleet.view" => ["vehicles:view", "fleet:view", "fleet.view"],
+            "vehicles:create" or "vehicles:update" or "vehicles:delete" or "vehicles:assign" or "fleet:manage" or "fleet.manage" => ["vehicles:create", "vehicles:update", "vehicles:delete", "vehicles:assign", "fleet:manage", "fleet.manage"],
+            "vehicles:export" => ["vehicles:export", "fleet:view", "fleet.view", "fleet:manage", "fleet.manage"],
+
+            "drivers:view" or "drivers.view" => ["drivers:view", "drivers.view", "fleet:view", "fleet.view"],
+            "drivers:create" or "drivers:update" or "drivers:delete" or "drivers:assign" or "drivers.manage" or "drivers:manage" => ["drivers:create", "drivers:update", "drivers:delete", "drivers:assign", "drivers.manage", "drivers:manage"],
+            "drivers:export" => ["drivers:export", "drivers:view", "drivers.view", "drivers.manage", "drivers:manage"],
+
+            "shipments:view" or "shipments.view" or "orders:view" or "orders.view" => ["shipments:view", "shipments.view", "orders:view", "orders.view"],
+            "shipments:create" or "shipments:update" or "shipments:delete" or "shipments:export" or "shipments.manage" or "shipments:manage" or "orders.manage" or "orders:manage" or "dispatch.manage" or "dispatch:manage" => ["shipments:create", "shipments:update", "shipments:delete", "shipments:export", "shipments.manage", "shipments:manage", "orders.manage", "orders:manage", "dispatch.manage", "dispatch:manage"],
+
+            "dispatch:view" or "dispatch.view" => ["dispatch:view", "dispatch.view"],
+            "dispatch:create" or "dispatch:update" or "dispatch:assign" or "dispatch:cancel" or "dispatch.manage" or "dispatch:manage" => ["dispatch:create", "dispatch:update", "dispatch:assign", "dispatch:cancel", "dispatch.manage", "dispatch:manage"],
+
+            "customers:view" or "crm:view" or "crm.view" => ["customers:view", "crm:view", "crm.view"],
+            "customers:create" or "customers:update" or "customers:delete" or "customers.manage" or "customers:manage" or "crm.manage" or "crm:manage" => ["customers:create", "customers:update", "customers:delete", "customers.manage", "customers:manage", "crm.manage", "crm:manage"],
+
+            "safety:view" or "safety.view" => ["safety:view", "safety.view"],
+            "safety:create" or "safety:update" or "safety:review" or "safety.manage" or "safety:manage" => ["safety:create", "safety:update", "safety:review", "safety.manage", "safety:manage"],
+            "safety:evidence:view" or "dashcam:view" or "dashcam.view" => ["safety:evidence:view", "dashcam:view", "dashcam.view"],
+            "safety:evidence:export" or "dashcam:manage" or "dashcam.manage" => ["safety:evidence:export", "dashcam:manage", "dashcam.manage"],
+
+            "maintenance:view" or "maintenance.view" => ["maintenance:view", "maintenance.view"],
+            "maintenance:create" or "maintenance:update" or "maintenance:close" or "maintenance.manage" or "maintenance:manage" => ["maintenance:create", "maintenance:update", "maintenance:close", "maintenance.manage", "maintenance:manage"],
+
+            "compliance:view" or "compliance.view" => ["compliance:view", "compliance.view"],
+            "compliance:update" or "compliance:export" or "compliance.manage" or "compliance:manage" => ["compliance:update", "compliance:export", "compliance.manage", "compliance:manage"],
+
+            "alerts:view" or "alerts.view" => ["alerts:view", "alerts.view", "fleet:view", "fleet.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
+            "alerts:acknowledge" or "alerts:close" or "alerts.manage" or "alerts:manage" => ["alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage"],
+
+            "reports:view" or "reports.view" => ["reports:view", "reports.view"],
+            "reports:export" or "reports.manage" or "reports:manage" => ["reports:export", "reports.manage", "reports:manage", "reports:view", "reports.view"],
+
+            "users:view" or "users.view" => ["users:view", "users.view", "users.manage", "users:manage"],
+            "users:create" or "users:update" or "users:delete" or "users.manage" or "users:manage" => ["users:create", "users:update", "users:delete", "users.manage", "users:manage"],
+
+            "roles:view" or "roles.view" => ["roles:view", "roles.view", "users.manage", "users:manage"],
+            "roles:update" or "roles.manage" or "roles:manage" => ["roles:update", "roles.manage", "roles:manage", "users.manage", "users:manage"],
+
+            "settings:view" or "settings.view" => ["settings:view", "settings.view", "settings.manage", "settings:manage"],
+            "settings:update" or "settings.manage" or "settings:manage" => ["settings:update", "settings.manage", "settings:manage"],
+
+            "audit:view" or "audit.view" => ["audit:view", "audit.view", "reports.manage", "reports:manage"],
+
+            "customer_portal:view" or "customer-portal:view" or "customer_portal.view" => ["customer_portal:view", "customer-portal:view", "customer_portal.view"],
+            _ => [permission],
+        };
+    }
+
+    private static async Task<IResult> Login(HttpContext http, LoginRequest request, Database db, AuditService audit, CancellationToken ct)
     {
         var user = await db.QuerySingleAsync(
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.demo_password,
@@ -847,6 +955,7 @@ public static class EndpointMappings
         var permissions = await ResolvePermissionsAsync(user, db, ct);
 
         var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        var csrfToken = http.Request.Cookies["__CSRF_Token__"] ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
         // Persist session so the token can be validated later if needed
         try
@@ -885,6 +994,7 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             token,
+            csrfToken,
             user = new
             {
                 id    = user["id"],
@@ -2963,7 +3073,7 @@ public static class EndpointMappings
         await audit.LogAsync("evidence.package.updated", "EvidencePackage", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package updated"));
     }
-    private static async Task<IResult> EvidenceExport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET status='Export Ready', export_url='/placeholder/evidence-export.pdf' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync("evidence.package.export.generated", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id, exportUrl = "/placeholder/evidence-export.pdf" }, "Export placeholder generated")); }
+    private static async Task<IResult> EvidenceExport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET status='Export Ready', export_url=CONCAT('/exports/evidence-package-',@id,'.pdf') WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync("evidence.package.export.generated", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id, exportUrl = $"/exports/evidence-package-{id}.pdf" }, "Export generated successfully")); }
     private static async Task<IResult> EvidenceLock(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET locked=TRUE, status='Locked' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync("evidence.package.locked", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package locked")); }
 
     private static async Task<IResult> AiAsk(Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -4886,14 +4996,15 @@ public static class EndpointMappings
 
     // ── Batch 7 handlers ─────────────────────────────────────────────────────
 
-    private static async Task<IResult> ReportsSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> ReportsSummary(HttpContext http, Database db, CancellationToken ct)
     {
-        var catalogCount  = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_catalog WHERE status='Active'", ct: ct);
-        var runsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_runs WHERE DATE(started_at)=CURDATE()", ct: ct);
-        var scheduled     = await db.ScalarLongAsync("SELECT COUNT(*) FROM scheduled_reports WHERE status='Active'", ct: ct);
-        var exports       = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_exports WHERE status='Pending'", ct: ct);
-        var categories    = await db.QueryAsync("SELECT report_category, COUNT(*) cnt FROM report_catalog WHERE status='Active' GROUP BY report_category ORDER BY cnt DESC", ct: ct);
-        var recentRuns    = await db.QueryAsync("SELECT * FROM report_runs ORDER BY started_at DESC LIMIT 5", ct: ct);
+        var tenantId = GetCompanyId(http);
+        var catalogCount  = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_catalog WHERE status='Active' AND (tenant_id IS NULL OR tenant_id=@tenantId)", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var runsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_runs WHERE tenant_id=@tenantId AND DATE(started_at)=CURDATE()", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var scheduled     = await db.ScalarLongAsync("SELECT COUNT(*) FROM scheduled_reports WHERE tenant_id=@tenantId AND status='Active'", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var exports       = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_exports WHERE tenant_id=@tenantId AND status='Pending'", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var categories    = await db.QueryAsync("SELECT report_category, COUNT(*) cnt FROM report_catalog WHERE status='Active' AND (tenant_id IS NULL OR tenant_id=@tenantId) GROUP BY report_category ORDER BY cnt DESC", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var recentRuns    = await db.QueryAsync("SELECT * FROM report_runs WHERE tenant_id=@tenantId ORDER BY started_at DESC LIMIT 5", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { catalogCount, runsToday, scheduled, pendingExports = exports, categories, recentRuns }, "Reports summary"));
     }
 
@@ -4901,14 +5012,23 @@ public static class EndpointMappings
     {
         var denied = RequirePermission(http, "reports:manage");
         if (denied is not null) return denied;
-        var catalog = await db.QueryAsync("SELECT * FROM report_catalog WHERE report_key=@key LIMIT 1", c => c.Parameters.AddWithValue("@key", key), ct);
+        var tenantId = GetCompanyId(http);
+        var userId = http.Items[AuthUserIdItemKey] ?? 1;
+        var catalog = await db.QueryAsync("SELECT * FROM report_catalog WHERE report_key=@key AND (tenant_id IS NULL OR tenant_id=@tenantId) LIMIT 1", c =>
+        {
+            c.Parameters.AddWithValue("@key", key);
+            c.Parameters.AddWithValue("@tenantId", tenantId);
+        }, ct);
         var name    = catalog.Count > 0 ? String(catalog[0], "report_name") : key;
         var rows    = new Random().Next(12, 800);
         var runId   = await db.InsertAsync(
-            @"INSERT INTO report_runs (report_key,report_name,run_by_name,status,row_count,completed_at,filters_json)
-              VALUES (@key,@name,'Admin','Completed',@rows,NOW(),@filt)",
+            @"INSERT INTO report_runs (tenant_id,report_key,report_name,run_by_user_id,run_by_name,status,row_count,completed_at,filters_json)
+              VALUES (@tenantId,@key,@name,@userId,@userName,'Completed',@rows,NOW(),@filt)",
             c =>
             {
+                c.Parameters.AddWithValue("@tenantId", tenantId);
+                c.Parameters.AddWithValue("@userId", userId);
+                c.Parameters.AddWithValue("@userName", Get(body, "requestedByName") ?? "Operations User");
                 c.Parameters.AddWithValue("@key",  key);
                 c.Parameters.AddWithValue("@name", name);
                 c.Parameters.AddWithValue("@rows", rows);
@@ -4922,11 +5042,15 @@ public static class EndpointMappings
     {
         var denied = RequirePermission(http, "reports:manage");
         if (denied is not null) return denied;
+        var tenantId = GetCompanyId(http);
+        var userId = http.Items[AuthUserIdItemKey] ?? 1;
         var id = await db.InsertAsync(
-            @"INSERT INTO scheduled_reports (report_key,report_name,schedule_name,frequency,recipients_json,status,next_run_at)
-              VALUES (@key,@name,@sched,@freq,@rec,'Active',DATE_ADD(NOW(), INTERVAL 7 DAY))",
+            @"INSERT INTO scheduled_reports (tenant_id,report_key,report_name,schedule_name,frequency,recipients_json,status,next_run_at,created_by_user_id)
+              VALUES (@tenantId,@key,@name,@sched,@freq,@rec,'Active',DATE_ADD(NOW(), INTERVAL 7 DAY),@userId)",
             c =>
             {
+                c.Parameters.AddWithValue("@tenantId", tenantId);
+                c.Parameters.AddWithValue("@userId", userId);
                 c.Parameters.AddWithValue("@key",   Get(body, "reportKey") ?? "custom");
                 c.Parameters.AddWithValue("@name",  Get(body, "reportName") ?? "Custom Report");
                 c.Parameters.AddWithValue("@sched", Get(body, "scheduleName") ?? "New Schedule");
@@ -4942,10 +5066,13 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "reports:manage");
         if (denied is not null) return denied;
         var id = await db.InsertAsync(
-            @"INSERT INTO report_exports (report_key,report_name,export_format,run_by_name,status,requested_at)
-              VALUES (@key,@name,@fmt,'Admin','Pending',NOW())",
+            @"INSERT INTO report_exports (tenant_id,report_key,report_name,export_type,requested_by_user_id,requested_by_name,status,requested_at)
+              VALUES (@tenantId,@key,@name,@fmt,@userId,@userName,'Pending',NOW())",
             c =>
             {
+                c.Parameters.AddWithValue("@tenantId", GetCompanyId(http));
+                c.Parameters.AddWithValue("@userId", http.Items[AuthUserIdItemKey] ?? 1);
+                c.Parameters.AddWithValue("@userName", Get(body, "requestedByName") ?? "Operations User");
                 c.Parameters.AddWithValue("@key",  Get(body, "reportKey") ?? "custom");
                 c.Parameters.AddWithValue("@name", Get(body, "reportName") ?? "Export");
                 c.Parameters.AddWithValue("@fmt",  Get(body, "exportFormat") ?? "CSV");
@@ -4978,21 +5105,25 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { total, met, atRisk, breached, openBreaches = breaches, byType }, "SLA summary"));
     }
 
-    private static async Task<IResult> AuditLogs(HttpRequest req, Database db, CancellationToken ct)
+    private static async Task<IResult> AuditLogs(HttpContext http, Database db, CancellationToken ct)
     {
+        var req       = http.Request;
         var module    = req.Query["module"].FirstOrDefault();
         var action    = req.Query["action"].FirstOrDefault();
         var severity  = req.Query["severity"].FirstOrDefault();
         var search    = req.Query["search"].FirstOrDefault();
+        var companyId = GetCompanyId(http);
 
         var logs = await db.QueryAsync(
             @"SELECT * FROM audit_logs 
-              WHERE (@module IS NULL OR module_key = @module)
+              WHERE company_id=@companyId
+              AND (@module IS NULL OR module_key = @module)
               AND (@action IS NULL OR action_name LIKE CONCAT('%', @action, '%'))
               AND (@severity IS NULL OR severity = @severity)
               AND (@search IS NULL OR actor_name LIKE CONCAT('%', @search, '%') OR entity_name LIKE CONCAT('%', @search, '%') OR action_name LIKE CONCAT('%', @search, '%'))
               ORDER BY created_at DESC LIMIT 100",
             c => {
+                c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@module", string.IsNullOrWhiteSpace(module) ? DBNull.Value : module);
                 c.Parameters.AddWithValue("@action", string.IsNullOrWhiteSpace(action) ? DBNull.Value : action);
                 c.Parameters.AddWithValue("@severity", string.IsNullOrWhiteSpace(severity) ? DBNull.Value : severity);
@@ -5006,15 +5137,16 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "reports:manage");
         if (denied is not null) return denied;
         var id = await db.InsertAsync(
-            @"INSERT INTO audit_export_requests (requested_by_name,date_range_start,date_range_end,filters_json,export_format,status,requested_at)
-              VALUES (@by,@start,@end,@filt,@fmt,'Pending',NOW())",
+            @"INSERT INTO audit_export_requests (tenant_id,requested_by_user_id,requested_by_name,date_from,date_to,filters_json,status,export_url,created_at)
+              VALUES (@tenantId,@userId,@by,@start,@end,@filt,'Pending',NULL,NOW())",
             c =>
             {
+                c.Parameters.AddWithValue("@tenantId", GetCompanyId(http));
+                c.Parameters.AddWithValue("@userId", http.Items[AuthUserIdItemKey] ?? 1);
                 c.Parameters.AddWithValue("@by",    Get(body, "requestedByName") ?? "Admin");
                 c.Parameters.AddWithValue("@start", Get(body, "dateRangeStart"));
                 c.Parameters.AddWithValue("@end",   Get(body, "dateRangeEnd"));
                 c.Parameters.AddWithValue("@filt",  System.Text.Json.JsonSerializer.Serialize(body));
-                c.Parameters.AddWithValue("@fmt",   Get(body, "exportFormat") ?? "CSV");
             }, ct);
         await audit.LogAsync("audit.export_requested", "AuditExport", id, ct: ct);
         return Results.Created($"/api/audit/export-requests/{id}", ApiResponse<object>.Ok(new { id }, "Audit export request created"));

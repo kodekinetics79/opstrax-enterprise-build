@@ -1,7 +1,10 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Download, Edit3, FileCheck2, Plus, RadioTower, Send, Sparkles, X } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { Download, Edit3, FileCheck2, Plus, RadioTower, Send, Sparkles, Trash2, X } from "lucide-react";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
+import { useAuth } from "@/hooks/useAuth";
+import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
 import { useJobDetail, useJobs, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
@@ -24,17 +27,32 @@ export function JobsPage() {
   const summary = useJobSummary();
   const detail = useJobDetail(selected?.id as string | number | undefined);
   const qc = useQueryClient();
+  const hasPermission = useHasPermission();
+  const { session } = useAuth();
+  const canManage = hasPermission("shipments:create") || hasPermission("shipments:update") || hasPermission("dispatch:update") || hasPermission("dispatch:assign");
+  const canExport = hasPermission("shipments:export") || hasPermission("shipments:view") || canManage;
+  const canCreate = canManage;
+  const canEdit = canManage;
+  const canDelete = canManage;
+  const canDispatch = hasPermission("dispatch:assign") || hasPermission("dispatch:update") || canManage;
+  const isScopedViewer = Boolean(session && (isDriverPortalRole(String(session.role ?? "")) || isCustomerPortalRole(String(session.role ?? ""))));
+  const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
+  const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
   const save = useMutation({
     mutationFn: (payload: AnyRecord) => payload.id ? jobsApi.update(String(payload.id), payload) : jobsApi.create(payload),
     onSuccess: async () => { setEditing(null); await qc.invalidateQueries({ queryKey: ["jobs"] }); },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string | number) => jobsApi.remove(id),
+    onSuccess: async () => { setSelected(null); await qc.invalidateQueries({ queryKey: ["jobs"] }); },
   });
   const action = useMutation({
     mutationFn: ({ type, id }: { type: string; id: string | number }) => type === "eta" ? jobsApi.sendEta(id) : jobsApi.proofPlaceholder(id),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ["jobs"] }); await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] }); },
   });
 
-  const rows = useMemo(() => (jobs.data || []).filter((row) => {
+  const rows = useMemo(() => scopedRows.filter((row) => {
     const qLower = query.toLowerCase();
     const matchesText = !query || 
       String(row.jobNumber || row.jobCode || "").toLowerCase().includes(qLower) ||
@@ -45,25 +63,33 @@ export function JobsPage() {
     const matchesStatus = status === "All" || String(row.status) === status || (status === "SLA At Risk" && row.slaStatus === "At Risk");
     const matchesPriority = priority === "All" || String(row.priority) === priority;
     return matchesText && matchesStatus && matchesPriority;
-  }), [jobs.data, priority, query, status]);
+  }), [priority, query, scopedRows, status]);
+
+  useEffect(() => {
+    if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
+      setSelected(null);
+    }
+  }, [rows, selected]);
 
   if (jobs.isLoading) return <LoadingState />;
-  const s = summary.data || {};
-
+  if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} />;
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Jobs & Orders"
         title="Order execution cockpit"
         description="Create, assign, track, communicate, prove and audit every job with SLA risk prediction and customer update intelligence."
-        actions={<><button className="btn-primary" onClick={() => setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> Create Job</button><button className="btn-ghost" onClick={() => exportCsv("jobs", rows)}><Download className="h-4 w-4" /> Export Roster</button></>}
+        actions={<>
+          <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> Create Job</button>
+          <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv("jobs", rows)}><Download className="h-4 w-4" /> Export Roster</button>
+        </>}
       />
       <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
-        {[
-          ["Total Jobs Today", "totalJobsToday"], ["Unassigned Jobs", "unassignedJobs"], ["Assigned Jobs", "assignedJobs"], ["En Route", "enRoute"],
-          ["At Stop", "atStop"], ["Completed", "completed"], ["Delayed", "delayed"], ["SLA At Risk", "slaAtRisk"],
-          ["Proof Pending", "proofPending"], ["Updates Sent", "customerUpdatesSent"], ["Avg ETA Accuracy", "averageEtaAccuracy"], ["Revenue / Margin", "revenueMarginPlaceholder"],
-        ].map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={<RadioTower />} status={/Delayed|Risk|Pending/.test(label) ? "Review" : "Active"} />)}
+      {[
+        ["Total Jobs Today", "totalJobsToday"], ["Unassigned Jobs", "unassignedJobs"], ["Assigned Jobs", "assignedJobs"], ["En Route", "enRoute"],
+        ["At Stop", "atStop"], ["Completed", "completed"], ["Delayed", "delayed"], ["SLA At Risk", "slaAtRisk"],
+        ["Proof Pending", "proofPending"], ["Updates Sent", "customerUpdatesSent"], ["Avg ETA Accuracy", "averageEtaAccuracy"], ["Revenue / Margin", "revenueMarginPlaceholder"],
+        ].map(([label, key]) => <KpiCard key={key} label={label} value={String(visibleSummary[key] ?? 0)} icon={<RadioTower />} status={/Delayed|Risk|Pending/.test(label) ? "Review" : "Active"} />)}
       </div>
       <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
         <input className="field xl:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, regions, proof, SLA..." />
@@ -71,14 +97,18 @@ export function JobsPage() {
         <select className="field xl:max-w-[160px]" value={priority} onChange={(e) => setPriority(e.target.value)}><option>All</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option></select>
         <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
       </div>
-      <DataTable rows={rows} columns={["jobNumber", "customerName", "jobType", "pickupAddress", "dropoffAddress", "timeWindow", "driverName", "vehicleCode", "status", "eta", "slaStatus", "priority", "proofStatus", "riskHeatScore", "recommendedAction"]} onSelect={setSelected} />
-      <JobDrawer detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} onEdit={(record) => setEditing(record)} onEta={(id) => action.mutate({ type: "eta", id })} onProof={(id) => action.mutate({ type: "proof", id })} />
+      {rows.length ? (
+        <DataTable rows={rows} columns={["jobNumber", "customerName", "jobType", "pickupAddress", "dropoffAddress", "timeWindow", "driverName", "vehicleCode", "status", "eta", "slaStatus", "priority", "proofStatus", "riskHeatScore", "recommendedAction"]} onSelect={setSelected} />
+      ) : (
+        <EmptyState title="No jobs found" subtitle="Try a different search or status filter." />
+      )}
+      <JobDrawer detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} onEdit={(record) => canEdit && setEditing(record)} onDelete={(id) => canDelete && remove.mutate(id)} onEta={(id) => canDispatch && action.mutate({ type: "eta", id })} onProof={(id) => canDispatch && action.mutate({ type: "proof", id })} onExport={() => exportJobRecordCsv(selectedRecord(detail.data, selected), detail.data)} canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canExport={canExport} />
       {editing ? <JobModal initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
     </div>
   );
 }
 
-function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof }: { detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void }) {
+function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onDelete, onExport, canEdit, canDelete, canDispatch, canExport }: { detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
@@ -89,7 +119,13 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof }: { detai
         <p className="section-title text-teal-300">OpsTrax Job Detail</p>
         <h2 className="mt-3 text-2xl font-semibold text-white">{String(record.jobNumber || record.jobCode)}</h2>
         <div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status} /><RiskBadge risk={record.riskHeatScore} /><span className="badge">SLA {String(record.slaStatus)}</span><span className="badge">Proof {String(record.proofStatus)}</span></div>
-        <div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button><button className="btn-ghost" onClick={() => onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button><button className="btn-ghost" onClick={() => onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Capture Proof</button><button className="btn-ghost"><Download className="h-4 w-4" /> Job Report</button></div>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button className="btn-primary" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+          <button className="btn-ghost" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
+          <button className="btn-ghost" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Capture Proof</button>
+          <button className="btn-ghost" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
+          <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export Job Report</button>
+        </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <Panel title="Assignment" record={record} keys={["driverName", "vehicleCode", "requiredVehicleType", "requiredDriverCertification", "routeCode"]} />
           <Panel title="Pickup / Drop-off" record={record} keys={["pickupAddress", "dropoffAddress", "scheduledStart", "scheduledEnd"]} />
@@ -127,4 +163,52 @@ function exportCsv(name: string, rows: AnyRecord[]) {
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   a.download = `opstrax-${name}.csv`;
   a.click();
+}
+
+function exportJobRecordCsv(record?: AnyRecord | null, detail?: AnyRecord) {
+  if (!record) return;
+  const rows = [
+    { section: "Job", key: "jobNumber", value: String(record.jobNumber ?? record.jobCode ?? record.id ?? "") },
+    { section: "Job", key: "customerName", value: String(record.customerName ?? record.customer ?? "") },
+    { section: "Job", key: "status", value: String(record.status ?? "") },
+    { section: "Job", key: "driverName", value: String(record.driverName ?? record.assignedDriver ?? "") },
+    { section: "Job", key: "vehicleCode", value: String(record.vehicleCode ?? record.assignedVehicle ?? "") },
+    { section: "Detail", key: "timeline", value: JSON.stringify(detail?.timeline ?? []) },
+    { section: "Detail", key: "proof", value: JSON.stringify(detail?.proof ?? []) },
+    { section: "Detail", key: "communications", value: JSON.stringify(detail?.communications ?? []) },
+  ];
+  exportCsv(`job-${String(record.jobNumber ?? record.jobCode ?? record.id ?? "report")}`, rows);
+}
+
+function selectedRecord(detail: AnyRecord | undefined, selected: AnyRecord | null) {
+  return (detail?.record as AnyRecord | undefined) ?? selected;
+}
+
+function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, session?: AnyRecord | null) {
+  const role = String(session?.role ?? "");
+  const scoped = isDriverPortalRole(role) || isCustomerPortalRole(role);
+  if (!scoped) return summary ?? {};
+
+  const total = rows.length;
+  const assigned = rows.filter((row) => /assigned|en route|at stop/i.test(String(row.status ?? ""))).length;
+  const delayed = rows.filter((row) => /delayed|risk/i.test(String(row.slaStatus ?? row.status ?? ""))).length;
+  const completed = rows.filter((row) => /completed|delivered/i.test(String(row.status ?? ""))).length;
+  const proofPending = rows.filter((row) => /pending/i.test(String(row.proofStatus ?? ""))).length;
+  const updatesSent = rows.filter((row) => /sent|delivered/i.test(String(row.customerUpdateStatus ?? row.status ?? ""))).length;
+  const avgEtaAccuracy = rows.length ? Math.max(0, 100 - Math.round(rows.reduce((acc, row) => acc + Number(row.etaDeltaMinutes ?? 0), 0) / rows.length)) : 0;
+  return {
+    ...summary,
+    totalJobsToday: total,
+    unassignedJobs: rows.filter((row) => /unassigned/i.test(String(row.status ?? ""))).length,
+    assignedJobs: assigned,
+    enRoute: rows.filter((row) => /en route/i.test(String(row.status ?? ""))).length,
+    atStop: rows.filter((row) => /at stop/i.test(String(row.status ?? ""))).length,
+    completed,
+    delayed,
+    slaAtRisk: delayed,
+    proofPending,
+    customerUpdatesSent: updatesSent,
+    averageEtaAccuracy: avgEtaAccuracy,
+    revenueMarginPlaceholder: rows.length,
+  };
 }

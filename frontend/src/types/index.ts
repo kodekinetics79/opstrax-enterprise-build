@@ -41,6 +41,7 @@ export type ModuleConfig = {
 
 export type UserSession = {
   token: string;
+  csrfToken: string;
   user: AnyRecord;
   role: string;
   company: AnyRecord;

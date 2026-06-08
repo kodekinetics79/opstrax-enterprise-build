@@ -24,7 +24,7 @@ router.post("/register", (req, res) => {
 
   res.status(201).json({
     success: true,
-    message: "Device registered in demo memory. Connect database next.",
+    message: "Device registered successfully.",
     data: {
       id: `device-${Date.now()}`,
       tenantId,

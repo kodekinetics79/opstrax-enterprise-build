@@ -6,14 +6,14 @@ public sealed class Batch2SchemaService(Database db)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
-        foreach (var column in Columns)
-        {
-            await EnsureColumnAsync(column.Table, column.Name, column.Definition, ct);
-        }
-
         foreach (var sql in TableStatements)
         {
             await db.ExecuteAsync(sql, ct: ct);
+        }
+
+        foreach (var column in Columns)
+        {
+            await EnsureColumnAsync(column.Table, column.Name, column.Definition, ct);
         }
 
         foreach (var sql in SeedStatements)
@@ -92,6 +92,7 @@ public sealed class Batch2SchemaService(Database db)
         new("route_stops", "notes", "TEXT NULL"),
         new("route_stops", "created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
         new("route_stops", "updated_at", "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+        new("customer_eta_links", "public_status", "VARCHAR(80) NOT NULL DEFAULT 'Active'"),
         new("dispatch_assignments", "assigned_by_user_id", "BIGINT NULL"),
         new("dispatch_assignments", "assignment_status", "VARCHAR(60) NULL"),
         new("dispatch_assignments", "match_reasons_json", "JSON NULL"),
@@ -138,6 +139,7 @@ public sealed class Batch2SchemaService(Database db)
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             company_id BIGINT NOT NULL,
             route_id BIGINT NULL,
+            recommendation_type VARCHAR(80) NOT NULL DEFAULT 'Route',
             title VARCHAR(220) NOT NULL,
             body TEXT NOT NULL,
             score DECIMAL(6,2) NOT NULL DEFAULT 85,
@@ -226,9 +228,9 @@ public sealed class Batch2SchemaService(Database db)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 12)
           SELECT 1, n, ((n - 1) % 20)+1, ((n - 1) % 20)+1, CONCAT('Batch 2 AI dispatch match for job ', n, ': same region, vehicle type fit, HOS acceptable, proximity placeholder.'), 84 + (n % 15), 'Recommended'
           FROM seq WHERE (SELECT COUNT(*) FROM dispatch_recommendations) < 12",
-        @"INSERT INTO route_recommendations (company_id, route_id, title, body, score, status)
+        @"INSERT INTO route_recommendations (company_id, route_id, recommendation_type, title, body, score, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 12)
-          SELECT 1, ((n-1)%12)+1, CONCAT('Route optimization recommendation ', n), 'Review stop sequence, SLA risk, delay hotspot and cost leakage before route release.', 82 + (n % 16), 'Recommended'
+          SELECT 1, ((n-1)%12)+1, 'Route', CONCAT('Route optimization recommendation ', n), 'Review stop sequence, SLA risk, delay hotspot and cost leakage before route release.', 82 + (n % 16), 'Recommended'
           FROM seq WHERE (SELECT COUNT(*) FROM route_recommendations) < 12",
         @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
           SELECT 1, m.module_key, m.title, m.body, 95, 'Recommended'

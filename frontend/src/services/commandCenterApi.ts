@@ -1,6 +1,8 @@
-import { apiClient, unwrap } from "./apiClient";
 import type { AnyRecord } from "@/types";
+import { getDashboardSummary } from "@/services/fleetDomainApi";
+
+export { getDashboardSummary };
 
 export const commandCenterApi = {
-  summary: () => unwrap<AnyRecord>(apiClient.get("/api/command-center/summary")),
+  summary: () => getDashboardSummary() as Promise<AnyRecord>,
 };

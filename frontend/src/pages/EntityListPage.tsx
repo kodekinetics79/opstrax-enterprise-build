@@ -1,8 +1,12 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText, Plus, Save, Search, Sparkles, Target, Trash2, UserCheck, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
+import { useAuth } from "@/hooks/useAuth";
+import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
 import { assetsApi } from "@/services/assetsApi";
 import { customersApi } from "@/services/customersApi";
 import { driversApi } from "@/services/driversApi";
@@ -212,8 +216,18 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const navigate = useNavigate();
+  const hasPermission = useHasPermission();
+  const { session } = useAuth();
   const cfg = config[kind];
+  const isScopedViewer = Boolean(session && (isDriverPortalRole(String(session.role ?? "")) || isCustomerPortalRole(String(session.role ?? ""))));
   const queryClient = useQueryClient();
+  const permissions = permissionMatrix(kind);
+  const canCreate = hasPermission(permissions.create);
+  const canUpdate = hasPermission(permissions.update);
+  const canDelete = hasPermission(permissions.delete);
+  const canAssign = hasPermission(permissions.assign);
+  const canExport = hasPermission(permissions.export);
 
   const list = useQuery({ queryKey: [kind], queryFn: cfg.api.list });
   const summary = useQuery({ queryKey: [kind, "summary"], queryFn: cfg.api.summary });
@@ -227,10 +241,12 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
   const isFleetMaster = kind === "vehicles" || kind === "drivers" || kind === "assets";
 
-  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: kind === "vehicles" || kind === "assets" });
-  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: kind === "drivers" || kind === "assets" });
-  const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: kind === "assets" });
-  const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" });
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: !isScopedViewer && (kind === "vehicles" || kind === "assets") });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: !isScopedViewer && (kind === "drivers" || kind === "assets") });
+  const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: !isScopedViewer && kind === "assets" });
+  const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" && !isScopedViewer });
+  const scopedRows = useMemo(() => scopeRowsForSession(kind, list.data || [], session), [kind, list.data, session]);
+  const visibleSummary = useMemo(() => buildVisibleSummary(kind, scopedRows, summary.data as AnyRecord | undefined, session), [kind, scopedRows, session, summary.data]);
 
   const saveMutation = useMutation({
     mutationFn: (payload: AnyRecord) => payload.id && !isCreating ? cfg.api.update!(String(payload.id), payload) : cfg.api.create!(payload),
@@ -279,7 +295,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   });
 
   const rows = useMemo(() => {
-    const source = list.data || [];
+    const source = scopedRows;
     return source.filter((row) => {
       const qLower = search.toLowerCase();
       const matchesStatus = statusFilter === "All" || 
@@ -292,9 +308,16 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
       return matchesStatus && matchesSearch;
     });
-  }, [list.data, search, statusFilter]);
+  }, [scopedRows, search, statusFilter]);
+
+  useEffect(() => {
+    if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
+      setSelected(null);
+    }
+  }, [rows, selected]);
 
   if (list.isLoading) return <LoadingState />;
+  if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : `Unable to load ${cfg.title.toLowerCase()}.`} />;
 
   return (
     <div className="space-y-6">
@@ -304,8 +327,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         description={cfg.description}
         actions={
           <>
-            {cfg.api.create ? <button className="btn-primary" onClick={() => { setIsCreating(true); setEditing({ ...cfg.defaults }); }}><Plus className="h-4 w-4" /> Create</button> : null}
-            <button className="btn-ghost" onClick={() => exportRows(kind, rows)}><Download className="h-4 w-4" /> Export CSV</button>
+            {cfg.api.create ? <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ ...cfg.defaults }); } }}><Plus className="h-4 w-4" /> Create</button> : null}
+            <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportRows(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
           </>
         }
       />
@@ -315,15 +338,15 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           kind={kind}
           config={cfg}
           rows={rows}
-          summary={summary.data}
+          summary={visibleSummary}
         />
       ) : null}
 
-      {kind === "vehicles" ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
+      {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
 
       <div className="grid gap-4 md:grid-cols-4">
-        {cfg.kpis.map(([label, key, suffix]) => (
-          <KpiCard key={label} label={label} value={`${summary.data?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0)}${suffix}`} icon={<Target />} status={Number(summary.data?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label) ? "Review" : "Healthy"} />
+          {cfg.kpis.map(([label, key, suffix]) => (
+          <KpiCard key={label} label={label} value={`${visibleSummary?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0)}${suffix}`} icon={<Target />} status={Number(visibleSummary?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label) ? "Review" : "Healthy"} />
         ))}
       </div>
 
@@ -340,7 +363,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
-        <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} />
+          {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
         <div className="space-y-4">
           <div className="panel p-5">
             <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Competitive Intelligence</span></div>
@@ -363,9 +386,13 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         loading={detail.isLoading}
         assignPending={assignMutation.isPending}
         onClose={() => setSelected(null)}
-        onEdit={(record) => { setIsCreating(false); setEditing(record); }}
-        onDelete={(record) => cfg.api.remove && deleteMutation.mutate(String(record.id))}
-        onSmartAssign={isFleetMaster ? () => assignMutation.mutate() : undefined}
+        onEdit={(record) => { if (canUpdate) { setIsCreating(false); setEditing(record); } }}
+        onDelete={(record) => canDelete && cfg.api.remove && deleteMutation.mutate(String(record.id))}
+        onSmartAssign={isFleetMaster && canAssign ? () => assignMutation.mutate() : undefined}
+        onNavigate={navigate}
+        canUpdate={canUpdate}
+        canDelete={canDelete}
+        canAssign={canAssign}
       />
 
       {editing ? (
@@ -382,7 +409,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   );
 }
 
-function BatchDetailDrawer({ config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onSmartAssign }: {
+function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onSmartAssign, onNavigate, canUpdate, canDelete, canAssign }: {
   kind: EntityKind;
   config: EntityConfig;
   detail?: AnyRecord;
@@ -393,10 +420,15 @@ function BatchDetailDrawer({ config: cfg, detail, record, loading, assignPending
   onEdit: (record: AnyRecord) => void;
   onDelete: (record: AnyRecord) => void;
   onSmartAssign?: () => void;
+  onNavigate: (route: string) => void;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canAssign: boolean;
 }) {
   if (!record) return null;
   const timeline = (detail?.timeline as AnyRecord[] | undefined) || [];
   const recommendations = (detail?.recommendations as AnyRecord[] | undefined) || [];
+  const snapshot = buildSnapshot(kind, record, detail);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
@@ -410,11 +442,34 @@ function BatchDetailDrawer({ config: cfg, detail, record, loading, assignPending
           <span className="badge"><Bot className="h-4 w-4" /> {String(record.recommendedAction || "AI monitoring active")}</span>
         </div>
         <div className="mt-5 flex gap-3">
-          <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
-          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
-          <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button>
-          <button className="btn-ghost"><FileText className="h-4 w-4" /> Report Placeholder</button>
+          <button className="btn-primary" disabled={!canUpdate} title={!canUpdate ? "You do not have permission to perform this action." : undefined} onClick={() => canUpdate && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
+          <button className="btn-ghost" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button>
+          <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> Audit trail</button>
         </div>
+
+        <section className="mt-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-teal-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="section-title">Operational Snapshot</p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950">Live context for this record</h3>
+            </div>
+            <span className="badge border-blue-200 bg-blue-50 text-blue-700">Connected workflow</span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {snapshot.map((item) => (
+              <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{item.value}</p>
+                {item.route ? (
+                  <button type="button" className="mt-3 text-xs font-semibold text-blue-700 hover:text-blue-800" onClick={() => onNavigate(item.route)}>
+                    Open {item.buttonLabel}
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
 
         <DecisionBrief config={cfg} record={record} />
 
@@ -764,6 +819,47 @@ function actionFor(kind: EntityKind, row: AnyRecord) {
   return "Review operational record.";
 }
 
+function buildSnapshot(kind: EntityKind, record: AnyRecord, detail?: AnyRecord) {
+  if (kind === "vehicles") {
+    return [
+      { label: "Vehicle status", value: String(record.status ?? "--") },
+      { label: "Assigned driver", value: String(record.assignedDriver || record.assignedDriverName || "Unassigned"), route: "/drivers", buttonLabel: "driver record" },
+      { label: "Current shipment", value: String(record.currentShipment || record.currentJob || "--"), route: "/shipments", buttonLabel: "shipment" },
+      { label: "Current location", value: String(record.currentLocation || record.location || record.city || "--") },
+      { label: "Maintenance status", value: String(record.maintenanceStatus ?? record.maintenance_status ?? "--"), route: "/maintenance", buttonLabel: "maintenance" },
+      { label: "Compliance status", value: String(record.complianceStatus ?? record.compliance_status ?? "--"), route: "/compliance", buttonLabel: "compliance" },
+      { label: "Active alerts", value: String(record.alertCount ?? record.alerts ?? detail?.alertCount ?? "--"), route: "/alerts", buttonLabel: "alerts" },
+    ];
+  }
+  if (kind === "drivers") {
+    return [
+      { label: "Driver status", value: String(record.status ?? "--") },
+      { label: "Assigned vehicle", value: String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned"), route: "/vehicles", buttonLabel: "vehicle record" },
+      { label: "Current trip/job", value: String(record.currentTrip || record.currentJob || "--"), route: "/jobs", buttonLabel: "job" },
+      { label: "License / compliance", value: String(record.licenseStatus || record.licenseNumber || record.complianceScore || "--"), route: "/compliance", buttonLabel: "compliance" },
+      { label: "Safety score", value: String(record.safetyScore ?? "--"), route: "/safety", buttonLabel: "safety" },
+      { label: "Availability / HOS", value: String(record.availability || record.hosStatus || "--"), route: "/hos-eld", buttonLabel: "HOS" },
+      { label: "Incidents / coaching", value: String(record.incidents || record.coachingStatus || "--"), route: "/incidents", buttonLabel: "incidents" },
+    ];
+  }
+  if (kind === "jobs") {
+    return [
+      { label: "Customer", value: String(record.customerName || record.customer || "--"), route: "/customers", buttonLabel: "customer" },
+      { label: "Vehicle", value: String(record.vehicleCode || record.assignedVehicle || "--"), route: "/vehicles", buttonLabel: "vehicle" },
+      { label: "Driver", value: String(record.driverName || record.assignedDriver || "--"), route: "/drivers", buttonLabel: "driver" },
+      { label: "Pickup / drop-off", value: `${String(record.pickupAddress || "--")} → ${String(record.dropoffAddress || "--")}` },
+      { label: "Status timeline", value: String((detail?.timeline as AnyRecord[] | undefined)?.[0]?.title || record.status || "--"), route: "/audit-logs", buttonLabel: "timeline" },
+      { label: "Load / POD", value: `${String(record.cargoType || record.jobType || "--")} · ${String(record.proofStatus || detail?.proofStatus || "Pending")}`, route: "/proof-of-delivery", buttonLabel: "POD" },
+      { label: "Invoice / compliance", value: String(record.invoiceStatus || "Not invoiced"), route: "/reports", buttonLabel: "invoice" },
+    ];
+  }
+  return [
+    { label: "Current status", value: String(record.status ?? "--") },
+    { label: "Risk posture", value: String(record.riskHeatScore ?? record.riskScore ?? "--") },
+    { label: "Recommended action", value: String(record.recommendedAction || record.recommended_action || actionFor(kind, record)) },
+  ];
+}
+
 function toCamel(value: string) {
   return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
@@ -852,4 +948,44 @@ function exportRows(kind: string, rows: AnyRecord[]) {
   anchor.download = `opstrax-${kind}-export.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function permissionMatrix(kind: EntityKind) {
+  if (kind === "vehicles") return { create: "vehicles:create", update: "vehicles:update", delete: "vehicles:delete", assign: "vehicles:assign", export: "vehicles:export" };
+  if (kind === "drivers") return { create: "drivers:create", update: "drivers:update", delete: "drivers:delete", assign: "drivers:assign", export: "drivers:export" };
+  if (kind === "jobs") return { create: "shipments:create", update: "shipments:update", delete: "shipments:delete", assign: "dispatch:assign", export: "shipments:export" };
+  return { create: "customers:create", update: "customers:update", delete: "customers:delete", assign: "customers:update", export: "customers:view" };
+}
+
+function buildVisibleSummary(kind: EntityKind, rows: AnyRecord[], summary: AnyRecord | undefined, session?: AnyRecord | null) {
+  const role = String(session?.role ?? "");
+  const scoped = isDriverPortalRole(role) || isCustomerPortalRole(role);
+
+  if (!scoped) return summary ?? {};
+
+  if (kind === "vehicles") {
+    const readiness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.fleetReadinessScore ?? row.readinessScore ?? 0), 0) / rows.length) : 0;
+    const completeness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.dataCompletenessScore ?? row.dataQualityScore ?? 0), 0) / rows.length) : 0;
+    const risk = rows.filter((row) => riskValue(row) >= 40).length;
+    const devices = rows.filter((row) => /offline|review|degraded/i.test(String(row.deviceStatus ?? row.device_status ?? ""))).length;
+    return { ...summary, fleetReadinessScore: readiness, dataCompletenessScore: completeness, atRisk: risk, deviceExceptions: devices };
+  }
+
+  if (kind === "drivers") {
+    const readiness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.driverReadinessScore ?? row.readinessScore ?? 0), 0) / rows.length) : 0;
+    const completeness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.complianceScore ?? 0), 0) / rows.length) : 0;
+    const risk = rows.filter((row) => riskValue(row) >= 40).length;
+    const safety = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.safetyScore ?? 0), 0) / rows.length) : 0;
+    return { ...summary, driverReadinessScore: readiness, dataCompletenessScore: completeness, atRisk: risk, safetyScore: safety };
+  }
+
+  if (kind === "jobs") {
+    const total = rows.length;
+    const active = rows.filter((row) => !/completed|delivered/i.test(String(row.status ?? ""))).length;
+    const atRisk = rows.filter((row) => /delayed|risk/i.test(String(row.slaStatus ?? row.status ?? ""))).length;
+    const assigned = rows.filter((row) => /assigned|en route|at stop/i.test(String(row.status ?? ""))).length;
+    return { ...summary, total: total, active: active, atRisk: atRisk, aiSignals: assigned };
+  }
+
+  return { ...summary, total: rows.length };
 }

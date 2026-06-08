@@ -3,6 +3,7 @@ using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Middleware;
 using Opstrax.Api.Services;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,19 +30,32 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+var rateWindows = new ConcurrentDictionary<string, (DateTimeOffset WindowStart, int Count)>();
+var rateWindowSize = TimeSpan.FromMinutes(1);
+const int apiRequestLimitPerWindow = 240;
 
 using (var scope = app.Services.CreateScope())
 {
-    await scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch4SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch5SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch6SchemaService>().EnsureAsync();
-    await scope.ServiceProvider.GetRequiredService<Batch7SchemaService>().EnsureAsync();
+    await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch3", () => scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch4", () => scope.ServiceProvider.GetRequiredService<Batch4SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch5", () => scope.ServiceProvider.GetRequiredService<Batch5SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch6", () => scope.ServiceProvider.GetRequiredService<Batch6SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Batch7", () => scope.ServiceProvider.GetRequiredService<Batch7SchemaService>().EnsureAsync());
 }
 
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.TryAdd("X-Frame-Options", "DENY");
+    context.Response.Headers.TryAdd("Referrer-Policy", "strict-origin-when-cross-origin");
+    context.Response.Headers.TryAdd("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    await next();
+});
+
 app.UseMiddleware<ErrorHandlingMiddleware>();
+app.UseMiddleware<CsrfMiddleware>();
 app.UseCors("OpsTraxCors");
 app.UseSwagger();
 app.UseWhen(
@@ -52,10 +66,28 @@ app.UseWhen(
         {
             var path = context.Request.Path.Value ?? string.Empty;
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)))
             {
                 await next();
+                return;
+            }
+
+            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var now = DateTimeOffset.UtcNow;
+            var window = rateWindows.AddOrUpdate(
+                remoteIp,
+                _ => (now, 1),
+                (_, current) => now - current.WindowStart > rateWindowSize
+                    ? (now, 1)
+                    : (current.WindowStart, current.Count + 1));
+
+            if (now - window.WindowStart <= rateWindowSize && window.Count > apiRequestLimitPerWindow)
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Too many requests", "Rate limit exceeded"));
                 return;
             }
 
@@ -136,6 +168,21 @@ app.MapGet("/swagger", () => Results.Content(SwaggerHtml(), "text/html"));
 app.MapGet("/swagger/index.html", () => Results.Content(SwaggerHtml(), "text/html"));
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "opstrax-api", utc = DateTime.UtcNow }));
+app.MapGet("/ready", async (Database db, CancellationToken ct) =>
+{
+    try
+    {
+        await using var connection = await db.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1";
+        await command.ExecuteScalarAsync(ct);
+        return Results.Ok(new { status = "ready", service = "opstrax-api", db = "connected", utc = DateTime.UtcNow });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { status = "degraded", service = "opstrax-api", db = "unavailable", message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 app.MapOpsTraxEndpoints();
 
 app.Run();
@@ -184,6 +231,18 @@ static IEnumerable<string> ParsePermissions(object? source)
         }
 
         yield return str;
+    }
+}
+
+static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step)
+{
+    try
+    {
+        await step();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "{SchemaStep} schema bootstrap failed; continuing startup", name);
     }
 }
 

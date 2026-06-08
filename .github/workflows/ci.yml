@@ -12,19 +12,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
       - run: npm install
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
 
-  node-service-install:
+  node-backend-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
+      - run: npm install
+        working-directory: backend
+      - run: npm run build
+        working-directory: backend
+
+  node-events-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: npm install
         working-directory: node-services/events
 
@@ -34,8 +46,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
-      - run: dotnet restore
-        working-directory: api-dotnet
-      - run: dotnet build --no-restore
-        working-directory: api-dotnet
+          dotnet-version: '8.0.x'
+      - run: dotnet restore backend-dotnet/Opstrax.Api.csproj
+      - run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore

@@ -28,9 +28,23 @@ import {
   Zap,
 } from "lucide-react";
 import { AiInsightCard, EmptyState, KpiCard, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
-import { bookings, contracts, customers, devices, drivers, incidents, invoices, maintenance, shipments, supportTickets, vehicles } from "@/data/mockOperatingData";
+import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
 import { calculateProfitability, formatCurrency } from "@/utils/formatters";
+
+const {
+  bookings,
+  contracts,
+  customers,
+  devices,
+  drivers,
+  incidents,
+  invoices,
+  maintenance,
+  shipments,
+  supportTickets,
+  vehicles,
+} = developmentFleetSeedData;
 
 type ViewMode = "Internal Operations View" | "Customer View";
 type FleetEntity = ReturnType<typeof buildFleetEntities>[number];

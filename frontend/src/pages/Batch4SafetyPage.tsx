@@ -1,8 +1,9 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, FileVideo, Gavel, PackageCheck, PenTool, Plus, ShieldAlert, Sparkles, UserCheck, X } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, RiskBadge, StatusBadge, PageHeader, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, RiskBadge, StatusBadge, PageHeader, labelize } from "@/components/ui";
 import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcamEventDetail, useDashcamEvents, useDashcamSummary, useEvidencePackageDetail, useEvidencePackages, useEvidenceSummary, useIncidentDetail, useIncidents, useIncidentsSummary, useSafetyEventDetail, useSafetyEvents, useSafetySummary } from "@/hooks/useBatch4";
+import { useHasPermission } from "@/hooks/usePermission";
 import { coachingApi } from "@/services/coachingApi";
 import { dashcamApi } from "@/services/dashcamApi";
 import { evidenceApi } from "@/services/evidenceApi";
@@ -17,7 +18,7 @@ const configs = {
     queryKey: "safety", eyebrow: "Safety", title: "Fleet safety intelligence center", icon: <ShieldAlert />,
     description: "Review safety events, driver risk, vehicle risk, trends, coaching queues and incident predictors from connected OpsTrax data.",
     useRows: useSafetyEvents, useSummary: useSafetySummary, useDetail: useSafetyEventDetail, api: safetyApi, createLabel: "Create Safety Event",
-    kpis: [["Fleet Safety Score","fleetSafetyScore"],["Events Today","safetyEventsToday"],["Critical Events","criticalEvents"],["Harsh Braking","harshBraking"],["Harsh Acceleration","harshAcceleration"],["Speeding","speedingEvents"],["Route Deviation","routeDeviation"],["Distracted Placeholder","distractedDrivingPlaceholder"],["Coaching Needed","coachingNeeded"],["Open Incidents","openIncidents"],["Reviewed Events","reviewedEvents"],["Preventable Risk","preventableRiskScore"]],
+    kpis: [["Fleet Safety Score","fleetSafetyScore"],["Events Today","safetyEventsToday"],["Critical Events","criticalEvents"],["Harsh Braking","harshBraking"],["Harsh Acceleration","harshAcceleration"],["Speeding","speedingEvents"],["Route Deviation","routeDeviation"],["Distracted Driving","distractedDrivingPlaceholder"],["Coaching Needed","coachingNeeded"],["Open Incidents","openIncidents"],["Reviewed Events","reviewedEvents"],["Preventable Risk","preventableRiskScore"]],
     columns: ["eventNumber","eventType","severity","driverName","vehicleCode","jobNumber","routeCode","locationDescription","speed","occurredAt","reviewStatus","coachingStatus","incidentStatus","riskScore","recommendedAction"],
     fields: [["eventNumber","Event Number"],["eventType","Event Type"],["severity","Severity"],["driverId","Driver ID"],["vehicleId","Vehicle ID"],["jobId","Job ID"],["routeId","Route ID"],["locationDescription","Location/Zone"],["speed","Speed"],["postedSpeedLimit","Posted Limit"],["reviewStatus","Review Status"],["riskScore","Risk Score"],["aiSummary","AI Summary"],["recommendedAction","Recommended Action"]],
     actions: ["review","createCoaching","createIncident"],
@@ -25,9 +26,9 @@ const configs = {
   },
   dashcam: {
     queryKey: "dashcam", eyebrow: "AI Dashcam / Incident Review", title: "AI video event inbox", icon: <FileVideo />,
-    description: "Review video event metadata, AI summaries, placeholder road/driver clips, false positives, coaching, evidence packages and insurance exports.",
+    description: "Review video event metadata, AI summaries, road and driver clip slots, false positives, coaching, evidence packages and insurance exports.",
     useRows: useDashcamEvents, useSummary: useDashcamSummary, useDetail: useDashcamEventDetail, api: dashcamApi, createLabel: "Create Video Event",
-    kpis: [["Dashcam Events Today","dashcamEventsToday"],["Critical Video Events","criticalVideoEvents"],["Pending Review","pendingReview"],["Reviewed Events","reviewedEvents"],["False Positives","falsePositives"],["Coaching Created","coachingCreated"],["Evidence Packages","evidencePackages"],["Collision/Near Miss","collisionNearMiss"],["Distracted Placeholder","distractedDrivingPlaceholder"],["Tailgating Placeholder","tailgatingPlaceholder"],["Speeding Video","speedingVideoEvents"],["Exoneration Placeholder","driverExonerationPlaceholder"]],
+    kpis: [["Dashcam Events Today","dashcamEventsToday"],["Critical Video Events","criticalVideoEvents"],["Pending Review","pendingReview"],["Reviewed Events","reviewedEvents"],["False Positives","falsePositives"],["Coaching Created","coachingCreated"],["Evidence Packages","evidencePackages"],["Collision/Near Miss","collisionNearMiss"],["Distracted Driving","distractedDrivingPlaceholder"],["Tailgating","tailgatingPlaceholder"],["Speeding Video","speedingVideoEvents"],["Driver Exoneration","driverExonerationPlaceholder"]],
     columns: ["eventNumber","eventType","severity","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt","videoProvider","aiConfidence","reviewStatus","evidenceStatus","recommendedAction"],
     fields: [["eventNumber","Event Number"],["safetyEventId","Safety Event ID"],["eventType","Event Type"],["title","Title"],["severity","Severity"],["driverId","Driver ID"],["vehicleId","Vehicle ID"],["jobId","Job ID"],["routeId","Route ID"],["locationDescription","Location"],["aiSummary","AI Summary"],["aiConfidence","AI Confidence"],["reviewStatus","Review Status"],["evidenceStatus","Evidence Status"],["recommendedAction","Recommended Action"]],
     actions: ["review","falsePositive","createCoaching","createEvidencePackage","createIncidentReport"],
@@ -45,7 +46,7 @@ const configs = {
   },
   incidents: {
     queryKey: "incidents", eyebrow: "Incidents", title: "Incident and legal review register", icon: <Gavel />,
-    description: "Manage incidents, driver/customer statements, evidence, insurance report placeholders and chain-of-custody audit trails.",
+    description: "Manage incidents, driver and customer statements, evidence, insurance report drafts and chain-of-custody audit trails.",
     useRows: useIncidents, useSummary: useIncidentsSummary, useDetail: useIncidentDetail, api: incidentsApi, createLabel: "Create Incident",
     kpis: [["Total Incidents","totalIncidents"],["Open Incidents","openIncidents"],["Closed Incidents","closedIncidents"],["Critical Incidents","criticalIncidents"],["Insurance Ready","insuranceReady"],["Awaiting Statement","awaitingDriverStatement"],["Insurance Reports","insuranceReports"],["Evidence Collected","evidenceCollected"]],
     columns: ["incidentNumber","incidentType","severity","status","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt","insuranceReportStatus","recommendedAction"],
@@ -55,7 +56,7 @@ const configs = {
   },
   evidence: {
     queryKey: "evidence-packages", eyebrow: "Evidence Packages", title: "Insurance evidence package builder", icon: <PackageCheck />,
-    description: "Bundle video, GPS, speed data, statements, job context, DVIR references, maintenance history and legal export placeholders.",
+    description: "Bundle video, GPS, speed data, statements, job context, DVIR references, maintenance history and legal export packages.",
     useRows: useEvidencePackages, useSummary: useEvidenceSummary, useDetail: useEvidencePackageDetail, api: evidenceApi, createLabel: "Create Evidence Package",
     kpis: [["Total Packages","totalPackages"],["Draft Packages","draftPackages"],["Export Ready","exportReady"],["Locked Packages","lockedPackages"],["Insurance Packages","insurancePackages"],["Exports Generated","exportsGenerated"]],
     columns: ["packageNumber","incidentNumber","driverName","vehicleCode","safetyEventNumber","dashcamEventNumber","packageType","status","locked","exportUrl","summary"],
@@ -65,8 +66,58 @@ const configs = {
   },
 } satisfies Record<Kind, { queryKey: string; eyebrow: string; title: string; icon: ReactNode; description: string; useRows: () => { data?: AnyRecord[]; isLoading: boolean }; useSummary: () => { data?: AnyRecord }; useDetail: (id?: string | number) => { data?: AnyRecord; isLoading: boolean }; api: AnyRecord; createLabel: string; kpis: string[][]; columns: string[]; fields: string[][]; actions: string[]; sections: [string,string,string[]][] }>;
 
+const ACTION_PERMISSIONS: Record<Kind, Record<string, string>> = {
+  safety: {
+    create: "safety:create",
+    update: "safety:update",
+    export: "safety:view",
+    review: "safety:review",
+    createCoaching: "safety:update",
+    createIncident: "safety:create",
+  },
+  dashcam: {
+    create: "safety:update",
+    update: "safety:update",
+    export: "safety:evidence:export",
+    review: "safety:update",
+    falsePositive: "safety:update",
+    createCoaching: "safety:update",
+    createEvidencePackage: "safety:evidence:view",
+    createIncidentReport: "safety:update",
+  },
+  coaching: {
+    create: "safety:update",
+    update: "safety:update",
+    export: "safety:view",
+    assign: "safety:update",
+    acknowledge: "safety:review",
+    complete: "safety:update",
+    addNote: "safety:update",
+  },
+  incidents: {
+    create: "safety:create",
+    update: "safety:update",
+    export: "safety:view",
+    status: "safety:update",
+    attachEvidence: "safety:update",
+    createInsuranceReport: "safety:review",
+  },
+  evidence: {
+    create: "safety:update",
+    update: "safety:update",
+    export: "safety:evidence:export",
+    exportPlaceholder: "safety:evidence:export",
+    lock: "safety:update",
+  },
+};
+
 export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const config = configs[kind];
+  const hasPermission = useHasPermission();
+  const can = (permission: string) => hasPermission(permission);
+  const createPermission = ACTION_PERMISSIONS[kind].create;
+  const updatePermission = ACTION_PERMISSIONS[kind].update;
+  const exportPermission = ACTION_PERMISSIONS[kind].export;
   const rowsQuery = config.useRows();
   const summary = config.useSummary();
   const [selected, setSelected] = useState<AnyRecord | null>(null);
@@ -90,15 +141,59 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     const matchesFilter = filter === "All" || statusVal.includes(filterLower);
     return matchesSearch && matchesFilter;
   }), [rowsQuery.data, search, filter]);
-  if (rowsQuery.isLoading) return <LoadingState />;
-  const s = summary.data || {};
+  if (rowsQuery.isLoading || summary.isLoading) return <LoadingState />;
+  if (rowsQuery.isError || summary.isError) {
+    return <EmptyState title={`${config.eyebrow} unavailable`} subtitle="Unable to load live records right now. Refresh to try again." />;
+  }
+  const s = (summary.data || {}) as AnyRecord;
   return <div className="space-y-6">
-    <PageHeader eyebrow={config.eyebrow} title={config.title} description={config.description} actions={<><button className="btn-primary" onClick={() => setEditing(defaultForm(kind))}><Plus className="h-4 w-4" /> {config.createLabel}</button><button className="btn-ghost" onClick={() => exportCsv(kind, rows)}><Download className="h-4 w-4" /> Export Report</button></>} />
+    <PageHeader
+      eyebrow={config.eyebrow}
+      title={config.title}
+      description={config.description}
+      actions={
+        <>
+          <button
+            className="btn-primary"
+            disabled={!can(createPermission)}
+            title={!can(createPermission) ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
+            onClick={() => setEditing(defaultForm(kind))}
+          >
+            <Plus className="h-4 w-4" /> {config.createLabel}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={!can(exportPermission)}
+            title={!can(exportPermission) ? "You do not have permission to perform this action." : "Export the current filtered records."}
+            onClick={() => exportCsv(kind, rows)}
+          >
+            <Download className="h-4 w-4" /> Export Report
+          </button>
+        </>
+      }
+    />
     <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">{config.kpis.map(([label,key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={config.icon} status={/critical|open|pending|risk|overdue|draft/i.test(label) ? "Review" : "Active"} />)}</div>
     <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center"><input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field xl:max-w-[180px]" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select><span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI workflow active</span></div>
     {kind === "dashcam" ? <VideoGrid rows={rows.slice(0, 6)} onSelect={setSelected} /> : null}
-    <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
-    <Drawer config={config} detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} onEdit={(r) => setEditing(r)} onAction={(type, row) => action.mutate({ type, row })} />
+    {!rows.length ? (
+      <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
+    ) : (
+      <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
+    )}
+    <Drawer
+      config={config}
+      detail={detail.data}
+      loading={detail.isLoading}
+      canUpdate={can(updatePermission)}
+      canExport={can(exportPermission)}
+      canRunAction={(type) => {
+        const permission = ACTION_PERMISSIONS[kind][type] || updatePermission;
+        return can(permission);
+      }}
+      onClose={() => setSelected(null)}
+      onEdit={(r) => setEditing(r)}
+      onAction={(type, row) => action.mutate({ type, row })}
+    />
     {editing ? <Modal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
   </div>;
 }
@@ -107,11 +202,31 @@ function VideoGrid({ rows, onSelect }: { rows: AnyRecord[]; onSelect: (row: AnyR
   return <div className="grid gap-4 lg:grid-cols-3">{rows.map((row) => <button key={String(row.id)} className="panel p-4 text-left transition hover:border-violet-400/40" onClick={() => onSelect(row)}><div className="flex aspect-video items-center justify-center rounded-xl border border-white/10 bg-slate-900 text-violet-200"><FileVideo className="h-10 w-10" /></div><p className="mt-3 font-semibold text-white">{String(row.eventNumber)}</p><p className="text-sm text-slate-400">{String(row.aiSummary || row.eventType)}</p><div className="mt-3 flex gap-2"><StatusBadge status={row.reviewStatus} /><RiskBadge risk={row.severity} /></div></button>)}</div>;
 }
 
-function Drawer({ config, detail, loading, onClose, onEdit, onAction }: { config: (typeof configs)[Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void }) {
+function Drawer({
+  config,
+  detail,
+  loading,
+  canUpdate,
+  canExport,
+  canRunAction,
+  onClose,
+  onEdit,
+  onAction,
+}: {
+  config: (typeof configs)[Kind];
+  detail?: AnyRecord;
+  loading: boolean;
+  canUpdate: boolean;
+  canExport: boolean;
+  canRunAction: (type: string) => boolean;
+  onClose: () => void;
+  onEdit: (record: AnyRecord) => void;
+  onAction: (type: string, row: AnyRecord) => void;
+}) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
-  return <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm"><aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6"><button className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button><p className="section-title text-teal-300">{config.eyebrow} Detail</p><h2 className="mt-3 text-2xl font-semibold text-white">{String(record.eventNumber || record.taskNumber || record.incidentNumber || record.packageNumber || `Record ${record.id}`)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.reviewStatus} /><RiskBadge risk={record.severity || record.priority || record.riskScore} /><span className="badge">OpsTrax AI Active</span></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>{config.actions.map((type) => <button key={type} className="btn-ghost" onClick={() => onAction(type, record)}>{labelize(type)}</button>)}<button className="btn-ghost" onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Report</button></div><div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Primary Context" record={record} keys={Object.keys(record).slice(0,12)} /><Info title="AI Summary / Recommended Action" record={record} keys={["aiSummary","aiScript","summary","recommendedAction","reportSummary"]} /><Info title="Evidence / Legal Readiness" record={record} keys={["evidenceStatus","insuranceReportStatus","locked","exportUrl","falsePositive"]} /></div>{config.sections.map(([title,key,columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}<Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={["actionName","actorName","createdAt"]} /><div className="mt-6 grid gap-4 lg:grid-cols-2">{((detail?.recommendations as AnyRecord[]) || []).slice(0,4).map((insight,i) => <AiInsightCard key={String(insight.id || i)} insight={insight} />)}</div></aside></div>;
+  return <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm"><aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6"><button className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button><p className="section-title text-teal-300">{config.eyebrow} Detail</p><h2 className="mt-3 text-2xl font-semibold text-white">{String(record.eventNumber || record.taskNumber || record.incidentNumber || record.packageNumber || `Record ${record.id}`)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.reviewStatus} /><RiskBadge risk={record.severity || record.priority || record.riskScore} /><span className="badge">OpsTrax AI Active</span></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={!canUpdate} title={!canUpdate ? "You do not have permission to perform this action." : "Edit this record."} onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>{config.actions.map((type) => { const canAction = canRunAction(type); return <button key={type} className="btn-ghost" disabled={!canAction} title={!canAction ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`} onClick={() => onAction(type, record)}>{labelize(type)}</button>; })}<button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : "Export this record."} onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Report</button></div><div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Primary Context" record={record} keys={Object.keys(record).slice(0,12)} /><Info title="AI Summary / Recommended Action" record={record} keys={["aiSummary","aiScript","summary","recommendedAction","reportSummary"]} /><Info title="Evidence / Legal Readiness" record={record} keys={["evidenceStatus","insuranceReportStatus","locked","exportUrl","falsePositive"]} /></div>{config.sections.map(([title,key,columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}<Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={["actionName","actorName","createdAt"]} /><div className="mt-6 grid gap-4 lg:grid-cols-2">{((detail?.recommendations as AnyRecord[]) || []).slice(0,4).map((insight,i) => <AiInsightCard key={String(insight.id || i)} insight={insight} />)}</div></aside></div>;
 }
 
 function Modal({ title, fields, initial, saving, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {

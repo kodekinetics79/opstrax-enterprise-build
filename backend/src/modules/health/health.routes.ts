@@ -5,9 +5,13 @@ const router = express.Router();
 router.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    service: "fleet-backend",
-    status: "running",
-    timestamp: new Date().toISOString(),
+    data: {
+      service: "fleet-backend",
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+    },
+    message: "Health check passed",
+    errors: [],
   });
 });
 

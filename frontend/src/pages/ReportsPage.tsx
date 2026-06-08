@@ -3,6 +3,8 @@ import {
   Bot, Calendar, CheckCircle2, Clock, Download,
   FileText, Play, Plus, RefreshCw, X,
 } from "lucide-react";
+import { EmptyState, LoadingState } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
 import {
   useReportCatalog, useReportRuns, useReportsSummary, useReportsAiRecs,
   useRunReport, useScheduledReports, useCreateScheduledReport,
@@ -50,24 +52,29 @@ function SummaryCard({ label, value, sub, color }: { label: string; value: strin
 }
 
 export function ReportsPage() {
+  const hasPermission = useHasPermission();
+  const canExport = hasPermission("reports:export");
   const [tab, setTab] = useState<Tab>("Catalog");
   const [runningKey, setRunningKey] = useState<string | null>(null);
   const [schedOpen, setSchedOpen] = useState(false);
   const [filterCat, setFilterCat] = useState("");
 
-  const { data: catalogRaw = [] } = useReportCatalog();
-  const { data: summaryRaw }       = useReportsSummary();
-  const { data: runsRaw = [] }     = useReportRuns();
-  const { data: scheduledRaw = [] }= useScheduledReports();
-  const { data: exportsRaw = [] }  = useReportExports();
-  const { data: aiRecsRaw = [] }   = useReportsAiRecs();
+  const catalogQ = useReportCatalog();
+  const summaryQ = useReportsSummary();
+  const runsQ = useReportRuns();
+  const scheduledQ = useScheduledReports();
+  const exportsQ = useReportExports();
+  const aiQ = useReportsAiRecs();
 
-  const catalog   = catalogRaw   as AnyRecord[];
-  const summary   = summaryRaw   as AnyRecord | undefined;
-  const runs      = runsRaw      as AnyRecord[];
-  const scheduled = scheduledRaw as AnyRecord[];
-  const exports_  = exportsRaw   as AnyRecord[];
-  const aiRecs    = aiRecsRaw    as AnyRecord[];
+  const catalog   = (catalogQ.data ?? []) as AnyRecord[];
+  const summary   = summaryQ.data   as AnyRecord | undefined;
+  const runs      = (runsQ.data ?? []) as AnyRecord[];
+  const scheduled = (scheduledQ.data ?? []) as AnyRecord[];
+  const exports_  = (exportsQ.data ?? []) as AnyRecord[];
+  const aiRecs    = (aiQ.data ?? []) as AnyRecord[];
+
+  const isLoading = catalogQ.isLoading || summaryQ.isLoading || runsQ.isLoading || scheduledQ.isLoading || exportsQ.isLoading || aiQ.isLoading;
+  const hasError = catalogQ.isError || summaryQ.isError || runsQ.isError || scheduledQ.isError || exportsQ.isError || aiQ.isError;
 
   const runReport         = useRunReport();
   const pauseScheduled    = usePauseScheduledReport();
@@ -77,6 +84,9 @@ export function ReportsPage() {
 
   const categories = [...new Set(catalog.map((r) => String(r.report_category ?? "")))].filter(Boolean);
   const filtered   = filterCat ? catalog.filter((r) => String(r.report_category) === filterCat) : catalog;
+
+  if (isLoading) return <LoadingState />;
+  if (hasError) return <EmptyState title="Reports unavailable" subtitle="Unable to load the report catalog right now. Refresh to try again." />;
 
   function handleRun(key: string) {
     setRunningKey(key);
@@ -133,6 +143,7 @@ export function ReportsPage() {
             ))}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {!filtered.length && <EmptyState title="No reports match this filter" subtitle="Clear the category filter to see all operational reports." />}
             {filtered.map((r) => {
               const key = String(r.report_key ?? "");
               const isRunning = runningKey === key;
@@ -157,10 +168,10 @@ export function ReportsPage() {
                       {isRunning ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
                       {isRunning ? "Running…" : "Run"}
                     </button>
-                    <button className="btn-ghost flex items-center gap-1 py-1.5 px-2 text-xs" onClick={() => handleExport(r, "CSV")}>
+                    <button className="btn-ghost flex items-center gap-1 py-1.5 px-2 text-xs" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : "Export this report as CSV."} onClick={() => handleExport(r, "CSV")}>
                       <Download className="h-3 w-3" /> CSV
                     </button>
-                    <button className="btn-ghost flex items-center gap-1 py-1.5 px-2 text-xs" onClick={() => handleExport(r, "PDF")}>
+                    <button className="btn-ghost flex items-center gap-1 py-1.5 px-2 text-xs" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : "Export this report as PDF."} onClick={() => handleExport(r, "PDF")}>
                       <Download className="h-3 w-3" /> PDF
                     </button>
                   </div>
@@ -174,6 +185,7 @@ export function ReportsPage() {
       {/* Run History */}
       {tab === "Run History" && (
         <div className="panel overflow-x-auto">
+          {!runs.length && <EmptyState title="No report runs yet" subtitle="Run a report from the catalog to populate history." />}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/[0.07]">
@@ -209,6 +221,7 @@ export function ReportsPage() {
       {/* Scheduled */}
       {tab === "Scheduled" && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {!scheduled.length && <EmptyState title="No scheduled reports" subtitle="Schedule a report to automate delivery." />}
           {scheduled.map((s, i) => {
             const isActive = String(s.status) === "Active";
             return (
@@ -241,6 +254,7 @@ export function ReportsPage() {
       {/* Exports */}
       {tab === "Exports" && (
         <div className="panel overflow-x-auto">
+          {!exports_.length && <EmptyState title="No exports yet" subtitle="Export a report to create a downloadable record." />}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/[0.07]">

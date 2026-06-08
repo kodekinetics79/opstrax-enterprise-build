@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   BarChart3,
@@ -30,9 +31,16 @@ import {
   PageHeader,
   RiskBadge,
   StatusBadge,
+  LoadingState,
 } from "@/components/ui";
 import { Fleet360MapView } from "@/components/Fleet360MapView";
-import {
+import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
+import { alertsApi } from "@/services/alertsApi";
+import { useHasPermission } from "@/hooks/usePermission";
+import type { AnyRecord } from "@/types";
+import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
+
+const {
   bookings,
   campaigns,
   contracts,
@@ -50,9 +58,7 @@ import {
   shipments,
   supportTickets,
   vehicles,
-} from "@/data/mockOperatingData";
-import type { AnyRecord } from "@/types";
-import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
+} = developmentFleetSeedData;
 
 type ModuleDefinition = {
   title: string;
@@ -116,14 +122,7 @@ const upsell = customers.map((customer) => ({
   status: customer.status === "High Risk" ? "Retention First" : "Qualified",
 }));
 
-const alerts = [
-  { alertId: "ALT-1001", category: "Cold Chain", type: "Temperature breach", entity: "KSA-REEFER-119", customer: "Al Noor Pharma Distribution", severity: "Critical", owner: "Cold Chain Support", location: "Jeddah Pharma Hub", age: "8m", recommendedAction: "Open evidence package and notify customer", status: "Open" },
-  { alertId: "ALT-1002", category: "Telematics", type: "Device offline", entity: "CAM-VA-106", customer: "Gulf Express Logistics", severity: "High", owner: "Telematics", location: "Washington DC", age: "22m", recommendedAction: "Dispatch device health check", status: "Open" },
-  { alertId: "ALT-1003", category: "SLA", type: "Late delivery", entity: "SHP-6204", customer: "Gulf Express Logistics", severity: "High", owner: "Dispatch", location: "I-395 corridor", age: "34m", recommendedAction: "Send revised ETA", status: "In Progress" },
-  { alertId: "ALT-1004", category: "Maintenance", type: "Maintenance due", entity: "BOX-106", customer: "Gulf Express Logistics", severity: "Medium", owner: "Maintenance", location: "Manassas yard", age: "1h", recommendedAction: "Block from dispatch", status: "Review" },
-  { alertId: "ALT-1005", category: "Safety", type: "Harsh braking cluster", entity: "DRV-US-017", customer: "Gulf Express Logistics", severity: "Medium", owner: "Safety", location: "Washington DC", age: "1h 18m", recommendedAction: "Queue coaching review", status: "Open" },
-  { alertId: "ALT-1006", category: "Finance", type: "Margin leakage", entity: "SHP-6204", customer: "Gulf Express Logistics", severity: "High", owner: "Finance Ops", location: "DC local lane", age: "2h", recommendedAction: "Review surcharge and detention", status: "Open" },
-];
+const alerts = developmentFleetSeedData.alerts;
 
 const accountHealth = customers.map((customer) => ({
   customer: customer.companyName,
@@ -861,21 +860,62 @@ function LiveDashboardPage() {
 }
 
 function AlertsPage() {
+  const hasPermission = useHasPermission();
+  const canExport = hasPermission("alerts:view");
+  const canAct = hasPermission("alerts:acknowledge");
+  const canClose = hasPermission("alerts:close");
+  const { data: alertRows = [], isLoading, isError } = useQuery({
+    queryKey: ["alerts"],
+    queryFn: alertsApi.list,
+    staleTime: 15_000,
+  });
+  const qc = useQueryClient();
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [activeTab, setActiveTab] = useState("All");
-  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
+  const [triageRunAt, setTriageRunAt] = useState<string | null>(null);
+  const [taskFor, setTaskFor] = useState<AnyRecord | null>(null);
   const tabs = ["All", "Critical", "SLA", "Telematics", "Cold Chain", "Maintenance", "Safety", "Finance"];
-  const visibleAlerts = alerts
-    .map((alert) => ({ ...alert, status: acknowledged.has(alert.alertId) ? "Acknowledged" : alert.status }))
-    .filter((alert) => activeTab === "All" || alert.severity === activeTab || alert.category === activeTab);
 
-  const acknowledgeAlert = (alertId: string) => {
-    setAcknowledged((current) => {
-      const next = new Set(current);
-      next.add(alertId);
-      return next;
-    });
+  const updateCachedAlert = (updated: AnyRecord) => {
+    qc.setQueryData<AnyRecord[]>(["alerts"], (current = []) =>
+      current.map((alert) => (String(alert.alertId ?? alert.id) === String(updated.alertId ?? updated.id) ? { ...alert, ...updated } : alert)),
+    );
+    setSelected((current) => (current && String(current.alertId ?? current.id) === String(updated.alertId ?? updated.id) ? { ...current, ...updated } : current));
   };
+
+  const ackMut = useMutation({
+    mutationFn: (alertId: string) => alertsApi.acknowledge(alertId, { acknowledgedAt: new Date().toISOString() }),
+    onSuccess: (updated) => updateCachedAlert(updated),
+  });
+  const closeMut = useMutation({
+    mutationFn: (alertId: string) => alertsApi.close(alertId, { closedAt: new Date().toISOString() }),
+    onSuccess: (updated) => updateCachedAlert(updated),
+  });
+  const taskMut = useMutation({
+    mutationFn: ({ alertId, title, owner }: { alertId: string; title: string; owner: string }) =>
+      alertsApi.createTask(alertId, { title, owner, createdAt: new Date().toISOString() }),
+    onSuccess: (updated) => {
+      updateCachedAlert(updated);
+      setTaskFor(null);
+    },
+  });
+
+  const visibleAlerts = useMemo(() => {
+    const triageSorted = [...alertRows].map((alert) => ({
+      ...alert,
+      status: String(alert.status ?? "").toLowerCase() === "closed" ? "Closed" : String(alert.status ?? ""),
+    }));
+    const severityRank = (severity: string) => ({ Critical: 4, High: 3, Medium: 2, Low: 1 }[severity] ?? 0);
+    const filtered = triageRunAt
+      ? triageSorted
+          .filter((alert) => !["Closed", "Resolved"].includes(String(alert.status)))
+          .sort((a, b) => severityRank(String(b.severity)) - severityRank(String(a.severity)))
+      : triageSorted;
+    return filtered.filter((alert) => activeTab === "All" || String(alert.severity) === activeTab || String(alert.category) === activeTab);
+  }, [alertRows, activeTab, triageRunAt]);
+
+  if (isLoading) return <LoadingState />;
+  if (isError) return <EmptyState title="Alerts unavailable" subtitle="Unable to load the alert register right now. Refresh to try again." />;
 
   return (
     <div className="space-y-6">
@@ -883,15 +923,37 @@ function AlertsPage() {
         eyebrow="Control Tower"
         title="Alerts"
         description="A live operations alert center for temperature, telematics, late freight, maintenance, safety, customer SLA and margin leakage."
-        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export Alert Register</button><button className="btn-primary"><Sparkles className="h-4 w-4" /> Run AI Triage</button></>}
+        actions={
+          <>
+            <button
+              className="btn-ghost"
+              disabled={!canExport}
+              title={!canExport ? "You do not have permission to perform this action." : "Export the current alert register."}
+              onClick={() => exportCsv("alerts", visibleAlerts)}
+            >
+              <Download className="h-4 w-4" /> Export Alert Register
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => setTriageRunAt(new Date().toISOString())}
+            >
+              <Sparkles className="h-4 w-4" /> Run AI Triage
+            </button>
+          </>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open Alerts" value={alerts.filter((alert) => alert.status === "Open").length - acknowledged.size} status="Open" />
-        <KpiCard label="Critical Alerts" value={alerts.filter((alert) => alert.severity === "Critical").length} status="Critical" />
-        <KpiCard label="Customer Impact" value={`${new Set(alerts.map((alert) => alert.customer)).size} accounts`} status="Risk" />
+        <KpiCard label="Open Alerts" value={visibleAlerts.filter((alert) => !/closed|resolved/i.test(String(alert.status))).length} status="Open" />
+        <KpiCard label="Critical Alerts" value={visibleAlerts.filter((alert) => alert.severity === "Critical").length} status="Critical" />
+        <KpiCard label="Customer Impact" value={`${new Set(visibleAlerts.map((alert) => alert.customer)).size} accounts`} status="Risk" />
         <KpiCard label="AI Triage Confidence" value="92%" status="AI" />
       </div>
+      {triageRunAt && (
+        <div className="panel border-teal-400/20 bg-teal-400/5 px-4 py-3 text-sm text-teal-100">
+          Triage run at {new Date(triageRunAt).toLocaleString()} and alerts are now sorted by severity and urgency.
+        </div>
+      )}
 
       <div className="panel flex flex-wrap gap-2 p-3">
         {tabs.map((tab) => (
@@ -920,11 +982,24 @@ function AlertsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 lg:justify-end">
-                  <button className="btn-primary py-2 text-xs" onClick={() => acknowledgeAlert(alert.alertId)}>
+                  <button
+                    className="btn-primary py-2 text-xs"
+                    disabled={!canAct}
+                    title={!canAct ? "You do not have permission to perform this action." : "Acknowledge this alert."}
+                    onClick={() => ackMut.mutate(alert.alertId)}
+                  >
                     <CheckCircle2 className="h-3.5 w-3.5" /> Acknowledge
                   </button>
                   <button className="btn-ghost py-2 text-xs" onClick={() => setSelected(alert)}>View Details</button>
-                  <button className="btn-ghost py-2 text-xs">Create Task</button>
+                  <button className="btn-ghost py-2 text-xs" onClick={() => setTaskFor(alert)}>Create Task</button>
+                  <button
+                    className="btn-ghost py-2 text-xs"
+                    disabled={!canClose}
+                    title={!canClose ? "You do not have permission to perform this action." : "Close this alert."}
+                    onClick={() => closeMut.mutate(alert.alertId)}
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
             </div>
@@ -967,8 +1042,62 @@ function AlertsPage() {
         </div>
       </div>
       <DetailDrawer record={selected} onClose={() => setSelected(null)} />
+      {taskFor && (
+        <AlertTaskModal
+          alertRecord={taskFor}
+          saving={taskMut.isPending}
+          onClose={() => setTaskFor(null)}
+          onSave={(payload) => taskMut.mutate({ alertId: String(taskFor.alertId), title: payload.title, owner: payload.owner })}
+        />
+      )}
     </div>
   );
+}
+
+function AlertTaskModal({ alertRecord, saving, onClose, onSave }: { alertRecord: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: { title: string; owner: string }) => void }) {
+  const [title, setTitle] = useState(`Task for ${String(alertRecord.type ?? alertRecord.alertId)}`);
+  const [owner, setOwner] = useState(String(alertRecord.owner ?? "Dispatch"));
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
+      <form
+        className="panel w-full max-w-md p-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave({ title, owner });
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-white">Create Alert Task</h2>
+          <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <p className="mt-2 text-sm text-slate-400">{String(alertRecord.type ?? alertRecord.alertId)} · {String(alertRecord.entity ?? "")}</p>
+        <div className="mt-5 space-y-4">
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Task Title</span>
+            <input className="field w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Owner</span>
+            <input className="field w-full" value={owner} onChange={(e) => setOwner(e.target.value)} />
+          </label>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={saving}>Create Task</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function exportCsv(name: string, rows: AnyRecord[]) {
+  if (!rows.length) return;
+  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
+  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `opstrax-${name}.csv`;
+  a.click();
 }
 
 function PriceSimulationPage() {
@@ -1172,7 +1301,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
     return (
       <div className="space-y-6">
         <PageHeader eyebrow="OpsTrax" title="Module Workspace" description="This module is available in navigation and ready for deeper workflow configuration." />
-        <EmptyState title="Workflow configuration pending" subtitle="This page is reserved for the next implementation batch." />
+        <EmptyState title="Integration required" subtitle="This module is available in navigation, but the specific workflow is not configured yet." />
       </div>
     );
   }
@@ -1183,7 +1312,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
         eyebrow={definition.eyebrow}
         title={definition.title}
         description={definition.description}
-        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export</button><button className="btn-primary"><Send className="h-4 w-4" /> Create Action</button></>}
+        actions={<><button className="btn-ghost" disabled title="Export is not configured for this workspace yet."><Download className="h-4 w-4" /> Export</button><button className="btn-primary" disabled title="Create action is not configured for this workspace yet."><Send className="h-4 w-4" /> Create Action</button></>}
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={kpi.value} status={kpi.status} trend={kpi.trend} />)}

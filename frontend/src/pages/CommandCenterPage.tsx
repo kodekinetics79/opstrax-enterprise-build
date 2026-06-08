@@ -1,17 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { Activity, AlertTriangle, CheckCircle2, DollarSign, RadioTower, Truck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RadioTower, Truck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ActionQueue, AiInsightCard, KpiCard, LoadingState, PageHeader, Timeline } from "@/components/ui";
+import { ActionQueue, AiInsightCard, ErrorState, KpiCard, LoadingState, PageHeader, Timeline } from "@/components/ui";
 import { commandCenterApi } from "@/services/commandCenterApi";
 import type { AnyRecord } from "@/types";
 
 export function CommandCenterPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["command-center"], queryFn: commandCenterApi.summary, refetchInterval: 15000 });
+  const { data, isLoading, isError, error } = useQuery({ queryKey: ["command-center"], queryFn: commandCenterApi.summary, refetchInterval: 15000 });
+  const navigate = useNavigate();
   if (isLoading || !data) return <LoadingState />;
+  if (isError) return <ErrorState message={error instanceof Error ? error.message : "Unable to load dashboard data."} />;
   const kpis = (data.kpis as AnyRecord[]) || [];
   const chartData = ((data.charts as AnyRecord)?.weeklyJobs as number[] || []).map((value, index) => ({ day: `D${index + 1}`, value }));
   const costData = ((data.charts as AnyRecord)?.costLeakage as number[] || []).map((value, index) => ({ day: `W${index + 1}`, value }));
+  const kpiTargets = (kpis.length ? kpis : []).slice(0, 8).map((kpi) => resolveKpiTarget(String(kpi.label ?? "")));
 
   return (
     <div className="space-y-6">
@@ -19,13 +23,35 @@ export function CommandCenterPage() {
         eyebrow="OpsTrax Command Center"
         title="Enterprise operations cockpit"
         description="Executive operating picture for fleet readiness, dispatch risk, safety, maintenance, compliance and cost leakage across Northern Virginia/DC operations."
-        actions={<><button className="btn-primary">Acknowledge Risks</button><button className="btn-ghost">Generate Brief</button></>}
+        actions={<><button className="btn-primary" onClick={() => navigate("/alerts")}>Acknowledge Risks</button><button className="btn-ghost" onClick={() => navigate("/reports")}>Generate Brief</button></>}
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {(kpis.length ? kpis : []).slice(0, 8).map((kpi, i) => (
-          <KpiCard key={String(kpi.id || i)} label={String(kpi.label)} value={String(kpi.valueText || kpi.value || "--")} trend={String(kpi.trendValue || "Live")} status={String(kpi.status || "Healthy")} icon={[<Truck />, <RadioTower />, <AlertTriangle />, <CheckCircle2 />][i % 4]} />
-        ))}
+        {(kpis.length ? kpis : []).slice(0, 8).map((kpi, i) => {
+          const card = (
+            <KpiCard
+              label={String(kpi.label)}
+              value={String(kpi.valueText || kpi.value || "--")}
+              trend={String(kpi.trendValue || "Live")}
+              status={String(kpi.status || "Healthy")}
+              icon={[<Truck />, <RadioTower />, <AlertTriangle />, <CheckCircle2 />][i % 4]}
+            />
+          );
+          const target = kpiTargets[i];
+          return target ? (
+            <button
+              key={String(kpi.id || i)}
+              type="button"
+              className="block w-full text-left transition hover:scale-[1.01]"
+              onClick={() => navigate(target.route)}
+              title={target.title}
+            >
+              {card}
+            </button>
+          ) : (
+            <div key={String(kpi.id || i)}>{card}</div>
+          );
+        })}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
@@ -69,4 +95,17 @@ export function CommandCenterPage() {
 
 function ChartPanel({ title, children }: { title: string; children: ReactNode }) {
   return <div className="panel p-5"><h2 className="section-title">{title}</h2><div className="mt-4">{children}</div></div>;
+}
+
+function resolveKpiTarget(label: string) {
+  const text = label.toLowerCase();
+  if (/vehicle|fleet|readiness|unit/.test(text)) return { route: "/vehicles", title: "Open vehicles" };
+  if (/job|order|dispatch/.test(text)) return { route: "/jobs", title: "Open jobs" };
+  if (/shipment|load|delivery|eta|pod|proof/.test(text)) return { route: "/shipments", title: "Open shipments" };
+  if (/alert|exception|risk|warning|incident/.test(text)) return { route: "/alerts", title: "Open alerts" };
+  if (/maint|service|repair|work order|downtime/.test(text)) return { route: "/maintenance", title: "Open maintenance" };
+  if (/driver|hos|coach|safety/.test(text)) return { route: "/drivers", title: "Open drivers" };
+  if (/cost|margin|fuel|revenue|finance|expense/.test(text)) return { route: "/reports", title: "Open reports" };
+  if (/compliance|audit|policy/.test(text)) return { route: "/compliance", title: "Open compliance" };
+  return null;
 }

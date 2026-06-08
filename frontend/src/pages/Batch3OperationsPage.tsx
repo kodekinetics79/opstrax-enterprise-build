@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, Download, FilePlus2, Hammer, PenTool, Plus, Sparkles, Wrench, X } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 import {
   useDocumentDetail,
@@ -133,6 +133,26 @@ const configs = {
   detailSections: [string, string, string[]][];
 }>;
 
+function getBatch3Permission(kind: Batch3Kind, action: string) {
+  if (kind === "maintenance") {
+    if (action === "schedule" || action === "createWorkOrder") return "maintenance:create";
+    if (action === "defer") return "maintenance:update";
+    if (action === "complete") return "maintenance:close";
+    return "maintenance:update";
+  }
+  if (kind === "work-orders") {
+    if (action === "complete") return "maintenance:close";
+    if (action === "assign" || action === "status" || action === "labor" || action === "part" || action === "approveCost") return "maintenance:update";
+    return "maintenance:view";
+  }
+  if (kind === "dvir") {
+    if (action === "mechanicReview" || action === "certifyRepair") return "maintenance:update";
+    return "maintenance:view";
+  }
+  if (action === "renew" || action === "upload") return "maintenance:update";
+  return "maintenance:view";
+}
+
 export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const config = configs[kind];
   const { session } = useAuth();
@@ -189,8 +209,11 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
     return matchesSearch && matchesStatus;
   }), [rowsQuery.data, search, status, statusLower]);
 
-  if (rowsQuery.isLoading) return <LoadingState />;
-  const s = summary.data || {};
+  if (rowsQuery.isLoading || summary.isLoading) return <LoadingState />;
+  if (rowsQuery.isError || summary.isError) {
+    return <EmptyState title={`${config.eyebrow} unavailable`} subtitle="Unable to load maintenance records right now. Refresh to try again." />;
+  }
+  const s = (summary.data || {}) as AnyRecord;
 
   return (
     <div className="space-y-6">
@@ -200,9 +223,14 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         description={config.description}
         actions={
           <>
-            {hasPermission(`${config.queryKey}:create`) && (
-              <button className="btn-primary" onClick={() => setEditing(defaultForm(kind))}><Plus className="h-4 w-4" /> {config.createLabel}</button>
-            )}
+            <button
+              className="btn-primary"
+              disabled={!hasPermission(kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update")}
+              title={!hasPermission(kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update") ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
+              onClick={() => setEditing(defaultForm(kind))}
+            >
+              <Plus className="h-4 w-4" /> {config.createLabel}
+            </button>
             <button className="btn-ghost" onClick={() => exportCsv(kind, rows)}><Download className="h-4 w-4" /> Export Report</button>
           </>
         }
@@ -217,8 +245,13 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         </select>
         <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
       </div>
-      <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
+      {!rows.length ? (
+        <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
+      ) : (
+        <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
+      )}
       <DetailDrawer
+        kind={kind}
         config={config}
         detail={detail.data}
         permissions={session?.permissions || []}
@@ -232,7 +265,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   );
 }
 
-function DetailDrawer({ config, detail, loading, onClose, onEdit, onAction, permissions }: { config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[] }) {
+function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction, permissions }: { kind: Batch3Kind; config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[] }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
@@ -240,10 +273,6 @@ function DetailDrawer({ config, detail, loading, onClose, onEdit, onAction, perm
   const hasPermission = (perm: string) => permissions.includes("*") || permissions.includes(perm);
   const recommendations = ((detail?.recommendations as AnyRecord[]) || []).slice(0, 4);
   
-  const allowedActions = config.actions.filter(act => 
-    hasPermission(`${config.queryKey}:update`) || hasPermission(`${config.queryKey}:operate`)
-  );
-
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
       <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6">
@@ -252,10 +281,28 @@ function DetailDrawer({ config, detail, loading, onClose, onEdit, onAction, perm
         <h2 className="mt-3 text-2xl font-semibold text-white">{String(record.documentNumber || record.reportNumber || record.workOrderNumber || record.serviceType || record.title || `Record ${record.id}`)}</h2>
         <div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.inspectionStatus || record.renewalStatus} /><RiskBadge risk={record.priority || record.riskScore || record.documentExpiryRiskScore || record.defectSeverityScore} /><span className="badge">{config.idLabel}: {String(record.id)}</span></div>
         <div className="mt-5 flex flex-wrap gap-3">
-          {hasPermission(`${config.queryKey}:update`) && (
-            <button className="btn-primary" onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>
-          )}
-          {allowedActions.map((type) => <button key={type} className="btn-ghost" onClick={() => onAction(type, record)}>{labelize(type)}</button>)}
+          <button
+            className="btn-primary"
+            disabled={!hasPermission(getBatch3Permission(kind, "update"))}
+            title={!hasPermission(getBatch3Permission(kind, "update")) ? "You do not have permission to perform this action." : "Edit this record."}
+            onClick={() => onEdit(record)}
+          >
+            <PenTool className="h-4 w-4" /> Edit
+          </button>
+          {config.actions.map((type) => {
+            const allowed = hasPermission(getBatch3Permission(kind, type));
+            return (
+              <button
+                key={type}
+                className="btn-ghost"
+                disabled={!allowed}
+                title={!allowed ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`}
+                onClick={() => onAction(type, record)}
+              >
+                {labelize(type)}
+              </button>
+            );
+          })}
           <button className="btn-ghost" onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Record</button>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">

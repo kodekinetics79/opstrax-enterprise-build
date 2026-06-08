@@ -21,7 +21,27 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         eyebrow={module.group}
         title={module.title}
         description={module.description}
-        actions={<><button className="btn-primary"><Plus className="h-4 w-4" /> Create</button><button className="btn-ghost">Review Queue</button></>}
+        actions={
+          <>
+            <button
+              className="btn-primary"
+              disabled
+              title="Create flow is not configured for this module yet."
+            >
+              <Plus className="h-4 w-4" />
+              Create
+              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold">Coming soon</span>
+            </button>
+            <button
+              className="btn-ghost"
+              disabled
+              title="Review queue is not available for this module yet."
+            >
+              Review Queue
+              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold">Integration required</span>
+            </button>
+          </>
+        }
       />
       <div className="grid gap-4 md:grid-cols-4">
         <KpiCard label="Records" value={records.length} icon={<Icon />} status="Active" />

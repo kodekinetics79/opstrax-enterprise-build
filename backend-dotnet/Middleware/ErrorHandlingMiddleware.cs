@@ -15,7 +15,7 @@ public sealed class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorH
         {
             logger.LogError(ex, "Unhandled API error");
             context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Internal server error", ex.Message));
+            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Internal server error", "An unexpected error occurred."));
         }
     }
 }

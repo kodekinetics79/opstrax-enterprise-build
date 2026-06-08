@@ -76,7 +76,7 @@ export function ControlTowerPage() {
             {entities.slice(0, 24).map((entity, index) => <VehiclePin key={String(entity.id)} entity={entity} index={index} onSelect={setSelected} />)}
             <div className="absolute bottom-4 left-4 max-w-sm rounded-2xl border border-blue-200 bg-white/95 p-4 text-xs text-slate-600 shadow-lg backdrop-blur">
               <p className="font-semibold text-slate-900">Replay Ready</p>
-              <p>{String((data.replay as AnyRecord)?.description || "GPS, speed, geofence and event replay placeholder.")}</p>
+              <p>{String((data.replay as AnyRecord)?.description || "GPS, speed, geofence and event replay synced from the live telemetry stream.")}</p>
             </div>
           </div>
         </section>

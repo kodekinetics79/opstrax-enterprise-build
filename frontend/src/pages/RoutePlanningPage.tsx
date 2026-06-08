@@ -36,11 +36,11 @@ export function RoutePlanningPage() {
   const s = summary.data || {};
 
   return <div className="space-y-6">
-    <PageHeader eyebrow="Route Planning" title="Route intelligence and stop orchestration" description="Plan routes, manage stops, preview optimization, inspect SLA risk by stop and export route plans without paid map APIs." actions={<><button className="btn-primary" onClick={() => setEditing({ status: "Planned", routeType: "Delivery", optimizationMode: "Balanced" })}><Plus className="h-4 w-4" /> Create Route</button><button className="btn-ghost"><Download className="h-4 w-4" /> Export Route Plan</button></>} />
+    <PageHeader eyebrow="Route Planning" title="Route intelligence and stop orchestration" description="Plan routes, manage stops, preview optimization, inspect SLA risk by stop and export route plans without paid map APIs." actions={<><button className="btn-primary" onClick={() => setEditing({ status: "Planned", routeType: "Delivery", optimizationMode: "Balanced" })}><Plus className="h-4 w-4" /> Create Route</button><button className="btn-ghost" onClick={() => exportRoutes(rows)}><Download className="h-4 w-4" /> Export Route Plan</button></>} />
     <div className="grid gap-4 md:grid-cols-5">
       {[["Total Routes Today","totalRoutesToday"],["Active Routes","activeRoutes"],["Planned Routes","plannedRoutes"],["Completed Routes","completedRoutes"],["Delayed Routes","delayedRoutes"],["Avg Stops","averageStopsPerRoute"],["Avg Route ETA","averageRouteEta"],["Efficiency","routeEfficiencyScore"],["High-Risk","highRiskRoutes"],["Cost Estimate","routeCostEstimate"]].map(([label,key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={<Route />} status={/Risk|Delayed/.test(label) ? "Review" : "Active"} />)}
     </div>
-    <div className="panel flex flex-col gap-3 p-4 lg:flex-row"><input className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." /><select className="field lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option></select><span className="badge">Route replay placeholder</span><span className="badge">Cost leakage by route</span></div>
+    <div className="panel flex flex-col gap-3 p-4 lg:flex-row"><input className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." /><select className="field lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option></select><span className="badge">Route replay available</span><span className="badge">Cost leakage by route</span></div>
     <DataTable rows={rows} columns={["routeCode", "routeName", "region", "driverName", "vehicleCode", "stops", "plannedStart", "plannedEnd", "status", "estimatedDurationMinutes", "estimatedDistance", "efficiencyScore", "slaRisk", "recommendedAction"]} onSelect={setSelected} />
     <RouteDrawer detail={detail.data} onClose={() => setSelected(null)} onEdit={(r) => setEditing(r)} onAddStop={() => setStopEditing({ stopType: "Drop-off", status: "Pending", proofStatus: "Pending" })} onOptimize={(id) => optimize.mutate(id)} optimizeResult={optimize.data} />
     {editing ? <Modal title={editing.id ? "Edit Route" : "Create Route"} fields={routeFields} initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(p) => save.mutate(p)} /> : null}
@@ -63,4 +63,16 @@ function Modal({ title, fields, initial, saving, onClose, onSave }: { title: str
 
 function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; columns: string[] }) {
   return <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h3 className="section-title">{title}</h3>{!rows.length ? <p className="mt-3 text-sm text-slate-500">No records yet.</p> : <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="text-xs uppercase tracking-[0.16em] text-slate-500"><tr>{columns.map(c=><th key={c} className="px-3 py-2">{labelize(c)}</th>)}</tr></thead><tbody className="divide-y divide-white/10">{rows.slice(0,10).map((r,i)=><tr key={String(r.id||i)}>{columns.map(c=><td key={c} className="px-3 py-2 text-slate-300">{String(r[c] ?? "--")}</td>)}</tr>)}</tbody></table></div>}</section>;
+}
+
+function exportRoutes(rows: AnyRecord[]) {
+  const columns = ["routeCode", "routeName", "region", "status", "driverName", "vehicleCode", "plannedStart", "plannedEnd", "estimatedDurationMinutes", "estimatedDistance", "efficiencyScore"];
+  const csv = [columns.join(","), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column] ?? "")).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "opstrax-route-plans.csv";
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

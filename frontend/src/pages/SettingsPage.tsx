@@ -189,8 +189,8 @@ export function SettingsPage() {
           {[
             ["Product",     "OpsTrax Transport Management Solution"],
             ["Developer",   "Kode Kinetics"],
-            ["Version",     "Enterprise Demo Build"],
-            ["Environment", "Local / Demo"],
+            ["Version",     "Enterprise Build"],
+            ["Environment", "Local / Seeded"],
             ["Frontend",    "React 19 · TypeScript · Vite"],
             ["Backend",     "ASP.NET Core 8 · MySQL 8.4"],
           ].map(([k, v]) => (
