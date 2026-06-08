@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -72,6 +73,83 @@ public class EmployeesController : ControllerBase
             .ToListAsync(cancellationToken);
         return Ok(new PagedResult<EmployeeListItemDto>(items, total, page, pageSize));
     }
+
+    // ── Configurable export / import / shareable template ────────────────────────
+    private static readonly string[] EmployeeCsvHeaders =
+        { "EmployeeCode", "FullName", "ArabicName", "WorkEmail", "Phone", "Gender", "Nationality", "Department", "Designation", "JobTitle", "EmploymentType", "ContractType", "Status", "JoiningDate" };
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Officer,Auditor")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        var emps = await _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .OrderBy(e => e.EmployeeCode).ToListAsync(ct);
+        var rows = emps.Select(e => (IReadOnlyList<object?>)new object?[]
+        {
+            e.EmployeeCode, e.FullName, e.ArabicName, e.WorkEmail, e.Phone, e.Gender, e.Nationality,
+            e.Department, e.Designation, e.JobTitle, e.EmploymentType, e.ContractType, e.Status,
+            e.JoiningDate.ToString("yyyy-MM-dd")
+        });
+        var csv = Csv.Build(EmployeeCsvHeaders, rows);
+        return File(Encoding.UTF8.GetBytes(csv), "text/csv", $"employees_{DateTime.UtcNow:yyyyMMdd}.csv");
+    }
+
+    /// <summary>Downloadable blank template — the shareable "data format" to fill and import.</summary>
+    [HttpGet("import-template")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public IActionResult ImportTemplate() =>
+        File(Encoding.UTF8.GetBytes(Csv.Template(EmployeeCsvHeaders)), "text/csv", "employees_import_template.csv");
+
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> Import([FromBody] ImportEmployeesRequest req, CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
+        var branch = await _db.Branches.FirstOrDefaultAsync(b => b.TenantId == tenantId, ct);
+        int created = 0, skipped = 0;
+        var errors = new List<string>();
+        var rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var name = row.GetValueOrDefault("FullName", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name)) { skipped++; continue; }
+            var code = row.GetValueOrDefault("EmployeeCode", string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(code) && await _db.Employees.AnyAsync(e => e.TenantId == tenantId && e.EmployeeCode == code, ct))
+            { skipped++; errors.Add($"Row {rowNum}: EmployeeCode '{code}' already exists."); continue; }
+            DateTime.TryParse(row.GetValueOrDefault("JoiningDate", string.Empty), out var jd);
+            var statusVal = row.GetValueOrDefault("Status", string.Empty).Trim();
+            _db.Employees.Add(new Employee
+            {
+                TenantId = tenantId,
+                CompanyId = company?.Id,
+                BranchId = branch?.Id,
+                EmployeeCode = string.IsNullOrWhiteSpace(code) ? $"IMP-{Guid.NewGuid().ToString()[..6].ToUpperInvariant()}" : code,
+                FullName = name,
+                EnglishName = name,
+                ArabicName = row.GetValueOrDefault("ArabicName", string.Empty),
+                WorkEmail = row.GetValueOrDefault("WorkEmail", string.Empty),
+                Phone = row.GetValueOrDefault("Phone", string.Empty),
+                Gender = row.GetValueOrDefault("Gender", string.Empty),
+                Nationality = row.GetValueOrDefault("Nationality", string.Empty),
+                Department = row.GetValueOrDefault("Department", string.Empty),
+                Designation = row.GetValueOrDefault("Designation", string.Empty),
+                JobTitle = row.GetValueOrDefault("JobTitle", row.GetValueOrDefault("Designation", string.Empty)),
+                EmploymentType = row.GetValueOrDefault("EmploymentType", "Full-time"),
+                ContractType = row.GetValueOrDefault("ContractType", string.Empty),
+                Status = string.IsNullOrWhiteSpace(statusVal) ? "Active" : statusVal,
+                JoiningDate = jd == default ? DateTime.UtcNow : jd,
+            });
+            created++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+    }
+
+    public record ImportEmployeesRequest(string CsvContent);
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<EmployeeDetailDto>> Get(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
