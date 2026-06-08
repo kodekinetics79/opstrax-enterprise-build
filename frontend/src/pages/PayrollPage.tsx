@@ -206,7 +206,7 @@ function CreateSalaryStructureModal({ onClose, onSaved }: { onClose: () => void;
         <div className="grid grid-cols-2 gap-3">
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD'].map(c => <option key={c}>{c}</option>)}
+              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
@@ -330,7 +330,7 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD'].map(c => <option key={c}>{c}</option>)}
+              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
         </div>

@@ -117,6 +117,9 @@ export function LoginPage() {
         <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
           KynexOne · One Platform for Every Workforce Operation
         </p>
+        <p className="mt-1 text-center text-[11px] text-slate-400 dark:text-slate-600">
+          A <span className="font-semibold text-slate-500 dark:text-slate-400">Kode Kinetics</span> product
+        </p>
       </div>
     </div>
   );

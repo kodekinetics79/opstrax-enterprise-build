@@ -159,6 +159,12 @@ public class AuthSeeder : IAuthSeeder
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        // Global labour-law / payroll rule packs for major countries — seeded for every
+        // tenant as configurable reference data (not demo). Admins can edit, override,
+        // or import additional country packs. This keeps the platform global, not UAE-only.
+        try { await EnsureGlobalCountryRules(tenant.Id, cancellationToken); }
+        catch (Exception ex) { Console.WriteLine($"[Seed] Country rule packs skipped: {ex.Message}"); }
+
         // Sample organisation/business data is seeded only when explicitly enabled
         // (SeedAdmin:SeedDemoData). Production tenants start clean — tenant, roles,
         // permissions and the admin account above are always seeded; nothing else.
@@ -166,6 +172,43 @@ public class AuthSeeder : IAuthSeeder
         {
             await EnsureFoundationSeedData(tenant.Id, cancellationToken);
         }
+    }
+
+    private async Task EnsureGlobalCountryRules(Guid tenantId, CancellationToken ct)
+    {
+        if (await _db.CountryPayrollRules.AnyAsync(x => x.TenantId == tenantId, ct)) return;
+
+        // (CountryCode, Currency, Weekend, AnnualLeaveDays, SickLeaveDays, ProbationMonths,
+        //  NoticeDays, OtNormal, OtHoliday, EndOfServiceNote)
+        var packs = new (string Country, string Currency, string Weekend, int Annual, int Sick, int Probation, int Notice, decimal OtNormal, decimal OtHoliday, string Eosb)[]
+        {
+            ("AE", "AED", "Fri-Sat", 30, 90, 6, 30, 1.25m, 1.50m, "Gratuity: 21 days/yr for first 5 yrs, 30 days/yr thereafter"),
+            ("SA", "SAR", "Fri-Sat", 21, 120, 3, 60, 1.50m, 2.00m, "End-of-service: 0.5 month/yr first 5 yrs, 1 month/yr after"),
+            ("IN", "INR", "Sat-Sun", 18, 12, 6, 30, 2.00m, 2.00m, "Gratuity (Payment of Gratuity Act): 15 days wages/yr after 5 yrs"),
+            ("GB", "GBP", "Sat-Sun", 28, 28, 3, 30, 1.50m, 2.00m, "Statutory: no gratuity; redundancy pay per service length"),
+            ("US", "USD", "Sat-Sun", 15, 5, 3, 14, 1.50m, 1.50m, "At-will; FLSA overtime 1.5x over 40 hrs/week; no statutory gratuity"),
+            ("PH", "PHP", "Sat-Sun", 5, 0, 6, 30, 1.25m, 2.00m, "13th-month pay mandatory; separation pay per Labor Code"),
+            ("EG", "EGP", "Fri-Sat", 21, 0, 3, 60, 1.35m, 2.00m, "End-of-service per Egyptian Labour Law No. 12/2003"),
+        };
+
+        var rules = new List<CountryPayrollRule>();
+        void Add(string country, string key, string val, string type, string desc) =>
+            rules.Add(new CountryPayrollRule { TenantId = tenantId, CountryCode = country, RuleKey = key, RuleValue = val, DataType = type, Description = desc });
+
+        foreach (var p in packs)
+        {
+            Add(p.Country, "default_currency", p.Currency, "string", "Default payroll currency");
+            Add(p.Country, "weekend_days", p.Weekend, "string", "Statutory weekend");
+            Add(p.Country, "annual_leave_days", p.Annual.ToString(), "int", "Statutory annual leave entitlement (days)");
+            Add(p.Country, "sick_leave_days", p.Sick.ToString(), "int", "Statutory sick leave entitlement (days)");
+            Add(p.Country, "probation_months", p.Probation.ToString(), "int", "Maximum probation period (months)");
+            Add(p.Country, "notice_period_days", p.Notice.ToString(), "int", "Default notice period (days)");
+            Add(p.Country, "overtime_multiplier_normal", p.OtNormal.ToString(System.Globalization.CultureInfo.InvariantCulture), "decimal", "Overtime multiplier — normal day");
+            Add(p.Country, "overtime_multiplier_holiday", p.OtHoliday.ToString(System.Globalization.CultureInfo.InvariantCulture), "decimal", "Overtime multiplier — public holiday/rest day");
+            Add(p.Country, "end_of_service", p.Eosb, "string", "End-of-service / gratuity rule");
+        }
+        _db.CountryPayrollRules.AddRange(rules);
+        await _db.SaveChangesAsync(ct);
     }
 
     private async Task<List<Permission>> EnsurePermissions(CancellationToken cancellationToken)

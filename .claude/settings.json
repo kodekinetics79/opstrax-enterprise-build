@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep -nA22 \"class AppraisalCycle\" Models/Performance.cs)"
+      "Bash(grep -nA22 \"class AppraisalCycle\" Models/Performance.cs)",
+      "Bash(grep -rnA14 \"class TenantLocalizationSetting\" Models/)",
+      "Bash(grep -rnA12 \"class CountryPayrollRule\" Models/)",
+      "Read(//Users/zackkhan/frontend/**)",
+      "Bash(sed -n '1,65p' Infrastructure/Attendance/AttendanceService.cs)",
+      "Bash(awk '/private async Task<Employee\\\\?> ResolveEmployee|static string NormalizeDirection|static string Clean|static string CleanJson/{p=1} p{print} p&&/^    \\\\}/{print \"----\"}' Infrastructure/Attendance/AttendanceService.cs)"
     ]
   }
 }
