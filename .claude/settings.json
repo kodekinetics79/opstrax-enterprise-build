@@ -6,7 +6,9 @@
       "Bash(grep -rnA12 \"class CountryPayrollRule\" Models/)",
       "Read(//Users/zackkhan/frontend/**)",
       "Bash(sed -n '1,65p' Infrastructure/Attendance/AttendanceService.cs)",
-      "Bash(awk '/private async Task<Employee\\\\?> ResolveEmployee|static string NormalizeDirection|static string Clean|static string CleanJson/{p=1} p{print} p&&/^    \\\\}/{print \"----\"}' Infrastructure/Attendance/AttendanceService.cs)"
+      "Bash(awk '/private async Task<Employee\\\\?> ResolveEmployee|static string NormalizeDirection|static string Clean|static string CleanJson/{p=1} p{print} p&&/^    \\\\}/{print \"----\"}' Infrastructure/Attendance/AttendanceService.cs)",
+      "Bash(cd /Users/zackkhan/Downloads/zayra-ai-workforce/frontend/src *)",
+      "Read(//Users/zackkhan/Downloads/**)"
     ]
   }
 }

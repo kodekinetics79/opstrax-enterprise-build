@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Search, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { employeesApi } from '../api/employees';
@@ -26,6 +26,7 @@ interface PaletteItem {
 
 export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -311,7 +312,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
             onOpenSearch={openCommandPalette}
             onAskKynexOne={() => navigate('/ai-assistant')}
           />
-          <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+          <main key={pathname} className="animate-fade-in-up px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
       </div>
 

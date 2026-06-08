@@ -83,19 +83,19 @@ input:focus-visible {
   }
 
   .nav-item {
-    @apply flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm font-semibold transition-all duration-150;
+    @apply relative flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm font-semibold transition-all duration-200 ease-out;
   }
 
   .nav-item-active {
-    @apply bg-sapphire text-white shadow-sm;
+    @apply bg-gradient-to-r from-sapphire to-blue-500 text-white shadow-md shadow-sapphire/25;
   }
 
   .nav-item-idle {
-    @apply text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.07] dark:hover:text-white;
+    @apply text-slate-600 hover:translate-x-0.5 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.07] dark:hover:text-white;
   }
 
   .btn-primary {
-    @apply inline-flex h-9 items-center gap-2 rounded-lg bg-sapphire px-4 text-sm font-semibold text-white transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sapphire/50;
+    @apply inline-flex h-9 items-center gap-2 rounded-lg bg-sapphire px-4 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-px hover:bg-blue-600 hover:shadow-md active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sapphire/50;
   }
 
   .btn-secondary {
@@ -109,4 +109,31 @@ input:focus-visible {
   .select {
     @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition focus:border-sapphire focus:outline-none focus:ring-2 focus:ring-sapphire/20 dark:border-white/10 dark:bg-white/[0.05] dark:text-white;
   }
+
+  /* Subtle lift for interactive cards/panels */
+  .lift {
+    @apply transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-soft;
+  }
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes kx-fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes kx-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes kx-slide-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-fade-in-up { animation: kx-fade-in-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fade-in { animation: kx-fade-in 0.25s ease-out both; }
+.animate-slide-in { animation: kx-slide-in 0.25s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up, .animate-fade-in, .animate-slide-in { animation: none; }
+  .nav-item-idle:hover, .btn-primary:hover { transform: none; }
 }

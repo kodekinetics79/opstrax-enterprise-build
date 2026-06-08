@@ -91,9 +91,12 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
             return (
             <div key={group.label} className={gi > 0 ? 'mt-1' : ''}>
               {!isCollapsed ? (
-                <p className="mb-0.5 mt-3 px-4 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 first:mt-2 dark:text-slate-500">
-                  {group.label}
-                </p>
+                <div className="mb-0.5 mt-3 flex items-center gap-1.5 px-4 first:mt-2">
+                  <span className="h-1 w-1 shrink-0 rounded-full bg-gradient-to-r from-sapphire to-cyanAccent" />
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+                    {group.label}
+                  </p>
+                </div>
               ) : (
                 gi > 0 && <div className="mx-3 mb-1 mt-2 h-px bg-slate-100 dark:bg-white/[0.07]" />
               )}
@@ -175,6 +178,9 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                   <LogOut className="h-3.5 w-3.5" />
                 </button>
               </div>
+              <p className="mt-1 px-2 text-center text-[10px] font-medium text-slate-400 dark:text-slate-600">
+                KynexOne · by <span className="font-semibold text-slate-500 dark:text-slate-400">Kode Kinetics</span>
+              </p>
             </div>
           )}
         </div>

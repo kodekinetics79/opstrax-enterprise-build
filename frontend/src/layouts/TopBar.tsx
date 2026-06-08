@@ -1,5 +1,6 @@
-import { Bell, Bot, Menu, Moon, Sun, X } from 'lucide-react';
+import { Bell, Bot, LogOut, Menu, Moon, Sun, UserCircle2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../components/Avatar';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsApi } from '../api/notifications';
@@ -78,10 +79,22 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
 
 export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAskKynexOne }: TopBarProps) {
   const ThemeIcon = theme === 'dark' ? Sun : Moon;
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const bellRef = useRef<HTMLDivElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (userRef.current && !userRef.current.contains(e.target as Node)) setUserMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [userMenuOpen]);
 
   useEffect(() => {
     notificationsApi.list()
@@ -159,17 +172,42 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAs
           {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
         </div>
 
-        <button
-          type="button"
-          aria-label="Open user menu"
-          className="hidden h-8 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 pl-1 pr-3 transition hover:border-slate-300 hover:bg-white md:flex dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]"
-        >
-          <Avatar name={user?.fullName ?? 'User'} size="xs" />
-          <div className="text-left">
-            <p className="text-xs font-semibold leading-tight text-slate-900 dark:text-white">{user?.fullName ?? 'User'}</p>
-            <p className="text-[10px] leading-tight text-slate-500 dark:text-slate-400">{user?.roles[0] ?? 'Member'}</p>
-          </div>
-        </button>
+        <div ref={userRef} className="relative">
+          <button
+            type="button"
+            aria-label="Open user menu"
+            onClick={() => setUserMenuOpen((o) => !o)}
+            className="hidden h-8 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 pl-1 pr-3 transition hover:border-slate-300 hover:bg-white md:flex dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]"
+          >
+            <Avatar name={user?.fullName ?? 'User'} size="xs" />
+            <div className="text-left">
+              <p className="text-xs font-semibold leading-tight text-slate-900 dark:text-white">{user?.fullName ?? 'User'}</p>
+              <p className="text-[10px] leading-tight text-slate-500 dark:text-slate-400">{user?.roles[0] ?? 'Member'}</p>
+            </div>
+          </button>
+          {userMenuOpen && (
+            <div className="animate-fade-in absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+              <div className="border-b border-slate-100 px-4 py-3 dark:border-white/[0.07]">
+                <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{user?.fullName ?? 'User'}</p>
+                <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{user?.email ?? ''}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setUserMenuOpen(false); navigate('/ess'); }}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/[0.04]"
+              >
+                <UserCircle2 className="h-4 w-4 text-slate-400" /> My Profile
+              </button>
+              <button
+                type="button"
+                onClick={async () => { setUserMenuOpen(false); await logout(); navigate('/login', { replace: true }); }}
+                className="flex w-full items-center gap-2.5 border-t border-slate-100 px-4 py-2.5 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:border-white/[0.07] dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <LogOut className="h-4 w-4" /> Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );
