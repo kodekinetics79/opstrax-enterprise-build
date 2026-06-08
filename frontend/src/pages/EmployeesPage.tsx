@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileUp, History, Plus, RefreshCw, Search, Send, UserRound, Users } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { employeesApi } from '../api/employees';
 import type { EmployeeCreateRequest, EmployeeDetail, EmployeeListItem } from '../api/employees';
 import { branchesApi, companiesApi, costCentersApi, departmentsApi, designationsApi, gradesApi } from '../api/organization';
@@ -68,6 +69,7 @@ const emptyEmployee = (): EmployeeCreateRequest => ({
 });
 
 export function EmployeesPage() {
+  const [searchParams] = useSearchParams();
   const [employees, setEmployees] = useState<EmployeeListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -133,6 +135,20 @@ export function EmployeesPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadLookups().catch(() => setError('Could not load organization setup data.')); }, [loadLookups]);
   useEffect(() => { setPage(1); }, [search, status]);
+  useEffect(() => {
+    const searchFromUrl = searchParams.get('search');
+    if (searchFromUrl !== null && searchFromUrl !== search) {
+      setSearch(searchFromUrl);
+    }
+  }, [search, searchParams]);
+  useEffect(() => {
+    const employeeId = searchParams.get('employeeId');
+    if (!employeeId) return;
+    const id = Number(employeeId);
+    if (Number.isFinite(id) && id > 0 && selectedId !== id) {
+      openDetail(id);
+    }
+  }, [searchParams, selectedId]);
 
   const selectedEmployee = useMemo(() => detail?.employee, [detail]);
 

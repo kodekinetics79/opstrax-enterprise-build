@@ -48,6 +48,7 @@ export interface DashboardOverview {
   payrollSummary: DashboardPayrollSummary | null;
   payrollByEntity: NamedValue[];
   workforceMix: NamedValue[];
+  headcountByDepartment: NamedValue[];
   alerts: DashboardAlert[];
   openLeaveRequests: number;
   newJoinersThisMonth: number;

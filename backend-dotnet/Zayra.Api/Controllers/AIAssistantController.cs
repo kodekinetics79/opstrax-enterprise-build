@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Diagnostics;
+using System.Security.Claims;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.AI;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
+using Zayra.Api.Infrastructure.AI;
 
 namespace Zayra.Api.Controllers;
 
@@ -14,8 +16,13 @@ namespace Zayra.Api.Controllers;
 public class AIAssistantController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IAiAdvisoryService _aiAdvisoryService;
 
-    public AIAssistantController(ZayraDbContext db) => _db = db;
+    public AIAssistantController(ZayraDbContext db, IAiAdvisoryService aiAdvisoryService)
+    {
+        _db = db;
+        _aiAdvisoryService = aiAdvisoryService;
+    }
 
     // ── AI HR Query (live DB context, advisory only) ─────────────────────────
 
@@ -26,71 +33,21 @@ public class AIAssistantController : ControllerBase
         if (tenantId is null) return Unauthorized();
 
         var userId = this.GetUserId();
-        var userRoles = User.Claims
+        var roles = User.Claims
             .Where(c => c.Type == System.Security.Claims.ClaimTypes.Role)
             .Select(c => c.Value)
             .ToList();
-        var userRole = string.Join(",", userRoles);
+        var permissions = User.Claims
+            .Where(c => c.Type == "permission")
+            .Select(c => c.Value)
+            .ToList();
 
-        var sw = Stopwatch.StartNew();
-        var intent = ClassifyIntent(req.Query);
+        var response = await _aiAdvisoryService.QueryAsync(
+            new AiUserContext(tenantId.Value, userId, roles, permissions, GetEmployeeId()),
+            req,
+            ct);
 
-        // RBAC: block sensitive queries for non-authorized roles
-        var isSensitiveIntent = intent is "payroll_details" or "salary_details" or "employee_risk";
-        var isHROrAdmin = userRoles.Any(r => r is "Admin" or "HR Manager" or "HR Officer" or "Payroll Manager");
-
-        if (isSensitiveIntent && !isHROrAdmin)
-        {
-            var blockedLog = new AIHRQueryLog
-            {
-                TenantId = tenantId.Value,
-                UserId = userId ?? Guid.Empty,
-                EmployeeId = req.EmployeeId,
-                UserRole = userRole,
-                Query = req.Query,
-                Response = string.Empty,
-                IntentClassified = intent,
-                WasBlocked = true,
-                BlockedReason = "Insufficient permissions to access this information.",
-                IsAdvisoryLabelShown = true
-            };
-            _db.AIHRQueryLogs.Add(blockedLog);
-            await _db.SaveChangesAsync(ct);
-            return Ok(new AIQueryResponse(
-                "I'm unable to provide that information based on your current access level.",
-                intent,
-                true,
-                "Insufficient permissions to access this information.",
-                0,
-                true,
-                []
-            ));
-        }
-
-        // Build live context from database
-        var context = await BuildContextAsync(tenantId.Value, intent, req.EmployeeId, ct);
-        var response = GenerateAdvisoryResponse(intent, req.Query, context);
-
-        sw.Stop();
-
-        var log = new AIHRQueryLog
-        {
-            TenantId = tenantId.Value,
-            UserId = userId ?? Guid.Empty,
-            EmployeeId = req.EmployeeId,
-            UserRole = userRole,
-            Query = req.Query,
-            Response = response.Answer,
-            IntentClassified = intent,
-            WasBlocked = false,
-            TokensUsed = (int)(req.Query.Length / 4 + response.Answer.Length / 4),
-            ResponseTimeMs = (int)sw.ElapsedMilliseconds,
-            IsAdvisoryLabelShown = true
-        };
-        _db.AIHRQueryLogs.Add(log);
-        await _db.SaveChangesAsync(ct);
-
-        return Ok(response with { IsAdvisory = true });
+        return Ok(response);
     }
 
     // ── AI Insights ──────────────────────────────────────────────────────────
@@ -347,114 +304,8 @@ public class AIAssistantController : ControllerBase
         });
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
-
-    private static string ClassifyIntent(string query)
-    {
-        var q = query.ToLowerInvariant();
-        if (q.Contains("headcount") || q.Contains("how many employee")) return "headcount";
-        if (q.Contains("on leave") || q.Contains("absent")) return "leave_status";
-        if (q.Contains("leave balance")) return "leave_balance";
-        if (q.Contains("pending approval")) return "pending_approvals";
-        if (q.Contains("salary") || q.Contains("payroll") || q.Contains("pay slip")) return "payroll_details";
-        if (q.Contains("risk") || q.Contains("churn") || q.Contains("burnout")) return "employee_risk";
-        if (q.Contains("department")) return "department_info";
-        if (q.Contains("overtime")) return "overtime_summary";
-        if (q.Contains("holiday") || q.Contains("public holiday")) return "holiday_info";
-        return "general";
-    }
-
-    private async Task<Dictionary<string, object>> BuildContextAsync(
-        Guid tenantId, string intent, int? employeeId, CancellationToken ct)
-    {
-        var context = new Dictionary<string, object>();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-
-        switch (intent)
-        {
-            case "headcount":
-                context["totalActive"] = await _db.Employees
-                    .CountAsync(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active", ct);
-                context["byDepartment"] = (await _db.Employees
-                    .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active")
-                    .GroupBy(e => e.Department)
-                    .Select(g => new { Department = g.Key, Count = g.Count() })
-                    .ToListAsync(ct))
-                    .Cast<object>().ToList();
-                break;
-
-            case "leave_status":
-                context["onLeaveToday"] = await _db.LeaveRequests
-                    .CountAsync(r => r.TenantId == tenantId && r.Status == "Approved"
-                        && r.StartDate <= today && r.EndDate >= today, ct);
-                break;
-
-            case "pending_approvals":
-                var statuses = new[] { "Submitted", "PendingManagerApproval", "PendingHRApproval" };
-                context["pendingLeaveCount"] = await _db.LeaveRequests
-                    .CountAsync(r => r.TenantId == tenantId && statuses.Contains(r.Status), ct);
-                context["pendingOvertimeCount"] = await _db.OvertimeRequests
-                    .CountAsync(r => r.TenantId == tenantId && r.Status == "PendingApproval", ct);
-                break;
-
-            case "leave_balance" when employeeId.HasValue:
-                context["balances"] = await _db.EmployeeLeaveBalances
-                    .Where(b => b.TenantId == tenantId && b.EmployeeId == employeeId.Value
-                        && b.Year == DateTime.UtcNow.Year)
-                    .Select(b => new { b.LeaveTypeName, b.Available, b.Used })
-                    .ToListAsync(ct);
-                break;
-
-            case "department_info":
-                context["departments"] = await _db.Departments
-                    .Where(d => d.TenantId == tenantId && !d.IsDeleted)
-                    .Select(d => new { Name = d.NameEn, d.Code })
-                    .ToListAsync(ct);
-                break;
-
-            case "holiday_info":
-                var nextMonth = today.AddMonths(1);
-                context["upcomingHolidays"] = await _db.PublicHolidays
-                    .Where(h => h.TenantId == tenantId && h.Date >= today && h.Date <= nextMonth)
-                    .OrderBy(h => h.Date)
-                    .Select(h => new { h.NameEn, h.Date })
-                    .ToListAsync(ct);
-                break;
-        }
-
-        return context;
-    }
-
-    private static AIQueryResponse GenerateAdvisoryResponse(
-        string intent, string query, Dictionary<string, object> context)
-    {
-        var answer = intent switch
-        {
-            "headcount" => context.TryGetValue("totalActive", out var total)
-                ? $"There are currently {total} active employees in your organisation."
-                : "I couldn't retrieve headcount data at this time.",
-            "leave_status" => context.TryGetValue("onLeaveToday", out var count)
-                ? $"There are {count} employees on approved leave today."
-                : "I couldn't retrieve leave data at this time.",
-            "pending_approvals" => context.TryGetValue("pendingLeaveCount", out var lc)
-                ? $"There are {lc} pending leave requests and {(context.TryGetValue("pendingOvertimeCount", out var oc) ? oc : 0)} pending overtime requests awaiting approval."
-                : "I couldn't retrieve pending approval data.",
-            "leave_balance" => context.TryGetValue("balances", out var b)
-                ? $"Here are the leave balances for the requested employee: {System.Text.Json.JsonSerializer.Serialize(b)}"
-                : "I couldn't retrieve leave balance data.",
-            "department_info" => context.TryGetValue("departments", out var d)
-                ? $"Your organisation has departments: {string.Join(", ", ((System.Collections.IEnumerable)d).Cast<dynamic>().Select(x => x.Name))}."
-                : "I couldn't retrieve department data.",
-            "holiday_info" => context.TryGetValue("upcomingHolidays", out var h)
-                ? $"Upcoming public holidays: {System.Text.Json.JsonSerializer.Serialize(h)}"
-                : "No upcoming holidays found in the next month.",
-            "payroll_details" => "Payroll details are available to authorised payroll and HR roles only.",
-            "employee_risk" => "Employee risk insights are available to HR leadership roles only.",
-            _ => "I'm your HR assistant. I can help with headcount, leave status, pending approvals, balances, and department information. Please rephrase your question."
-        };
-
-        return new AIQueryResponse(answer, intent, false, string.Empty, 0, true, []);
-    }
+    private int? GetEmployeeId() =>
+        int.TryParse(User.FindFirst("employee_id")?.Value, out var id) ? id : null;
 
     private static string GenerateRiskRecommendation(string level, int absenceCount, decimal overtimeHours) =>
         level switch
@@ -465,13 +316,3 @@ public class AIAssistantController : ControllerBase
             _ => "Employee engagement appears stable. Continue regular check-ins."
         };
 }
-
-public record AIQueryRequest(string Query, int? EmployeeId);
-public record AIQueryResponse(
-    string Answer,
-    string Intent,
-    bool WasBlocked,
-    string BlockedReason,
-    int TokensUsed,
-    bool IsAdvisory,
-    List<string> Suggestions);

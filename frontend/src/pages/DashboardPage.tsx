@@ -5,18 +5,15 @@ import {
   ArrowRight,
   BadgeDollarSign,
   Bot,
+  Building2,
   CalendarPlus,
-  CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
-  Clock3,
   FileCheck2,
   Info,
   PlaneTakeoff,
   ShieldAlert,
   Sparkles,
   UserPlus,
-  UsersRound,
   Zap,
 } from 'lucide-react';
 import { dashboardApi } from '../api/dashboard';
@@ -44,6 +41,7 @@ import type { AiInsight } from '../types/ui';
 
 const mixColors = ['#2F6BFF', '#00C896', '#5EEBFF', '#94A3B8', '#A78BFA', '#F59E0B'];
 const mixDotClass = ['bg-sapphire', 'bg-emeraldZ', 'bg-cyanAccent', 'bg-slate-400', 'bg-violet-400', 'bg-amber-500'];
+const attendanceColors = { present: '#00C896', leave: '#5EEBFF', absent: '#F43F5E' };
 
 const severityIcon = {
   critical: <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />,
@@ -67,19 +65,19 @@ const quickActions = [
 function InsightCard({ insight }: { insight: AiInsight }) {
   const sev = insight.severity ?? 'info';
   return (
-    <div className={`rounded-lg border bg-white p-3.5 dark:bg-white/[0.04] ${severityBorder[sev]}`}>
+    <div className={`rounded-lg border bg-white p-3 dark:bg-white/[0.04] ${severityBorder[sev]}`}>
       <div className="flex items-center gap-2">
         {severityIcon[sev]}
         <p className="text-xs font-bold text-slate-900 dark:text-white">{insight.title}</p>
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">{insight.body}</p>
+      <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">{insight.body}</p>
     </div>
   );
 }
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="flex items-center justify-center rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-400 dark:border-white/10 dark:text-slate-500">
+    <div className="flex h-full min-h-[80px] items-center justify-center rounded-lg border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400 dark:border-white/10 dark:text-slate-500">
       {message}
     </div>
   );
@@ -128,292 +126,222 @@ export function DashboardPage() {
     ? Math.round((summary.presentToday / summary.activeEmployees) * 100)
     : 0;
 
-  const liveKpis = [
-    { label: 'Total Active Employees', value: (summary?.activeEmployees ?? 0).toLocaleString(), delta: `${summary?.totalEmployees ?? 0} total`, tone: 'blue' as const, trend: 'up' as const },
-    { label: 'Present Today', value: (summary?.presentToday ?? 0).toLocaleString(), delta: summary ? `${attendanceRate}% attendance` : '—', tone: 'emerald' as const, trend: 'up' as const },
-    { label: 'Pending Approvals', value: (overview?.pendingApprovals ?? 0).toLocaleString(), delta: `${overview?.openLeaveRequests ?? 0} open leave`, tone: 'amber' as const, trend: 'neutral' as const },
-    { label: 'OT Hours (Month)', value: (summary?.overtimeHours ?? 0).toFixed(0), delta: `${summary?.churnRisk ?? 0} churn risk`, tone: 'rose' as const, trend: (summary?.churnRisk ?? 0) > 0 ? 'down' as const : 'neutral' as const },
-  ];
-
-  const attendanceTiles = [
-    { label: 'Present', value: (summary?.presentToday ?? 0).toString() },
-    { label: 'On Leave', value: (summary?.onLeave ?? 0).toString() },
-    { label: 'Absent', value: (summary?.absent ?? 0).toString() },
-    { label: 'OT Hours (MTD)', value: (summary?.overtimeHours ?? 0).toFixed(1) },
-  ];
-
   const hasTrend = trends.length > 0;
   const approvalQueue = overview?.approvalQueue ?? [];
   const payroll = overview?.payrollSummary ?? null;
   const payrollByEntity = overview?.payrollByEntity ?? [];
   const workforceMix = overview?.workforceMix ?? [];
+  const headcountByDept = overview?.headcountByDepartment ?? [];
   const alerts = overview?.alerts ?? [];
   const workforceTotal = workforceMix.reduce((s, x) => s + x.value, 0);
+  const deptMax = Math.max(1, ...headcountByDept.map((d) => d.value));
+  const criticalAlerts = alerts.filter((a) => a.severity === 'Critical').length;
 
-  const payrollTiles = payroll
-    ? [
-        { label: 'Gross Payroll', value: fmtMoney(payroll.totalGross) },
-        { label: 'Net Payroll', value: fmtMoney(payroll.totalNet) },
-        { label: 'Deductions', value: fmtMoney(payroll.totalDeductions) },
-        { label: 'Employees', value: payroll.employeeCount.toLocaleString() },
-      ]
-    : [];
+  const attendanceDonut = [
+    { name: 'Present', value: summary?.presentToday ?? 0, color: attendanceColors.present },
+    { name: 'On Leave', value: summary?.onLeave ?? 0, color: attendanceColors.leave },
+    { name: 'Absent', value: summary?.absent ?? 0, color: attendanceColors.absent },
+  ];
+  const attendanceTotal = attendanceDonut.reduce((s, x) => s + x.value, 0);
 
-  const selfServiceItems = [
-    { label: 'Open leave requests', value: (overview?.openLeaveRequests ?? 0).toString() },
-    { label: 'Pending approvals', value: (overview?.pendingApprovals ?? 0).toString() },
-    { label: 'New joiners (this month)', value: (overview?.newJoinersThisMonth ?? 0).toString() },
+  const kpis = [
+    { label: 'Active Headcount', value: (summary?.activeEmployees ?? 0).toLocaleString(), delta: `${summary?.totalEmployees ?? 0} total · ${overview?.newJoinersThisMonth ?? 0} new`, tone: 'blue' as const, trend: 'up' as const },
+    { label: 'Present Today', value: (summary?.presentToday ?? 0).toLocaleString(), delta: summary ? `${attendanceRate}% attendance` : '—', tone: 'emerald' as const, trend: 'up' as const },
+    { label: 'On Leave', value: (summary?.onLeave ?? 0).toLocaleString(), delta: `${summary?.absent ?? 0} absent today`, tone: 'cyan' as const, trend: 'neutral' as const },
+    { label: 'Pending Approvals', value: (overview?.pendingApprovals ?? 0).toLocaleString(), delta: `${overview?.openLeaveRequests ?? 0} open leave`, tone: 'amber' as const, trend: 'neutral' as const },
+    { label: 'Net Payroll', value: payroll ? fmtMoney(payroll.totalNet) : '—', delta: payroll ? `${payroll.periodLabel} · ${payroll.employeeCount} paid` : 'No run yet', tone: 'cyan' as const, trend: 'up' as const },
+    { label: 'Compliance Alerts', value: alerts.length.toLocaleString(), delta: `${criticalAlerts} critical`, tone: 'rose' as const, trend: criticalAlerts > 0 ? 'down' as const : 'neutral' as const },
   ];
 
   return (
-    <div className="mx-auto flex max-w-[1600px] flex-col gap-5">
-      {/* Page header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-sapphire dark:text-cyanAccent">
-            Command Center
-          </p>
+    <div className="mx-auto flex max-w-[1600px] flex-col gap-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-sapphire dark:text-cyanAccent">Command Center</p>
+            <StatusChip label="Live" tone="emerald" dot />
+          </div>
           <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
             Workforce Command Center
           </h1>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-            {today} &nbsp;·&nbsp; {summary ? `${summary.activeEmployees} active employees` : 'Loading…'}
+          <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400">
+            {today} · {summary ? `${summary.activeEmployees} active · ${attendanceRate}% present` : 'Loading live data…'}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button type="button" className="btn-secondary" onClick={() => navigate('/reports')}>Reports</button>
           <button type="button" className="btn-primary" onClick={() => navigate('/approvals')}>
-            Approval Center
+            Approvals
+            {overview && overview.pendingApprovals > 0 && (
+              <span className="ml-0.5 rounded-full bg-white/25 px-1.5 text-[10px] font-bold">{overview.pendingApprovals}</span>
+            )}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
-      {/* KPI grid */}
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Workforce KPIs">
-        {liveKpis.map((metric) => (
+      {/* KPI strip — 6 at a glance */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" aria-label="Workforce KPIs">
+        {kpis.map((metric) => (
           <KpiCard key={metric.label} metric={metric} />
         ))}
       </section>
 
-      {/* Main content: charts + right panel */}
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Left column */}
-        <div className="flex flex-col gap-5">
-          {/* Attendance live */}
-          <DataPanel
-            title="Attendance & Overtime Trend"
-            description="Monthly attendance rate and overtime hours."
-            action={<StatusChip label="Live" tone="emerald" dot />}
-          >
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_200px]">
-              <div className="h-[240px] min-w-0">
-                {hasTrend ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trends as unknown as Record<string, unknown>[]} margin={{ left: -20, right: 4, top: 6, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="grad-present" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#2F6BFF" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#2F6BFF" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="grad-late" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#00C896" stopOpacity={0.25} />
-                          <stop offset="95%" stopColor="#00C896" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
-                      <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                      <Tooltip contentStyle={tooltipStyle} />
-                      <Area type="monotone" dataKey="attendanceRate" name="Attendance %" stroke="#2F6BFF" strokeWidth={2} fill="url(#grad-present)" />
-                      <Area type="monotone" dataKey="overtimeHours" name="OT Hours" stroke="#00C896" strokeWidth={2} fill="url(#grad-late)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <EmptyState message="No attendance data recorded yet." />
-                  </div>
-                )}
+      {/* Bento grid */}
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        {/* Attendance & OT trend */}
+        <DataPanel
+          title="Attendance & Overtime Trend"
+          description="Last 6 months — attendance rate vs overtime hours."
+          className="xl:col-span-8"
+        >
+          <div className="h-[230px]">
+            {hasTrend ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trends as unknown as Record<string, unknown>[]} margin={{ left: -20, right: 4, top: 6, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="grad-present" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2F6BFF" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#2F6BFF" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="grad-late" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#00C896" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#00C896" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
+                  <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                  <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Area type="monotone" dataKey="attendanceRate" name="Attendance %" stroke="#2F6BFF" strokeWidth={2} fill="url(#grad-present)" />
+                  <Area type="monotone" dataKey="overtimeHours" name="OT Hours" stroke="#00C896" strokeWidth={2} fill="url(#grad-late)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState message="No attendance history recorded yet." />
+            )}
+          </div>
+        </DataPanel>
+
+        {/* Attendance today donut */}
+        <DataPanel title="Attendance Today" description="Live workforce status." className="xl:col-span-4">
+          {attendanceTotal === 0 ? (
+            <EmptyState message="No attendance recorded today." />
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="relative h-[150px] w-[150px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={attendanceDonut} dataKey="value" nameKey="name" innerRadius={46} outerRadius={66} paddingAngle={2}>
+                      {attendanceDonut.map((e) => <Cell key={e.name} fill={e.color} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-xl font-bold text-slate-950 dark:text-white">{attendanceRate}%</span>
+                  <span className="text-[10px] font-medium text-slate-400">present</span>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-                {attendanceTiles.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-white/[0.07] dark:bg-white/[0.04]"
-                  >
-                    <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{item.label}</p>
-                    <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{item.value}</p>
+              <div className="flex-1 space-y-2">
+                {attendanceDonut.map((e) => (
+                  <div key={e.name} className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      <span className="h-2 w-2 rounded-full" style={{ background: e.color }} />
+                      {e.name}
+                    </span>
+                    <span className="text-sm font-bold text-slate-950 dark:text-white">{e.value}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-slate-100 pt-2 dark:border-white/[0.07]">
+                  <span className="text-xs font-semibold text-slate-500">OT (MTD)</span>
+                  <span className="text-sm font-bold text-slate-950 dark:text-white">{(summary?.overtimeHours ?? 0).toFixed(0)}h</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </DataPanel>
+
+        {/* Payroll snapshot */}
+        <DataPanel
+          title="Payroll Command"
+          description={payroll ? `${payroll.periodLabel} · ${payroll.status}` : 'No payroll run yet.'}
+          className="xl:col-span-4"
+        >
+          {payroll ? (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: 'Gross', value: fmtMoney(payroll.totalGross) },
+                  { label: 'Net', value: fmtMoney(payroll.totalNet) },
+                  { label: 'Deductions', value: fmtMoney(payroll.totalDeductions) },
+                  { label: 'Employees', value: payroll.employeeCount.toLocaleString() },
+                ].map((t) => (
+                  <div key={t.label} className="rounded-lg border border-slate-100 bg-slate-50 p-2.5 dark:border-white/[0.07] dark:bg-white/[0.04]">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t.label}</p>
+                    <p className="mt-0.5 text-base font-bold text-slate-950 dark:text-white">{t.value}</p>
                   </div>
                 ))}
               </div>
-            </div>
-          </DataPanel>
+              <div className="mt-3 h-[120px]">
+                {payrollByEntity.length === 0 ? (
+                  <EmptyState message="No payslip breakdown." />
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={payrollByEntity} margin={{ left: -22, right: 4, top: 4, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
+                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 10 }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10 }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => [fmtMoney(Number(v)), 'Net']} />
+                      <Bar dataKey="value" fill="#2F6BFF" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </>
+          ) : (
+            <EmptyState message="Create a payroll run to see the command center." />
+          )}
+        </DataPanel>
 
-          {/* Approval queue + Payroll side-by-side */}
-          <div className="grid gap-5 lg:grid-cols-2">
-            {/* Approval Center preview */}
-            <DataPanel
-              title="Approval Center"
-              description="Pending across HR, payroll, leave, overtime and documents."
-              viewAll
-            >
-              {approvalQueue.length === 0 ? (
-                <EmptyState message="No pending approvals." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[420px] border-collapse text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                        {['Request', 'Module', 'Submitted'].map((h) => (
-                          <th
-                            key={h}
-                            className="pb-2.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500"
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50 dark:divide-white/[0.05]">
-                      {approvalQueue.map((item) => (
-                        <tr
-                          key={item.id}
-                          className="group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]"
-                          onClick={() => navigate('/approvals')}
-                        >
-                          <td className="py-2.5 pr-4">
-                            <p className="font-semibold text-slate-900 dark:text-white">{item.title}</p>
-                          </td>
-                          <td className="py-2.5 pr-4">
-                            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-white/10 dark:text-slate-300">
-                              {item.module}
-                            </span>
-                          </td>
-                          <td className="py-2.5 pr-4 text-slate-600 dark:text-slate-300">{timeAgo(item.createdAtUtc)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {/* Headcount by department */}
+        <DataPanel title="Headcount by Department" description="Active employees per department." className="xl:col-span-4">
+          {headcountByDept.length === 0 ? (
+            <EmptyState message="No active employees yet." />
+          ) : (
+            <div className="space-y-2.5">
+              {headcountByDept.map((d, i) => (
+                <div key={d.name}>
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 font-semibold text-slate-600 dark:text-slate-300">
+                      <Building2 className="h-3 w-3 text-slate-400" />
+                      {d.name}
+                    </span>
+                    <span className="font-bold text-slate-950 dark:text-white">{d.value}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.06]">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${(d.value / deptMax) * 100}%`, background: mixColors[i % mixColors.length] }}
+                    />
+                  </div>
                 </div>
-              )}
-            </DataPanel>
-
-            {/* Payroll Command Center */}
-            <DataPanel
-              title="Payroll Command Center"
-              description={payroll ? `Latest run · ${payroll.periodLabel} · ${payroll.status}` : 'No payroll run created yet.'}
-            >
-              {payroll ? (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    {payrollTiles.map((item) => (
-                      <div
-                        key={item.label}
-                        className="rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-white/[0.07] dark:bg-white/[0.04]"
-                      >
-                        <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{item.label}</p>
-                        <p className="mt-0.5 text-lg font-bold text-slate-950 dark:text-white">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-4 h-[160px]">
-                    {payrollByEntity.length === 0 ? (
-                      <EmptyState message="No payslip breakdown for this run." />
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={payrollByEntity} margin={{ left: -20, right: 4, top: 4, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
-                          <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                          <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                          <Tooltip contentStyle={tooltipStyle} formatter={(v) => [fmtMoney(Number(v)), 'Net']} />
-                          <Bar dataKey="value" fill="#2F6BFF" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <EmptyState message="Create a payroll run to see the command center." />
-              )}
-            </DataPanel>
-          </div>
-        </div>
-
-        {/* Right column — AI + Quick actions */}
-        <aside className="flex flex-col gap-5 xl:max-w-[320px]">
-          {/* AI Workforce Insights */}
-          <DataPanel
-            title="AI Workforce Insights"
-            description="Advisory signals for HR and finance leaders."
-            action={
-              <span className="flex items-center gap-1 rounded-full bg-sapphire/10 px-2 py-0.5 text-[10px] font-bold text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
-                <Sparkles className="h-3 w-3" />
-                KynexOne AI
-              </span>
-            }
-          >
-            <div className="space-y-2">
-              {insights.length === 0 ? (
-                <EmptyState message="No active AI insights." />
-              ) : (
-                insights.slice(0, 4).map((insight) => (
-                  <InsightCard
-                    key={insight.id ?? insight.title}
-                    insight={{ title: insight.title, body: insight.summary, severity: sevToTone[insight.severity] ?? 'info' }}
-                  />
-                ))
-              )}
+              ))}
             </div>
-            <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => navigate('/ai-assistant')}>
-              <Bot className="h-3.5 w-3.5" />
-              Open KynexOne AI
-            </button>
-          </DataPanel>
+          )}
+        </DataPanel>
 
-          {/* Quick Actions */}
-          <DataPanel title="Quick Actions" description="Frequent workflows, fewer clicks.">
-            <div className="space-y-1.5">
-              {quickActions.map((action) => {
-                const Icon = action.icon;
-                return (
-                  <button
-                    key={action.label}
-                    type="button"
-                    onClick={() => navigate(action.to)}
-                    className="flex w-full items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-left transition hover:border-sapphire/20 hover:bg-sapphire/[0.04] dark:border-white/[0.07] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
-                  >
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-sapphire/10 text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
-                      <Icon className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">
-                        {action.label}
-                      </span>
-                      <span className="block truncate text-[11px] text-slate-500 dark:text-slate-400">
-                        {action.description}
-                      </span>
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300 dark:text-slate-600" />
-                  </button>
-                );
-              })}
-            </div>
-          </DataPanel>
-        </aside>
-      </section>
-
-      {/* Analytics + ESS + Alerts row */}
-      <section className="grid gap-5 xl:grid-cols-[1fr_1fr_300px]">
-        {/* Workforce distribution donut */}
-        <DataPanel title="Workforce Distribution" description="Active employees by employment type.">
+        {/* Workforce mix */}
+        <DataPanel title="Workforce Mix" description="Active employees by employment type." className="xl:col-span-4">
           {workforceMix.length === 0 ? (
             <EmptyState message="No active employees to chart yet." />
           ) : (
-            <div className="flex items-center gap-4">
-              <div className="h-[190px] w-[190px] shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="h-[150px] w-[150px] shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={workforceMix} dataKey="value" nameKey="name" innerRadius={54} outerRadius={80} paddingAngle={2}>
+                    <Pie data={workforceMix} dataKey="value" nameKey="name" innerRadius={46} outerRadius={66} paddingAngle={2}>
                       {workforceMix.map((entry, index) => (
                         <Cell key={entry.name} fill={mixColors[index % mixColors.length]} />
                       ))}
@@ -422,21 +350,18 @@ export function DashboardPage() {
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex-1 space-y-2">
-                {workforceMix.map((item, index) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 dark:bg-white/[0.04]"
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+              <div className="flex-1 space-y-1.5">
+                {workforceMix.slice(0, 5).map((item, index) => (
+                  <div key={item.name} className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-2 font-semibold text-slate-600 dark:text-slate-300">
                       <span className={`h-2 w-2 rounded-full ${mixDotClass[index % mixDotClass.length]}`} />
                       {item.name}
                     </span>
-                    <span className="text-sm font-bold text-slate-950 dark:text-white">
+                    <span className="font-bold text-slate-950 dark:text-white">
                       {item.value}
                       {workforceTotal > 0 && (
-                        <span className="ml-1 text-[11px] font-medium text-slate-400">
-                          ({Math.round((item.value / workforceTotal) * 100)}%)
+                        <span className="ml-1 text-[10px] font-medium text-slate-400">
+                          {Math.round((item.value / workforceTotal) * 100)}%
                         </span>
                       )}
                     </span>
@@ -447,37 +372,78 @@ export function DashboardPage() {
           )}
         </DataPanel>
 
-        {/* Employee Self-Service */}
-        <DataPanel title="Employee Self-Service" description="Employee-facing demand signals." viewAll>
-          <div className="space-y-2">
-            {selfServiceItems.map((item) => (
-              <div
-                key={item.label}
-                className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-3 dark:border-white/[0.07]"
-              >
-                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{item.label}</span>
-                <span className="text-sm font-bold text-slate-950 dark:text-white">{item.value}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <SummaryLine icon={UsersRound} label="New joiners" value={(overview?.newJoinersThisMonth ?? 0).toString()} tone="blue" />
-            <SummaryLine icon={CircleDollarSign} label="Approvals" value={(overview?.pendingApprovals ?? 0).toString()} tone="amber" />
-            <SummaryLine icon={Clock3} label="Attendance" value={`${attendanceRate}%`} tone="emerald" />
-          </div>
+        {/* Approvals queue */}
+        <DataPanel title="Approval Center" description="Pending across HR, payroll, leave and overtime." className="xl:col-span-8" viewAll onViewAll={() => navigate('/approvals')}>
+          {approvalQueue.length === 0 ? (
+            <EmptyState message="No pending approvals — you're all caught up." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+                    {['Request', 'Module', 'Submitted'].map((h) => (
+                      <th key={h} className="pb-2.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50 dark:divide-white/[0.05]">
+                  {approvalQueue.map((item) => (
+                    <tr
+                      key={item.id}
+                      className="group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]"
+                      onClick={() => navigate('/approvals')}
+                    >
+                      <td className="py-2.5 pr-4 font-semibold text-slate-900 dark:text-white">{item.title}</td>
+                      <td className="py-2.5 pr-4">
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-white/10 dark:text-slate-300">{item.module}</span>
+                      </td>
+                      <td className="py-2.5 pr-4 text-slate-600 dark:text-slate-300">{timeAgo(item.createdAtUtc)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </DataPanel>
 
-        {/* Alerts & Anomalies */}
-        <DataPanel title="Alerts & Anomalies" description="Documents nearing or past expiry.">
+        {/* AI insights */}
+        <DataPanel
+          title="AI Workforce Insights"
+          description="Advisory signals."
+          className="xl:col-span-4"
+          action={
+            <span className="flex items-center gap-1 rounded-full bg-sapphire/10 px-2 py-0.5 text-[10px] font-bold text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
+              <Sparkles className="h-3 w-3" />
+              KynexOne AI
+            </span>
+          }
+        >
           <div className="space-y-2">
-            {alerts.length === 0 ? (
-              <EmptyState message="No compliance alerts." />
+            {insights.length === 0 ? (
+              <EmptyState message="No active AI insights." />
             ) : (
-              alerts.map((item) => (
-                <div
-                  key={item.title}
-                  className="flex items-center gap-2.5 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-white/[0.07] dark:bg-white/[0.04]"
-                >
+              insights.slice(0, 3).map((insight) => (
+                <InsightCard
+                  key={insight.id ?? insight.title}
+                  insight={{ title: insight.title, body: insight.summary, severity: sevToTone[insight.severity] ?? 'info' }}
+                />
+              ))
+            )}
+          </div>
+          <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => navigate('/ai-assistant')}>
+            <Bot className="h-3.5 w-3.5" />
+            Open KynexOne AI
+          </button>
+        </DataPanel>
+
+        {/* Alerts & compliance */}
+        <DataPanel title="Alerts & Anomalies" description="Documents nearing or past expiry." className="xl:col-span-8">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {alerts.length === 0 ? (
+              <div className="sm:col-span-2"><EmptyState message="No compliance alerts." /></div>
+            ) : (
+              alerts.slice(0, 6).map((item) => (
+                <div key={item.title} className="flex items-center gap-2.5 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-white/[0.07] dark:bg-white/[0.04]">
                   {item.severity === 'Critical' ? (
                     <ShieldAlert className="h-4 w-4 shrink-0 text-rose-500" />
                   ) : item.severity === 'Warning' ? (
@@ -485,120 +451,47 @@ export function DashboardPage() {
                   ) : (
                     <Info className="h-4 w-4 shrink-0 text-sapphire dark:text-cyanAccent" />
                   )}
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{item.title}</span>
+                  <span className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{item.title}</span>
                 </div>
               ))
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => navigate('/compliance')}
+            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-midnight py-2 text-xs font-semibold text-white transition hover:opacity-90 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
+          >
+            <PlaneTakeoff className="h-3.5 w-3.5" />
+            Review compliance readiness
+          </button>
+        </DataPanel>
 
-          {/* Featured action card */}
-          <div className="mt-4 rounded-xl bg-midnight p-4 dark:bg-white/[0.06]">
-            <div className="flex items-start gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-cyanAccent text-midnight">
-                <PlaneTakeoff className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-white">Compliance readiness</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-slate-400">Review employees blocked by document expiry.</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('/compliance')}
-              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/10 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              Open Compliance
-            </button>
+        {/* Quick actions */}
+        <DataPanel title="Quick Actions" description="Frequent workflows." className="xl:col-span-4">
+          <div className="space-y-1.5">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => navigate(action.to)}
+                  className="flex w-full items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-sapphire/20 hover:bg-sapphire/[0.04] dark:border-white/[0.07] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+                >
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sapphire/10 text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
+                    <Icon className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">{action.label}</span>
+                    <span className="block truncate text-[11px] text-slate-500 dark:text-slate-400">{action.description}</span>
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300 dark:text-slate-600" />
+                </button>
+              );
+            })}
           </div>
         </DataPanel>
       </section>
-
-      {/* Bottom summary row */}
-      <section className="grid gap-4 lg:grid-cols-3">
-        <ModuleSummary
-          icon={UsersRound}
-          title="People"
-          description="Headcount health and onboarding velocity."
-          lines={[
-            { icon: UsersRound, label: 'Active employees', value: (summary?.activeEmployees ?? 0).toLocaleString() },
-            { icon: UserPlus, label: 'New joiners this month', value: (overview?.newJoinersThisMonth ?? 0).toString() },
-          ]}
-        />
-        <ModuleSummary
-          icon={CircleDollarSign}
-          title="Payroll"
-          description="Finance controls and latest run."
-          lines={[
-            { icon: CircleDollarSign, label: 'Latest net payroll', value: payroll ? fmtMoney(payroll.totalNet) : '—' },
-            { icon: CheckCircle2, label: 'Employees paid', value: payroll ? payroll.employeeCount.toLocaleString() : '—' },
-          ]}
-        />
-        <ModuleSummary
-          icon={Clock3}
-          title="Attendance"
-          description="Operational coverage today."
-          lines={[
-            { icon: Clock3, label: 'Present today', value: (summary?.presentToday ?? 0).toLocaleString() },
-            { icon: CheckCircle2, label: 'Attendance rate', value: `${attendanceRate}%` },
-          ]}
-        />
-      </section>
-    </div>
-  );
-}
-
-/* ---- Sub-components ---- */
-
-function SummaryLine({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: typeof UsersRound;
-  label: string;
-  value: string;
-  tone: 'blue' | 'emerald' | 'amber';
-}) {
-  const color = tone === 'blue' ? 'text-sapphire dark:text-blue-400' : tone === 'emerald' ? 'text-emeraldZ dark:text-emerald-400' : 'text-amber-500';
-  return (
-    <div className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 py-2.5 dark:bg-white/[0.04]">
-      <Icon className={`h-4 w-4 ${color}`} />
-      <p className="text-base font-bold text-slate-950 dark:text-white">{value}</p>
-      <p className="text-center text-[10px] font-medium text-slate-500 dark:text-slate-400">{label}</p>
-    </div>
-  );
-}
-
-function ModuleSummary({
-  title,
-  description,
-  lines,
-}: {
-  icon: typeof UsersRound;
-  title: string;
-  description: string;
-  lines: { icon: typeof UsersRound; label: string; value: string }[];
-}) {
-  return (
-    <div className="surface rounded-xl p-4">
-      <h3 className="text-sm font-bold text-slate-950 dark:text-white">{title}</h3>
-      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{description}</p>
-      <div className="mt-3 space-y-2">
-        {lines.map(({ icon: Icon, label, value }) => (
-          <div
-            key={label}
-            className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2.5 dark:border-white/[0.07]"
-          >
-            <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-slate-600 dark:text-slate-300">
-              <Icon className="h-3.5 w-3.5 shrink-0 text-sapphire dark:text-cyanAccent" />
-              <span className="truncate">{label}</span>
-            </span>
-            <strong className="ml-3 shrink-0 text-sm font-bold text-slate-950 dark:text-white">{value}</strong>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

@@ -29,6 +29,8 @@ using Zayra.Api.Application.Leave;
 using Zayra.Api.Infrastructure.Leave;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Infrastructure.Common;
+using Zayra.Api.Application.AI;
+using Zayra.Api.Infrastructure.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:5117");
@@ -37,7 +39,14 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("SeedAdmin"));
 
 builder.Services.AddControllers();
-builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+// CORS locked to an explicit allowlist (SOC: no AllowAnyOrigin). Auth is bearer-token
+// via the Authorization header (no cookies), so credentials are not exposed cross-origin.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:5173" };
+builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy
+    .WithOrigins(allowedOrigins)
+    .AllowAnyMethod()
+    .AllowAnyHeader()));
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "server=localhost;port=3306;database=zayra;user=root;password=password";
 builder.Services.AddDbContext<ZayraDbContext>(options => options
@@ -81,12 +90,21 @@ builder.Services.AddScoped<IRecruitmentService, RecruitmentService>();
 builder.Services.AddScoped<IPerformanceService, PerformanceService>();
 builder.Services.AddScoped<ILeaveService, LeaveService>();
 builder.Services.AddScoped<IDataScopeService, DataScopeService>();
+builder.Services.AddSingleton(AiOptions.Load(builder.Configuration));
+builder.Services.AddScoped<AiRedactionService>();
+builder.Services.AddScoped<AiTokenBudgetService>();
+builder.Services.AddScoped<IAiGovernanceService, AiGovernanceService>();
+builder.Services.AddScoped<IAiPromptBuilder, AiPromptBuilder>();
+builder.Services.AddScoped<IAiAuditService, AiAuditService>();
+builder.Services.AddScoped<IAiResponseCacheService, AiResponseCacheService>();
+builder.Services.AddScoped<IAiAdvisoryService, AiAdvisoryService>();
+builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "Zayra Workforce AI API", Version = "v1" });
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "KynexOne Workforce API", Version = "v1" });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header using the Bearer scheme. Example: Bearer {token}",
@@ -109,6 +127,17 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+
+// Security response headers (SOC defence-in-depth: anti-sniffing, anti-clickjacking).
+app.Use(async (context, next) =>
+{
+    var headers = context.Response.Headers;
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    headers["X-Permitted-Cross-Domain-Policies"] = "none";
+    await next();
+});
 
 app.UseCors("zayra");
 app.UseSwagger();

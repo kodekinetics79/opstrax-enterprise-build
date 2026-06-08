@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Shield, Users, Key, GitBranch, Award, Lock, CheckCircle, XCircle,
   RefreshCw, Plus, Search, ChevronLeft, ChevronRight, Eye,
@@ -86,6 +87,7 @@ function fmtDateTime(d?: string) {
 // ── Users Tab ─────────────────────────────────────────────────────────────────
 
 function UsersTab() {
+  const [searchParams] = useSearchParams();
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -115,6 +117,13 @@ function UsersTab() {
   }, [search, statusFilter, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const searchFromUrl = searchParams.get('search');
+    if (searchFromUrl !== null && searchFromUrl !== search) {
+      setSearch(searchFromUrl);
+      setPage(1);
+    }
+  }, [search, searchParams]);
   useEffect(() => {
     rolesApi.list().then(setRoles).catch(() => {});
     rolesApi.permissions().then(setAllPermissions).catch(() => {});

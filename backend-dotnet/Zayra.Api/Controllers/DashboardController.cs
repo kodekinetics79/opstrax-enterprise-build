@@ -114,6 +114,7 @@ public class DashboardController : ControllerBase
             return Ok(new DashboardOverviewDto(
                 0, Array.Empty<ApprovalQueueItemDto>(), null,
                 Array.Empty<NamedValueDto>(), Array.Empty<NamedValueDto>(),
+                Array.Empty<NamedValueDto>(),
                 Array.Empty<DashboardAlertDto>(), 0, 0));
         }
 
@@ -176,6 +177,18 @@ public class DashboardController : ControllerBase
             .Select(x => new NamedValueDto(string.IsNullOrWhiteSpace(x.Key) ? "Unspecified" : x.Key, x.Count))
             .ToList();
 
+        // --- Headcount by department (active employees) ---
+        var rawDept = await _db.Employees
+            .Where(e => e.TenantId == tenantId && e.Status == "Active")
+            .GroupBy(e => e.Department)
+            .Select(g => new { Key = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
+            .Take(6)
+            .ToListAsync(cancellationToken);
+        var headcountByDepartment = rawDept
+            .Select(x => new NamedValueDto(string.IsNullOrWhiteSpace(x.Key) ? "Unassigned" : x.Key, x.Count))
+            .ToList();
+
         // --- Alerts (compliance documents expiring within 60 days) ---
         var horizon = today.AddDays(60);
         var expiring = await _db.EmployeeComplianceRecords
@@ -215,6 +228,7 @@ public class DashboardController : ControllerBase
             payrollSummary,
             payrollByEntity,
             workforceMix,
+            headcountByDepartment,
             alerts,
             openLeaveRequests,
             newJoinersThisMonth));
@@ -241,6 +255,7 @@ public record DashboardOverviewDto(
     PayrollSummaryDto? PayrollSummary,
     IReadOnlyList<NamedValueDto> PayrollByEntity,
     IReadOnlyList<NamedValueDto> WorkforceMix,
+    IReadOnlyList<NamedValueDto> HeadcountByDepartment,
     IReadOnlyList<DashboardAlertDto> Alerts,
     int OpenLeaveRequests,
     int NewJoinersThisMonth);

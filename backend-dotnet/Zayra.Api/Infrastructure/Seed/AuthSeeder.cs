@@ -158,7 +158,14 @@ public class AuthSeeder : IAuthSeeder
         }
 
         await _db.SaveChangesAsync(cancellationToken);
-        await EnsureFoundationSeedData(tenant.Id, cancellationToken);
+
+        // Sample organisation/business data is seeded only when explicitly enabled
+        // (SeedAdmin:SeedDemoData). Production tenants start clean — tenant, roles,
+        // permissions and the admin account above are always seeded; nothing else.
+        if (_options.SeedDemoData)
+        {
+            await EnsureFoundationSeedData(tenant.Id, cancellationToken);
+        }
     }
 
     private async Task<List<Permission>> EnsurePermissions(CancellationToken cancellationToken)

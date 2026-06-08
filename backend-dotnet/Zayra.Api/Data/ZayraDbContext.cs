@@ -180,6 +180,7 @@ public class ZayraDbContext : DbContext
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
     public DbSet<AIRecommendation> AIRecommendations => Set<AIRecommendation>();
     public DbSet<AIHRQueryLog> AIHRQueryLogs => Set<AIHRQueryLog>();
+    public DbSet<AIHRQueryCache> AIHRQueryCaches => Set<AIHRQueryCache>();
     public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
     public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
     public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
@@ -1408,8 +1409,32 @@ public class ZayraDbContext : DbContext
         {
             entity.ToTable("ai_hr_query_logs");
             entity.HasKey(x => x.Id);
+            entity.Property(x => x.LoggedPrompt).HasColumnType("longtext");
+            entity.Property(x => x.PromptSummary).HasColumnType("longtext");
+            entity.Property(x => x.PromptHash).HasMaxLength(128);
+            entity.Property(x => x.Provider).HasMaxLength(50);
+            entity.Property(x => x.Model).HasMaxLength(100);
+            entity.Property(x => x.ResponseStatus).HasMaxLength(50);
             entity.HasIndex(x => new { x.TenantId, x.UserId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<AIHRQueryCache>(entity =>
+        {
+            entity.ToTable("ai_hr_query_cache");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.NormalizedQuery).HasColumnType("longtext");
+            entity.Property(x => x.Answer).HasColumnType("longtext");
+            entity.Property(x => x.QueryHash).HasMaxLength(128);
+            entity.Property(x => x.CacheKey).HasMaxLength(191);
+            entity.Property(x => x.UserRoleSignature).HasColumnType("longtext");
+            entity.Property(x => x.PermissionSignature).HasColumnType("longtext");
+            entity.Property(x => x.Provider).HasMaxLength(50);
+            entity.Property(x => x.Model).HasMaxLength(100);
+            entity.Property(x => x.ResponseStatus).HasMaxLength(50);
+            entity.HasIndex(x => new { x.TenantId, x.CacheKey }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.ExpiresAtUtc });
+            entity.HasIndex(x => new { x.TenantId, x.IntentClassified, x.Module });
         });
 
         modelBuilder.Entity<ResumeParseResult>(entity =>

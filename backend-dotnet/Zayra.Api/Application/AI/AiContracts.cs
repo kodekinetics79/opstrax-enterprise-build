@@ -1,0 +1,149 @@
+namespace Zayra.Api.Application.AI;
+
+public sealed record AIQueryRequest(string Query, int? EmployeeId);
+
+public sealed record AIQueryResponse(
+    string Answer,
+    string Intent,
+    bool WasBlocked,
+    string BlockedReason,
+    int TokensUsed,
+    bool IsAdvisory,
+    List<string> Suggestions)
+{
+    public string Provider { get; init; } = "fallback";
+    public string? Model { get; init; }
+    public bool HumanReviewRequired { get; init; }
+}
+
+public sealed record AiUserContext(
+    Guid TenantId,
+    Guid? UserId,
+    IReadOnlyCollection<string> Roles,
+    IReadOnlyCollection<string> Permissions,
+    int? EmployeeId);
+
+public sealed record AiGovernanceDecision(
+    string Intent,
+    string Module,
+    bool IsSensitive,
+    bool Allowed,
+    bool HumanReviewRequired,
+    string? BlockedReason);
+
+public sealed record AiPromptContext(
+    Guid TenantId,
+    string Intent,
+    string Module,
+    string Query,
+    string ContextJson,
+    bool IsSensitive,
+    bool HumanReviewRequired,
+    int? EmployeeId,
+    IReadOnlyCollection<string> Roles);
+
+public sealed record AiPromptBundle(
+    string SystemPrompt,
+    string UserPrompt,
+    string PromptForLogging,
+    string Intent,
+    string Module,
+    bool IsSensitive,
+    bool HumanReviewRequired,
+    int EstimatedInputTokens);
+
+public sealed record LlmRequest(
+    string Provider,
+    string Model,
+    string SystemPrompt,
+    string UserPrompt,
+    int MaxOutputTokens);
+
+public sealed record LlmResponse(
+    bool Success,
+    string Provider,
+    string Model,
+    string Text,
+    int InputTokens = 0,
+    int OutputTokens = 0,
+    string? ResponseId = null,
+    string? Error = null);
+
+public sealed record AiAuditEntry(
+    Guid TenantId,
+    Guid? UserId,
+    int? EmployeeId,
+    string UserRole,
+    string Query,
+    string PromptHash,
+    string PromptSummary,
+    string Response,
+    string IntentClassified,
+    string Module,
+    bool WasBlocked,
+    string BlockedReason,
+    string Provider,
+    string Model,
+    string ResponseStatus,
+    bool HumanReviewRequired,
+    bool IsAdvisoryLabelShown,
+    int TokensUsed,
+    int PromptTokens,
+    int CompletionTokens,
+    int ResponseTimeMs);
+
+public sealed record AiCacheKey(
+    Guid TenantId,
+    string CacheKey,
+    string QueryHash,
+    string NormalizedQuery,
+    string IntentClassified,
+    string Module,
+    int? EmployeeId,
+    string UserRoleSignature,
+    string PermissionSignature);
+
+public sealed record AiCachedResponse(
+    string Answer,
+    string Provider,
+    string Model,
+    string ResponseStatus,
+    bool HumanReviewRequired,
+    bool IsAdvisoryLabelShown,
+    int TokensUsed,
+    int PromptTokens,
+    int CompletionTokens,
+    int ResponseTimeMs,
+    int HitCount,
+    DateTime ExpiresAtUtc);
+
+public interface ILlmClient
+{
+    Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken cancellationToken);
+}
+
+public interface IAiAdvisoryService
+{
+    Task<AIQueryResponse> QueryAsync(AiUserContext caller, AIQueryRequest request, CancellationToken cancellationToken);
+}
+
+public interface IAiPromptBuilder
+{
+    AiPromptBundle Build(AiPromptContext context);
+}
+
+public interface IAiGovernanceService
+{
+    AiGovernanceDecision Evaluate(string query, IReadOnlyCollection<string> roles);
+}
+
+public interface IAiAuditService
+{
+    Task LogAsync(AiAuditEntry entry, CancellationToken cancellationToken);
+}
+
+public interface IAiResponseCacheService
+{
+    Task<AiCachedResponse?> TryGetAsync(AiCacheKey key, CancellationToken cancellationToken);
+    Task StoreAsync(AiCacheKey key, AIQueryResponse response, string responseStatus, int promptTokens, int completionTokens, int responseTimeMs, CancellationToken cancellationToken);
+}

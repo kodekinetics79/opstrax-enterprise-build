@@ -10,6 +10,8 @@ interface TopBarProps {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenSidebar: () => void;
+  onOpenSearch: () => void;
+  onAskKynexOne: () => void;
 }
 
 function timeAgo(utc: string) {
@@ -74,11 +76,18 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function TopBar({ theme, onToggleTheme, onOpenSidebar }: TopBarProps) {
+export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAskKynexOne }: TopBarProps) {
   const ThemeIcon = theme === 'dark' ? Sun : Moon;
   const { user } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const bellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    notificationsApi.list()
+      .then((items) => setUnreadCount(items.filter((n) => n.status === 'Unread').length))
+      .catch(() => {});
+  }, [notifOpen]);
 
   useEffect(() => {
     if (!notifOpen) return;
@@ -103,6 +112,7 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar }: TopBarProps) {
       <button
         type="button"
         aria-label="Open command search"
+        onClick={onOpenSearch}
         className="flex h-8 max-w-md flex-1 items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/80 px-3 text-left text-sm transition hover:border-slate-300 hover:bg-white dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]"
       >
         <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -117,6 +127,7 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar }: TopBarProps) {
         <button
           type="button"
           aria-label="Ask KynexOne AI"
+          onClick={onAskKynexOne}
           className="hidden h-8 items-center gap-1.5 rounded-lg border border-sapphire/25 bg-sapphire/[0.07] px-3 text-xs font-semibold text-sapphire transition hover:bg-sapphire/[0.12] sm:flex dark:border-cyanAccent/20 dark:bg-cyanAccent/[0.07] dark:text-cyanAccent dark:hover:bg-cyanAccent/[0.12]"
         >
           <Bot className="h-3.5 w-3.5" />
@@ -141,7 +152,9 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar }: TopBarProps) {
             className="relative grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 dark:border-white/10 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
           >
             <Bell className="h-4 w-4" />
-            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-[#0D1221]" />
+            {unreadCount > 0 && (
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-[#0D1221]" />
+            )}
           </button>
           {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
         </div>
