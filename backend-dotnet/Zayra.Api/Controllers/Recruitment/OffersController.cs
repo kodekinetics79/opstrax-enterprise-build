@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers.Recruitment;
@@ -12,7 +13,8 @@ namespace Zayra.Api.Controllers.Recruitment;
 public class OffersController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public OffersController(ZayraDbContext db) => _db = db;
+    private readonly ILetterService _letters;
+    public OffersController(ZayraDbContext db, ILetterService letters) { _db = db; _letters = letters; }
 
     private Guid GetTenantId() =>
         Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
@@ -190,6 +192,30 @@ public class OffersController : ControllerBase
 
         await _db.SaveChangesAsync(ct);
         return Ok(offer);
+    }
+
+    // GET /api/recruitment/offers/{id}/download — Download offer letter as PDF
+    [HttpGet("{id:guid}/download")]
+    [Authorize(Roles = "Admin,HR Manager,Recruiter")]
+    public async Task<IActionResult> Download(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var offer = await _db.OfferLetters.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid, ct);
+        if (offer == null) return NotFound();
+        var tenant = await _db.Tenants.AsNoTracking().Select(t => new { t.Id, t.Name }).FirstOrDefaultAsync(t => t.Id == tid, ct);
+        var data = new OfferLetterData(
+            CandidateName: offer.CandidateName,
+            Position: offer.OfferedJobTitle,
+            Department: offer.OfferedDepartment,
+            Salary: offer.GrossSalary,
+            Currency: "AED",
+            StartDate: offer.StartDate.ToDateTime(TimeOnly.MinValue),
+            CompanyName: tenant?.Name ?? "KynexOne Technologies",
+            IssuedBy: GetUserName(),
+            IssuedDate: DateTime.UtcNow
+        );
+        var pdf = await _letters.GenerateOfferLetterAsync(data, ct);
+        return File(pdf, "application/pdf", $"offer-letter-{offer.CandidateName.Replace(" ", "-")}.pdf");
     }
 
     // POST /api/recruitment/offers/{id}/approvals — Add approval step

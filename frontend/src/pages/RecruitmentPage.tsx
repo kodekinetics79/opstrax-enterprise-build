@@ -221,7 +221,8 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-12">
       <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="mb-5 flex items-center justify-between">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
@@ -290,6 +291,7 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Requisition'}</button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -442,7 +444,8 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-12">
       <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
@@ -497,6 +500,7 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Opening'}</button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1059,7 +1063,8 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-12">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
@@ -1100,6 +1105,7 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" disabled={saving} onClick={save}>{saving ? 'Adding…' : 'Add Candidate'}</button>
         </div>
+      </div>
       </div>
     </div>
   );

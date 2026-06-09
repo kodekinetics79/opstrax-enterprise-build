@@ -31,6 +31,8 @@ using Zayra.Api.Application.Common;
 using Zayra.Api.Infrastructure.Common;
 using Zayra.Api.Application.AI;
 using Zayra.Api.Infrastructure.AI;
+using Zayra.Api.Infrastructure.Email;
+using Zayra.Api.Infrastructure.Documents.Letters;
 
 var builder = WebApplication.CreateBuilder(args);
 // Railway injects PORT; fall back to ASPNETCORE_URLS, then local default.
@@ -91,6 +93,8 @@ builder.Services.AddScoped<IEmployeeModuleSchemaBootstrapper, EmployeeModuleSche
 builder.Services.AddScoped<IDocumentStorage, LocalDocumentStorage>();
 builder.Services.AddScoped<IHijriDateService, HijriDateService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+builder.Services.AddScoped<ILetterService, LetterService>();
 builder.Services.AddScoped<IRecruitmentService, RecruitmentService>();
 builder.Services.AddScoped<IPerformanceService, PerformanceService>();
 builder.Services.AddScoped<ILeaveService, LeaveService>();

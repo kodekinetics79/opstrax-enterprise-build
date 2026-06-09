@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -18,12 +19,14 @@ public class PayrollController : ControllerBase
     private readonly ZayraDbContext _db;
     private readonly IDataScopeService _scopeService;
     private readonly IHttpContextAccessor _http;
+    private readonly INotificationService _notifications;
 
-    public PayrollController(ZayraDbContext db, IDataScopeService scopeService, IHttpContextAccessor http)
+    public PayrollController(ZayraDbContext db, IDataScopeService scopeService, IHttpContextAccessor http, INotificationService notifications)
     {
         _db = db;
         _scopeService = scopeService;
         _http = http;
+        _notifications = notifications;
     }
 
     [HttpGet("salary-structures")]
@@ -123,6 +126,19 @@ public class PayrollController : ControllerBase
 
         var employees = await _db.Employees.Where(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted).ToListAsync(cancellationToken);
         var salaryAssignments = await _db.EmployeeSalaryStructures.AsNoTracking().Where(x => x.TenantId == tenantId && x.IsActive).ToListAsync(cancellationToken);
+
+        // Load salary structure components (for IsTaxable-based tax deduction)
+        var structureIds = salaryAssignments.Select(x => x.SalaryStructureId).Distinct().ToList();
+        var salaryComponents = await _db.SalaryComponents.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.SalaryStructureId.HasValue && structureIds.Contains(x.SalaryStructureId!.Value))
+            .ToListAsync(cancellationToken);
+
+        // Income tax rate from System Settings (0 if not configured — GCC has no personal income tax by default)
+        var taxRateSetting = await _db.SystemSettings.AsNoTracking()
+            .Where(x => x.Category == "Payroll" && x.SettingKey == "IncomeTaxRate")
+            .Select(x => x.SettingValue)
+            .FirstOrDefaultAsync(cancellationToken);
+        decimal.TryParse(taxRateSetting, out var incomeTaxRate); // 0 if unset
         var attendanceImpacts = await _db.AttendancePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.WorkDate >= periodStart && x.WorkDate <= periodEnd && x.Status != "Processed").ToListAsync(cancellationToken);
         var leaveImpacts = await _db.LeavePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayPeriod == $"{run.Year}-{run.Month:00}" && x.Status != "Processed").ToListAsync(cancellationToken);
 
@@ -158,7 +174,19 @@ public class PayrollController : ControllerBase
             var absenceDeduction = Math.Round(attendanceImpacts.Where(x => x.EmployeeId == e.Id && x.ImpactType.Contains("Absence", StringComparison.OrdinalIgnoreCase)).Sum(x => x.Minutes) / 60m * hourlyRate, 2);
             var leaveDeduction = leaveImpacts.Where(x => x.EmployeeId == e.Id && x.ImpactType.Contains("Deduction", StringComparison.OrdinalIgnoreCase)).Sum(x => x.Amount);
             var overtimePay = overtimeImpacts.Where(x => x.EmployeeId == e.Id).Sum(x => x.Amount);
-            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction;
+            // Tax deduction: apply income tax rate to taxable components only
+            decimal taxDeduction = 0m;
+            if (incomeTaxRate > 0 && salary is not null)
+            {
+                var structureComponents = salaryComponents.Where(c => c.SalaryStructureId == salary.SalaryStructureId && c.IsTaxable).ToList();
+                // If no explicit taxable components defined, treat basic salary as taxable
+                var taxableBase = structureComponents.Count > 0
+                    ? structureComponents.Sum(c => c.CalculationType == "Percentage" ? basic * c.Percentage / 100m : c.Amount)
+                    : basic;
+                taxDeduction = Math.Round(taxableBase * incomeTaxRate / 100m, 2);
+            }
+
+            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction;
             // C3: net salary cannot be negative (GCC labour law)
             var netSalary = Math.Max(0m, gross + overtimePay - deductions);
             if (gross + overtimePay - deductions < 0)
@@ -188,6 +216,7 @@ public class PayrollController : ControllerBase
             if (otherAllowances > 0) AddEarning(tenantId, id, e.Id, "OTHER_ALLOWANCES", "Other allowances", otherAllowances, "Salary");
             if (overtimePay > 0) AddEarning(tenantId, id, e.Id, "OVERTIME", "Approved overtime", overtimePay, "Overtime");
             if (fixedDeduction > 0) AddDeduction(tenantId, id, e.Id, "FIXED_DEDUCTION", "Fixed deduction", fixedDeduction, "Salary");
+            if (taxDeduction > 0) AddDeduction(tenantId, id, e.Id, "INCOME_TAX", $"Income tax ({incomeTaxRate}%)", taxDeduction, "Tax");
             if (attendanceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ATTENDANCE", "Late/early attendance deduction", attendanceDeduction, "Attendance");
             if (absenceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ABSENCE", "Absence deduction", absenceDeduction, "Attendance");
             if (leaveDeduction > 0) AddDeduction(tenantId, id, e.Id, "LEAVE", "Leave deduction", leaveDeduction, "Leave");
@@ -224,6 +253,22 @@ public class PayrollController : ControllerBase
         await _db.Payslips.Where(s => s.PayrollRunId == id && s.TenantId == tenantId).ExecuteUpdateAsync(s => s.SetProperty(p => p.IsPublishedToEss, true).SetProperty(p => p.PublishedAtUtc, DateTime.UtcNow), cancellationToken);
         await PayrollAudit("payroll.run.locked", "PayrollRun", id.ToString(), null, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
+        // Notify all employees with a payslip for this run
+        var employeeIds = await _db.PayrollSlips.AsNoTracking().Where(s => s.RunId == id && s.TenantId == tenantId).Select(s => s.EmployeeId).ToListAsync(cancellationToken);
+        var usersByEmployee = await _db.Users.AsNoTracking()
+            .Where(u => u.TenantId == tenantId)
+            .Join(_db.Employees.AsNoTracking().Where(e => employeeIds.Contains(e.Id)), u => u.Email, e => e.WorkEmail, (u, e) => new { u.Id, u.Email, u.FullName })
+            .ToListAsync(cancellationToken);
+        foreach (var user in usersByEmployee)
+        {
+            try
+            {
+                await _notifications.SendEmailAsync(tenantId, "PAYSLIP_READY", user.Email, user.FullName,
+                    new Dictionary<string, string> { ["EmployeeName"] = user.FullName, ["Month"] = run.Month.ToString("D2"), ["Year"] = run.Year.ToString(), ["Subject"] = $"Your payslip for {run.Year}/{run.Month:D2} is ready" },
+                    cancellationToken);
+            }
+            catch { /* best-effort per employee */ }
+        }
         return Ok(run);
     }
 
@@ -263,6 +308,9 @@ public class PayrollController : ControllerBase
         run.Status = "Approved";
         await PayrollAudit("payroll.run.approved", "PayrollRun", id.ToString(), new { notes = req.Notes }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
+        // Notify payroll team
+        var approverUserId = GetUserId();
+        await _notifications.NotifyAsync(tenantId, approverUserId, $"Payroll Run Approved — {run.Year}/{run.Month:D2}", $"Payroll run for {run.Year}/{run.Month:D2} has been approved. Total net: {run.TotalNetSalary:N2} AED.", "PayrollRun", id.ToString(), cancellationToken);
         return Ok(run);
     }
 
@@ -325,14 +373,60 @@ public class PayrollController : ControllerBase
         var batch = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (batch is null) return NotFound();
         var records = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
+        var employeeCodes = await _db.Employees.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && records.Select(r => r.EmployeeId).Contains(e.Id))
+            .Select(e => new { e.Id, e.EmployeeCode })
+            .ToListAsync(cancellationToken);
+
+        // Persist WPS records
         var wps = new WPSFileBatch { TenantId = tenantId, PaymentBatchId = id, SifFileName = $"SIF-{batch.BatchNumber}.txt" };
         _db.WPSFileBatches.Add(wps);
         foreach (var record in records)
-            _db.SIFFileRecords.Add(new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, Iban = record.Iban, NetPay = record.Amount });
+        {
+            var code = employeeCodes.FirstOrDefault(e => e.Id == record.EmployeeId)?.EmployeeCode ?? record.EmployeeId.ToString();
+            _db.SIFFileRecords.Add(new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, EmployeeCode = code, Iban = record.Iban, NetPay = record.Amount });
+        }
         batch.Status = "FileGenerated";
         await PayrollAudit("payroll.wps.generated", "WPSFileBatch", wps.Id.ToString(), null, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(wps);
+    }
+
+    /// <summary>Download the actual SIF text file for a WPS batch — per UAE CBUAE SIF v2 format.</summary>
+    [HttpGet("payment-batches/{batchId:guid}/wps-file/download")]
+    public async Task<IActionResult> DownloadWpsFile(Guid batchId, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var batch = await _db.PayrollPaymentBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
+        if (batch is null) return NotFound();
+        var wpsFile = await _db.WPSFileBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.PaymentBatchId == batchId, cancellationToken);
+        if (wpsFile is null) return BadRequest(new { message = "WPS file has not been generated for this batch yet." });
+
+        var sifRecords = await _db.SIFFileRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.WPSFileBatchId == wpsFile.Id).ToListAsync(cancellationToken);
+        var gcc = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        var agentId = (gcc?.WpsAgentId ?? "0000000000").PadRight(10).Substring(0, 10);
+        var molCode = (gcc?.WpsMolCode ?? "0000000").PadRight(7).Substring(0, 7);
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batch.PayrollRunId, cancellationToken);
+        var paymentDate = run is not null
+            ? new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month))
+            : DateTime.UtcNow;
+
+        // UAE CBUAE SIF v2 format
+        // Header record: EDI_DC40 segment
+        var sb = new StringBuilder();
+        sb.AppendLine($"EDI_DC40+{agentId}+{molCode}+{paymentDate:yyyyMMdd}+{sifRecords.Count:D6}+{batch.TotalAmount:F2}+AED'");
+        foreach (var rec in sifRecords)
+        {
+            var iban = rec.Iban.Replace(" ", string.Empty).PadRight(34).Substring(0, 34);
+            // E1EDL20: employee salary record
+            sb.AppendLine($"E1EDL20+{rec.EmployeeCode.PadRight(10).Substring(0, 10)}+{iban}+{rec.NetPay:F2}+AED+{paymentDate:yyyyMMdd}+01'");
+        }
+        // Trailer
+        sb.AppendLine($"EOF+{sifRecords.Count:D6}+{sifRecords.Sum(r => r.NetPay):F2}'");
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        Response.Headers["Content-Disposition"] = $"attachment; filename={wpsFile.SifFileName}";
+        return File(bytes, "text/plain", wpsFile.SifFileName);
     }
 
     [HttpGet("employee-salary-structures")]
@@ -413,6 +507,30 @@ public class PayrollController : ControllerBase
         return Ok(await query.OrderBy(x => x.EmployeeCode).ToListAsync(cancellationToken));
     }
 
+    [HttpGet("reports/register/export")]
+    public async Task<IActionResult> ExportRegister([FromQuery] Guid runId, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == runId && x.TenantId == tenantId, cancellationToken);
+        if (run is null) return NotFound();
+        var query = _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == runId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(x => scope.AllowedEmployeeIds!.Contains(x.EmployeeId));
+        var slips = await query.OrderBy(x => x.EmployeeCode).ToListAsync(cancellationToken);
+
+        var headers = new[] { "Employee Code", "Employee Name", "Department", "Basic Salary", "Housing Allowance", "Transport Allowance", "Other Allowances", "Gross Salary", "Deductions", "Net Salary", "Status" };
+        var rows = slips.Select(s => (IReadOnlyList<object?>)new object?[]
+        {
+            s.EmployeeCode, s.EmployeeName, s.Department,
+            s.BasicSalary.ToString("F2"), s.HousingAllowance.ToString("F2"), s.TransportAllowance.ToString("F2"), s.OtherAllowances.ToString("F2"),
+            s.GrossSalary.ToString("F2"), s.Deductions.ToString("F2"), s.NetSalary.ToString("F2"), s.Status
+        });
+        var csv = Csv.Build(headers, rows);
+        Response.Headers["Content-Disposition"] = $"attachment; filename=salary-register-{run.Year}-{run.Month:D2}.csv";
+        return Content(csv, "text/csv");
+    }
+
     [HttpGet("reports/summary")]
     public async Task<IActionResult> ReportSummary(CancellationToken cancellationToken)
     {
@@ -426,6 +544,93 @@ public class PayrollController : ControllerBase
             totalGrossYtd = runs.Where(x => x.Status == "Locked" && x.Year == DateTime.UtcNow.Year).Sum(x => x.TotalGrossSalary),
             totalNetYtd = runs.Where(x => x.Status == "Locked" && x.Year == DateTime.UtcNow.Year).Sum(x => x.TotalNetSalary),
         });
+    }
+
+    // ── EOSB / Gratuity ──────────────────────────────────────────────────────────
+
+    /// <summary>Calculate EOSB/Gratuity for a single employee using tenant GCC settings.</summary>
+    [HttpPost("eosb/calculate")]
+    public async Task<IActionResult> CalculateEosb([FromBody] EosbCalculationRequest req, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == req.EmployeeId && !x.IsDeleted, cancellationToken);
+        if (employee is null) return NotFound(new { message = "Employee not found." });
+
+        var gcc = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        if (gcc is null || !gcc.EosbEnabled)
+            return BadRequest(new { message = "EOSB is not enabled for this tenant. Enable it in GCC Settings first." });
+
+        var salary = await _db.EmployeeSalaryStructures.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.EmployeeId == req.EmployeeId && x.IsActive)
+            .OrderByDescending(x => x.EffectiveDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var eligibleSalary = salary?.BasicSalary ?? employee.Salary ?? 0m;
+        var joiningDate = employee.JoiningDate;
+        var calcDate = req.AsOfDate ?? DateTime.UtcNow;
+        var totalYears = (calcDate - joiningDate).Days / 365.0;
+        var minYears = gcc.EosbMinYears > 0 ? gcc.EosbMinYears : 1;
+
+        if (totalYears < minYears)
+            return Ok(new { employeeId = req.EmployeeId, employeeName = employee.FullName, eligibleSalary, totalYears, eosbAmount = 0m, message = $"Employee has {totalYears:F1} years of service. Minimum required: {minYears} year(s)." });
+
+        // UAE Gratuity: 21 days per year for first 5 years, 30 days per year thereafter
+        var rate1 = gcc.EosbYears1To5Rate > 0 ? gcc.EosbYears1To5Rate : 21m;  // days per year
+        var rate2 = gcc.EosbYearsAbove5Rate > 0 ? gcc.EosbYearsAbove5Rate : 30m; // days per year
+        var dailySalary = eligibleSalary * 12 / 365m;
+
+        decimal eosbAmount;
+        if (totalYears <= 5)
+            eosbAmount = dailySalary * rate1 * (decimal)totalYears;
+        else
+            eosbAmount = dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5);
+
+        eosbAmount = Math.Round(eosbAmount, 2);
+
+        // Persist the calculation
+        var existing = await _db.EOSBCalculations.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == req.EmployeeId && x.Status == "Draft", cancellationToken);
+        if (existing is not null)
+        {
+            existing.CalculationDate = DateOnly.FromDateTime(calcDate);
+            existing.EligibleSalary = eligibleSalary;
+            existing.CalculatedAmount = eosbAmount;
+            existing.RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { rate1, rate2, totalYears, dailySalary });
+        }
+        else
+        {
+            _db.EOSBCalculations.Add(new EOSBCalculation
+            {
+                TenantId = tenantId, EmployeeId = req.EmployeeId, CalculationDate = DateOnly.FromDateTime(calcDate),
+                EligibleSalary = eligibleSalary, CalculatedAmount = eosbAmount,
+                RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { rate1, rate2, totalYears, dailySalary })
+            });
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            employeeId = req.EmployeeId,
+            employeeName = employee.FullName,
+            joiningDate,
+            asOfDate = calcDate,
+            totalYears = Math.Round(totalYears, 2),
+            eligibleSalary,
+            dailySalary = Math.Round(dailySalary, 4),
+            rate1To5Years = rate1,
+            rateAbove5Years = rate2,
+            eosbAmount,
+            currency = salary?.Currency ?? "AED",
+            message = $"Calculated EOSB/Gratuity for {employee.FullName}: {salary?.Currency ?? "AED"} {eosbAmount:N2}"
+        });
+    }
+
+    [HttpGet("eosb/list")]
+    public async Task<IActionResult> ListEosb([FromQuery] int? employeeId, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var query = _db.EOSBCalculations.AsNoTracking().Where(x => x.TenantId == tenantId);
+        if (employeeId.HasValue) query = query.Where(x => x.EmployeeId == employeeId.Value);
+        return Ok(await query.OrderByDescending(x => x.CalculationDate).ToListAsync(cancellationToken));
     }
 
     [HttpGet("ai-validation")]
@@ -533,3 +738,4 @@ public record PayrollDecisionRequest(string? Notes);
 public record PayrollPaymentBatchRequest(string? PaymentMethod, string? Currency);
 public record PayrollGroupRequest(string Code, string Name, string? Currency);
 public record ImportSalaryStructuresRequest(string CsvContent);
+public record EosbCalculationRequest(int EmployeeId, DateTime? AsOfDate);

@@ -219,4 +219,16 @@ export const payrollApi = {
 
   aiValidation: (runId: string) =>
     client.get('/api/payroll/ai-validation', { params: { runId } }).then((r) => r.data),
+
+  calculateEosb: (employeeId: number, asOfDate?: string) =>
+    client.post('/api/payroll/eosb/calculate', { employeeId, asOfDate }).then((r) => r.data),
+
+  listEosb: (employeeId?: number) =>
+    client.get('/api/payroll/eosb/list', { params: employeeId ? { employeeId } : undefined }).then((r) => r.data),
+
+  exportRegister: (runId: string) =>
+    `/api/payroll/reports/register/export?runId=${runId}`,
+
+  downloadWpsFile: (batchId: string) =>
+    `/api/payroll/payment-batches/${batchId}/wps-file/download`,
 };

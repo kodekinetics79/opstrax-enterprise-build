@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -20,9 +21,11 @@ public class EmployeeSelfServiceController : ControllerBase
     };
 
     private readonly ZayraDbContext _db;
+    private readonly ILetterService _letters;
 
-    public EmployeeSelfServiceController(ZayraDbContext db)
+    public EmployeeSelfServiceController(ZayraDbContext db, ILetterService letters)
     {
+        _letters = letters;
         _db = db;
     }
 
@@ -113,10 +116,47 @@ public class EmployeeSelfServiceController : ControllerBase
         if (!essOk) return BadRequest(new { message = ctxError });
         var slip = await _db.PayrollSlips.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id, cancellationToken);
         if (slip is null) return NotFound();
+
+        // Load itemised earnings and deductions for the payslip
+        var payslip = await _db.Payslips.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.PayrollRunId == slip.RunId && x.EmployeeId == employeeId, cancellationToken);
+        var components = payslip is not null
+            ? await _db.PayslipComponents.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayslipId == payslip.Id).ToListAsync(cancellationToken)
+            : new List<PayslipComponent>();
+
+        // Fallback: build components from the slip summary if payslip detail rows don't exist
+        var items = components.Count > 0
+            ? components.Select(c => new PayslipLineItem(c.ComponentName, c.Amount, c.ComponentType)).ToList()
+            : new List<PayslipLineItem>
+            {
+                new("Basic Salary", slip.BasicSalary, "Earning"),
+                new("Housing Allowance", slip.HousingAllowance, "Earning"),
+                new("Transport Allowance", slip.TransportAllowance, "Earning"),
+                new("Other Allowances", slip.OtherAllowances, "Earning"),
+                new("Total Deductions", slip.Deductions, "Deduction"),
+                new("Net Pay", slip.NetSalary, "Net"),
+            }.Where(i => i.Amount != 0).ToList();
+
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == slip.RunId, cancellationToken);
+        var employee = await _db.Employees.AsNoTracking().Select(e => new { e.Id, e.Designation }).FirstOrDefaultAsync(e => e.Id == employeeId, cancellationToken);
+        var tenant = await _db.Tenants.AsNoTracking().Select(t => new { t.Id, t.Name }).FirstOrDefaultAsync(t => t.Id == tenantId, cancellationToken);
+
+        var data = new PayslipData(
+            PayslipNumber: payslip?.PayslipNumber ?? $"PS-{slip.EmployeeCode}",
+            EmployeeCode: slip.EmployeeCode,
+            EmployeeName: slip.EmployeeName,
+            Department: slip.Department,
+            Designation: employee?.Designation ?? string.Empty,
+            PayYear: run?.Year ?? DateTime.UtcNow.Year,
+            PayMonth: run?.Month ?? DateTime.UtcNow.Month,
+            Currency: "AED",
+            Items: items,
+            CompanyName: tenant?.Name ?? "KynexOne Technologies"
+        );
+
+        var pdfBytes = await _letters.GeneratePayslipPdfAsync(data, cancellationToken);
         _db.EmployeePayslipAccessLogs.Add(new EmployeePayslipAccessLog { TenantId = tenantId, EmployeeId = employeeId, PayslipId = id, Action = "Download", UserId = GetUserId() });
         await _db.SaveChangesAsync(cancellationToken);
-        var body = $"Zayra Payslip\nEmployee: {slip.EmployeeName}\nGross: {slip.GrossSalary:0.00}\nDeductions: {slip.Deductions:0.00}\nNet: {slip.NetSalary:0.00}\nStatus: {slip.Status}\n";
-        return File(Encoding.UTF8.GetBytes(body), "application/pdf", $"payslip-{slip.EmployeeCode}-{id:N}.pdf");
+        return File(pdfBytes, "application/pdf", $"payslip-{slip.EmployeeCode}-{run?.Year}{run?.Month:00}.pdf");
     }
 
     [HttpGet("attendance")]

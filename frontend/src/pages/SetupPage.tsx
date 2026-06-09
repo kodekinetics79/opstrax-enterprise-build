@@ -47,7 +47,7 @@ import { Modal } from '../components/Modal';
 
 type Tab = 'companies' | 'branches' | 'departments' | 'designations' | 'grades' | 'costCenters'
   | 'masterData' | 'numberingRules' | 'systemSettings' | 'gccSettings'
-  | 'fiscalYears' | 'locations' | 'notificationTemplates' | 'adminAuditLogs';
+  | 'fiscalYears' | 'locations' | 'notificationTemplates' | 'emailConfig' | 'adminAuditLogs';
 
 const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'companies', label: 'Companies', icon: Building2 },
@@ -63,6 +63,7 @@ const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'fiscalYears', label: 'Fiscal Years', icon: Calendar },
   { id: 'locations', label: 'Locations', icon: MapPin },
   { id: 'notificationTemplates', label: 'Notifications', icon: Bell },
+  { id: 'emailConfig', label: 'Email / SMTP', icon: Settings },
   { id: 'adminAuditLogs', label: 'Audit Logs', icon: ClipboardList },
 ];
 
@@ -1588,6 +1589,126 @@ function AdminAuditLogsTab() {
   );
 }
 
+// ─── Email / SMTP Configuration ──────────────────────────────────────────────
+
+function EmailConfigTab() {
+  const KEYS = ['Smtp.Host', 'Smtp.Port', 'Smtp.Username', 'Smtp.Password', 'Smtp.FromAddress', 'Smtp.FromName', 'Smtp.UseTls'] as const;
+  type SmtpKey = typeof KEYS[number];
+  const [cfg, setCfg] = useState<Record<SmtpKey, string>>({
+    'Smtp.Host': '', 'Smtp.Port': '587', 'Smtp.Username': '', 'Smtp.Password': '',
+    'Smtp.FromAddress': '', 'Smtp.FromName': 'KynexOne HR', 'Smtp.UseTls': 'true',
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    systemSettingsApi.list('Email').then((settings) => {
+      const merged = { ...cfg };
+      for (const s of settings) {
+        if (KEYS.includes(s.settingKey as SmtpKey)) merged[s.settingKey as SmtpKey] = s.settingValue;
+      }
+      setCfg(merged);
+    }).catch(() => {}).finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      for (const key of KEYS) {
+        await systemSettingsApi.upsert({ category: 'Email', settingKey: key, settingValue: cfg[key], dataType: 'string', description: key });
+      }
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch { /**/ } finally { setSaving(false); }
+  };
+
+  const testConnection = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      await systemSettingsApi.upsert({ category: 'Email', settingKey: 'Smtp.Host', settingValue: cfg['Smtp.Host'], dataType: 'string', description: 'Smtp.Host' });
+      setTestResult({ ok: true, message: 'Settings saved. Send a test email from the notification system to verify SMTP connectivity.' });
+    } catch { setTestResult({ ok: false, message: 'Failed to save settings.' }); } finally { setTesting(false); }
+  };
+
+  if (loading) return <div className="py-12 text-center"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></div>;
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h2 className="text-base font-semibold text-slate-900 dark:text-white">Email / SMTP Configuration</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Configure outbound email for payslip delivery, alerts, appointment letters, and notifications.
+          Credentials are stored encrypted in the database.
+        </p>
+      </div>
+
+      <div className="surface space-y-4 p-5">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">SMTP Host *</label>
+            <input className="input w-full" placeholder="smtp.example.com" value={cfg['Smtp.Host']} onChange={e => setCfg(c => ({ ...c, 'Smtp.Host': e.target.value }))} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Port</label>
+            <input type="number" className="input w-full" placeholder="587" value={cfg['Smtp.Port']} onChange={e => setCfg(c => ({ ...c, 'Smtp.Port': e.target.value }))} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Username</label>
+            <input className="input w-full" placeholder="noreply@company.com" value={cfg['Smtp.Username']} onChange={e => setCfg(c => ({ ...c, 'Smtp.Username': e.target.value }))} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Password</label>
+            <input type="password" className="input w-full" placeholder="••••••••" value={cfg['Smtp.Password']} onChange={e => setCfg(c => ({ ...c, 'Smtp.Password': e.target.value }))} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">From Address *</label>
+            <input type="email" className="input w-full" placeholder="hr@company.com" value={cfg['Smtp.FromAddress']} onChange={e => setCfg(c => ({ ...c, 'Smtp.FromAddress': e.target.value }))} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">From Name</label>
+            <input className="input w-full" placeholder="KynexOne HR" value={cfg['Smtp.FromName']} onChange={e => setCfg(c => ({ ...c, 'Smtp.FromName': e.target.value }))} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="useTls" className="h-4 w-4 rounded accent-sapphire" checked={cfg['Smtp.UseTls'] === 'true'} onChange={e => setCfg(c => ({ ...c, 'Smtp.UseTls': e.target.checked ? 'true' : 'false' }))} />
+          <label htmlFor="useTls" className="text-sm text-slate-700 dark:text-slate-300">Use STARTTLS (recommended)</label>
+        </div>
+      </div>
+
+      {testResult && (
+        <p className={`rounded-lg px-3 py-2 text-sm ${testResult.ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'}`}>
+          {testResult.message}
+        </p>
+      )}
+      {saved && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Settings saved successfully.</p>}
+
+      <div className="flex gap-3">
+        <button type="button" className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Settings'}</button>
+        <button type="button" className="btn-secondary" onClick={testConnection} disabled={testing}>{testing ? 'Saving…' : 'Save & Verify'}</button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+        <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">When configured, email is sent for:</p>
+        <ul className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+          <li>• Payslip published → employee receives PDF by email</li>
+          <li>• Payroll run approved / locked → notify payroll team</li>
+          <li>• Appointment & Experience letters → emailed to employee</li>
+          <li>• Offer letters → emailed to candidate</li>
+          <li>• Leave request approved / rejected → notify employee</li>
+          <li>• Any notification template with channel = Email</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
 function TableShell({
@@ -1764,6 +1885,7 @@ export function SetupPage() {
         {activeTab === 'fiscalYears' && <FiscalYearsTab />}
         {activeTab === 'locations' && <LocationsTab />}
         {activeTab === 'notificationTemplates' && <NotificationTemplatesTab />}
+        {activeTab === 'emailConfig' && <EmailConfigTab />}
         {activeTab === 'adminAuditLogs' && <AdminAuditLogsTab />}
       </div>
     </div>

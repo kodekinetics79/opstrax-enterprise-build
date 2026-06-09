@@ -13,6 +13,7 @@ using Zayra.Api.Infrastructure.Auth;
 using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Infrastructure.Localization;
 using Zayra.Api.Infrastructure.Documents;
+using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -39,8 +40,9 @@ public class EmployeesController : ControllerBase
     private readonly INotificationService _notifications;
     private readonly IHijriDateService _hijri;
     private readonly IDataScopeService _scopeService;
+    private readonly ILetterService _letters;
 
-    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri, IDataScopeService scopeService)
+    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri, IDataScopeService scopeService, ILetterService letters)
     {
         _db = db;
         _passwordHasher = passwordHasher;
@@ -49,6 +51,7 @@ public class EmployeesController : ControllerBase
         _notifications = notifications;
         _hijri = hijri;
         _scopeService = scopeService;
+        _letters = letters;
     }
 
     [HttpGet]
@@ -590,6 +593,60 @@ public class EmployeesController : ControllerBase
         }
         var incomplete = await employees.Where(x => x.ProfileCompletenessScore < 80).Take(50).ToListAsync(cancellationToken);
         return Ok(new EmployeeAiResponseDto($"Found {incomplete.Count} employees with incomplete onboarding profiles.", incomplete.Select(ToListItem).ToList()));
+    }
+
+    [HttpGet("{id:int}/letters/appointment")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> AppointmentLetter(int id, CancellationToken cancellationToken)
+    {
+        var tenantId = RequireTenant();
+        var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId && !x.IsDeleted, cancellationToken);
+        if (employee is null) return NotFound();
+        var tenant = await _db.Tenants.AsNoTracking().Select(t => new { t.Id, t.Name }).FirstOrDefaultAsync(t => t.Id == tenantId, cancellationToken);
+        var salary = await _db.EmployeeSalaryStructures.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == id && x.IsActive).OrderByDescending(x => x.EffectiveDate).FirstOrDefaultAsync(cancellationToken);
+        var data = new LetterData(
+            EmployeeName: employee.FullName,
+            EmployeeCode: employee.EmployeeCode,
+            Department: employee.Department,
+            Designation: employee.Designation,
+            JoiningDate: employee.JoiningDate,
+            LeavingDate: null,
+            BasicSalary: salary?.BasicSalary ?? employee.Salary ?? 0m,
+            Currency: "AED",
+            CompanyName: tenant?.Name ?? "KynexOne Technologies",
+            IssuedBy: "HR Department",
+            IssuedDate: DateTime.UtcNow
+        );
+        var pdf = await _letters.GenerateAppointmentLetterAsync(data, cancellationToken);
+        await Audit("employee.letter.appointment", "Employee", id.ToString(), cancellationToken);
+        return File(pdf, "application/pdf", $"appointment-letter-{employee.EmployeeCode}.pdf");
+    }
+
+    [HttpGet("{id:int}/letters/experience")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> ExperienceLetter(int id, CancellationToken cancellationToken)
+    {
+        var tenantId = RequireTenant();
+        var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId && !x.IsDeleted, cancellationToken);
+        if (employee is null) return NotFound();
+        var tenant = await _db.Tenants.AsNoTracking().Select(t => new { t.Id, t.Name }).FirstOrDefaultAsync(t => t.Id == tenantId, cancellationToken);
+        var salary = await _db.EmployeeSalaryStructures.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == id && x.IsActive).OrderByDescending(x => x.EffectiveDate).FirstOrDefaultAsync(cancellationToken);
+        var data = new LetterData(
+            EmployeeName: employee.FullName,
+            EmployeeCode: employee.EmployeeCode,
+            Department: employee.Department,
+            Designation: employee.Designation,
+            JoiningDate: employee.JoiningDate,
+            LeavingDate: employee.ContractEndDate.HasValue ? employee.ContractEndDate.Value.ToDateTime(TimeOnly.MinValue) : null,
+            BasicSalary: salary?.BasicSalary ?? employee.Salary ?? 0m,
+            Currency: "AED",
+            CompanyName: tenant?.Name ?? "KynexOne Technologies",
+            IssuedBy: "HR Department",
+            IssuedDate: DateTime.UtcNow
+        );
+        var pdf = await _letters.GenerateExperienceLetterAsync(data, cancellationToken);
+        await Audit("employee.letter.experience", "Employee", id.ToString(), cancellationToken);
+        return File(pdf, "application/pdf", $"experience-letter-{employee.EmployeeCode}.pdf");
     }
 
     [HttpGet("{id:int}/templates/{templateType}")]

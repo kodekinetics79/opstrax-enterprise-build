@@ -117,7 +117,7 @@ const btn = {
 
 // ── Tabs ────────────────────────────────────────────────────────────────────────
 
-type Tab = 'dashboard' | 'salary-structures' | 'employee-salary' | 'runs' | 'validation' | 'approvals' | 'payslips' | 'bank-wps' | 'payment-tracking' | 'reports' | 'ai-validation';
+type Tab = 'dashboard' | 'salary-structures' | 'employee-salary' | 'runs' | 'validation' | 'approvals' | 'payslips' | 'bank-wps' | 'payment-tracking' | 'reports' | 'eosb' | 'ai-validation';
 
 const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: BarChart2 },
@@ -130,6 +130,7 @@ const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: s
   { key: 'bank-wps', label: 'Bank / WPS Files', icon: Landmark },
   { key: 'payment-tracking', label: 'Payment Tracking', icon: TrendingUp },
   { key: 'reports', label: 'Reports', icon: BarChart2 },
+  { key: 'eosb', label: 'EOSB / Gratuity', icon: FileText },
   { key: 'ai-validation', label: 'AI Validation', icon: Bot },
 ];
 
@@ -1197,6 +1198,98 @@ function AIValidationTab() {
   );
 }
 
+// ── EOSB / Gratuity Tab ──────────────────────────────────────────────────────────
+
+function EOSBTab() {
+  const [employeeId, setEmployeeId] = useState('');
+  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().substring(0, 10));
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [history, setHistory] = useState<unknown[]>([]);
+  const [error, setError] = useState('');
+
+  const calculate = async () => {
+    if (!employeeId) return;
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await payrollApi.calculateEosb(Number(employeeId), asOfDate);
+      setResult(res as Record<string, unknown>);
+      payrollApi.listEosb(Number(employeeId)).then(h => setHistory(h as unknown[])).catch(() => {});
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Calculation failed.';
+      setError(msg);
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="surface p-4 space-y-3">
+        <p className="text-sm font-semibold text-slate-800 dark:text-white">EOSB / Gratuity Calculator</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Calculates End-of-Service Benefit per UAE Labour Law (21 days/year for first 5 years, 30 days/year thereafter).
+          Rates are configurable in Setup → GCC Settings.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Employee ID *</label>
+            <input type="number" className={inp} placeholder="e.g. 1" value={employeeId} onChange={e => setEmployeeId(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">As of Date</label>
+            <input type="date" className={inp} aria-label="As of date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} />
+          </div>
+        </div>
+        {error && <p className="text-xs text-rose-500">{error}</p>}
+        <button type="button" className={btn.primary} onClick={calculate} disabled={!employeeId || loading}>
+          {loading ? 'Calculating…' : 'Calculate EOSB'}
+        </button>
+      </div>
+
+      {result && (
+        <div className="surface p-5 space-y-3">
+          <p className="font-semibold text-slate-900 dark:text-white">{result.employeeName as string}</p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div className="text-slate-500">Total Service</div><div className="font-medium">{(result.totalYears as number).toFixed(2)} years</div>
+            <div className="text-slate-500">Eligible Salary</div><div className="font-medium">{result.currency as string} {(result.eligibleSalary as number).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Daily Rate</div><div className="font-medium">{result.currency as string} {(result.dailySalary as number).toFixed(4)}</div>
+            <div className="text-slate-500">Rate (1–5 yrs)</div><div className="font-medium">{result.rate1To5Years as number} days/year</div>
+            <div className="text-slate-500">Rate (5+ yrs)</div><div className="font-medium">{result.rateAbove5Years as number} days/year</div>
+          </div>
+          <div className="rounded-xl bg-sapphire/10 p-4 dark:bg-cyanAccent/10">
+            <p className="text-xs text-slate-500 dark:text-slate-400">Calculated EOSB</p>
+            <p className="text-2xl font-bold text-sapphire dark:text-cyanAccent">{result.currency as string} {(result.eosbAmount as number).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+            <p className="mt-1 text-xs text-slate-500">{result.message as string}</p>
+          </div>
+          <p className="text-xs text-amber-600 dark:text-amber-400">Advisory only. Consult legal/HR before processing EOSB payment.</p>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="surface overflow-hidden">
+          <div className="border-b border-slate-100 px-4 py-3 dark:border-white/10">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">Previous Calculations</p>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead><tr className="border-b border-slate-100 dark:border-white/10">
+              {['Date', 'Eligible Salary', 'EOSB Amount', 'Status'].map(h => <th key={h} className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+              {(history as Array<Record<string, unknown>>).map((h, i) => (
+                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                  <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{h.calculationDate as string}</td>
+                  <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">AED {(h.eligibleSalary as number).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 font-medium text-sapphire dark:text-cyanAccent">AED {(h.calculatedAmount as number).toLocaleString()}</td>
+                  <td className="px-4 py-2.5"><StatusBadge status={h.status as string} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ───────────────────────────────────────────────────────────────────
 
 export function PayrollPage() {
@@ -1220,6 +1313,7 @@ export function PayrollPage() {
       case 'bank-wps': return <BankWpsTab />;
       case 'payment-tracking': return <PaymentTrackingTab />;
       case 'reports': return <ReportsTab />;
+      case 'eosb': return <EOSBTab />;
       case 'ai-validation': return <AIValidationTab />;
     }
   };
