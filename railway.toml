@@ -1,6 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+watchPatterns = ["backend-dotnet/Zayra.Api/**"]
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
