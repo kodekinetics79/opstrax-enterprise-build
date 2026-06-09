@@ -14,7 +14,7 @@ public class RecruitmentReportsController : ControllerBase
     public RecruitmentReportsController(ZayraDbContext db) => _db = db;
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
 
     // GET /api/recruitment/reports/pipeline-summary
     [HttpGet("pipeline-summary")]

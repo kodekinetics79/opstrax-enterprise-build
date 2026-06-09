@@ -69,7 +69,7 @@ public class EmployeeModuleTests
 
     private static EmployeesController CreateController(ZayraDbContext db, Guid tenantId)
     {
-        var controller = new EmployeesController(db, new Pbkdf2PasswordHasher(), new AuditService(db), new FakeDocumentStorage(), new Zayra.Api.Infrastructure.Notifications.NotificationService(db), new FakeHijriDateService());
+        var controller = new EmployeesController(db, new Pbkdf2PasswordHasher(), new AuditService(db), new FakeDocumentStorage(), new Zayra.Api.Infrastructure.Notifications.NotificationService(db), new FakeHijriDateService(), new Zayra.Api.Infrastructure.Common.DataScopeService(db));
         var userId = Guid.NewGuid();
         var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {

@@ -64,4 +64,14 @@ export const shiftsApi = {
     client.post('/api/shifts/roster/assign', body).then((r) => r.data),
 
   removeAssignment: (id: string) => client.delete(`/api/shifts/roster/${id}`),
+
+  autoPlan: (body: {
+    dateFrom: string;
+    dateTo: string;
+    shiftIds: string[];
+    pattern: 'fixed' | 'alternating' | 'rotating';
+    skipWeekend: boolean;
+    overwriteExisting: boolean;
+    employeeIds?: number[];
+  }) => client.post<{ created: number; skipped: number; employees: number; days: number }>('/api/shifts/roster/auto-plan', body).then(r => r.data),
 };

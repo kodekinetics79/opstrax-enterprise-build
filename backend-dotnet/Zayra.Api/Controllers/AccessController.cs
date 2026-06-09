@@ -230,6 +230,18 @@ public class AccessController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
+    [HttpDelete("users/{userId:guid}")]
+    public async Task<IActionResult> DeleteUser(Guid userId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tenantId = GetTenantId();
+            if (tenantId is null) return Unauthorized();
+            return await _accessManagement.DeleteUserAsync(tenantId.Value, userId, GetContext(), cancellationToken) ? NoContent() : NotFound();
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
     [HttpPut("users/{userId:guid}/roles")]
     public async Task<ActionResult<AuthUserDto>> AssignRoles(Guid userId, AssignRolesRequest request, CancellationToken cancellationToken)
     {

@@ -16,4 +16,11 @@ public class SeedAdminOptions
     public string Email { get; set; } = "admin@zayra.local";
     public string FullName { get; set; } = "Zayra Admin";
     public string Password { get; set; } = "ChangeMe123!";
+
+    /// <summary>
+    /// When true, seeds sample/demo business data (company, branches, departments,
+    /// grades, sample policies and approval workflows). Defaults to FALSE so production
+    /// tenants start clean — the admin configures their own organisation via Setup.
+    /// </summary>
+    public bool SeedDemoData { get; set; } = false;
 }

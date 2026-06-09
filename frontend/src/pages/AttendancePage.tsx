@@ -160,7 +160,7 @@ export function AttendancePage() {
   const submitPunch = (event: FormEvent) => {
     event.preventDefault();
     const employeeId = Number(punchEmployeeId);
-    runAction(() => attendanceApi.punch[punchSource]({ employeeId, punchDirection, locationName: 'Zayra web console' }), 'Punch saved to live attendance events.');
+    runAction(() => attendanceApi.punch[punchSource]({ employeeId, punchDirection, locationName: 'KynexOne web console' }), 'Punch saved to live attendance events.');
   };
 
   const submitDevice = (event: FormEvent) => {
@@ -179,7 +179,7 @@ export function AttendancePage() {
       punchTimestampUtc: toUtc(rawForm.punchAt)!,
       punchDirection: rawForm.direction,
       verificationMethod: rawForm.verificationMethod,
-      rawPayloadJson: JSON.stringify({ source: rawForm.source, submittedFrom: 'Zayra attendance workspace' }),
+      rawPayloadJson: JSON.stringify({ source: rawForm.source, submittedFrom: 'KynexOne attendance workspace' }),
     }), 'Raw attendance event saved.');
   };
 

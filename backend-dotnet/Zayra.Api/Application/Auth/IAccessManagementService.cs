@@ -20,6 +20,7 @@ public interface IAccessManagementService
     Task LockUserAsync(Guid tenantId, Guid userId, string reason, RequestContext context, CancellationToken cancellationToken);
     Task UnlockUserAsync(Guid tenantId, Guid userId, RequestContext context, CancellationToken cancellationToken);
     Task AdminResetPasswordAsync(Guid tenantId, Guid userId, AdminResetPasswordRequest request, RequestContext context, CancellationToken cancellationToken);
+    Task<bool> DeleteUserAsync(Guid tenantId, Guid userId, RequestContext context, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<EmployeeTeamMemberDto>> GetTeamAsync(Guid tenantId, int managerEmployeeId, CancellationToken cancellationToken);
     Task<ApprovalDelegationDto> CreateDelegationAsync(Guid tenantId, ApprovalDelegationRequest request, RequestContext context, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ApprovalDelegationDto>> GetDelegationsAsync(Guid tenantId, CancellationToken cancellationToken);

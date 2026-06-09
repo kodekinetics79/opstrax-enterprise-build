@@ -238,7 +238,7 @@ public class OvertimeController : ControllerBase
         var tenantId = RequireTenant();
         var request = await _db.OvertimeRequests.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == req.OvertimeRequestId && x.Status == "Approved", ct);
         if (request is null) return BadRequest(new { message = "Approved overtime request not found." });
-        var policy = request.OvertimePolicyId.HasValue ? await _db.OvertimePolicies.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.OvertimePolicyId, ct) : null;
+        var policy = request.OvertimePolicyId.HasValue ? await _db.OvertimePolicies.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.OvertimePolicyId && x.TenantId == tenantId, ct) : null;
         if (policy is not null && !policy.AllowCompOffConversion) return BadRequest(new { message = "Comp-off conversion is not allowed by this policy." });
         var compOff = new OvertimeCompOffConversion { TenantId = tenantId, OvertimeRequestId = req.OvertimeRequestId, EmployeeId = request.EmployeeId, OvertimeHours = Math.Round(request.ApprovedMinutes / 60m, 2), CompOffDays = req.CompOffDays, Status = "Pending" };
         _db.OvertimeCompOffConversions.Add(compOff);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   BarChart2, BookOpen, Clock, Download, Play, Plus, RefreshCw, Save, Trash2, ToggleLeft, ToggleRight,
 } from 'lucide-react';
@@ -208,6 +209,7 @@ function AnalyticsDashboard() {
 const CATEGORIES = ['HR', 'Attendance', 'Leave', 'Overtime', 'Payroll', 'Recruitment', 'Compliance', 'Finance'];
 
 function ReportLibrary() {
+  const [searchParams] = useSearchParams();
   const [catalog, setCatalog] = useState<ReportCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState<ReportCatalogItem | null>(null);
@@ -227,6 +229,17 @@ function ReportLibrary() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const reportKey = searchParams.get('report');
+    if (!reportKey || catalog.length === 0) return;
+    const selected = catalog.find((item) => item.key === reportKey);
+    if (selected) {
+      setSelectedReport(selected);
+      setFilters({});
+      setResult(null);
+      setRunError('');
+    }
+  }, [catalog, searchParams]);
 
   const displayed = filterCat ? catalog.filter((r) => r.category === filterCat) : catalog;
 

@@ -1,0 +1,36 @@
+{
+  "apiBaseUrl": "http://localhost:5117",
+  "pollIntervalSeconds": 60,
+  "cursorFile": "./.cursor.json",
+  "devices": [
+    {
+      "name": "Dubai HQ - Main Door",
+      "connector": "mock",
+      "deviceKey": "knx_REPLACE_WITH_KEY_FROM_KYNEXONE",
+      "mock": {
+        "punches": [
+          { "employeeCode": "KNX-0001", "direction": "In",  "offsetMinutes": -480 },
+          { "employeeCode": "KNX-0001", "direction": "Out", "offsetMinutes": -5 }
+        ]
+      }
+    },
+    {
+      "name": "Branch 2 - Turnstile",
+      "connector": "csv",
+      "deviceKey": "knx_REPLACE_WITH_KEY",
+      "csv": {
+        "inboxDir": "./inbox",
+        "archiveDir": "./archive",
+        "columns": { "employeeCode": 0, "timestamp": 1, "direction": 2 },
+        "timestampFormat": "iso",
+        "hasHeader": true
+      }
+    },
+    {
+      "name": "Branch 3 - ZKTeco Face",
+      "connector": "zkteco",
+      "deviceKey": "knx_REPLACE_WITH_KEY",
+      "zkteco": { "ip": "192.168.1.201", "port": 4370, "timeout": 10000 }
+    }
+  ]
+}

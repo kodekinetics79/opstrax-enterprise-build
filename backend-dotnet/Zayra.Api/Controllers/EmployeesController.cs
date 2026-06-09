@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -37,8 +38,9 @@ public class EmployeesController : ControllerBase
     private readonly IDocumentStorage _documents;
     private readonly INotificationService _notifications;
     private readonly IHijriDateService _hijri;
+    private readonly IDataScopeService _scopeService;
 
-    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri)
+    public EmployeesController(ZayraDbContext db, IPasswordHasher passwordHasher, IAuditService audit, IDocumentStorage documents, INotificationService notifications, IHijriDateService hijri, IDataScopeService scopeService)
     {
         _db = db;
         _passwordHasher = passwordHasher;
@@ -46,19 +48,117 @@ public class EmployeesController : ControllerBase
         _documents = documents;
         _notifications = notifications;
         _hijri = hijri;
+        _scopeService = scopeService;
     }
 
     [HttpGet]
     [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Officer,Manager,Auditor")]
     public async Task<ActionResult<PagedResult<EmployeeListItemDto>>> Search([FromServices] IEmployeeManagementService employeeManagement, [FromQuery] string? search, [FromQuery] string? status, [FromQuery] string? department, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
     {
-        return Ok(await employeeManagement.SearchAsync(RequireTenant(), search, status, department, page, pageSize, cancellationToken));
+        var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        if (scope.IsUnrestricted)
+            return Ok(await employeeManagement.SearchAsync(tenantId, search, status, department, page, pageSize, cancellationToken));
+
+        // Restricted scope: query directly and apply AllowedEmployeeIds filter
+        var query = _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted
+            && scope.AllowedEmployeeIds!.Contains(e.Id));
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(e => e.FullName.Contains(search) || e.EmployeeCode.Contains(search) || (e.WorkEmail != null && e.WorkEmail.Contains(search)));
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(e => e.Status == status);
+        if (!string.IsNullOrWhiteSpace(department)) query = query.Where(e => e.Department == department);
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query.OrderBy(e => e.FullName).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(e => new EmployeeListItemDto(e.Id, e.EmployeeCode, e.FullName, e.ArabicName ?? string.Empty, e.Department ?? string.Empty, e.Designation ?? string.Empty, e.Branch ?? string.Empty, e.ManagerEmployeeId, e.Status, e.ProfileCompletenessScore, e.VisaExpiryDate, e.PassportExpiryDate, e.IqamaNumber ?? string.Empty))
+            .ToListAsync(cancellationToken);
+        return Ok(new PagedResult<EmployeeListItemDto>(items, total, page, pageSize));
     }
+
+    // ── Configurable export / import / shareable template ────────────────────────
+    private static readonly string[] EmployeeCsvHeaders =
+        { "EmployeeCode", "FullName", "ArabicName", "WorkEmail", "Phone", "Gender", "Nationality", "Department", "Designation", "JobTitle", "EmploymentType", "ContractType", "Status", "JoiningDate" };
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Officer,Auditor")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        var emps = await _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .OrderBy(e => e.EmployeeCode).ToListAsync(ct);
+        var rows = emps.Select(e => (IReadOnlyList<object?>)new object?[]
+        {
+            e.EmployeeCode, e.FullName, e.ArabicName, e.WorkEmail, e.Phone, e.Gender, e.Nationality,
+            e.Department, e.Designation, e.JobTitle, e.EmploymentType, e.ContractType, e.Status,
+            e.JoiningDate.ToString("yyyy-MM-dd")
+        });
+        var csv = Csv.Build(EmployeeCsvHeaders, rows);
+        return File(Encoding.UTF8.GetBytes(csv), "text/csv", $"employees_{DateTime.UtcNow:yyyyMMdd}.csv");
+    }
+
+    /// <summary>Downloadable blank template — the shareable "data format" to fill and import.</summary>
+    [HttpGet("import-template")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public IActionResult ImportTemplate() =>
+        File(Encoding.UTF8.GetBytes(Csv.Template(EmployeeCsvHeaders)), "text/csv", "employees_import_template.csv");
+
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> Import([FromBody] ImportEmployeesRequest req, CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
+        var branch = await _db.Branches.FirstOrDefaultAsync(b => b.TenantId == tenantId, ct);
+        int created = 0, skipped = 0;
+        var errors = new List<string>();
+        var rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var name = row.GetValueOrDefault("FullName", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name)) { skipped++; continue; }
+            var code = row.GetValueOrDefault("EmployeeCode", string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(code) && await _db.Employees.AnyAsync(e => e.TenantId == tenantId && e.EmployeeCode == code, ct))
+            { skipped++; errors.Add($"Row {rowNum}: EmployeeCode '{code}' already exists."); continue; }
+            DateTime.TryParse(row.GetValueOrDefault("JoiningDate", string.Empty), out var jd);
+            var statusVal = row.GetValueOrDefault("Status", string.Empty).Trim();
+            _db.Employees.Add(new Employee
+            {
+                TenantId = tenantId,
+                CompanyId = company?.Id,
+                BranchId = branch?.Id,
+                EmployeeCode = string.IsNullOrWhiteSpace(code) ? $"IMP-{Guid.NewGuid().ToString()[..6].ToUpperInvariant()}" : code,
+                FullName = name,
+                EnglishName = name,
+                ArabicName = row.GetValueOrDefault("ArabicName", string.Empty),
+                WorkEmail = row.GetValueOrDefault("WorkEmail", string.Empty),
+                Phone = row.GetValueOrDefault("Phone", string.Empty),
+                Gender = row.GetValueOrDefault("Gender", string.Empty),
+                Nationality = row.GetValueOrDefault("Nationality", string.Empty),
+                Department = row.GetValueOrDefault("Department", string.Empty),
+                Designation = row.GetValueOrDefault("Designation", string.Empty),
+                JobTitle = row.GetValueOrDefault("JobTitle", row.GetValueOrDefault("Designation", string.Empty)),
+                EmploymentType = row.GetValueOrDefault("EmploymentType", "Full-time"),
+                ContractType = row.GetValueOrDefault("ContractType", string.Empty),
+                Status = string.IsNullOrWhiteSpace(statusVal) ? "Active" : statusVal,
+                JoiningDate = jd == default ? DateTime.UtcNow : jd,
+            });
+            created++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+    }
+
+    public record ImportEmployeesRequest(string CsvContent);
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<EmployeeDetailDto>> Get(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
-        var employee = await employeeManagement.GetAsync(RequireTenant(), id, CanViewSensitive(), Context(), cancellationToken);
+        var tenantId = RequireTenant();
+        var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(id))
+            return Forbid();
+        var employee = await employeeManagement.GetAsync(tenantId, id, CanViewSensitive(), Context(), cancellationToken);
         return employee is null ? NotFound() : Ok(employee);
     }
 
@@ -397,7 +497,7 @@ public class EmployeesController : ControllerBase
         var tenantId = RequireTenant();
         var transfer = await _db.EmployeeTransferRequests.FirstOrDefaultAsync(x => x.Id == transferId && x.TenantId == tenantId, cancellationToken);
         if (transfer is null) return NotFound();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == transfer.EmployeeId, cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == transfer.EmployeeId && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         employee.Department = transfer.NewDepartment;
         employee.Branch = transfer.NewBranch;

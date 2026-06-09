@@ -36,6 +36,25 @@ public record AttendanceRawEventRequest(
     decimal? ConfidenceScore);
 
 public record WebPunchRequest(int EmployeeId, string PunchDirection, string? LocationName, decimal? Latitude, decimal? Longitude);
+
+// ── Device-key-authenticated ingest (generic webhook connector) ──────────────
+public record DeviceIngestPunch(
+    string EmployeeCode,
+    DateTime PunchTimestampUtc,
+    string? PunchDirection,
+    string? VerificationMethod,
+    decimal? ConfidenceScore,
+    decimal? Latitude,
+    decimal? Longitude,
+    string? PhotoReference,
+    string? RawPayloadJson);
+
+public record DeviceIngestRequest(IReadOnlyList<DeviceIngestPunch> Punches, bool? AutoProcess);
+
+public record DeviceIngestResult(int Received, int Accepted, int Duplicates, int Unmatched, int Processed, Guid SyncLogId);
+
+public record DeviceKeyResult(Guid DeviceId, string DeviceName, string ApiKey);
+
 public record ImportAttendanceRequest(string FileName, string CsvContent);
 public record ProcessAttendanceRequest(DateOnly FromDate, DateOnly ToDate, int? EmployeeId);
 public record RegularizationRequestDto(int EmployeeId, DateOnly WorkDate, string RequestType, DateTime? RequestedInUtc, DateTime? RequestedOutUtc, string Reason);

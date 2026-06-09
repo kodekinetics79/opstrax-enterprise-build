@@ -5,6 +5,23 @@ import {
   FileText, AlertCircle, ArrowRight, Calendar, BarChart3, Bot,
   Target, BookOpen, Award, TrendingUp, LayoutGrid,
 } from 'lucide-react';
+import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import client from '../api/client';
+
+// ── Recruitment import/export helpers ─────────────────────────────────────────
+
+const jobOpeningsImportExport = {
+  export: async () => {
+    const csv = await client.get<string>('/api/recruitment/openings/export', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'job-openings.csv');
+  },
+  template: async () => {
+    const csv = await client.get<string>('/api/recruitment/openings/import-template', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'job-openings-template.csv');
+  },
+  import: (csvContent: string) =>
+    client.post<{ received: number; created: number; skipped: number; errors: string[] }>('/api/recruitment/openings/import', { csvContent }).then(r => r.data),
+};
 import {
   requisitionsApi, openingsApi, candidatesApi, applicationsApi,
   workforcePlanningApi, interviewsApi, assessmentsApi, offersApi,
@@ -506,11 +523,19 @@ function OpeningsTab({ onSelectOpening, requisitionToOpen, onOpeningCreated }: {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <p className="text-sm text-slate-500 dark:text-slate-400">{items.length} opening{items.length !== 1 ? 's' : ''}</p>
-        <button type="button" className="btn-primary flex items-center gap-1.5 text-sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="h-3.5 w-3.5" />New Opening
-        </button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <ImportExportToolbar
+            entityName="Job Openings"
+            onExport={jobOpeningsImportExport.export}
+            onDownloadTemplate={jobOpeningsImportExport.template}
+            onImport={jobOpeningsImportExport.import}
+          />
+          <button type="button" className="btn-primary flex items-center gap-1.5 text-sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-3.5 w-3.5" />New Opening
+          </button>
+        </div>
       </div>
 
       {loading && <div className="flex justify-center py-12"><div className="h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></div>}

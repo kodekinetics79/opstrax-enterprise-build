@@ -126,7 +126,7 @@ export default function TenantAdminPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Current Subscription</h2>
           {!subscription ? (
-            <p className="text-sm text-gray-500">No subscription found. Contact your Zayra account manager.</p>
+            <p className="text-sm text-gray-500">No subscription found. Contact your KynexOne account manager.</p>
           ) : (
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-4">
@@ -344,7 +344,7 @@ export default function TenantAdminPage() {
           )}
           {!branding && (
             <div className="text-center py-8 text-sm text-gray-400">
-              <p>No branding configured. Default Zayra branding is active.</p>
+              <p>No branding configured. Default KynexOne branding is active.</p>
               <button
                 onClick={() => setBranding({ logoUrl: '', primaryColor: '#2563EB', accentColor: '#7C3AED', companyNameEn: '', companyNameAr: '', portalTitle: 'HR Portal', faviconUrl: '' })}
                 className="mt-3 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"

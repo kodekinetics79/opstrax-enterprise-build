@@ -189,6 +189,9 @@ export const usersApi = {
   adminResetPassword: (userId: string, newPassword: string, mustChangePassword = true) =>
     client.post(`/api/access/users/${userId}/admin-reset-password`, { newPassword, mustChangePassword }),
 
+  delete: (userId: string) =>
+    client.delete(`/api/access/users/${userId}`),
+
   inviteEmployee: (body: { employeeId: number; email?: string; accessMode: string; roles?: string[]; invitationHours?: number }) =>
     client.post('/api/access/employee-logins/invite', body).then(r => r.data),
 };

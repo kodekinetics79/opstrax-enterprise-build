@@ -84,6 +84,27 @@ public class AttendanceController : ControllerBase
     public Task<IReadOnlyCollection<AttendanceDeviceSyncLog>> SyncLogs(Guid id, CancellationToken ct) =>
         _attendance.GetSyncLogsAsync(RequireTenant(), id, ct);
 
+    /// <summary>Generate (or rotate) a device API key. Plaintext is returned ONCE; only its hash is stored.</summary>
+    [HttpPost("devices/{id:guid}/generate-key")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<ActionResult<DeviceKeyResult>> GenerateDeviceKey(Guid id, CancellationToken ct) =>
+        await _attendance.GenerateDeviceKeyAsync(RequireTenant(), id, Context(), ct) is { } r ? Ok(r) : NotFound();
+
+    /// <summary>
+    /// Generic webhook ingest for attendance devices, cloud platforms, or the local bridge agent.
+    /// Authenticated by the per-device API key in the <c>X-Device-Key</c> header (no user JWT).
+    /// Accepts a batch of punches, stores raw events, and auto-processes affected days.
+    /// </summary>
+    [HttpPost("ingest")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Ingest([FromBody] DeviceIngestRequest request, CancellationToken ct)
+    {
+        var key = Request.Headers["X-Device-Key"].ToString();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var result = await _attendance.IngestByDeviceKeyAsync(key, request, ip, ct);
+        return result is null ? Unauthorized(new { message = "Invalid or inactive device key." }) : Ok(result);
+    }
+
     [HttpPost("events/push")]
     public async Task<ActionResult<AttendanceRawEvent>> PushEvent(AttendanceRawEventRequest request, CancellationToken ct)
     {

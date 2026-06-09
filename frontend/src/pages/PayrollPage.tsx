@@ -12,6 +12,23 @@ import {
   type PayrollPaymentBatch, type PayrollPaymentRecord,
   type PayrollApproval, type PayrollSummary,
 } from '../api/payroll';
+import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import client from '../api/client';
+
+// ── Payroll import/export helpers ───────────────────────────────────────────────
+
+const salaryStructuresImportExport = {
+  export: async () => {
+    const csv = await client.get<string>('/api/payroll/salary-structures/export', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'salary-structures.csv');
+  },
+  template: async () => {
+    const csv = await client.get<string>('/api/payroll/salary-structures/import-template', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'salary-structures-template.csv');
+  },
+  import: (csvContent: string) =>
+    client.post<{ received: number; created: number; skipped: number; errors: string[] }>('/api/payroll/salary-structures/import', { csvContent }).then(r => r.data),
+};
 
 // ── Shared helpers ──────────────────────────────────────────────────────────────
 
@@ -206,7 +223,7 @@ function CreateSalaryStructureModal({ onClose, onSaved }: { onClose: () => void;
         <div className="grid grid-cols-2 gap-3">
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD'].map(c => <option key={c}>{c}</option>)}
+              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
@@ -231,7 +248,13 @@ function SalaryStructuresTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <ImportExportToolbar
+          entityName="Salary Structures"
+          onExport={salaryStructuresImportExport.export}
+          onDownloadTemplate={salaryStructuresImportExport.template}
+          onImport={salaryStructuresImportExport.import}
+        />
         <button type="button" className={btn.primary} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> New Structure</button>
       </div>
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : structures.length === 0 ? (
@@ -330,7 +353,7 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD'].map(c => <option key={c}>{c}</option>)}
+              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
         </div>

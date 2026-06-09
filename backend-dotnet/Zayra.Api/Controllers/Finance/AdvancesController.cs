@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -12,10 +13,16 @@ namespace Zayra.Api.Controllers.Finance;
 public class AdvancesController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    public AdvancesController(ZayraDbContext db) => _db = db;
+    private readonly IDataScopeService _scopeService;
+
+    public AdvancesController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
     private Guid? GetUserId() =>
         Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     private string GetUserName() => User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Unknown";
@@ -66,8 +73,32 @@ public class AdvancesController : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = 30, CancellationToken ct = default)
     {
         var tid = GetTenantId();
+
+        // GCC salary confidentiality: salary advances are restricted to HR/Finance (employees.read or payroll.read)
+        // or caller's own record only. Managers do NOT see their team's advance data.
+        var scope = await _scopeService.ResolveAsync(User, tid, ct);
         var q = _db.SalaryAdvances.Where(x => x.TenantId == tid && !x.IsDeleted);
-        if (employeeId.HasValue) q = q.Where(x => x.EmployeeId == employeeId);
+
+        if (!scope.IsUnrestricted)
+        {
+            // Restrict to caller's own records via UserAccountId
+            var callerUserId = GetUserId();
+            if (callerUserId.HasValue)
+            {
+                var allowedId = callerUserId.Value;
+                var effectiveId = (employeeId.HasValue && employeeId.Value == allowedId) ? employeeId : allowedId;
+                q = q.Where(x => x.EmployeeId == effectiveId);
+            }
+            else
+            {
+                return Ok(new { total = 0, items = Array.Empty<SalaryAdvance>() });
+            }
+        }
+        else if (employeeId.HasValue)
+        {
+            q = q.Where(x => x.EmployeeId == employeeId);
+        }
+
         if (!string.IsNullOrEmpty(status)) q = q.Where(x => x.Status == status);
         var total = await q.CountAsync(ct);
         var items = await q.OrderByDescending(x => x.CreatedAtUtc)

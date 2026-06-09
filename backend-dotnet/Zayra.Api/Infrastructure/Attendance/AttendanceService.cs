@@ -146,6 +146,98 @@ public class AttendanceService : IAttendanceService
         return raw;
     }
 
+    private static string HashKey(string key) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+
+    public async Task<DeviceKeyResult?> GenerateDeviceKeyAsync(Guid tenantId, Guid id, RequestContext context, CancellationToken ct)
+    {
+        var device = await GetDeviceAsync(tenantId, id, ct);
+        if (device is null) return null;
+        var key = "knx_" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+        device.ApiKeyReference = HashKey(key); // store only the hash; plaintext returned once
+        device.UpdatedAtUtc = DateTime.UtcNow;
+        device.UpdatedBy = context.UserId;
+        await Audit(tenantId, context, "attendance.device.key_generated", "AttendanceDevice", id.ToString(), ct);
+        await _db.SaveChangesAsync(ct);
+        return new DeviceKeyResult(device.Id, device.DeviceName, key);
+    }
+
+    public async Task<DeviceIngestResult?> IngestByDeviceKeyAsync(string deviceKey, DeviceIngestRequest request, string? ip, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey)) return null;
+        var hash = HashKey(deviceKey.Trim());
+        // The device key identifies device + tenant. Lookup spans tenants by design;
+        // every subsequent query is scoped explicitly to device.TenantId.
+        var device = await _db.AttendanceDevices.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.ApiKeyReference == hash && !x.IsDeleted, ct);
+        if (device is null || !device.IsActive) return null;
+        var tenantId = device.TenantId;
+
+        var syncLog = new AttendanceDeviceSyncLog { TenantId = tenantId, DeviceId = device.Id, SyncMethod = "Device push (webhook)", Status = "Started" };
+        _db.AttendanceDeviceSyncLogs.Add(syncLog);
+
+        var punches = request.Punches ?? Array.Empty<DeviceIngestPunch>();
+        int accepted = 0, duplicates = 0, unmatched = 0;
+        var matchedEmployees = new Dictionary<int, Employee>();
+        var affectedDates = new HashSet<DateOnly>();
+
+        foreach (var punch in punches)
+        {
+            var employee = await ResolveEmployee(tenantId, null, punch.EmployeeCode, ct);
+            var direction = NormalizeDirection(punch.PunchDirection);
+            var dup = await _db.AttendanceRawEvents.IgnoreQueryFilters().AnyAsync(x =>
+                x.TenantId == tenantId && x.DeviceId == device.Id && x.PunchTimestampUtc == punch.PunchTimestampUtc &&
+                x.PunchDirection == direction &&
+                (employee == null ? x.EmployeeCode == punch.EmployeeCode : x.EmployeeId == employee.Id), ct);
+            if (dup) { duplicates++; continue; }
+
+            _db.AttendanceRawEvents.Add(new AttendanceRawEvent
+            {
+                TenantId = tenantId,
+                EmployeeId = employee?.Id,
+                EmployeeCode = employee?.EmployeeCode ?? Clean(punch.EmployeeCode),
+                DeviceId = device.Id,
+                Source = $"Device: {device.DeviceName}",
+                PunchTimestampUtc = punch.PunchTimestampUtc,
+                PunchDirection = direction,
+                LocationName = Clean(device.LocationName),
+                Latitude = punch.Latitude,
+                Longitude = punch.Longitude,
+                IpAddress = Clean(ip),
+                PhotoReference = Clean(punch.PhotoReference),
+                RawPayloadJson = CleanJson(punch.RawPayloadJson),
+                SyncBatchReference = syncLog.Id.ToString(),
+                VerificationMethod = Clean(punch.VerificationMethod, "Device"),
+                ConfidenceScore = punch.ConfidenceScore,
+            });
+            accepted++;
+            if (employee is null) unmatched++;
+            else { matchedEmployees[employee.Id] = employee; affectedDates.Add(DateOnly.FromDateTime(punch.PunchTimestampUtc)); }
+        }
+
+        device.LastSyncStatus = "Completed";
+        device.LastSyncAtUtc = DateTime.UtcNow;
+        device.ErrorLog = unmatched > 0 ? $"{unmatched} punch(es) had no matching employee code." : "";
+        syncLog.Status = "Completed";
+        syncLog.CompletedAtUtc = DateTime.UtcNow;
+        syncLog.RawEventsReceived = punches.Count;
+        syncLog.RawEventsProcessed = accepted;
+        await _db.SaveChangesAsync(ct);
+
+        int processedDays = 0;
+        if ((request.AutoProcess ?? true) && matchedEmployees.Count > 0 && affectedDates.Count > 0)
+        {
+            var policy = await _db.AttendancePolicies.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.IsActive, ct) ?? DefaultPolicy(tenantId);
+            var ctx = new RequestContext(ip, "device-ingest", null, tenantId);
+            foreach (var emp in matchedEmployees.Values)
+                foreach (var date in affectedDates)
+                { await ProcessEmployeeDay(tenantId, emp, date, policy, ctx, ct); processedDays++; }
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return new DeviceIngestResult(punches.Count, accepted, duplicates, unmatched, processedDays, syncLog.Id);
+    }
+
     public async Task<AttendanceImportBatch> ImportCsvAsync(Guid tenantId, ImportAttendanceRequest request, RequestContext context, CancellationToken ct)
     {
         var batch = new AttendanceImportBatch { TenantId = tenantId, FileName = request.FileName, CreatedBy = context.UserId, Status = "Processing" };
@@ -354,8 +446,15 @@ public class AttendanceService : IAttendanceService
     public async Task<IReadOnlyCollection<AttendanceAIInsight>> GenerateInsightsAsync(Guid tenantId, CancellationToken ct)
     {
         var since = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(-30));
-        var repeatedMissed = await _db.AttendanceDailyRecords.Where(x => x.TenantId == tenantId && x.WorkDate >= since && x.MissingPunch)
-            .GroupBy(x => new { x.EmployeeId, x.EmployeeName }).Where(g => g.Count() >= 3).ToListAsync(ct);
+        // Materialise first — EF Core cannot translate GroupBy with element access into SQL
+        var missingRecords = await _db.AttendanceDailyRecords
+            .Where(x => x.TenantId == tenantId && x.WorkDate >= since && x.MissingPunch)
+            .Select(x => new { x.EmployeeId, x.EmployeeName })
+            .ToListAsync(ct);
+        var repeatedMissed = missingRecords
+            .GroupBy(x => new { x.EmployeeId, x.EmployeeName })
+            .Where(g => g.Count() >= 3)
+            .ToList();
         foreach (var group in repeatedMissed)
         {
             var exists = await _db.AttendanceAIInsights.AnyAsync(x => x.TenantId == tenantId && x.EmployeeId == group.Key.EmployeeId && x.InsightType == "RepeatedMissedPunch" && !x.IsAcknowledged, ct);

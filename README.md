@@ -1,10 +1,12 @@
-# Zayra AI Workforce
+# KynexOne
 
-AI-powered GCC workforce operations platform.
+**One Platform for Every Workforce Operation**
+
+AI-Powered HRM and Workforce Operating System.
 
 ## Stack
-- Frontend: React + Vite
-- Enterprise API: .NET 8 Web API
+- Frontend: React + Vite + TypeScript + Tailwind CSS
+- Enterprise API: .NET 8 Web API + EF Core
 - AI/Automation Microservice: Node.js + Express
 - Database: MySQL
 
@@ -28,11 +30,18 @@ npm run dev
 ## Database
 Run database/schema.sql in MySQL.
 
-## MVP Modules Included
-- Dashboard prototype
-- Employee master shell
-- Attendance/time-in/time-out model
-- Overtime model
-- Requisition table
-- Appraisal cycle table
-- AI insights service shell
+## Modules
+- Command Center (Dashboard)
+- Workforce (Employees, Departments, Organization)
+- Time & Leave (Attendance, Leave, Overtime, Shifts)
+- Payroll (Runs, Payslips, Loans & Advances)
+- Talent (Recruitment, Onboarding)
+- Performance (Reviews, KPIs)
+- Operations (Approvals, HR Request Center, Documents, Compliance)
+- Reports & Analytics
+- Administration (Users, Roles, Permissions, Tenant Admin, Setup)
+- KynexOne AI (advisory assistant)
+
+> **Note:** The internal .NET solution and namespaces retain the `Zayra.Api`
+> project name for build stability; this is not user-facing. All UI, copy, and
+> product surfaces are branded **KynexOne**.

@@ -13,8 +13,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class AbsenceController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public AbsenceController(ZayraDbContext db) => _db = db;
+    public AbsenceController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -29,7 +34,11 @@ public class AbsenceController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.AbsenceRecords.Where(a => a.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(a => scope.AllowedEmployeeIds!.Contains(a.EmployeeId));
         if (employeeId.HasValue) query = query.Where(a => a.EmployeeId == employeeId.Value);
         if (fromDate.HasValue) query = query.Where(a => a.AbsenceDate >= fromDate.Value);
         if (toDate.HasValue) query = query.Where(a => a.AbsenceDate <= toDate.Value);
@@ -90,7 +99,11 @@ public class AbsenceController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.AbsenceRegularizationRequests.Where(r => r.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
 

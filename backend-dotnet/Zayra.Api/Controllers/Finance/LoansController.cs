@@ -22,7 +22,7 @@ public class LoansController : ControllerBase
     }
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value ?? User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
     private Guid? GetUserId() =>
         Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     private string GetUserName() => User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Unknown";
@@ -186,7 +186,7 @@ public class LoansController : ControllerBase
         approval.ApprovedBy = uid; approval.ApprovedByName = GetUserName();
         approval.DecidedAtUtc = DateTime.UtcNow;
 
-        var loan = await _db.EmployeeLoans.FirstAsync(x => x.Id == id, ct);
+        var loan = await _db.EmployeeLoans.FirstAsync(x => x.Id == id && x.TenantId == tid, ct);
         if (req.Decision == "Rejected")
         {
             loan.Status = "Rejected"; loan.RejectionReason = req.Comments;

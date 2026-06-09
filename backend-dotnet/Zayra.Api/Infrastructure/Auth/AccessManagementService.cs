@@ -400,6 +400,24 @@ public class AccessManagementService : IAccessManagementService
         await _auditService.WriteAsync("access.admin_password_reset", "User", user.Id.ToString(), context, null, cancellationToken);
     }
 
+    public async Task<bool> DeleteUserAsync(Guid tenantId, Guid userId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken);
+        if (user is null) return false;
+        if (user.Id == context.UserId)
+            throw new InvalidOperationException("You cannot delete your own account.");
+        user.IsDeleted = true;
+        user.DeletedAtUtc = DateTime.UtcNow;
+        user.DeletedBy = context.UserId;
+        user.IsActive = false;
+        user.Status = "Deactivated";
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.RefreshTokens.Where(x => x.UserId == userId && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("access.user_deleted", "User", user.Id.ToString(), context, null, cancellationToken);
+        return true;
+    }
+
     public async Task<bool> CancelDelegationAsync(Guid tenantId, Guid delegationId, RequestContext context, CancellationToken cancellationToken)
     {
         var delegation = await _db.ApprovalDelegations.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == delegationId, cancellationToken);

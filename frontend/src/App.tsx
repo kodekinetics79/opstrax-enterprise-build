@@ -66,7 +66,7 @@ function AppShell() {
         <Route path="reports" element={<ProtectedRoute requiredPermissions={['reports.read','reports.schedule']}><ReportsPage /></ProtectedRoute>} />
         <Route path="performance" element={<ProtectedRoute requiredPermissions={['performance.read','performance.write']}><PerformancePage /></ProtectedRoute>} />
         <Route path="ess" element={<ProtectedRoute requiredPermissions={['ess.read']}><EmployeeSelfServicePage /></ProtectedRoute>} />
-        <Route path="ai-assistant" element={<AIAssistantPage />} />
+        <Route path="ai-assistant" element={<ProtectedRoute requiredPermissions={['ai.query','ai.insights_view']}><AIAssistantPage /></ProtectedRoute>} />
         <Route path="hr-requests" element={<ProtectedRoute requiredPermissions={['approvals.read','approvals.write','approvals.decide']}><HRRequestCenterPage /></ProtectedRoute>} />
         <Route path="tenant-admin" element={<ProtectedRoute requiredPermissions={['security.manage']}><TenantAdminPage /></ProtectedRoute>} />
         <Route path="user-management" element={<ProtectedRoute requiredPermissions={['users.manage','roles.manage','security.manage']}><UserManagementPage /></ProtectedRoute>} />

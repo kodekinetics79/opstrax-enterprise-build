@@ -13,8 +13,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class LeaveDelegationController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public LeaveDelegationController(ZayraDbContext db) => _db = db;
+    public LeaveDelegationController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -27,7 +32,11 @@ public class LeaveDelegationController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.LeaveDelegations.Where(d => d.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(d => scope.AllowedEmployeeIds!.Contains(d.EmployeeId));
         if (employeeId.HasValue) query = query.Where(d => d.EmployeeId == employeeId.Value || d.DelegateEmployeeId == employeeId.Value);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(d => d.Status == status);
 

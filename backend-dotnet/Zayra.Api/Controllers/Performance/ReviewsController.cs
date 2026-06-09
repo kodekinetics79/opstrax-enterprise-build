@@ -15,9 +15,14 @@ public class ReviewsController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly IPerformanceService _svc;
+    private readonly IDataScopeService _scopeService;
 
-    public ReviewsController(ZayraDbContext db, IPerformanceService svc)
-    { _db = db; _svc = svc; }
+    public ReviewsController(ZayraDbContext db, IPerformanceService svc, IDataScopeService scopeService)
+    {
+        _db = db;
+        _svc = svc;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -30,7 +35,10 @@ public class ReviewsController : ControllerBase
         CancellationToken ct = default)
     {
         var tenantId = this.GetTenantId()!.Value;
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
         var query = _db.AppraisalReviews.Where(r => r.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
         if (cycleId.HasValue)    query = query.Where(r => r.CycleId == cycleId.Value);
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
         if (!string.IsNullOrWhiteSpace(status))     query = query.Where(r => r.Status == status);

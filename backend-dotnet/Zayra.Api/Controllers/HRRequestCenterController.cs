@@ -13,8 +13,13 @@ namespace Zayra.Api.Controllers;
 public class HRRequestCenterController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public HRRequestCenterController(ZayraDbContext db) => _db = db;
+    public HRRequestCenterController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     // ── Categories ──────────────────────────────────────────────────────────
 
@@ -105,7 +110,11 @@ public class HRRequestCenterController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.HRRequests.Where(r => r.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(r => scope.AllowedEmployeeIds!.Contains(r.EmployeeId));
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
         if (!string.IsNullOrWhiteSpace(priority)) query = query.Where(r => r.Priority == priority);

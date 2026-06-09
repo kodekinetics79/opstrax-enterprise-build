@@ -67,14 +67,54 @@ public class AIHRQueryLog
     public int? EmployeeId { get; set; }
     public string UserRole { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
+    public string LoggedPrompt { get; set; } = string.Empty;
+    public string PromptHash { get; set; } = string.Empty;
+    public string PromptSummary { get; set; } = string.Empty;
     public string Response { get; set; } = string.Empty;
     public string IntentClassified { get; set; } = string.Empty; // leave_inquiry, headcount, payroll_summary
+    public string Module { get; set; } = string.Empty;
     public bool WasBlocked { get; set; }
     public string BlockedReason { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string ResponseStatus { get; set; } = string.Empty;
+    public bool HumanReviewRequired { get; set; }
     public int TokensUsed { get; set; }
+    public int PromptTokens { get; set; }
+    public int CompletionTokens { get; set; }
     public int ResponseTimeMs { get; set; }
     public bool IsAdvisoryLabelShown { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+// ── AI HR Assistant Query Cache ───────────────────────────────────────────────
+
+public class AIHRQueryCache
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string CacheKey { get; set; } = string.Empty;
+    public string QueryHash { get; set; } = string.Empty;
+    public string NormalizedQuery { get; set; } = string.Empty;
+    public string IntentClassified { get; set; } = string.Empty;
+    public string Module { get; set; } = string.Empty;
+    public int? EmployeeId { get; set; }
+    public string UserRoleSignature { get; set; } = string.Empty;
+    public string PermissionSignature { get; set; } = string.Empty;
+    public string Answer { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string ResponseStatus { get; set; } = string.Empty;
+    public bool HumanReviewRequired { get; set; }
+    public bool IsAdvisoryLabelShown { get; set; } = true;
+    public int TokensUsed { get; set; }
+    public int PromptTokens { get; set; }
+    public int CompletionTokens { get; set; }
+    public int ResponseTimeMs { get; set; }
+    public int HitCount { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime LastHitAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAtUtc { get; set; } = DateTime.UtcNow.AddMinutes(5);
 }
 
 // ── Resume Screening ──────────────────────────────────────────────────────────

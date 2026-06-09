@@ -30,16 +30,25 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://0.0.0.0:5117
       ConnectionStrings__Default: server=mysql;port=3306;database=${MYSQL_DATABASE:-zayra};user=${MYSQL_USER:-zayra};password=${MYSQL_PASSWORD:-zayra_password}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      AI_MODEL: ${AI_MODEL:-gpt-oss:120b-cloud}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11435}
+      AI_MAX_CONTEXT_TOKENS: ${AI_MAX_CONTEXT_TOKENS:-4096}
+      AI_REQUIRE_HUMAN_REVIEW: ${AI_REQUIRE_HUMAN_REVIEW:-true}
+      AI_LOG_PROMPTS: ${AI_LOG_PROMPTS:-false}
       Jwt__Issuer: ${JWT_ISSUER:-Zayra.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Zayra.Client}
       Jwt__SigningKey: ${JWT_SIGNING_KEY:-CHANGE_ME_TO_A_64_CHARACTER_PRODUCTION_SECRET_KEY_1234567890}
-      SeedAdmin__TenantName: ${SEED_TENANT_NAME:-Zayra HQ}
+      SeedAdmin__TenantName: ${SEED_TENANT_NAME:-KynexOne}
       SeedAdmin__TenantSlug: ${SEED_TENANT_SLUG:-zayra}
       SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@zayra.local}
-      SeedAdmin__FullName: ${SEED_ADMIN_NAME:-Zayra Admin}
+      SeedAdmin__FullName: ${SEED_ADMIN_NAME:-KynexOne Admin}
       SeedAdmin__Password: ${SEED_ADMIN_PASSWORD:-ChangeMe123!}
+      SeedAdmin__SeedDemoData: ${SEED_DEMO_DATA:-true}
     ports:
       - "${BACKEND_PORT:-5117}:5117"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - zayra-documents:/app/storage
 

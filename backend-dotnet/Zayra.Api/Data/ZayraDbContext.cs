@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
@@ -7,7 +9,19 @@ namespace Zayra.Api.Data;
 
 public class ZayraDbContext : DbContext
 {
-    public ZayraDbContext(DbContextOptions<ZayraDbContext> options) : base(options) { }
+    /// <summary>
+    /// Current request's tenant, resolved from the authenticated user's `tenant_id` claim.
+    /// Null when there is no HTTP context (startup seeding, login/refresh before auth,
+    /// background work) — in that case the global tenant query filter is bypassed.
+    /// </summary>
+    private readonly Guid? _tenantId;
+
+    public ZayraDbContext(DbContextOptions<ZayraDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
+        : base(options)
+    {
+        var claim = httpContextAccessor?.HttpContext?.User?.FindFirst("tenant_id")?.Value;
+        if (Guid.TryParse(claim, out var tid)) _tenantId = tid;
+    }
 
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
@@ -166,6 +180,7 @@ public class ZayraDbContext : DbContext
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
     public DbSet<AIRecommendation> AIRecommendations => Set<AIRecommendation>();
     public DbSet<AIHRQueryLog> AIHRQueryLogs => Set<AIHRQueryLog>();
+    public DbSet<AIHRQueryCache> AIHRQueryCaches => Set<AIHRQueryCache>();
     public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
     public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
     public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
@@ -216,6 +231,9 @@ public class ZayraDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    // ── Policy RAG Documents ───────────────────────────────────────────────────
+    public DbSet<PolicyDocument> PolicyDocuments { get; set; }
+    public DbSet<DocumentChunk> DocumentChunks { get; set; }
     // ── Setup & Admin ──────────────────────────────────────────────────────────
     public DbSet<MasterDataType> MasterDataTypes => Set<MasterDataType>();
     public DbSet<MasterDataValue> MasterDataValues => Set<MasterDataValue>();
@@ -1394,8 +1412,32 @@ public class ZayraDbContext : DbContext
         {
             entity.ToTable("ai_hr_query_logs");
             entity.HasKey(x => x.Id);
+            entity.Property(x => x.LoggedPrompt).HasColumnType("longtext");
+            entity.Property(x => x.PromptSummary).HasColumnType("longtext");
+            entity.Property(x => x.PromptHash).HasMaxLength(128);
+            entity.Property(x => x.Provider).HasMaxLength(50);
+            entity.Property(x => x.Model).HasMaxLength(100);
+            entity.Property(x => x.ResponseStatus).HasMaxLength(50);
             entity.HasIndex(x => new { x.TenantId, x.UserId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<AIHRQueryCache>(entity =>
+        {
+            entity.ToTable("ai_hr_query_cache");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.NormalizedQuery).HasColumnType("longtext");
+            entity.Property(x => x.Answer).HasColumnType("longtext");
+            entity.Property(x => x.QueryHash).HasMaxLength(128);
+            entity.Property(x => x.CacheKey).HasMaxLength(191);
+            entity.Property(x => x.UserRoleSignature).HasColumnType("longtext");
+            entity.Property(x => x.PermissionSignature).HasColumnType("longtext");
+            entity.Property(x => x.Provider).HasMaxLength(50);
+            entity.Property(x => x.Model).HasMaxLength(100);
+            entity.Property(x => x.ResponseStatus).HasMaxLength(50);
+            entity.HasIndex(x => new { x.TenantId, x.CacheKey }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.ExpiresAtUtc });
+            entity.HasIndex(x => new { x.TenantId, x.IntentClassified, x.Module });
         });
 
         modelBuilder.Entity<ResumeParseResult>(entity =>
@@ -1897,7 +1939,62 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.ReportKey });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
         });
+
+        // ── Policy RAG Documents ───────────────────────────────────────────────
+        modelBuilder.Entity<PolicyDocument>(entity =>
+        {
+            entity.ToTable("policy_documents");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+            entity.HasMany(x => x.Chunks).WithOne(x => x.Document).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DocumentChunk>(entity =>
+        {
+            entity.ToTable("document_chunks");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.DocumentId, x.ChunkIndex });
+        });
+
+        ApplyTenantQueryFilters(modelBuilder);
     }
+
+    private static readonly MethodInfo _setTenantFilterNonNull =
+        typeof(ZayraDbContext).GetMethod(nameof(SetTenantFilterNonNull), BindingFlags.Instance | BindingFlags.NonPublic)!;
+    private static readonly MethodInfo _setTenantFilterNullable =
+        typeof(ZayraDbContext).GetMethod(nameof(SetTenantFilterNullable), BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    /// <summary>
+    /// Defence-in-depth tenant isolation: every entity exposing a `TenantId` property gets a
+    /// global query filter so a forgotten <c>.Where(x =&gt; x.TenantId == ...)</c> cannot leak
+    /// across tenants. The filter is bypassed when <see cref="_tenantId"/> is null (seeding,
+    /// login/refresh, background work — see the field doc).
+    /// </summary>
+    private void ApplyTenantQueryFilters(ModelBuilder modelBuilder)
+    {
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            if (entityType.IsOwned() || entityType.BaseType is not null) continue;
+            var clr = entityType.ClrType;
+            var prop = clr.GetProperty("TenantId", BindingFlags.Public | BindingFlags.Instance);
+            if (prop is null) continue;
+            if (prop.PropertyType == typeof(Guid))
+                _setTenantFilterNonNull.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
+            else if (prop.PropertyType == typeof(Guid?))
+                _setTenantFilterNullable.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
+        }
+    }
+
+    // The lambdas close over the instance field _tenantId so EF Core re-parameterises it
+    // per request (the compiled model is shared; only the parameter value changes).
+    private void SetTenantFilterNonNull<TEntity>(ModelBuilder modelBuilder) where TEntity : class
+        => modelBuilder.Entity<TEntity>().HasQueryFilter(
+            e => _tenantId == null || EF.Property<Guid>(e, "TenantId") == _tenantId);
+
+    private void SetTenantFilterNullable<TEntity>(ModelBuilder modelBuilder) where TEntity : class
+        => modelBuilder.Entity<TEntity>().HasQueryFilter(
+            e => _tenantId == null || EF.Property<Guid?>(e, "TenantId") == _tenantId);
 
     private static void ApplySnakeCaseColumns(ModelBuilder modelBuilder)
     {

@@ -13,8 +13,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class CompOffController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public CompOffController(ZayraDbContext db) => _db = db;
+    public CompOffController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -27,7 +32,11 @@ public class CompOffController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.CompOffCredits.Where(c => c.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(c => scope.AllowedEmployeeIds!.Contains(c.EmployeeId));
         if (employeeId.HasValue) query = query.Where(c => c.EmployeeId == employeeId.Value);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(c => c.Status == status);
 

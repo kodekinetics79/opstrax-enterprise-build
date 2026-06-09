@@ -15,7 +15,7 @@ public class ContractsController : ControllerBase
     public ContractsController(ZayraDbContext db) => _db = db;
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
 
     private Guid? GetUserId() =>
         Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;

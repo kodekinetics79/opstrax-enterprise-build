@@ -13,8 +13,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class EncashmentController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IDataScopeService _scopeService;
 
-    public EncashmentController(ZayraDbContext db) => _db = db;
+    public EncashmentController(ZayraDbContext db, IDataScopeService scopeService)
+    {
+        _db = db;
+        _scopeService = scopeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -28,7 +33,11 @@ public class EncashmentController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
         var query = _db.LeaveEncashmentRequests.Where(e => e.TenantId == tenantId);
+        if (!scope.IsUnrestricted)
+            query = query.Where(e => scope.AllowedEmployeeIds!.Contains(e.EmployeeId));
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(e => e.Status == status);
         if (employeeId.HasValue) query = query.Where(e => e.EmployeeId == employeeId.Value);
         if (year.HasValue) query = query.Where(e => e.Year == year.Value);

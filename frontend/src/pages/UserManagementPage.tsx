@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Shield, Users, Key, GitBranch, Award, Lock, CheckCircle, XCircle,
   RefreshCw, Plus, Search, ChevronLeft, ChevronRight, Eye,
   UserCheck, UserX, Unlock, RotateCcw, ClipboardList, UserCog,
-  CheckSquare, MinusSquare, Square, Edit2, Power, PowerOff, Table2,
+  CheckSquare, MinusSquare, Square, Edit2, Power, PowerOff, Table2, Trash2,
 } from 'lucide-react';
 import {
   usersApi, rolesApi, delegationsApi, authoritiesApi, securitySettingsApi,
@@ -86,6 +87,7 @@ function fmtDateTime(d?: string) {
 // ── Users Tab ─────────────────────────────────────────────────────────────────
 
 function UsersTab() {
+  const [searchParams] = useSearchParams();
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -100,6 +102,10 @@ function UsersTab() {
   const [newPassword, setNewPassword] = useState('');
   const [actionErr, setActionErr] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [editUser, setEditUser] = useState<UserListItem | null>(null);
+  const [editFields, setEditFields] = useState({ fullName: '', phoneNumber: '', preferredLanguage: '', timezone: '' });
+  const [editErr, setEditErr] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
   const [roles, setRoles] = useState<RoleItem[]>([]);
   const [allPermissions, setAllPermissions] = useState<PermissionItem[]>([]);
 
@@ -116,6 +122,13 @@ function UsersTab() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    const searchFromUrl = searchParams.get('search');
+    if (searchFromUrl !== null && searchFromUrl !== search) {
+      setSearch(searchFromUrl);
+      setPage(1);
+    }
+  }, [search, searchParams]);
+  useEffect(() => {
     rolesApi.list().then(setRoles).catch(() => {});
     rolesApi.permissions().then(setAllPermissions).catch(() => {});
   }, []);
@@ -129,6 +142,7 @@ function UsersTab() {
       else if (type === 'suspend') await usersApi.suspend(userId, actionReason);
       else if (type === 'lock') await usersApi.lock(userId, actionReason);
       else if (type === 'unlock') await usersApi.unlock(userId);
+      else if (type === 'delete') await usersApi.delete(userId);
       else if (type === 'reset-password') {
         if (newPassword.length < 10) { setActionErr('Password must be at least 10 characters.'); setActionLoading(false); return; }
         await usersApi.adminResetPassword(userId, newPassword, true);
@@ -140,6 +154,26 @@ function UsersTab() {
       setActionErr(msg ?? 'Action failed.');
     }
     setActionLoading(false);
+  };
+
+  const openEdit = (u: UserListItem) => {
+    setEditUser(u);
+    setEditFields({ fullName: u.fullName, phoneNumber: u.phoneNumber ?? '', preferredLanguage: '', timezone: '' });
+    setEditErr('');
+  };
+
+  const doEdit = async () => {
+    if (!editUser) return;
+    setEditLoading(true); setEditErr('');
+    try {
+      await usersApi.update(editUser.id, editFields);
+      setEditUser(null);
+      load();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setEditErr(msg ?? 'Failed to save changes.');
+    }
+    setEditLoading(false);
   };
 
   const totalPages = Math.ceil(total / pageSize);
@@ -200,6 +234,9 @@ function UsersTab() {
                     <button title="View Access" onClick={() => setSelected(u)} className="rounded p-1 hover:bg-slate-100 dark:hover:bg-slate-700">
                       <Eye className="h-3.5 w-3.5 text-slate-500" />
                     </button>
+                    <button title="Edit User" onClick={() => openEdit(u)} className="rounded p-1 hover:bg-violet-100 dark:hover:bg-violet-900/30">
+                      <Edit2 className="h-3.5 w-3.5 text-violet-500" />
+                    </button>
                     {u.status !== 'Active' && (
                       <button title="Activate" onClick={() => setShowAction({ type: 'activate', userId: u.id })} className="rounded p-1 hover:bg-green-100 dark:hover:bg-green-900/30">
                         <UserCheck className="h-3.5 w-3.5 text-green-600" />
@@ -221,6 +258,9 @@ function UsersTab() {
                     )}
                     <button title="Reset Password" onClick={() => setShowAction({ type: 'reset-password', userId: u.id })} className="rounded p-1 hover:bg-violet-100 dark:hover:bg-violet-900/30">
                       <RotateCcw className="h-3.5 w-3.5 text-violet-600" />
+                    </button>
+                    <button title="Delete User" onClick={() => setShowAction({ type: 'delete', userId: u.id })} className="rounded p-1 hover:bg-red-100 dark:hover:bg-red-900/30">
+                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
                     </button>
                   </div>
                 </td>
@@ -256,9 +296,14 @@ function UsersTab() {
       {showAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
-            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 capitalize mb-4">
+            <h3 className={`text-base font-semibold capitalize mb-4 ${showAction.type === 'delete' ? 'text-red-600 dark:text-red-400' : 'text-slate-800 dark:text-slate-200'}`}>
               {showAction.type.replace('-', ' ')} User
             </h3>
+            {showAction.type === 'delete' && (
+              <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
+                This will permanently remove the user's access. This action cannot be undone.
+              </p>
+            )}
             {['suspend', 'lock'].includes(showAction.type) && (
               <FormField label="Reason">
                 <input className={inp()} value={actionReason} onChange={e => setActionReason(e.target.value)} placeholder="Optional reason…" />
@@ -276,8 +321,49 @@ function UsersTab() {
                 Cancel
               </button>
               <button onClick={doAction} disabled={actionLoading}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-60 ${showAction.type === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-violet-600 hover:bg-violet-700'}`}>
+                {actionLoading ? 'Processing…' : showAction.type === 'delete' ? 'Delete' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900 animate-fade-in">
+            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-1">Edit User</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{editUser.email}</p>
+            <div className="space-y-3">
+              <FormField label="Full Name">
+                <input className={inp()} value={editFields.fullName} onChange={e => setEditFields(f => ({ ...f, fullName: e.target.value }))} placeholder="Full name" />
+              </FormField>
+              <FormField label="Phone Number">
+                <input className={inp()} value={editFields.phoneNumber} onChange={e => setEditFields(f => ({ ...f, phoneNumber: e.target.value }))} placeholder="+1 555 000 0000" />
+              </FormField>
+              <FormField label="Preferred Language">
+                <select title="Preferred Language" className={inp()} value={editFields.preferredLanguage} onChange={e => setEditFields(f => ({ ...f, preferredLanguage: e.target.value }))}>
+                  <option value="">— Default —</option>
+                  {['en','ar','de','fr','es','zh','hi','ur','tl','id'].map(l => <option key={l} value={l}>{l.toUpperCase()}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Timezone">
+                <select title="Timezone" className={inp()} value={editFields.timezone} onChange={e => setEditFields(f => ({ ...f, timezone: e.target.value }))}>
+                  <option value="">— Default —</option>
+                  {['UTC','Asia/Dubai','Asia/Riyadh','Asia/Qatar','Asia/Kuwait','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Toronto','Europe/London','Europe/Berlin','Europe/Paris','Asia/Kolkata','Asia/Karachi','Asia/Manila','Asia/Singapore','Australia/Sydney','Africa/Cairo','Africa/Lagos','Africa/Johannesburg'].map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </FormField>
+            </div>
+            {editErr && <ErrMsg msg={editErr} />}
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setEditUser(null)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-700">
+                Cancel
+              </button>
+              <button onClick={doEdit} disabled={editLoading}
                 className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-60">
-                {actionLoading ? 'Processing…' : 'Confirm'}
+                {editLoading ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </div>
@@ -666,20 +752,69 @@ function RolesTab() {
     setEditPerms(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key]);
   };
 
+  const sortedRoles = [...roles].sort((a, b) => a.authorityLevel - b.authorityLevel || a.name.localeCompare(b.name));
+
   const permsByModule = allPermissions.reduce<Record<string, PermissionItem[]>>((acc, p) => {
     if (!acc[p.module]) acc[p.module] = [];
     acc[p.module].push(p);
     return acc;
   }, {});
 
+  const copyRoleSummary = async () => {
+    const text = sortedRoles
+      .map(r => `${r.name} (L${r.authorityLevel}) - ${r.permissions.length} permissions${r.isSystem ? ' - system' : ''}${r.isActive ? '' : ' - inactive'}`)
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Role summary copied to clipboard.');
+    } catch {
+      alert('Copy failed. Please copy from the visible summary.');
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">{roles.length} roles configured</p>
-        <button type="button" onClick={() => { setShowCreate(true); setErr(''); }}
-          className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700">
-          <Plus className="h-4 w-4" /> Create Role
-        </button>
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-800/30">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">Role ladder snapshot</p>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Authority levels and permission counts</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={copyRoleSummary}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700">
+              Copy Summary
+            </button>
+            <button type="button" onClick={() => { setShowCreate(true); setErr(''); }}
+              className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700">
+              <Plus className="h-4 w-4" /> Create Role
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {sortedRoles.map(r => (
+            <div key={r.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[10px] font-bold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                      {r.authorityLevel}
+                    </span>
+                    <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{r.name}</p>
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-slate-500">{r.description}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                  {r.permissions.length} perms
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {!r.isActive && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700">Inactive</span>}
+                {r.isSystem && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">System</span>}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Create Modal */}

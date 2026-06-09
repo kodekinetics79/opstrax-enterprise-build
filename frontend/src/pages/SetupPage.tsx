@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Award, Building2, GitBranch, Layers, Landmark, Tag, Plus, Pencil, Database, Hash, Settings, Globe, Calendar, MapPin, Bell, ClipboardList, ChevronRight } from 'lucide-react';
+import { Award, Building2, GitBranch, Layers, Landmark, Tag, Plus, Pencil, Trash2, Database, Hash, Settings, Globe, Calendar, MapPin, Bell, ClipboardList, ChevronRight } from 'lucide-react';
 import {
   companiesApi,
   branchesApi,
@@ -76,6 +76,7 @@ function CompaniesTab() {
   const [form, setForm] = useState<CompanyRequest>(emptyCompany());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,11 +102,17 @@ function CompaniesTab() {
       else await companiesApi.create(form);
       setModalOpen(false);
       load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
 
   const f = (key: keyof CompanyRequest, v: string | boolean) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteCompany = async (id: string) => {
+    if (!confirm('Delete this company? This cannot be undone.')) return;
+    setDeleting(id);
+    try { await companiesApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   return (
     <>
@@ -127,9 +134,12 @@ function CompaniesTab() {
               <ActiveBadge active={c.isActive} />
             </td>
             <td className="px-4 py-3">
-              <button type="button" onClick={() => openEdit(c)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100">
-                <Pencil className="h-3 w-3" /> Edit
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(c)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteCompany(c.id)} disabled={deleting === c.id} aria-label="Delete company" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
@@ -201,6 +211,7 @@ function BranchesTab({ companies }: { companies: CompanyDto[] }) {
   const [form, setForm] = useState<BranchRequest>(emptyBranch(companies[0]?.id ?? ''));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -224,11 +235,17 @@ function BranchesTab({ companies }: { companies: CompanyDto[] }) {
       if (editing) await branchesApi.update(editing.id, form);
       else await branchesApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
 
   const f = (key: keyof BranchRequest, v: string | boolean) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteBranch = async (id: string) => {
+    if (!confirm('Delete this branch?')) return;
+    setDeleting(id);
+    try { await branchesApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   const companyName = (id: string) => companies.find((c) => c.id === id)?.legalNameEn ?? id;
 
@@ -259,9 +276,12 @@ function BranchesTab({ companies }: { companies: CompanyDto[] }) {
             <td className="px-4 py-3">{b.isHeadOffice ? <span className="rounded-full bg-sapphire/10 px-2 py-0.5 text-xs font-semibold text-sapphire dark:bg-sapphire/20">HQ</span> : '—'}</td>
             <td className="px-4 py-3"><ActiveBadge active={b.isActive} /></td>
             <td className="px-4 py-3">
-              <button type="button" onClick={() => openEdit(b)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100">
-                <Pencil className="h-3 w-3" /> Edit
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(b)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteBranch(b.id)} disabled={deleting === b.id} aria-label="Delete branch" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
@@ -331,6 +351,7 @@ function DepartmentsTab({ costCenters }: { costCenters: CostCenterDto[] }) {
   const [form, setForm] = useState<DepartmentRequest>(emptyDept());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -354,11 +375,17 @@ function DepartmentsTab({ costCenters }: { costCenters: CostCenterDto[] }) {
       if (editing) await departmentsApi.update(editing.id, form);
       else await departmentsApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
 
   const f = (key: keyof DepartmentRequest, v: string | boolean | number | undefined) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteDept = async (id: string) => {
+    if (!confirm('Delete this department?')) return;
+    setDeleting(id);
+    try { await departmentsApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   return (
     <>
@@ -376,9 +403,12 @@ function DepartmentsTab({ costCenters }: { costCenters: CostCenterDto[] }) {
             <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{d.nameEn}</td>
             <td className="px-4 py-3"><ActiveBadge active={d.isActive} /></td>
             <td className="px-4 py-3">
-              <button type="button" onClick={() => openEdit(d)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100">
-                <Pencil className="h-3 w-3" /> Edit
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(d)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteDept(d.id)} disabled={deleting === d.id} aria-label="Delete department" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
@@ -434,6 +464,7 @@ function DesignationsTab({ grades }: { grades: GradeDto[] }) {
   const [form, setForm] = useState<DesignationRequest>(emptyDesig());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -457,11 +488,17 @@ function DesignationsTab({ grades }: { grades: GradeDto[] }) {
       if (editing) await designationsApi.update(editing.id, form);
       else await designationsApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
 
   const f = (key: keyof DesignationRequest, v: string | boolean | undefined) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteDesig = async (id: string) => {
+    if (!confirm('Delete this designation?')) return;
+    setDeleting(id);
+    try { await designationsApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   return (
     <>
@@ -481,9 +518,12 @@ function DesignationsTab({ grades }: { grades: GradeDto[] }) {
             <td className="px-4 py-3">{d.isManagerRole ? <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-600 dark:text-violet-400">Manager</span> : '—'}</td>
             <td className="px-4 py-3"><ActiveBadge active={d.isActive} /></td>
             <td className="px-4 py-3">
-              <button type="button" onClick={() => openEdit(d)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100">
-                <Pencil className="h-3 w-3" /> Edit
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(d)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteDesig(d.id)} disabled={deleting === d.id} aria-label="Delete designation" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
@@ -552,6 +592,7 @@ function GradesTab() {
   const [form, setForm] = useState<GradeRequest>(emptyGrade());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -575,10 +616,16 @@ function GradesTab() {
       if (editing) await gradesApi.update(editing.id, form);
       else await gradesApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
   const f = (key: keyof GradeRequest, v: string | boolean | number) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteGrade = async (id: string) => {
+    if (!confirm('Delete this grade?')) return;
+    setDeleting(id);
+    try { await gradesApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   return (
     <>
@@ -590,7 +637,14 @@ function GradesTab() {
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{g.band || '—'}</td>
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{g.level}</td>
             <td className="px-4 py-3"><ActiveBadge active={g.isActive} /></td>
-            <td className="px-4 py-3"><button type="button" onClick={() => openEdit(g)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100"><Pencil className="h-3 w-3" /> Edit</button></td>
+            <td className="px-4 py-3">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(g)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteGrade(g.id)} disabled={deleting === g.id} aria-label="Delete grade" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </TableShell>
@@ -618,6 +672,7 @@ function CostCentersTab({ companies }: { companies: CompanyDto[] }) {
   const [form, setForm] = useState<CostCenterRequest>(emptyCostCenter());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -640,10 +695,16 @@ function CostCentersTab({ companies }: { companies: CompanyDto[] }) {
       if (editing) await costCentersApi.update(editing.id, form);
       else await costCentersApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save. Please try again.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save. Please try again.'); }
     finally { setSaving(false); }
   };
   const f = (key: keyof CostCenterRequest, v: string | boolean | undefined) => setForm((x) => ({ ...x, [key]: v }));
+  const deleteCostCenter = async (id: string) => {
+    if (!confirm('Delete this cost center?')) return;
+    setDeleting(id);
+    try { await costCentersApi.remove(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
   const companyName = (id?: string) => companies.find((c) => c.id === id)?.legalNameEn ?? '—';
 
   return (
@@ -655,7 +716,14 @@ function CostCentersTab({ companies }: { companies: CompanyDto[] }) {
             <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{c.name}</td>
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{companyName(c.companyId)}</td>
             <td className="px-4 py-3"><ActiveBadge active={c.isActive} /></td>
-            <td className="px-4 py-3"><button type="button" onClick={() => openEdit(c)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100"><Pencil className="h-3 w-3" /> Edit</button></td>
+            <td className="px-4 py-3">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(c)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteCostCenter(c.id)} disabled={deleting === c.id} aria-label="Delete cost center" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </TableShell>
@@ -725,7 +793,7 @@ function MasterDataTab() {
       if (editingType) await masterDataApi.updateType(editingType.id, typeForm);
       else await masterDataApi.createType(typeForm);
       setTypeModal(false); loadTypes();
-    } catch { setError('Failed to save.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
 
@@ -746,7 +814,7 @@ function MasterDataTab() {
       if (editingValue) await masterDataApi.updateValue(editingValue.id, { ...valueForm });
       else await masterDataApi.createValue(selectedType.id, { ...valueForm, isDefault: valueForm.isDefault });
       setValueModal(false); loadValues(selectedType.id);
-    } catch { setError('Failed to save.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
   const deleteValue = async (v: MasterDataValue) => {
@@ -891,6 +959,7 @@ function NumberingRulesTab() {
   const [form, setForm] = useState({ entityType: '', prefix: '', suffix: '', paddingLength: 5, separator: '-', includeYear: true, includeMonth: false, resetYearly: true });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -913,10 +982,16 @@ function NumberingRulesTab() {
     if (!form.entityType.trim() || !form.prefix.trim()) { setError('Entity type and prefix are required'); return; }
     setSaving(true); setError('');
     try { await numberingRulesApi.upsert(form); setModalOpen(false); load(); }
-    catch { setError('Failed to save.'); }
+    catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
   const f = (key: string, v: string | boolean | number) => setForm(x => ({ ...x, [key]: v }));
+  const deleteRule = async (id: string) => {
+    if (!confirm('Delete this numbering rule?')) return;
+    setDeleting(id);
+    try { await numberingRulesApi.delete(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   const preview = (r: NumberingRule) => {
     const parts: string[] = [r.prefix];
@@ -939,7 +1014,12 @@ function NumberingRulesTab() {
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{r.paddingLength}</td>
             <td className="px-4 py-3">{r.resetYearly ? <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600">Yes</span> : '—'}</td>
             <td className="px-4 py-3">
-              <button type="button" onClick={() => openEdit(r)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100"><Pencil className="h-3 w-3" /> Edit</button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(r)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteRule(r.id)} disabled={deleting === r.id} aria-label="Delete rule" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
@@ -1009,7 +1089,7 @@ function SystemSettingsTab() {
     if (!form.category.trim() || !form.settingKey.trim()) { setError('Category and key are required'); return; }
     setSaving(true); setError('');
     try { await systemSettingsApi.upsert(form); setModalOpen(false); load(); }
-    catch { setError('Failed to save.'); }
+    catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
 
@@ -1091,7 +1171,7 @@ function GCCSettingsTab() {
   const save = async () => {
     setSaving(true); setError('');
     try { await gccSettingsApi.upsert(form as GCCComplianceSetting & { countryCode: string }); setModalOpen(false); load(); }
-    catch { setError('Failed to save.'); }
+    catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
   const f = (key: string, v: string | boolean | number) => setForm(x => ({ ...x, [key]: v }));
@@ -1170,6 +1250,7 @@ function FiscalYearsTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [closing, setClosing] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1182,7 +1263,7 @@ function FiscalYearsTab() {
     if (!form.startDate || !form.endDate) { setError('Start and end dates are required'); return; }
     setSaving(true); setError('');
     try { await fiscalYearsApi.create(form); setModalOpen(false); load(); }
-    catch { setError('Failed to create fiscal year.'); }
+    catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to create fiscal year.'); }
     finally { setSaving(false); }
   };
   const closeFY = async (id: string) => {
@@ -1190,6 +1271,12 @@ function FiscalYearsTab() {
     setClosing(id);
     try { await fiscalYearsApi.close(id); load(); } catch { /**/ }
     finally { setClosing(null); }
+  };
+  const deleteFY = async (id: string) => {
+    if (!confirm('Delete this fiscal year?')) return;
+    setDeleting(id);
+    try { await fiscalYearsApi.delete(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
   };
 
   const statusColor = (s: string) => s === 'Open' ? 'bg-emerald-500/10 text-emerald-600' : s === 'Closed' ? 'bg-slate-100 text-slate-400 dark:bg-white/10 dark:text-slate-500' : 'bg-amber-500/10 text-amber-600';
@@ -1206,11 +1293,18 @@ function FiscalYearsTab() {
             <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusColor(fy.status)}`}>{fy.status}</span></td>
             <td className="px-4 py-3">{fy.isCurrent ? <span className="rounded-full bg-sapphire/10 px-2 py-0.5 text-xs font-semibold text-sapphire">Current</span> : '—'}</td>
             <td className="px-4 py-3">
-              {fy.status === 'Open' && (
-                <button type="button" onClick={() => closeFY(fy.id)} disabled={closing === fy.id} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100 disabled:opacity-60">
-                  {closing === fy.id ? '…' : 'Close'}
-                </button>
-              )}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                {fy.status === 'Open' && (
+                  <button type="button" onClick={() => closeFY(fy.id)} disabled={closing === fy.id} className="btn-secondary h-7 px-2 text-xs disabled:opacity-60">
+                    {closing === fy.id ? '…' : 'Close'}
+                  </button>
+                )}
+                {!fy.isCurrent && (
+                  <button type="button" onClick={() => deleteFY(fy.id)} disabled={deleting === fy.id} aria-label="Delete fiscal year" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </td>
           </tr>
         ))}
@@ -1238,6 +1332,7 @@ function LocationsTab() {
   const [form, setForm] = useState({ code: '', nameEn: '', nameAr: '', addressLine1: '', city: '', countryCode: 'AE', postalCode: '', latitude: '', longitude: '', geofenceRadiusMeters: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1261,10 +1356,16 @@ function LocationsTab() {
       if (editing) await locationsApi.update(editing.id, body);
       else await locationsApi.create(body);
       setModalOpen(false); load();
-    } catch { setError('Failed to save.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
   };
   const f = (key: string, v: string) => setForm(x => ({ ...x, [key]: v }));
+  const deleteLocation = async (id: string) => {
+    if (!confirm('Delete this location?')) return;
+    setDeleting(id);
+    try { await locationsApi.delete(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
+  };
 
   return (
     <>
@@ -1278,7 +1379,14 @@ function LocationsTab() {
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{l.countryCode}</td>
             <td className="px-4 py-3 text-slate-500 text-xs">{l.geofenceRadiusMeters ? `${l.geofenceRadiusMeters}m` : '—'}</td>
             <td className="px-4 py-3"><ActiveBadge active={l.isActive} /></td>
-            <td className="px-4 py-3"><button type="button" onClick={() => openEdit(l)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100"><Pencil className="h-3 w-3" /> Edit</button></td>
+            <td className="px-4 py-3">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(l)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteLocation(l.id)} disabled={deleting === l.id} aria-label="Delete location" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </TableShell>
@@ -1314,6 +1422,7 @@ function NotificationTemplatesTab() {
   const [form, setForm] = useState({ code: '', eventType: '', channel: 'Email', subjectEn: '', subjectAr: '', bodyEn: '', bodyAr: '', variables: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1339,8 +1448,14 @@ function NotificationTemplatesTab() {
       if (editing) await notificationTemplatesApi.update(editing.id, form);
       else await notificationTemplatesApi.create(form);
       setModalOpen(false); load();
-    } catch { setError('Failed to save.'); }
+    } catch (err: unknown) { setError((err as any)?.response?.data?.message ?? 'Failed to save.'); }
     finally { setSaving(false); }
+  };
+  const deleteTemplate = async (id: string) => {
+    if (!confirm('Delete this notification template?')) return;
+    setDeleting(id);
+    try { await notificationTemplatesApi.delete(id); load(); } catch { /**/ }
+    finally { setDeleting(null); }
   };
 
   return (
@@ -1360,7 +1475,14 @@ function NotificationTemplatesTab() {
             <td className="px-4 py-3"><span className="rounded-full bg-sapphire/10 px-2 py-0.5 text-xs font-semibold text-sapphire">{t.channel}</span></td>
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">{t.subjectEn || '—'}</td>
             <td className="px-4 py-3"><ActiveBadge active={t.isActive} /></td>
-            <td className="px-4 py-3"><button type="button" onClick={() => openEdit(t)} className="btn-secondary h-7 px-2 text-xs opacity-0 group-hover:opacity-100"><Pencil className="h-3 w-3" /> Edit</button></td>
+            <td className="px-4 py-3">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button type="button" onClick={() => openEdit(t)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => deleteTemplate(t.id)} disabled={deleting === t.id} aria-label="Delete template" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </TableShell>

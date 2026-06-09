@@ -368,8 +368,8 @@ export const holidayCalendarApi = {
 
 export const encashmentApi = {
   list: (params: { status?: string; employeeId?: number } = {}) =>
-    client.get<LeaveEncashmentRequest[]>('/api/leave/encashment', { params }).then(r => r.data),
-  create: (body: { employeeId: number; employeeName: string; leaveTypeId: string; leaveTypeName: string; year: number; daysToEncash: number; amountPerDay: number; reason: string }) =>
+    client.get<PagedResult<LeaveEncashmentRequest>>('/api/leave/encashment', { params }).then(r => r.data.items ?? []),
+  create: (body: { employeeId: number; leaveTypeId: string; year: number; daysToEncash: number; amountPerDay: number; reason: string }) =>
     client.post<LeaveEncashmentRequest>('/api/leave/encashment', body).then(r => r.data),
   hrApprove: (id: string, notes?: string) =>
     client.post<LeaveEncashmentRequest>(`/api/leave/encashment/${id}/hr-approve`, { notes }).then(r => r.data),
@@ -381,23 +381,23 @@ export const encashmentApi = {
 
 export const compOffApi = {
   list: (params: { employeeId?: number; status?: string } = {}) =>
-    client.get<CompOffCredit[]>('/api/leave/compoff', { params }).then(r => r.data),
-  create: (body: { employeeId: number; employeeName: string; workedDate: string; workType: string; hoursWorked: number; daysEarned: number; expiryDate?: string }) =>
+    client.get<PagedResult<CompOffCredit>>('/api/leave/compoff', { params }).then(r => r.data.items ?? []),
+  create: (body: { employeeId: number; workedDate: string; workType: string; hoursWorked: number; daysEarned: number; expiryDate?: string }) =>
     client.post<CompOffCredit>('/api/leave/compoff', body).then(r => r.data),
   approve: (id: string, notes?: string) =>
     client.post<CompOffCredit>(`/api/leave/compoff/${id}/approve`, { notes }).then(r => r.data),
-  use: (id: string, daysUsed: number, leaveRequestId?: string) =>
-    client.post(`/api/leave/compoff/${id}/use`, { daysUsed, leaveRequestId }).then(r => r.data),
+  use: (id: string, daysToUse: number, leaveRequestId?: string) =>
+    client.post(`/api/leave/compoff/${id}/use`, { daysToUse, leaveRequestId }).then(r => r.data),
 };
 
 export const absenceApi = {
   list: (params: { employeeId?: number; from?: string; to?: string; type?: string } = {}) =>
-    client.get<AbsenceRecord[]>('/api/leave/absences', { params }).then(r => r.data),
-  record: (body: { employeeId: number; employeeName: string; departmentName?: string; absenceDate: string; absenceType: string; payrollImpact?: string }) =>
+    client.get<PagedResult<AbsenceRecord>>('/api/leave/absences', { params }).then(r => r.data.items ?? []),
+  record: (body: { employeeId: number; absenceDate: string; absenceType: string; payrollImpact?: string }) =>
     client.post<AbsenceRecord>('/api/leave/absences', body).then(r => r.data),
   listRegularizations: (params: { status?: string } = {}) =>
-    client.get<AbsenceRegularizationRequest[]>('/api/leave/absences/regularization', { params }).then(r => r.data),
-  submitRegularization: (body: { employeeId: number; employeeName: string; absenceRecordId: string; reason: string; leaveTypeId?: string }) =>
+    client.get<PagedResult<AbsenceRegularizationRequest>>('/api/leave/absences/regularization', { params }).then(r => r.data.items ?? []),
+  submitRegularization: (body: { employeeId: number; absenceRecordId: string; reason: string; leaveTypeId?: string }) =>
     client.post<AbsenceRegularizationRequest>('/api/leave/absences/regularization', body).then(r => r.data),
   approveRegularization: (id: string, notes?: string) =>
     client.post<AbsenceRegularizationRequest>(`/api/leave/absences/regularization/${id}/approve`, { notes }).then(r => r.data),

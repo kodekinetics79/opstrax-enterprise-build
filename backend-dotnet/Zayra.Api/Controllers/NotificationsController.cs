@@ -42,4 +42,29 @@ public class NotificationsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         return NoContent();
     }
+
+    [HttpPost("read-all")]
+    public async Task<IActionResult> MarkAllRead(CancellationToken cancellationToken)
+    {
+        var tenantId = Guid.Parse(User.FindFirstValue("tenant_id")!);
+        var userId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var parsed) ? parsed : (Guid?)null;
+        await _db.Notifications
+            .Where(x => x.TenantId == tenantId && (x.UserId == null || x.UserId == userId) && x.Status == "Unread")
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(n => n.Status, "Read")
+                .SetProperty(n => n.ReadAtUtc, DateTime.UtcNow),
+            cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Dismiss(Guid id, CancellationToken cancellationToken)
+    {
+        var tenantId = Guid.Parse(User.FindFirstValue("tenant_id")!);
+        var notification = await _db.Notifications.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, cancellationToken);
+        if (notification is null) return NotFound();
+        _db.Notifications.Remove(notification);
+        await _db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
 }

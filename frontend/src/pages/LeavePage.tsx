@@ -15,6 +15,36 @@ import type {
   LeaveEncashmentRequest, CompOffCredit, AbsenceRecord,
   LeaveCalendarEntry, LeaveAIInsight, LeaveDashboard,
 } from '../api/leave';
+import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import client from '../api/client';
+
+// ── Leave import/export helpers ───────────────────────────────────────────────
+
+const leaveTypesImportExport = {
+  export: async () => {
+    const csv = await client.get<string>('/api/leave/types/export', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'leave-types.csv');
+  },
+  template: async () => {
+    const csv = await client.get<string>('/api/leave/types/import-template', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'leave-types-template.csv');
+  },
+  import: (csvContent: string) =>
+    client.post<{ received: number; created: number; skipped: number; errors: string[] }>('/api/leave/types/import', { csvContent }).then(r => r.data),
+};
+
+const leaveRequestsImportExport = {
+  export: async () => {
+    const csv = await client.get<string>('/api/leave/requests/export', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'leave-requests.csv');
+  },
+  template: async () => {
+    const csv = await client.get<string>('/api/leave/requests/import-template', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'leave-requests-template.csv');
+  },
+  import: (csvContent: string) =>
+    client.post<{ received: number; created: number; skipped: number; errors: string[] }>('/api/leave/requests/import', { csvContent }).then(r => r.data),
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -480,7 +510,7 @@ function MyRequestsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <select className={`${sel} w-56`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
           {['Draft', 'Submitted', 'PendingManagerApproval', 'PendingHRApproval', 'Approved', 'Rejected', 'Cancelled', 'Withdrawn', 'PayrollProcessed'].map(s => (
@@ -488,6 +518,14 @@ function MyRequestsTab() {
           ))}
         </select>
         <p className="text-sm text-slate-400">{requests.length} request{requests.length !== 1 ? 's' : ''}</p>
+        <div className="ml-auto">
+          <ImportExportToolbar
+            entityName="Leave Requests"
+            onExport={leaveRequestsImportExport.export}
+            onDownloadTemplate={leaveRequestsImportExport.template}
+            onImport={leaveRequestsImportExport.import}
+          />
+        </div>
       </div>
 
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : requests.length === 0 ? (
@@ -759,7 +797,15 @@ function LeaveTypesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end"><button type="button" className={btn.primary} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> New Leave Type</button></div>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <ImportExportToolbar
+          entityName="Leave Types"
+          onExport={leaveTypesImportExport.export}
+          onDownloadTemplate={leaveTypesImportExport.template}
+          onImport={leaveTypesImportExport.import}
+        />
+        <button type="button" className={btn.primary} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> New Leave Type</button>
+      </div>
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {types.map(t => (
@@ -1136,8 +1182,7 @@ function EncashmentTab() {
     if (!form.employeeId || !form.leaveTypeId || !form.daysToEncash || !form.amountPerDay) return;
     setSaving(true);
     try {
-      const lt = leaveTypes.find(t => t.id === form.leaveTypeId);
-      await encashmentApi.create({ employeeId: Number(form.employeeId), employeeName: form.employeeName, leaveTypeId: form.leaveTypeId, leaveTypeName: lt?.nameEn ?? '', year: Number(form.year), daysToEncash: Number(form.daysToEncash), amountPerDay: Number(form.amountPerDay), reason: form.reason });
+      await encashmentApi.create({ employeeId: Number(form.employeeId), leaveTypeId: form.leaveTypeId, year: Number(form.year), daysToEncash: Number(form.daysToEncash), amountPerDay: Number(form.amountPerDay), reason: form.reason });
       setShowCreate(false); load();
     } catch { alert('Failed.'); }
     setSaving(false);
@@ -1227,7 +1272,7 @@ function CompOffTab() {
   const create = async () => {
     if (!form.employeeId || !form.workedDate || !form.daysEarned) return;
     setSaving(true);
-    try { await compOffApi.create({ employeeId: Number(form.employeeId), employeeName: form.employeeName, workedDate: form.workedDate, workType: form.workType, hoursWorked: Number(form.hoursWorked), daysEarned: Number(form.daysEarned), expiryDate: form.expiryDate || undefined }); setShowCreate(false); load(); }
+    try { await compOffApi.create({ employeeId: Number(form.employeeId), workedDate: form.workedDate, workType: form.workType, hoursWorked: Number(form.hoursWorked), daysEarned: Number(form.daysEarned), expiryDate: form.expiryDate || undefined }); setShowCreate(false); load(); }
     catch { alert('Failed.'); }
     setSaving(false);
   };
@@ -1303,7 +1348,7 @@ function AbsencesTab() {
 
   const regularize = async () => {
     if (!regModal || !regReason) return;
-    try { await absenceApi.submitRegularization({ employeeId: regModal.employeeId, employeeName: regModal.employeeName, absenceRecordId: regModal.id, reason: regReason }); setRegModal(null); load(); }
+    try { await absenceApi.submitRegularization({ employeeId: regModal.employeeId, absenceRecordId: regModal.id, reason: regReason }); setRegModal(null); load(); }
     catch { alert('Failed.'); }
   };
 

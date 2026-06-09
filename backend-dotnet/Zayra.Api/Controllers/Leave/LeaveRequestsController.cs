@@ -1,10 +1,12 @@
 using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Application.Leave;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers.Leave;
@@ -17,12 +19,14 @@ public class LeaveRequestsController : ControllerBase
     private readonly ZayraDbContext _db;
     private readonly ILeaveService _leaveService;
     private readonly IDataScopeService _scopeService;
+    private readonly INotificationService _notifications;
 
-    public LeaveRequestsController(ZayraDbContext db, ILeaveService leaveService, IDataScopeService scopeService)
+    public LeaveRequestsController(ZayraDbContext db, ILeaveService leaveService, IDataScopeService scopeService, INotificationService notifications)
     {
         _db = db;
         _leaveService = leaveService;
         _scopeService = scopeService;
+        _notifications = notifications;
     }
 
     [HttpGet]
@@ -133,6 +137,10 @@ public class LeaveRequestsController : ControllerBase
         try
         {
             var submitted = await _leaveService.SubmitRequestAsync(tenantId.Value, request, ct);
+            await _notifications.NotifyAsync(tenantId.Value, null,
+                "New Leave Request",
+                $"{submitted.EmployeeName} submitted a {submitted.LeaveTypeName} request for {submitted.TotalDays} day(s).",
+                "LeaveRequest", submitted.Id.ToString(), ct);
             return Created($"/api/leave/requests/{submitted.Id}", submitted);
         }
         catch (InvalidOperationException ex)
@@ -154,6 +162,10 @@ public class LeaveRequestsController : ControllerBase
         try
         {
             var result = await _leaveService.ApproveRequestAsync(tenantId.Value, id, approverId, approverName, req.Notes, ct);
+            await _notifications.NotifyAsync(tenantId.Value, null,
+                "Leave Approved",
+                $"{result.EmployeeName}'s {result.LeaveTypeName} request has been approved.",
+                "LeaveRequest", result.Id.ToString(), ct);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
@@ -178,6 +190,10 @@ public class LeaveRequestsController : ControllerBase
         try
         {
             var result = await _leaveService.RejectRequestAsync(tenantId.Value, id, approverId, approverName, req.Reason, ct);
+            await _notifications.NotifyAsync(tenantId.Value, null,
+                "Leave Rejected",
+                $"{result.EmployeeName}'s {result.LeaveTypeName} request has been rejected.",
+                "LeaveRequest", result.Id.ToString(), ct);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
@@ -275,6 +291,33 @@ public class LeaveRequestsController : ControllerBase
 
         await _db.SaveChangesAsync(ct);
         return Ok(new { leaveRequest, delegation });
+    }
+
+    // ── Export ───────────────────────────────────────────────────────────────
+    private static readonly string[] LeaveRequestCsvHeaders =
+        { "EmployeeCode", "EmployeeName", "LeaveType", "StartDate", "EndDate", "Days", "Status", "Reason" };
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Auditor")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var requests = await _db.LeaveRequests
+            .Where(r => r.TenantId == tenantId)
+            .OrderByDescending(r => r.CreatedAtUtc)
+            .ToListAsync(ct);
+
+        var rows = requests.Select(r => (IReadOnlyList<object?>)new object?[]
+        {
+            r.EmployeeId.ToString(), r.EmployeeName, r.LeaveTypeName,
+            r.StartDate.ToString("yyyy-MM-dd"), r.EndDate.ToString("yyyy-MM-dd"),
+            r.TotalDays, r.Status, r.Reason
+        });
+        var csv = Csv.Build(LeaveRequestCsvHeaders, rows);
+        Response.Headers["Content-Disposition"] = "attachment; filename=leave_requests_export.csv";
+        return Content(csv, "text/csv");
     }
 }
 

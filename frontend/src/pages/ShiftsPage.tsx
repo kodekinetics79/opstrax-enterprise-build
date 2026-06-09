@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Clock, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Clock, X, Wand2, CheckCircle2 } from 'lucide-react';
 import { shiftsApi } from '../api/shifts';
 import type { ShiftDefinition, RosterEmployee, RosterAssignment } from '../api/shifts';
 
@@ -219,6 +219,152 @@ function DefinitionModal({ existing, onClose, onSaved }: DefinitionModalProps) {
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : existing ? 'Save Changes' : 'Create Shift'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Auto Plan Modal ───────────────────────────────────────────────────────────
+
+interface AutoPlanModalProps {
+  definitions: ShiftDefinition[];
+  onClose: () => void;
+  onDone: () => void;
+}
+
+function AutoPlanModal({ definitions, onClose, onDone }: AutoPlanModalProps) {
+  const today = new Date().toISOString().slice(0, 10);
+  const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(nextMonth);
+  const [selectedShiftIds, setSelectedShiftIds] = useState<string[]>(definitions.filter(d => d.isActive).slice(0, 1).map(d => d.id));
+  const [pattern, setPattern] = useState<'fixed' | 'alternating' | 'rotating'>('fixed');
+  const [skipWeekend, setSkipWeekend] = useState(true);
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<{ created: number; skipped: number; employees: number; days: number } | null>(null);
+  const [error, setError] = useState('');
+
+  const toggleShift = (id: string) =>
+    setSelectedShiftIds(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+
+  const run = async () => {
+    if (!dateFrom || !dateTo) { setError('Date range is required.'); return; }
+    if (selectedShiftIds.length === 0) { setError('Select at least one shift.'); return; }
+    setRunning(true); setError('');
+    try {
+      const r = await shiftsApi.autoPlan({ dateFrom, dateTo, shiftIds: selectedShiftIds, pattern, skipWeekend, overwriteExisting });
+      setResult(r);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setError(msg ?? 'Auto plan failed.');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (result) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+          <CheckCircle2 className="mx-auto mb-4 h-14 w-14 text-emerald-500" />
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Auto Plan Complete</h3>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            Created <span className="font-semibold text-sapphire dark:text-cyanAccent">{result.created}</span> assignments
+            {result.skipped > 0 && <>, skipped <span className="font-semibold">{result.skipped}</span> existing</>} across{' '}
+            <span className="font-semibold">{result.employees}</span> employees and{' '}
+            <span className="font-semibold">{result.days}</span> working days.
+          </p>
+          <button type="button" className="btn-primary mt-6 w-full" onClick={() => { onDone(); onClose(); }}>
+            View Roster
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="mb-5 flex items-start justify-between">
+          <div>
+            <h3 className="font-semibold text-slate-900 dark:text-white">Auto Plan Shifts</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Bulk-assign shifts to all active employees for a date range.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {/* Date range */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">From</label>
+              <input type="date" className="input w-full" value={dateFrom} onChange={e => setDateFrom(e.target.value)} aria-label="From date" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">To</label>
+              <input type="date" className="input w-full" value={dateTo} onChange={e => setDateTo(e.target.value)} aria-label="To date" />
+            </div>
+          </div>
+
+          {/* Shift selection */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">Shifts to assign</label>
+            <div className="flex flex-wrap gap-2">
+              {definitions.filter(d => d.isActive).map(d => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => toggleShift(d.id)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    selectedShiftIds.includes(d.id)
+                      ? 'border-transparent text-white'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-white/10 dark:text-slate-300'
+                  }`}
+                  style={selectedShiftIds.includes(d.id) ? { backgroundColor: d.color } : {}}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: selectedShiftIds.includes(d.id) ? 'rgba(255,255,255,0.6)' : d.color }} />
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Pattern */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">Pattern</label>
+            <select className="select w-full" value={pattern} onChange={e => setPattern(e.target.value as typeof pattern)} aria-label="Shift pattern">
+              <option value="fixed">Fixed — same shift for all employees every day</option>
+              <option value="alternating">Alternating — cycles shifts day by day</option>
+              <option value="rotating">Rotating — distributes shifts across employees and days</option>
+            </select>
+          </div>
+
+          {/* Toggles */}
+          <div className="flex gap-6">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" checked={skipWeekend} onChange={e => setSkipWeekend(e.target.checked)} />
+              Skip weekends
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" checked={overwriteExisting} onChange={e => setOverwriteExisting(e.target.checked)} />
+              Overwrite existing
+            </label>
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-primary flex items-center gap-1.5 text-sm" onClick={run} disabled={running}>
+            <Wand2 className="h-3.5 w-3.5" />
+            {running ? 'Planning…' : 'Run Auto Plan'}
           </button>
         </div>
       </div>
@@ -491,12 +637,13 @@ function DefinitionsTab({ definitions, onRefresh }: DefinitionsTabProps) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'roster' | 'definitions';
+type Tab = 'roster' | 'definitions' | 'autoPlan';
 
 export function ShiftsPage() {
   const [tab, setTab] = useState<Tab>('roster');
   const [definitions, setDefinitions] = useState<ShiftDefinition[]>([]);
   const [defsLoading, setDefsLoading] = useState(true);
+  const [autoPlanOpen, setAutoPlanOpen] = useState(false);
 
   const loadDefinitions = () => {
     setDefsLoading(true);
@@ -508,12 +655,24 @@ export function ShiftsPage() {
 
   useEffect(() => { loadDefinitions(); }, []);
 
+  const TAB_LABELS: Record<Tab, string> = { roster: 'Weekly Roster', definitions: 'Shift Definitions', autoPlan: 'Auto Plan' };
+
   return (
     <div className="space-y-5 p-4 sm:p-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Shifts & Rosters</h1>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Manage shift definitions and assign employees to weekly schedules.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white">Shifts & Rosters</h1>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Manage shift definitions and assign employees to weekly schedules.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAutoPlanOpen(true)}
+          className="btn-primary flex items-center gap-1.5 text-sm"
+        >
+          <Wand2 className="h-3.5 w-3.5" />
+          Auto Plan
+        </button>
       </div>
 
       {/* Tabs */}
@@ -529,7 +688,7 @@ export function ShiftsPage() {
                 : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
             }`}
           >
-            {t === 'roster' ? 'Weekly Roster' : 'Shift Definitions'}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
@@ -543,6 +702,14 @@ export function ShiftsPage() {
         <RosterTab definitions={definitions} />
       ) : (
         <DefinitionsTab definitions={definitions} onRefresh={loadDefinitions} />
+      )}
+
+      {autoPlanOpen && (
+        <AutoPlanModal
+          definitions={definitions}
+          onClose={() => setAutoPlanOpen(false)}
+          onDone={() => { setTab('roster'); setAutoPlanOpen(false); }}
+        />
       )}
     </div>
   );
