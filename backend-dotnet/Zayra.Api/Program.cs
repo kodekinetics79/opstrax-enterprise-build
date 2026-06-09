@@ -46,10 +46,12 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("SeedAdmin"));
 
 builder.Services.AddControllers();
-// CORS locked to an explicit allowlist (SOC: no AllowAnyOrigin). Auth is bearer-token
-// via the Authorization header (no cookies), so credentials are not exposed cross-origin.
+// CORS: explicit allowlist from config + optional CORS_EXTRA_ORIGINS env var for production deployments
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[] { "http://localhost:5173" };
+var extraOrigins = (builder.Configuration["CORS_EXTRA_ORIGINS"] ?? string.Empty)
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+allowedOrigins = allowedOrigins.Concat(extraOrigins).Distinct().ToArray();
 builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy
     .WithOrigins(allowedOrigins)
     .AllowAnyMethod()

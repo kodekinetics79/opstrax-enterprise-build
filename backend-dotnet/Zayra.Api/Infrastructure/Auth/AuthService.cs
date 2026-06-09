@@ -14,22 +14,35 @@ public class AuthService : IAuthService
     private readonly ITokenService _tokenService;
     private readonly IAuditService _auditService;
     private readonly JwtOptions _jwtOptions;
+    private readonly ILogger<AuthService> _log;
 
-    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IOptions<JwtOptions> jwtOptions)
+    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IOptions<JwtOptions> jwtOptions, ILogger<AuthService> log)
     {
         _db = db;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _auditService = auditService;
         _jwtOptions = jwtOptions.Value;
+        _log = log;
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request, RequestContext context, CancellationToken cancellationToken)
     {
         var user = await LoadUserGraph(request.Email, request.TenantSlug, cancellationToken);
-        if (user is null || user.Tenant is null || !user.IsActive || !user.Tenant.IsActive || IsNoLogin(user) || RequiresPasswordSetup(user) || !_passwordHasher.Verify(request.Password, user.PasswordHash))
+
+        string? failReason = null;
+        if (user is null)                                           failReason = "user_not_found";
+        else if (user.Tenant is null)                              failReason = "tenant_not_loaded";
+        else if (!user.IsActive)                                   failReason = "user_inactive";
+        else if (!user.Tenant.IsActive)                            failReason = "tenant_inactive";
+        else if (IsNoLogin(user))                                  failReason = "access_mode_no_login";
+        else if (RequiresPasswordSetup(user))                      failReason = "requires_password_setup";
+        else if (!_passwordHasher.Verify(request.Password, user.PasswordHash)) failReason = "password_mismatch";
+
+        if (failReason is not null)
         {
-            await _auditService.WriteAsync("auth.login_failed", "User", null, context, $"{{\"email\":\"{request.Email}\"}}", cancellationToken);
+            _log.LogWarning("Login failed for {Email} / tenant={Slug}: {Reason}", request.Email, request.TenantSlug, failReason);
+            await _auditService.WriteAsync("auth.login_failed", "User", null, context, $"{{\"email\":\"{request.Email}\",\"reason\":\"{failReason}\"}}", cancellationToken);
             throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
         }
 
@@ -162,7 +175,7 @@ public class AuthService : IAuthService
             .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x!.RolePermissions).ThenInclude(x => x.Permission)
             .Include(x => x.EmployeeUserAccounts)
             .Include(x => x.PermissionOverrides)
-            .Where(x => x.NormalizedEmail == normalizedEmail);
+            .Where(x => x.NormalizedEmail == normalizedEmail && !x.IsDeleted);
         if (!string.IsNullOrWhiteSpace(tenantSlug)) query = query.Where(x => x.Tenant!.Slug == tenantSlug.Trim().ToLowerInvariant());
         return await query.FirstOrDefaultAsync(cancellationToken);
     }
