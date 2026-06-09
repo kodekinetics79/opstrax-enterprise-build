@@ -8,7 +8,27 @@
       "Bash(sed -n '1,65p' Infrastructure/Attendance/AttendanceService.cs)",
       "Bash(awk '/private async Task<Employee\\\\?> ResolveEmployee|static string NormalizeDirection|static string Clean|static string CleanJson/{p=1} p{print} p&&/^    \\\\}/{print \"----\"}' Infrastructure/Attendance/AttendanceService.cs)",
       "Bash(cd /Users/zackkhan/Downloads/zayra-ai-workforce/frontend/src *)",
-      "Read(//Users/zackkhan/Downloads/**)"
+      "Read(//Users/zackkhan/Downloads/**)",
+      "Bash(node -e \"const l = require\\('/Users/zackkhan/Downloads/zayra-ai-workforce/frontend/node_modules/lucide-react'\\); console.log\\('Trash2' in l\\);\")",
+      "Bash(curl -s -X DELETE http://localhost:5117/api/access/users/00000000-0000-0000-0000-000000000001 -H \"Authorization: Bearer test\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X DELETE http://localhost:5117/api/access/users/00000000-0000-0000-0000-000000000001 -H \"Authorization: Bearer test\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X DELETE http://localhost:5117/api/access/users/00000000-0000-0000-0000-000000000001)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X DELETE http://localhost:5117/api/access/nonexistent-route-xyz)",
+      "Bash(curl -sv -X POST http://localhost:5117/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@kynexone.com\",\"password\":\"ChangeMe123!\"}')",
+      "Bash(curl -s -X POST http://localhost:5117/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@kynexone.com\",\"password\":\"ChangeMe123!\"}')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X DELETE http://localhost:5117/api/access/users/6fd30231-fabb-49c7-9259-65746e7fe0a6)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X GET http://localhost:5117/api/access/users/6fd30231-fabb-49c7-9259-65746e7fe0a6)",
+      "Bash(curl -s -X POST http://localhost:5117/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@kynexone.demo\",\"password\":\"Admin@KynexOne2024!\"}')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('accessToken',''\\) or d.get\\('error','no-token'\\) or str\\(d\\)[:200]\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(str\\(d\\)[:400]\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); t=d.get\\('accessToken',''\\); print\\(t[:60] + '...' if t else str\\(d\\)[:300]\\)\")",
+      "Bash(sed -i'' \"s/} catch { setError\\('Failed to save. Please try again.'\\); }/} catch \\(err: unknown\\) { setError\\(\\(err as any\\)?.response?.data?.message ?? 'Failed to save. Please try again.'\\); }/g\" /Users/zackkhan/Downloads/zayra-ai-workforce/frontend/src/pages/SetupPage.tsx)",
+      "Bash(sed -i'' \"s/} catch { setError\\('Failed to save.'\\); }/} catch \\(err: unknown\\) { setError\\(\\(err as any\\)?.response?.data?.message ?? 'Failed to save.'\\); }/g\" /Users/zackkhan/Downloads/zayra-ai-workforce/frontend/src/pages/SetupPage.tsx)",
+      "Bash(python3 -c ' *)",
+      "Bash(echo \"Rows updated: $?\")",
+      "Bash(git merge feature/hrm-ai-intelligence-layer --no-ff -m ' *)",
+      "Bash(git stash *)",
+      "Bash(git merge *)"
     ]
   }
 }

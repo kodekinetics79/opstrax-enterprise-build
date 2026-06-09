@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Zayra.Api.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4006552048ce1d57e9f4e470e7fb9474af201c36")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+88fc2f8b07babd3342b6af02a7a66a7b42de3f5e")]
 [assembly: System.Reflection.AssemblyProductAttribute("Zayra.Api.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Zayra.Api.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
