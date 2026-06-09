@@ -1730,25 +1730,23 @@ export function SetupPage() {
         </p>
       </div>
 
-      {/* Tab bar — scrollable for many tabs */}
-      <div className="overflow-x-auto">
-        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-white/[0.08] min-w-max">
-          {tabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-semibold transition whitespace-nowrap ${
-                activeTab === id
-                  ? 'border-sapphire text-sapphire'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </button>
-          ))}
-        </div>
+      {/* Tab bar — wrapping pill tabs */}
+      <div className="flex flex-wrap gap-1.5">
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+              activeTab === id
+                ? 'bg-sapphire text-white shadow-sm'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/[0.06] dark:text-slate-400 dark:hover:bg-white/[0.10] dark:hover:text-slate-200'
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5 shrink-0" />
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
