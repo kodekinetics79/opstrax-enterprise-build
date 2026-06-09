@@ -159,6 +159,8 @@ export const numberingRulesApi = {
 
   upsert: (body: { entityType: string; prefix: string; suffix?: string; paddingLength: number; separator: string; includeYear: boolean; includeMonth: boolean; resetYearly: boolean }) =>
     client.post<NumberingRule>('/api/admin/numbering-rules', body).then(r => r.data),
+
+  delete: (id: string) => client.delete(`/api/admin/numbering-rules/${id}`),
 };
 
 export const systemSettingsApi = {
@@ -186,6 +188,8 @@ export const fiscalYearsApi = {
 
   close: (id: string) =>
     client.patch<FiscalYear>(`/api/admin/fiscal-years/${id}/close`).then(r => r.data),
+
+  delete: (id: string) => client.delete(`/api/admin/fiscal-years/${id}`),
 };
 
 export const locationsApi = {
@@ -197,6 +201,8 @@ export const locationsApi = {
 
   update: (id: string, body: Partial<Location>) =>
     client.put<Location>(`/api/admin/locations/${id}`, body).then(r => r.data),
+
+  delete: (id: string) => client.delete(`/api/admin/locations/${id}`),
 };
 
 export const notificationTemplatesApi = {
@@ -208,6 +214,8 @@ export const notificationTemplatesApi = {
 
   update: (id: string, body: Partial<NotificationTemplate>) =>
     client.put<NotificationTemplate>(`/api/admin/notification-templates/${id}`, body).then(r => r.data),
+
+  delete: (id: string) => client.delete(`/api/admin/notification-templates/${id}`),
 };
 
 export const adminAuditApi = {

@@ -15,4 +15,6 @@ export interface NotificationItem {
 export const notificationsApi = {
   list: () => client.get<NotificationItem[]>('/api/notifications').then((r) => r.data),
   markRead: (id: string) => client.post(`/api/notifications/${id}/read`),
+  markAllRead: () => client.post('/api/notifications/read-all'),
+  dismiss: (id: string) => client.delete(`/api/notifications/${id}`),
 };

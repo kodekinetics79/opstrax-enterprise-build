@@ -98,6 +98,7 @@ builder.Services.AddScoped<IAiPromptBuilder, AiPromptBuilder>();
 builder.Services.AddScoped<IAiAuditService, AiAuditService>();
 builder.Services.AddScoped<IAiResponseCacheService, AiResponseCacheService>();
 builder.Services.AddScoped<IAiAdvisoryService, AiAdvisoryService>();
+builder.Services.AddScoped<IPolicyDocumentService, PolicyDocumentService>();
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 

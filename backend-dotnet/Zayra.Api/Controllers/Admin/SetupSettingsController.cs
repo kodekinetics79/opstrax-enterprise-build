@@ -14,9 +14,9 @@ public class SetupSettingsController : ControllerBase
     public SetupSettingsController(ZayraDbContext db) => _db = db;
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
     private Guid? GetUserId() =>
-        Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+        Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value, out var id) ? id : null;
 
     // ── Numbering Rules ─────────────────────────────────────────────────────
 
@@ -237,6 +237,44 @@ public class SetupSettingsController : ControllerBase
         return Ok(loc);
     }
 
+    [HttpDelete("api/admin/locations/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> DeleteLocation(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var loc = await _db.Locations.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (loc == null) return NotFound();
+        loc.IsDeleted = true;
+        loc.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpDelete("api/admin/fiscal-years/{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteFiscalYear(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var fy = await _db.FiscalYears.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid, ct);
+        if (fy == null) return NotFound();
+        if (fy.IsCurrent) return BadRequest(new { message = "Cannot delete the current fiscal year." });
+        _db.FiscalYears.Remove(fy);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpDelete("api/admin/numbering-rules/{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteNumberingRule(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var rule = await _db.NumberingRules.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid, ct);
+        if (rule == null) return NotFound();
+        _db.NumberingRules.Remove(rule);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
     // ── Notification Templates ───────────────────────────────────────────────
 
     [HttpGet("api/admin/notification-templates")]
@@ -283,6 +321,19 @@ public class SetupSettingsController : ControllerBase
         t.IsActive = req.IsActive; t.UpdatedAtUtc = DateTime.UtcNow; t.UpdatedBy = uid;
         await _db.SaveChangesAsync(ct);
         return Ok(t);
+    }
+
+    [HttpDelete("api/admin/notification-templates/{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteNotificationTemplate(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var t = await _db.NotificationTemplates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (t == null) return NotFound();
+        t.IsDeleted = true;
+        t.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
     }
 
     // ── Admin Audit Logs ─────────────────────────────────────────────────────

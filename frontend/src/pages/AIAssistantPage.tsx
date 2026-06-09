@@ -6,8 +6,9 @@ import {
   type EmployeeRiskScore,
   type AIHRQueryLog,
 } from '../api/intelligence';
+import { PolicyDocumentManager } from '../components/PolicyDocumentManager';
 
-type Tab = 'assistant' | 'insights' | 'risk' | 'history';
+type Tab = 'assistant' | 'insights' | 'risk' | 'history' | 'policy-docs';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -136,6 +137,7 @@ export default function AIAssistantPage() {
     { id: 'insights', label: 'Insights' },
     { id: 'risk', label: 'Risk Scores' },
     { id: 'history', label: 'Query Log' },
+    { id: 'policy-docs', label: 'Policy Documents' },
   ];
 
   return (
@@ -372,6 +374,17 @@ export default function AIAssistantPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Policy Documents */}
+      {tab === 'policy-docs' && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Policy Documents</h2>
+            <p className="text-xs text-gray-500">Upload policy documents (PDF, DOCX, TXT) and ask questions grounded in their content.</p>
+          </div>
+          <PolicyDocumentManager />
         </div>
       )}
 

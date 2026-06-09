@@ -5,14 +5,14 @@
 :root {
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #f8fafc;
+  background: #f0f4ff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 :root.dark {
   color-scheme: dark;
-  background: #0b1020;
+  background: #090e1c;
 }
 
 * {
@@ -21,11 +21,11 @@
 
 html {
   min-width: 320px;
-  background: #f8fafc;
+  background: #f0f4ff;
 }
 
 html.dark {
-  background: #0b1020;
+  background: #090e1c;
 }
 
 body {
@@ -33,12 +33,12 @@ body {
   min-height: 100vh;
   margin: 0;
   color: #111827;
-  background: #f8fafc;
+  background: #f0f4ff;
 }
 
 .dark body {
-  color: #f8fafc;
-  background: #0b1020;
+  color: #f0f4ff;
+  background: #090e1c;
 }
 
 button,
@@ -49,68 +49,115 @@ input {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible {
-  outline: 2px solid rgba(47, 107, 255, 0.50);
+  outline: 2px solid rgba(47, 107, 255, 0.45);
   outline-offset: 2px;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.35);
   border-radius: 9999px;
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.10);
 }
 
 @layer components {
+
+  /* ─── Surfaces ─────────────────────────────────────────── */
   .surface {
-    @apply rounded-xl border border-slate-200/70 bg-white shadow-panel dark:border-white/[0.08] dark:bg-white/[0.05];
+    @apply rounded-xl border border-white/70 bg-white/80 shadow-panel backdrop-blur-sm
+      dark:border-white/[0.07] dark:bg-white/[0.04] dark:backdrop-blur-sm;
   }
 
   .surface-raised {
-    @apply border border-slate-200 bg-white shadow-soft dark:border-white/[0.09] dark:bg-white/[0.07];
+    @apply border border-white/80 bg-white/90 shadow-soft backdrop-blur-md
+      dark:border-white/[0.09] dark:bg-white/[0.06];
   }
 
   .muted-text {
     @apply text-slate-500 dark:text-slate-400;
   }
 
+  /* ─── Sidebar nav items ────────────────────────────────── */
   .nav-item {
-    @apply relative flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm font-semibold transition-all duration-200 ease-out;
+    @apply relative flex w-full items-center gap-2.5 rounded-lg border border-transparent
+      px-2 py-1.5 text-left font-medium transition-all duration-150 ease-out;
   }
 
+  /* Active — glass blue pill with left accent */
   .nav-item-active {
-    @apply bg-gradient-to-r from-sapphire to-blue-500 text-white shadow-md shadow-sapphire/25;
+    @apply border-sapphire/20 bg-sapphire/10 text-sapphire shadow-sm
+      dark:border-sapphire/25 dark:bg-sapphire/[0.14] dark:text-[#7AABFF];
+    box-shadow: 0 1px 4px rgba(47,107,255,0.10), inset 0 1px 0 rgba(255,255,255,0.15);
   }
 
+  .nav-item-active::before {
+    content: '';
+    @apply absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-sapphire dark:bg-[#7AABFF];
+  }
+
+  /* Idle — glass hover: faint grey-blue tint */
   .nav-item-idle {
-    @apply text-slate-600 hover:translate-x-0.5 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.07] dark:hover:text-white;
+    @apply text-slate-500
+      hover:border-slate-200/80 hover:bg-white/70 hover:text-slate-700
+      dark:text-slate-500
+      dark:hover:border-white/[0.07] dark:hover:bg-white/[0.05] dark:hover:text-slate-200;
   }
 
+  /* ─── Buttons ──────────────────────────────────────────── */
   .btn-primary {
-    @apply inline-flex h-9 items-center gap-2 rounded-lg bg-sapphire px-4 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-px hover:bg-blue-600 hover:shadow-md active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sapphire/50;
+    @apply inline-flex h-9 items-center gap-2 rounded-lg bg-sapphire px-4
+      text-sm font-semibold text-white
+      shadow-sm shadow-sapphire/30
+      transition-all duration-150
+      hover:-translate-y-px hover:bg-blue-600 hover:shadow-md hover:shadow-sapphire/25
+      active:translate-y-0 active:scale-[0.98]
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sapphire/50;
+    /* Glass inner highlight */
+    box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 8px rgba(47,107,255,0.25);
   }
 
   .btn-secondary {
-    @apply inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:bg-white/[0.07];
+    @apply inline-flex h-9 items-center gap-2 rounded-lg
+      border border-slate-200/90 bg-white/80 px-3
+      text-sm font-semibold text-slate-600
+      backdrop-blur-sm
+      transition-all duration-150
+      hover:border-sapphire/30 hover:bg-sapphire/[0.04] hover:text-sapphire
+      active:scale-[0.98]
+      dark:border-white/[0.09] dark:bg-white/[0.05] dark:text-slate-300
+      dark:hover:border-sapphire/30 dark:hover:bg-sapphire/[0.08] dark:hover:text-[#7AABFF];
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 0 rgba(255,255,255,0.60) inset;
   }
 
+  /* ─── Inputs / Selects ─────────────────────────────────── */
   .input {
-    @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 transition focus:border-sapphire focus:outline-none focus:ring-2 focus:ring-sapphire/20 dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-slate-500 dark:focus:border-sapphire;
+    @apply rounded-lg border border-slate-200/90 bg-white/80 px-3 py-2 text-sm text-slate-900
+      backdrop-blur-sm
+      placeholder:text-slate-400
+      transition
+      focus:border-sapphire/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sapphire/15
+      dark:border-white/[0.09] dark:bg-white/[0.05] dark:text-white
+      dark:placeholder:text-slate-500 dark:focus:border-sapphire/50 dark:focus:bg-white/[0.08];
   }
 
   .select {
-    @apply rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition focus:border-sapphire focus:outline-none focus:ring-2 focus:ring-sapphire/20 dark:border-white/10 dark:bg-white/[0.05] dark:text-white;
+    @apply rounded-lg border border-slate-200/90 bg-white/80 px-3 py-2 text-sm text-slate-900
+      backdrop-blur-sm
+      transition
+      focus:border-sapphire/60 focus:outline-none focus:ring-2 focus:ring-sapphire/15
+      dark:border-white/[0.09] dark:bg-white/[0.05] dark:text-white;
   }
 
-  /* Subtle lift for interactive cards/panels */
+  /* ─── Card lift ─────────────────────────────────────────── */
   .lift {
     @apply transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-soft;
   }
@@ -119,19 +166,19 @@ input:focus-visible {
 /* ── Animations ─────────────────────────────────────────────────────────── */
 @keyframes kx-fade-in-up {
   from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes kx-fade-in {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
 }
 @keyframes kx-slide-in {
   from { opacity: 0; transform: translateX(-6px); }
-  to { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 .animate-fade-in-up { animation: kx-fade-in-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.animate-fade-in { animation: kx-fade-in 0.25s ease-out both; }
-.animate-slide-in { animation: kx-slide-in 0.25s ease-out both; }
+.animate-fade-in    { animation: kx-fade-in 0.25s ease-out both; }
+.animate-slide-in   { animation: kx-slide-in 0.25s ease-out both; }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up, .animate-fade-in, .animate-slide-in { animation: none; }

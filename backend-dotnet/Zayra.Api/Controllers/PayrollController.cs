@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -458,6 +459,68 @@ public class PayrollController : ControllerBase
         await Task.CompletedTask;
     }
 
+    // ── Salary Structure Export / Import / Template ───────────────────────────
+    private static readonly string[] SalaryStructureCsvHeaders =
+        { "Code", "Name", "Currency", "EffectiveDate" };
+
+    [HttpGet("structures/export")]
+    public async Task<IActionResult> ExportStructures(CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var structures = await _db.SalaryStructures
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted)
+            .OrderBy(x => x.Name)
+            .ToListAsync(cancellationToken);
+        var rows = structures.Select(s => (IReadOnlyList<object?>)new object?[]
+        {
+            s.Code, s.Name, s.Currency, s.EffectiveDate.ToString("yyyy-MM-dd")
+        });
+        var csv = Csv.Build(SalaryStructureCsvHeaders, rows);
+        Response.Headers["Content-Disposition"] = "attachment; filename=salary_structures_export.csv";
+        return Content(csv, "text/csv");
+    }
+
+    [HttpGet("structures/import-template")]
+    public IActionResult StructuresImportTemplate()
+    {
+        Response.Headers["Content-Disposition"] = "attachment; filename=salary_structures_import_template.csv";
+        return Content(Csv.Template(SalaryStructureCsvHeaders), "text/csv");
+    }
+
+    [HttpPost("structures/import")]
+    public async Task<IActionResult> ImportStructures([FromBody] ImportSalaryStructuresRequest req, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+        int created = 0, skipped = 0;
+        var errors = new List<string>();
+        var rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var code = row.GetValueOrDefault("Code", string.Empty).Trim();
+            var name = row.GetValueOrDefault("Name", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name)) { skipped++; continue; }
+            if (await _db.SalaryStructures.AnyAsync(x => x.TenantId == tenantId && x.Code == code && !x.IsDeleted, cancellationToken))
+            { skipped++; errors.Add($"Row {rowNum}: Code '{code}' already exists."); continue; }
+            DateOnly.TryParse(row.GetValueOrDefault("EffectiveDate", string.Empty), out var effectiveDate);
+            if (effectiveDate == default) effectiveDate = DateOnly.FromDateTime(DateTime.UtcNow);
+            _db.SalaryStructures.Add(new SalaryStructure
+            {
+                TenantId = tenantId,
+                Code = code,
+                Name = name,
+                Currency = row.GetValueOrDefault("Currency", "AED"),
+                EffectiveDate = effectiveDate,
+                CreatedBy = GetUserId()
+            });
+            created++;
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+    }
+
     private Guid GetTenantId() => Guid.Parse(User.FindFirstValue("tenant_id")!);
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
 }
@@ -469,3 +532,4 @@ public record EmployeeSalaryStructureRequest(int EmployeeId, Guid SalaryStructur
 public record PayrollDecisionRequest(string? Notes);
 public record PayrollPaymentBatchRequest(string? PaymentMethod, string? Currency);
 public record PayrollGroupRequest(string Code, string Name, string? Currency);
+public record ImportSalaryStructuresRequest(string CsvContent);

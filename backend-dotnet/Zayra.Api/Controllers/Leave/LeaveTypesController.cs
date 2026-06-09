@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -108,6 +109,88 @@ public class LeaveTypesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    // ── Export / Import / Template ──────────────────────────────────────────
+    private static readonly string[] LeaveTypeCsvHeaders =
+        { "Code", "NameEn", "NameAr", "Category", "IsPaid", "IsHalfDayAllowed", "IsHourlyAllowed", "RequiresAttachment", "RequiresReason", "MaxConsecutiveDays", "ColorCode", "SortOrder" };
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Auditor")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var items = await _db.LeaveTypes
+            .Where(t => t.TenantId == tenantId && t.IsActive)
+            .OrderBy(t => t.SortOrder).ThenBy(t => t.NameEn)
+            .ToListAsync(ct);
+        var rows = items.Select(t => (IReadOnlyList<object?>)new object?[]
+        {
+            t.Code, t.NameEn, t.NameAr, t.Category, t.IsPaid, t.IsHalfDayAllowed,
+            t.IsHourlyAllowed, t.RequiresAttachment, t.RequiresReason, t.MaxConsecutiveDays,
+            t.ColorCode, t.SortOrder
+        });
+        var csv = Csv.Build(LeaveTypeCsvHeaders, rows);
+        Response.Headers["Content-Disposition"] = "attachment; filename=leave_types_export.csv";
+        return Content(csv, "text/csv");
+    }
+
+    [HttpGet("import-template")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public IActionResult ImportTemplate()
+    {
+        Response.Headers["Content-Disposition"] = "attachment; filename=leave_types_import_template.csv";
+        return Content(Csv.Template(LeaveTypeCsvHeaders), "text/csv");
+    }
+
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> Import([FromBody] ImportLeaveTypesRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+        int created = 0, skipped = 0;
+        var errors = new List<string>();
+        var rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var code = row.GetValueOrDefault("Code", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(code)) { skipped++; continue; }
+            var nameEn = row.GetValueOrDefault("NameEn", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(nameEn)) { skipped++; errors.Add($"Row {rowNum}: NameEn is required."); continue; }
+            if (await _db.LeaveTypes.AnyAsync(t => t.TenantId == tenantId && t.Code == code, ct))
+            { skipped++; errors.Add($"Row {rowNum}: Code '{code}' already exists."); continue; }
+            bool.TryParse(row.GetValueOrDefault("IsPaid", "true"), out var isPaid);
+            bool.TryParse(row.GetValueOrDefault("IsHalfDayAllowed", "false"), out var halfDay);
+            bool.TryParse(row.GetValueOrDefault("IsHourlyAllowed", "false"), out var hourly);
+            bool.TryParse(row.GetValueOrDefault("RequiresAttachment", "false"), out var attachment);
+            bool.TryParse(row.GetValueOrDefault("RequiresReason", "false"), out var reason);
+            int.TryParse(row.GetValueOrDefault("MaxConsecutiveDays", "0"), out var maxDays);
+            int.TryParse(row.GetValueOrDefault("SortOrder", "0"), out var sortOrder);
+            _db.LeaveTypes.Add(new LeaveType
+            {
+                TenantId = tenantId.Value,
+                Code = code,
+                NameEn = nameEn,
+                NameAr = row.GetValueOrDefault("NameAr", string.Empty),
+                Category = row.GetValueOrDefault("Category", "General"),
+                IsPaid = isPaid,
+                IsHalfDayAllowed = halfDay,
+                IsHourlyAllowed = hourly,
+                RequiresAttachment = attachment,
+                RequiresReason = reason,
+                MaxConsecutiveDays = maxDays,
+                ColorCode = row.GetValueOrDefault("ColorCode", "#3B82F6"),
+                IsActive = true,
+                SortOrder = sortOrder
+            });
+            created++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+    }
 }
 
 public record CreateLeaveTypeRequest(
@@ -136,3 +219,5 @@ public record UpdateLeaveTypeRequest(
     int? MaxConsecutiveDays,
     string? ColorCode,
     int? SortOrder);
+
+public record ImportLeaveTypesRequest(string CsvContent);

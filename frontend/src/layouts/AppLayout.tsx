@@ -29,7 +29,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   const { pathname } = useLocation();
   const { hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [employeeResults, setEmployeeResults] = useState<Array<{ id: number; label: string; sublabel: string }>>([]);
@@ -302,7 +302,11 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
           isOpen={sidebarOpen}
           isCollapsed={sidebarCollapsed}
           onClose={() => setSidebarOpen(false)}
-          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+          onToggleCollapse={() => setSidebarCollapsed((c) => {
+            const next = !c;
+            localStorage.setItem('sidebar-collapsed', String(next));
+            return next;
+          })}
         />
         <div className="min-w-0 flex-1">
           <TopBar

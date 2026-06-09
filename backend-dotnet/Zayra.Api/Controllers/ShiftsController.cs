@@ -164,6 +164,83 @@ public class ShiftsController : ControllerBase
         return Ok();
     }
 
+    [HttpPost("roster/auto-plan")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> AutoPlan([FromBody] AutoPlanRequest req, CancellationToken ct)
+    {
+        var tenantId = GetTenantId();
+
+        if (req.DateFrom > req.DateTo)
+            return BadRequest(new { message = "From date must be before To date." });
+        if (req.ShiftIds == null || req.ShiftIds.Count == 0)
+            return BadRequest(new { message = "At least one shift must be selected." });
+
+        var shifts = await _db.ShiftDefinitions
+            .Where(d => req.ShiftIds.Contains(d.Id) && d.TenantId == tenantId && d.IsActive)
+            .ToListAsync(ct);
+        if (shifts.Count == 0)
+            return BadRequest(new { message = "No valid active shifts found." });
+
+        var employeeQuery = _db.Employees.Where(e => e.TenantId == tenantId && e.Status == "Active");
+        if (req.EmployeeIds != null && req.EmployeeIds.Count > 0)
+            employeeQuery = employeeQuery.Where(e => req.EmployeeIds.Contains(e.Id));
+        var employees = await employeeQuery.Select(e => new { e.Id, e.FullName }).ToListAsync(ct);
+
+        var days = new List<DateOnly>();
+        for (var d = req.DateFrom; d <= req.DateTo; d = d.AddDays(1))
+        {
+            if (req.SkipWeekend && (d.DayOfWeek == DayOfWeek.Saturday || d.DayOfWeek == DayOfWeek.Sunday))
+                continue;
+            days.Add(d);
+        }
+
+        var existingKeys = (await _db.ShiftAssignments
+            .Where(a => a.TenantId == tenantId && a.AssignedDate >= req.DateFrom && a.AssignedDate <= req.DateTo)
+            .Select(a => new { a.EmployeeId, a.AssignedDate })
+            .ToListAsync(ct))
+            .Select(a => (a.EmployeeId, a.AssignedDate))
+            .ToHashSet(new AssignmentKeyComparer());
+
+        int created = 0, skipped = 0;
+        for (int ei = 0; ei < employees.Count; ei++)
+        {
+            var emp = employees[ei];
+            for (int di = 0; di < days.Count; di++)
+            {
+                var day = days[di];
+                if (req.OverwriteExisting == false && existingKeys.Contains((emp.Id, day))) { skipped++; continue; }
+
+                var shift = req.Pattern switch
+                {
+                    "rotating" => shifts[(ei + di) % shifts.Count],
+                    "alternating" => shifts[di % shifts.Count],
+                    _ => shifts[0],
+                };
+
+                var existing = await _db.ShiftAssignments
+                    .FirstOrDefaultAsync(a => a.EmployeeId == emp.Id && a.AssignedDate == day && a.TenantId == tenantId, ct);
+                if (existing != null)
+                {
+                    existing.ShiftDefinitionId = shift.Id; existing.ShiftName = shift.Name;
+                    existing.ShiftCode = shift.Code; existing.ShiftColor = shift.Color;
+                }
+                else
+                {
+                    _db.ShiftAssignments.Add(new ShiftAssignment
+                    {
+                        TenantId = tenantId, EmployeeId = emp.Id, EmployeeName = emp.FullName,
+                        ShiftDefinitionId = shift.Id, ShiftName = shift.Name,
+                        ShiftCode = shift.Code, ShiftColor = shift.Color,
+                        AssignedDate = day,
+                    });
+                }
+                created++;
+            }
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { created, skipped, employees = employees.Count, days = days.Count });
+    }
+
     [HttpDelete("roster/{id:guid}")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
     public async Task<IActionResult> RemoveAssignment(Guid id, CancellationToken ct)
@@ -183,3 +260,10 @@ public record ShiftDefinitionRequest(string Code, string Name, string StartTime,
 public record AssignShiftRequest(int EmployeeId, Guid ShiftDefinitionId, DateOnly Date, string? Notes);
 public record RosterEmployee(int Id, string FullName, string Department, string EmployeeCode);
 public record RosterAssignment(Guid Id, int EmployeeId, DateOnly Date, Guid ShiftDefinitionId, string ShiftName, string ShiftCode, string ShiftColor);
+public record AutoPlanRequest(DateOnly DateFrom, DateOnly DateTo, List<Guid> ShiftIds, string Pattern, bool SkipWeekend, bool OverwriteExisting, List<int>? EmployeeIds);
+
+internal class AssignmentKeyComparer : IEqualityComparer<(int EmployeeId, DateOnly Date)>
+{
+    public bool Equals((int, DateOnly) x, (int, DateOnly) y) => x == y;
+    public int GetHashCode((int, DateOnly) obj) => HashCode.Combine(obj.Item1, obj.Item2);
+}

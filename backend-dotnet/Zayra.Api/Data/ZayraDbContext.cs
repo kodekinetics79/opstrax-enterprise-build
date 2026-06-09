@@ -231,6 +231,9 @@ public class ZayraDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    // ── Policy RAG Documents ───────────────────────────────────────────────────
+    public DbSet<PolicyDocument> PolicyDocuments { get; set; }
+    public DbSet<DocumentChunk> DocumentChunks { get; set; }
     // ── Setup & Admin ──────────────────────────────────────────────────────────
     public DbSet<MasterDataType> MasterDataTypes => Set<MasterDataType>();
     public DbSet<MasterDataValue> MasterDataValues => Set<MasterDataValue>();
@@ -1935,6 +1938,23 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.FiltersJson).HasColumnType("json");
             entity.HasIndex(x => new { x.TenantId, x.ReportKey });
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
+        });
+
+        // ── Policy RAG Documents ───────────────────────────────────────────────
+        modelBuilder.Entity<PolicyDocument>(entity =>
+        {
+            entity.ToTable("policy_documents");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+            entity.HasMany(x => x.Chunks).WithOne(x => x.Document).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DocumentChunk>(entity =>
+        {
+            entity.ToTable("document_chunks");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.TenantId, x.DocumentId, x.ChunkIndex });
         });
 
         ApplyTenantQueryFilters(modelBuilder);

@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -172,7 +173,84 @@ public class OpeningsController : ControllerBase
             offersPending = apps.Count(a => a.Stage == "Offer" && a.Status == "Active"),
         });
     }
+
+    // ── Export / Import / Template ───────────────────────────────────────────
+    private static readonly string[] JobOpeningCsvHeaders =
+        { "Title", "DepartmentName", "DesignationTitle", "EmploymentType", "HeadCount", "Location", "SalaryFrom", "SalaryTo", "Description", "Requirements", "Status" };
+
+    [HttpGet("export")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId()!.Value;
+        var openings = await _db.JobOpenings
+            .Where(j => j.TenantId == tenantId)
+            .OrderByDescending(j => j.CreatedAtUtc)
+            .ToListAsync(ct);
+        var rows = openings.Select(j => (IReadOnlyList<object?>)new object?[]
+        {
+            j.Title, j.DepartmentName, j.DesignationTitle, j.EmploymentType, j.HeadCount,
+            j.Location, j.SalaryFrom, j.SalaryTo, j.Description, j.Requirements, j.Status
+        });
+        var csv = Csv.Build(JobOpeningCsvHeaders, rows);
+        Response.Headers["Content-Disposition"] = "attachment; filename=job_openings_export.csv";
+        return Content(csv, "text/csv");
+    }
+
+    [HttpGet("import-template")]
+    public IActionResult ImportTemplate()
+    {
+        Response.Headers["Content-Disposition"] = "attachment; filename=job_openings_import_template.csv";
+        return Content(Csv.Template(JobOpeningCsvHeaders), "text/csv");
+    }
+
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> Import([FromBody] ImportJobOpeningsRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId()!.Value;
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+        int created = 0, skipped = 0;
+        var errors = new List<string>();
+        var rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var title = row.GetValueOrDefault("Title", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(title)) { skipped++; continue; }
+            // Dedup by title + department
+            var dept = row.GetValueOrDefault("DepartmentName", string.Empty).Trim();
+            if (await _db.JobOpenings.AnyAsync(j => j.TenantId == tenantId && j.Title == title && j.DepartmentName == dept && j.Status == "Open", ct))
+            { skipped++; errors.Add($"Row {rowNum}: An open job '{title}' in '{dept}' already exists."); continue; }
+            int.TryParse(row.GetValueOrDefault("HeadCount", "1"), out var headCount);
+            if (headCount <= 0) headCount = 1;
+            decimal.TryParse(row.GetValueOrDefault("SalaryFrom", string.Empty), out var salaryFrom);
+            decimal.TryParse(row.GetValueOrDefault("SalaryTo", string.Empty), out var salaryTo);
+            var code = await _svc.GenerateJobCodeAsync(tenantId, ct);
+            _db.JobOpenings.Add(new JobOpening
+            {
+                TenantId = tenantId,
+                JobCode = code,
+                Title = title,
+                DepartmentName = dept,
+                DesignationTitle = row.GetValueOrDefault("DesignationTitle", string.Empty),
+                EmploymentType = row.GetValueOrDefault("EmploymentType", "Full-Time"),
+                HeadCount = headCount,
+                Location = row.GetValueOrDefault("Location", string.Empty),
+                SalaryFrom = salaryFrom > 0 ? salaryFrom : null,
+                SalaryTo = salaryTo > 0 ? salaryTo : null,
+                Description = row.GetValueOrDefault("Description", string.Empty),
+                Requirements = row.GetValueOrDefault("Requirements", string.Empty),
+                Status = row.GetValueOrDefault("Status", "Open"),
+                PublishedAtUtc = DateTime.UtcNow
+            });
+            created++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+    }
 }
+
+public record ImportJobOpeningsRequest(string CsvContent);
 
 public record CreateOpeningRequest(
     Guid? RequisitionId, string Title, string DepartmentName, string DesignationTitle,

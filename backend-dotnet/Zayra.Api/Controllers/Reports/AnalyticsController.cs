@@ -14,7 +14,7 @@ public class AnalyticsController : ControllerBase
     public AnalyticsController(ZayraDbContext db) => _db = db;
 
     private Guid GetTenantId() =>
-        Guid.TryParse(User.FindFirst("tenantId")?.Value, out var id) ? id : Guid.Empty;
+        Guid.TryParse(User.FindFirst("tenant_id")?.Value, out var id) ? id : Guid.Empty;
 
     // GET /api/analytics/kpis
     [HttpGet("kpis")]

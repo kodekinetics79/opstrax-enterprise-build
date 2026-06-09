@@ -3,6 +3,21 @@ import { FileUp, History, Plus, RefreshCw, Search, Send, UserRound, Users } from
 import { useSearchParams } from 'react-router-dom';
 import { employeesApi } from '../api/employees';
 import type { EmployeeCreateRequest, EmployeeDetail, EmployeeListItem } from '../api/employees';
+import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import client from '../api/client';
+
+const employeesImportExport = {
+  export: async () => {
+    const csv = await client.get<string>('/api/employees/export', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'employees.csv');
+  },
+  template: async () => {
+    const csv = await client.get<string>('/api/employees/import-template', { responseType: 'text' }).then(r => r.data);
+    downloadCsv(csv, 'employees-template.csv');
+  },
+  import: (csvContent: string) =>
+    client.post<{ received: number; created: number; skipped: number; errors: string[] }>('/api/employees/import', { csvContent }).then(r => r.data),
+};
 import { branchesApi, companiesApi, costCentersApi, departmentsApi, designationsApi, gradesApi } from '../api/organization';
 import type { BranchDto, CompanyDto, CostCenterDto, DepartmentDto, DesignationDto, GradeDto } from '../api/organization';
 import { Avatar } from '../components/Avatar';
@@ -243,10 +258,18 @@ export function EmployeesPage() {
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">Employee Management</h1>
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{total} live employee records from MySQL</p>
         </div>
-        <button type="button" onClick={() => { setForm(emptyEmployee()); setFormOpen(true); }} className="btn-primary">
-          <Plus className="h-4 w-4" />
-          Add Employee
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportExportToolbar
+            entityName="Employees"
+            onExport={employeesImportExport.export}
+            onDownloadTemplate={employeesImportExport.template}
+            onImport={employeesImportExport.import}
+          />
+          <button type="button" onClick={() => { setForm(emptyEmployee()); setFormOpen(true); }} className="btn-primary">
+            <Plus className="h-4 w-4" />
+            Add Employee
+          </button>
+        </div>
       </div>
 
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
@@ -393,11 +416,11 @@ export function EmployeesPage() {
                 {activeTab === 'documents' && (
                   <div className="space-y-3">
                     <div className="grid gap-2">
-                      <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="select w-full">
+                      <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="select w-full" aria-label="Document type">
                         {['Passport', 'Visa', 'Iqama', 'Emirates ID', 'National ID', 'Labor card', 'Contract', 'Offer letter', 'NDA', 'Policy acknowledgment'].map((item) => <option key={item}>{item}</option>)}
                       </select>
                       <input type="date" value={documentExpiry} onChange={(e) => setDocumentExpiry(e.target.value)} className="input w-full" aria-label="Document expiry" />
-                      <input type="file" onChange={(e) => setDocumentFile(e.target.files?.[0] ?? null)} className="input w-full" />
+                      <input type="file" onChange={(e) => setDocumentFile(e.target.files?.[0] ?? null)} className="input w-full" aria-label="Upload document file" />
                       <button type="button" onClick={uploadDocument} disabled={!documentFile} className="btn-primary justify-center disabled:opacity-50">
                         <FileUp className="h-4 w-4" />
                         Upload metadata and file
@@ -416,7 +439,7 @@ export function EmployeesPage() {
                 )}
                 {activeTab === 'transfers' && (
                   <div className="space-y-3">
-                    <select value={transferDepartment} onChange={(e) => setTransferDepartment(e.target.value)} className="select w-full">
+                    <select value={transferDepartment} onChange={(e) => setTransferDepartment(e.target.value)} className="select w-full" aria-label="Transfer to department">
                       <option value="">New department</option>
                       {departments.map((dept) => <option key={dept.id} value={dept.id}>{dept.nameEn}</option>)}
                     </select>
@@ -437,7 +460,7 @@ export function EmployeesPage() {
                 <div className="rounded-lg border border-slate-200 p-3 dark:border-white/10">
                   <p className="mb-2 text-xs font-bold uppercase text-slate-400">Status change</p>
                   <div className="grid gap-2">
-                    <select value={newStatus} onChange={(e) => setNewStatus(e.target.value as StatusFilter)} className="select w-full">
+                    <select value={newStatus} onChange={(e) => setNewStatus(e.target.value as StatusFilter)} className="select w-full" aria-label="New employee status">
                       {statusOptions.filter(Boolean).map((item) => <option key={item} value={item}>{item}</option>)}
                     </select>
                     <input value={statusReason} onChange={(e) => setStatusReason(e.target.value)} className="input w-full" placeholder="Required reason" />
