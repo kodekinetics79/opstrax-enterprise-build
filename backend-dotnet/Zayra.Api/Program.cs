@@ -33,7 +33,12 @@ using Zayra.Api.Application.AI;
 using Zayra.Api.Infrastructure.AI;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:5117");
+// Railway injects PORT; fall back to ASPNETCORE_URLS, then local default.
+var port = Environment.GetEnvironmentVariable("PORT");
+var listenUrl = !string.IsNullOrEmpty(port)
+    ? $"http://0.0.0.0:{port}"
+    : builder.Configuration["ASPNETCORE_URLS"] ?? "http://0.0.0.0:5117";
+builder.WebHost.UseUrls(listenUrl);
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("SeedAdmin"));

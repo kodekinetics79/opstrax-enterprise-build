@@ -1,0 +1,8 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend-dotnet/Zayra.Api/Dockerfile"
+buildContext = "backend-dotnet/Zayra.Api"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
