@@ -389,12 +389,22 @@ public class AccessManagementService : IAccessManagementService
 
     public async Task AdminResetPasswordAsync(Guid tenantId, Guid userId, AdminResetPasswordRequest request, RequestContext context, CancellationToken cancellationToken)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
+        var user = await _db.Users
+            .Include(x => x.EmployeeUserAccounts)
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == userId && !x.IsDeleted, cancellationToken)
             ?? throw new InvalidOperationException("User not found.");
         user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
         user.MustChangePassword = request.MustChangePassword;
         user.LastPasswordChangedAt = DateTime.UtcNow;
         user.UpdatedAtUtc = DateTime.UtcNow;
+        user.IsActive = true;
+        // Clear the invitation flag so the new password can be used immediately to log in
+        foreach (var link in user.EmployeeUserAccounts.Where(x => !x.IsDeleted))
+        {
+            link.RequiresPasswordSetup = false;
+            link.Status = "Active";
+            link.UpdatedAtUtc = DateTime.UtcNow;
+        }
         await _db.RefreshTokens.Where(x => x.UserId == userId && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("access.admin_password_reset", "User", user.Id.ToString(), context, null, cancellationToken);
