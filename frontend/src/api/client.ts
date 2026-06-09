@@ -1,6 +1,11 @@
 import axios from 'axios';
 
-export const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5117';
+function resolveApiUrl(raw: string | undefined): string {
+  if (!raw) return 'http://localhost:5117';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  return `https://${raw}`;
+}
+export const BASE_URL = resolveApiUrl(import.meta.env.VITE_API_URL);
 
 const client = axios.create({ baseURL: BASE_URL });
 
