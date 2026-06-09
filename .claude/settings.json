@@ -28,7 +28,8 @@
       "Bash(echo \"Rows updated: $?\")",
       "Bash(git merge feature/hrm-ai-intelligence-layer --no-ff -m ' *)",
       "Bash(git stash *)",
-      "Bash(git merge *)"
+      "Bash(git merge *)",
+      "Bash(git remote *)"
     ]
   }
 }
