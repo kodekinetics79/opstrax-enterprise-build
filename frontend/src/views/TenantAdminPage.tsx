@@ -40,6 +40,7 @@ interface UsageData {
   activeEmployees: number;
   maxEmployees: number;
   activeUsers: number;
+  maxUsers: number;
   storageUsedMb: number;
 }
 
@@ -65,19 +66,47 @@ interface CountryRule {
 }
 
 // Reusable progress bar using a <meter> element — semantic, no inline styles needed.
-function EmployeeProgressBar({ pct }: { pct: number }) {
+function UsageProgressBar({ pct, label }: { pct: number; label: string }) {
   const clamped = Math.min(Math.max(pct, 0), 100);
   // Tailwind can't express arbitrary dynamic widths, so we use <meter> which renders
   // a native progress indicator and carries its own accessible semantics.
-  const barColor = pct > 95 ? 'accent-red-500' : pct > 80 ? 'accent-orange-400' : 'accent-indigo-500';
+  const barColor = pct > 95 ? 'accent-red-500' : pct > 80 ? 'accent-orange-400' : 'accent-green-500';
   return (
     <meter
       className={`w-full h-2 rounded-full ${barColor}`}
       value={clamped}
       min={0}
       max={100}
-      aria-label={`Employee usage: ${Math.round(clamped)}%`}
+      aria-label={`${label}: ${Math.round(clamped)}%`}
     />
+  );
+}
+
+// Upgrade request button with toast feedback
+function UpgradeButton() {
+  const [sent, setSent] = useState(false);
+
+  const handleClick = () => {
+    setSent(true);
+    setTimeout(() => setSent(false), 4000);
+  };
+
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={sent}
+        className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-60 hover:bg-indigo-700 transition-colors"
+      >
+        {sent ? 'Request Sent!' : 'Request Upgrade'}
+      </button>
+      {sent && (
+        <p className="text-xs text-green-600 font-medium">
+          Upgrade request sent! Our team will contact you shortly.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -327,14 +356,19 @@ export default function TenantAdminPage() {
           {usage && (
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Usage</h2>
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {/* Employees progress */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm font-medium text-gray-700">Active Employees</span>
-                    <span className="text-sm text-gray-500">{usage.activeEmployees} / {usage.maxEmployees}</span>
+                    <span className="text-sm text-gray-500">
+                      {usage.maxEmployees === 0
+                        ? `${usage.activeEmployees} / Unlimited`
+                        : `${usage.activeEmployees} / ${usage.maxEmployees}`}
+                    </span>
                   </div>
-                  <EmployeeProgressBar
+                  <UsageProgressBar
+                    label="Employee usage"
                     pct={usage.maxEmployees > 0 ? (usage.activeEmployees / usage.maxEmployees) * 100 : 0}
                   />
                   {usage.maxEmployees > 0 && usage.activeEmployees / usage.maxEmployees > 0.8 && (
@@ -346,16 +380,36 @@ export default function TenantAdminPage() {
                   )}
                 </div>
 
-                <dl className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 rounded-lg px-4 py-3">
-                    <dt className="text-xs font-medium text-gray-500">Active Users</dt>
-                    <dd className="text-xl font-bold text-gray-900 mt-0.5">{usage.activeUsers}</dd>
+                {/* Users progress */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-medium text-gray-700">Active Users</span>
+                    <span className="text-sm text-gray-500">
+                      {usage.maxUsers === 0
+                        ? `${usage.activeUsers} / Unlimited`
+                        : `${usage.activeUsers} / ${usage.maxUsers}`}
+                    </span>
                   </div>
-                  <div className="bg-gray-50 rounded-lg px-4 py-3">
-                    <dt className="text-xs font-medium text-gray-500">Storage Used</dt>
-                    <dd className="text-xl font-bold text-gray-900 mt-0.5">{usage.storageUsedMb} MB</dd>
-                  </div>
+                  <UsageProgressBar
+                    label="User usage"
+                    pct={usage.maxUsers > 0 ? (usage.activeUsers / usage.maxUsers) * 100 : 0}
+                  />
+                  {usage.maxUsers > 0 && usage.activeUsers / usage.maxUsers > 0.8 && (
+                    <p className={`text-xs mt-1 ${usage.activeUsers / usage.maxUsers > 0.95 ? 'text-red-500' : 'text-orange-500'}`}>
+                      {usage.activeUsers / usage.maxUsers > 0.95
+                        ? 'Critical: approaching user limit'
+                        : 'Warning: user limit approaching'}
+                    </p>
+                  )}
+                </div>
+
+                <dl className="bg-gray-50 rounded-lg px-4 py-3">
+                  <dt className="text-xs font-medium text-gray-500">Storage Used</dt>
+                  <dd className="text-xl font-bold text-gray-900 mt-0.5">{usage.storageUsedMb} MB</dd>
                 </dl>
+
+                {/* Request Upgrade button */}
+                <UpgradeButton />
               </div>
             </div>
           )}

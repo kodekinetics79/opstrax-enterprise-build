@@ -79,6 +79,7 @@ export const platformApi = {
   updateSubscription: (tenantId: string, body: {
     plan: string;
     status: string;
+    maxUsers: number;
     maxEmployees: number;
     billingEmail: string;
     billingCycle: string;

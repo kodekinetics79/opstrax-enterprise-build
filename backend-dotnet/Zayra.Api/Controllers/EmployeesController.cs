@@ -171,7 +171,27 @@ public class EmployeesController : ControllerBase
     {
         try
         {
-            var employee = await employeeManagement.CreateAsync(RequireTenant(), request, Context(), cancellationToken);
+            var tenantId = RequireTenant();
+
+            // Enforce employee limit
+            var sub = await _db.TenantSubscriptions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId, cancellationToken);
+
+            if (sub is not null && sub.MaxEmployees > 0)
+            {
+                var count = await _db.Employees.CountAsync(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted, cancellationToken);
+                if (count >= sub.MaxEmployees)
+                    return UnprocessableEntity(new
+                    {
+                        error = "employee_limit_reached",
+                        message = $"You have reached your employee limit ({count}/{sub.MaxEmployees}). Please upgrade your subscription.",
+                        current = count,
+                        limit = sub.MaxEmployees
+                    });
+            }
+
+            var employee = await employeeManagement.CreateAsync(tenantId, request, Context(), cancellationToken);
             return CreatedAtAction(nameof(Get), new { id = employee.Employee.Id }, employee);
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }

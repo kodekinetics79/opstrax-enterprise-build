@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Data;
 
 namespace Zayra.Api.Controllers;
 
@@ -12,10 +14,12 @@ namespace Zayra.Api.Controllers;
 public class AccessController : ControllerBase
 {
     private readonly IAccessManagementService _accessManagement;
+    private readonly ZayraDbContext _db;
 
-    public AccessController(IAccessManagementService accessManagement)
+    public AccessController(IAccessManagementService accessManagement, ZayraDbContext db)
     {
         _accessManagement = accessManagement;
+        _db = db;
     }
 
     [HttpGet("roles")]
@@ -146,6 +150,25 @@ public class AccessController : ControllerBase
         {
             var tenantId = GetTenantId();
             if (tenantId is null) return Unauthorized();
+
+            // Enforce user limit
+            var sub = await _db.TenantSubscriptions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId, cancellationToken);
+
+            if (sub is not null && sub.MaxUsers > 0)
+            {
+                var count = await _db.Users.CountAsync(u => u.TenantId == tenantId && u.IsActive && !u.IsDeleted, cancellationToken);
+                if (count >= sub.MaxUsers)
+                    return UnprocessableEntity(new
+                    {
+                        error = "user_limit_reached",
+                        message = $"You have reached your user limit ({count}/{sub.MaxUsers}). Please upgrade your subscription.",
+                        current = count,
+                        limit = sub.MaxUsers
+                    });
+            }
+
             var user = await _accessManagement.CreateUserAsync(tenantId.Value, request, GetContext(), cancellationToken);
             return CreatedAtAction(nameof(GetUser), new { userId = user.Id }, user);
         }

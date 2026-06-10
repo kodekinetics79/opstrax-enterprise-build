@@ -33,6 +33,7 @@ using Zayra.Api.Application.AI;
 using Zayra.Api.Infrastructure.AI;
 using Zayra.Api.Infrastructure.Email;
 using Zayra.Api.Infrastructure.Documents.Letters;
+using Zayra.Api.Infrastructure.Filters;
 
 var builder = WebApplication.CreateBuilder(args);
 // Railway injects PORT; fall back to ASPNETCORE_URLS, then local default.
@@ -45,7 +46,10 @@ builder.WebHost.UseUrls(listenUrl);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("SeedAdmin"));
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<SubscriptionGuardFilter>();
+});
 // CORS: explicit allowlist from config + optional CORS_EXTRA_ORIGINS env var for production deployments
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[] { "http://localhost:5173" };

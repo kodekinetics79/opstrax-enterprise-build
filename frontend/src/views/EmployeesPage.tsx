@@ -85,6 +85,14 @@ const emptyEmployee = (): EmployeeCreateRequest => ({
   ],
 });
 
+interface EmployeeUsageData {
+  activeEmployees: number;
+  maxEmployees: number;
+  activeUsers: number;
+  maxUsers: number;
+  storageUsedMb: number;
+}
+
 export function EmployeesPage() {
   const searchParams = useSearchParams();
   const [employees, setEmployees] = useState<EmployeeListItem[]>([]);
@@ -94,6 +102,8 @@ export function EmployeesPage() {
   const [status, setStatus] = useState<StatusFilter>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [subscriptionBanner, setSubscriptionBanner] = useState('');
+  const [usage, setUsage] = useState<EmployeeUsageData | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<EmployeeCreateRequest>(emptyEmployee());
   const [saving, setSaving] = useState(false);
@@ -151,6 +161,16 @@ export function EmployeesPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadLookups().catch(() => setError('Could not load organization setup data.')); }, [loadLookups]);
+  useEffect(() => {
+    client.get<EmployeeUsageData>('/api/tenant-admin/usage')
+      .then(r => setUsage(r.data))
+      .catch((e: unknown) => {
+        const status = (e as { response?: { status?: number } })?.response?.status;
+        if (status === 402) {
+          setSubscriptionBanner('Your subscription is inactive or expired. Please contact support.');
+        }
+      });
+  }, []);
   useEffect(() => { setPage(1); }, [search, status]);
   useEffect(() => {
     const searchFromUrl = searchParams?.get('search') ?? null;
@@ -207,8 +227,16 @@ export function EmployeesPage() {
       setForm(emptyEmployee());
       await load();
       await openDetail(created.employee.id);
-    } catch {
-      setError('Employee could not be saved. Check validation errors and try again.');
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number; data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.status;
+      const data = (e as { response?: { data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.data;
+      if (status === 402) {
+        setError('Your subscription is inactive or expired. Please contact support.');
+      } else if (status === 422 && data?.error === 'employee_limit_reached') {
+        setError(data.message ?? `Employee limit reached (${data.current}/${data.limit}). Please upgrade your subscription.`);
+      } else {
+        setError('Employee could not be saved. Check validation errors and try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -253,8 +281,16 @@ export function EmployeesPage() {
     setTransferReason('');
   };
 
+  const atEmployeeLimit = usage !== null && usage.maxEmployees > 0 && usage.activeEmployees >= usage.maxEmployees;
+
   return (
     <div className="space-y-5">
+      {subscriptionBanner && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300">
+          {subscriptionBanner}
+        </div>
+      )}
+
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Employee Management</h1>
@@ -267,10 +303,22 @@ export function EmployeesPage() {
             onDownloadTemplate={employeesImportExport.template}
             onImport={employeesImportExport.import}
           />
-          <button type="button" onClick={() => { setForm(emptyEmployee()); setFormOpen(true); }} className="btn-primary">
-            <Plus className="h-4 w-4" />
-            Add Employee
-          </button>
+          <div className="relative group">
+            <button
+              type="button"
+              onClick={() => { if (!atEmployeeLimit) { setForm(emptyEmployee()); setFormOpen(true); } }}
+              disabled={atEmployeeLimit}
+              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="h-4 w-4" />
+              Add Employee
+            </button>
+            {atEmployeeLimit && usage && (
+              <div className="absolute bottom-full left-0 mb-1.5 w-64 rounded-lg bg-slate-800 px-3 py-2 text-xs text-white shadow-lg hidden group-hover:block z-10">
+                Employee limit reached ({usage.activeEmployees}/{usage.maxEmployees}). Upgrade your plan to add more employees.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

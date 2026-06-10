@@ -165,6 +165,7 @@ public class PlatformController : ControllerBase
         sub.Plan = req.Plan;
         sub.Status = req.Status;
         sub.MaxEmployees = req.MaxEmployees;
+        sub.MaxUsers = req.MaxUsers;
         sub.BillingEmail = req.BillingEmail;
         sub.BillingCycle = req.BillingCycle;
         sub.MonthlyAmount = req.MonthlyAmount;

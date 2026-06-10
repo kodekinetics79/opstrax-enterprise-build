@@ -32,50 +32,50 @@ export default function PlatformLoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
+    <div className="flex min-h-screen items-center justify-center bg-midnight px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Platform Administration</h1>
-          <p className="mt-1 text-sm text-gray-500">Internal access only</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Platform Administration</h1>
+          <p className="mt-1 text-sm text-slate-400">Internal access only</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-white/10 bg-sidebarDark p-6">
           <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1.5">Email</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-400">Email</label>
             <input
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
               autoComplete="email"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="w-full rounded-lg border border-white/10 bg-midnight px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:border-sapphire focus:outline-none focus:ring-1 focus:ring-sapphire"
               placeholder="admin@example.com"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1.5">Password</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-400">Password</label>
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
               autoComplete="current-password"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="w-full rounded-lg border border-white/10 bg-midnight px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:border-sapphire focus:outline-none focus:ring-1 focus:ring-sapphire"
               placeholder="••••••••"
             />
           </div>
 
           {error && (
-            <p className="text-xs text-red-400 bg-red-950 border border-red-900 rounded-lg px-3 py-2">{error}</p>
+            <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">{error}</p>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg py-2.5 transition-colors"
+            className="w-full rounded-lg bg-sapphire py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
       </div>

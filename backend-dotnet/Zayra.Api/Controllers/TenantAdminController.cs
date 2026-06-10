@@ -48,6 +48,7 @@ public class TenantAdminController : ControllerBase
         sub.Plan = req.Plan;
         sub.Status = req.Status;
         sub.MaxEmployees = req.MaxEmployees;
+        sub.MaxUsers = req.MaxUsers;
         sub.BillingEmail = req.BillingEmail;
         sub.BillingCycle = req.BillingCycle;
         sub.MonthlyAmount = req.MonthlyAmount;
@@ -273,6 +274,7 @@ public class TenantAdminController : ControllerBase
             activeEmployees,
             maxEmployees = sub?.MaxEmployees ?? 0,
             activeUsers,
+            maxUsers = sub?.MaxUsers ?? 0,
             storageUsedMb = 0.0f  // placeholder — real value requires blob storage integration
         });
     }
@@ -293,7 +295,7 @@ public class TenantAdminController : ControllerBase
 }
 
 public record UpsertSubscriptionRequest(
-    string Plan, string Status, int MaxEmployees, string BillingEmail,
+    string Plan, string Status, int MaxEmployees, int MaxUsers, string BillingEmail,
     string BillingCycle, decimal MonthlyAmount, string CurrencyCode, DateTime? ExpiresAtUtc);
 
 public record SetFeatureFlagRequest(bool IsEnabled, string? ConfigJson);

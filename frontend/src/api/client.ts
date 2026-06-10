@@ -26,6 +26,17 @@ client.interceptors.response.use(
   (res) => res,
   async (err) => {
     const original = err.config;
+
+    // 402 — subscription expired or inactive; redirect to tenant admin with alert
+    if (err.response?.status === 402) {
+      // Only redirect for non-tenant-admin URLs to avoid redirect loops
+      const url: string = original?.url ?? '';
+      if (!url.includes('/api/tenant-admin/usage') && !url.includes('/api/tenant-admin/subscription')) {
+        window.location.href = '/tenant-admin?alert=subscription';
+      }
+      return Promise.reject(err);
+    }
+
     if (err.response?.status !== 401 || original._retry) {
       return Promise.reject(err);
     }

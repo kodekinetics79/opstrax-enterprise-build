@@ -12,6 +12,7 @@ import {
   usersApi, rolesApi, delegationsApi, authoritiesApi, securitySettingsApi,
   identityAuditApi, grantorsApi, permissionGrantApi,
 } from '../api/identity';
+import client from '../api/client';
 import type {
   UserListItem, RoleItem, PermissionItem, ApprovalDelegation,
   ApprovalAuthority, SecuritySetting, AuditLogItem, PermissionGrantorRecord,
@@ -88,6 +89,14 @@ function fmtDateTime(d?: string) {
 
 // ── Users Tab ─────────────────────────────────────────────────────────────────
 
+interface UsageData {
+  activeUsers: number;
+  maxUsers: number;
+  activeEmployees: number;
+  maxEmployees: number;
+  storageUsedMb: number;
+}
+
 function UsersTab() {
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<UserListItem[]>([]);
@@ -97,6 +106,8 @@ function UsersTab() {
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  const [subscriptionBanner, setSubscriptionBanner] = useState('');
+  const [usage, setUsage] = useState<UsageData | null>(null);
   const [selected, setSelected] = useState<UserListItem | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAction, setShowAction] = useState<{ type: string; userId: string } | null>(null);
@@ -113,6 +124,20 @@ function UsersTab() {
 
   const pageSize = 20;
 
+  const atUserLimit = usage !== null && usage.maxUsers > 0 && usage.activeUsers >= usage.maxUsers;
+
+  const loadUsage = useCallback(async () => {
+    try {
+      const data = await client.get<UsageData>('/api/tenant-admin/usage').then(r => r.data);
+      setUsage(data);
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status === 402) {
+        setSubscriptionBanner('Your subscription is inactive or expired. Please contact support.');
+      }
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true); setErr('');
     try {
@@ -122,6 +147,7 @@ function UsersTab() {
     finally { setLoading(false); }
   }, [search, statusFilter, page]);
 
+  useEffect(() => { loadUsage(); }, [loadUsage]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const searchFromUrl = searchParams?.get('search') ?? null;
@@ -182,6 +208,13 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
+      {/* Subscription inactive banner */}
+      {subscriptionBanner && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300">
+          {subscriptionBanner}
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-52">
@@ -196,9 +229,21 @@ function UsersTab() {
         <button onClick={load} className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-700">
           <RefreshCw className="h-4 w-4 text-slate-500" />
         </button>
-        <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-700">
-          <Plus className="h-4 w-4" /> Create User
-        </button>
+        <div className="relative group">
+          <button
+            type="button"
+            onClick={() => { if (!atUserLimit) setShowCreate(true); }}
+            disabled={atUserLimit}
+            className="flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Plus className="h-4 w-4" /> Create User
+          </button>
+          {atUserLimit && usage && (
+            <div className="absolute bottom-full left-0 mb-1.5 w-64 rounded-lg bg-slate-800 px-3 py-2 text-xs text-white shadow-lg hidden group-hover:block z-10">
+              User limit reached ({usage.activeUsers}/{usage.maxUsers}). Upgrade your plan to add more users.
+            </div>
+          )}
+        </div>
       </div>
 
       {err && <p className="text-sm text-red-500">{err}</p>}
@@ -651,8 +696,15 @@ function CreateUserModal({ roles, onClose, onCreated }: { roles: RoleItem[]; onC
       await usersApi.create({ email, fullName, password, roles: selectedRoles });
       onCreated();
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      setErr(msg ?? 'Failed to create user.');
+      const status = (e as { response?: { status?: number; data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.status;
+      const data = (e as { response?: { data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.data;
+      if (status === 402) {
+        setErr('Your subscription is inactive or expired. Please contact support.');
+      } else if (status === 422 && data?.error === 'user_limit_reached') {
+        setErr(data.message ?? `User limit reached (${data.current}/${data.limit}). Please upgrade your subscription.`);
+      } else {
+        setErr(data?.message ?? 'Failed to create user.');
+      }
     }
     setLoading(false);
   };
