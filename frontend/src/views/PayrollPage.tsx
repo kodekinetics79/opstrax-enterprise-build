@@ -500,8 +500,9 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
           {!loading && runs.length === 0 && <p className="py-10 text-center text-sm text-slate-400">No runs yet. Create one above.</p>}
           <div className="divide-y divide-slate-100 dark:divide-white/[0.05]">
             {runs.map(run => (
-              <button key={run.id} type="button" onClick={() => openSlips(run)}
-                className={`w-full px-4 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-white/[0.03] ${selectedRun?.id === run.id ? 'bg-sapphire/5 dark:bg-sapphire/10' : ''}`}>
+              <div key={run.id} role="button" tabIndex={0} onClick={() => openSlips(run)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSlips(run); } }}
+                className={`w-full cursor-pointer px-4 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-white/[0.03] ${selectedRun?.id === run.id ? 'bg-sapphire/5 dark:bg-sapphire/10' : ''}`}>
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-slate-900 dark:text-white">{MONTHS[run.month - 1]} {run.year}</p>
                   <StatusBadge status={run.status} />
@@ -527,7 +528,7 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
                     </button>
                   </div>
                 )}
-              </button>
+              </div>
             ))}
           </div>
         </div>
@@ -917,8 +918,9 @@ function BankWpsTab() {
           {batches.length === 0 ? <p className="p-5 text-sm text-slate-400">No batches yet.</p> : (
             <div className="divide-y divide-slate-100 dark:divide-white/5">
               {batches.map(b => (
-                <button key={b.id} type="button" onClick={() => openBatch(b)}
-                  className={`w-full px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 ${selectedBatch?.id === b.id ? 'bg-sapphire/5 dark:bg-sapphire/10' : ''}`}>
+                <div key={b.id} role="button" tabIndex={0} onClick={() => openBatch(b)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBatch(b); } }}
+                  className={`w-full cursor-pointer px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 ${selectedBatch?.id === b.id ? 'bg-sapphire/5 dark:bg-sapphire/10' : ''}`}>
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-slate-800 dark:text-white">{b.batchNumber}</p>
                     <StatusBadge status={b.status} />
@@ -929,7 +931,7 @@ function BankWpsTab() {
                       Generate WPS/SIF
                     </button>
                   )}
-                </button>
+                </div>
               ))}
             </div>
           )}

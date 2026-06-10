@@ -63,7 +63,8 @@ builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "server=localhost;port=3306;database=zayra;user=root;password=password";
 builder.Services.AddDbContext<ZayraDbContext>(options => options
-    .UseMySql(connectionString, ServerVersion.Create(new Version(8, 0, 0), Pomelo.EntityFrameworkCore.MySql.Infrastructure.ServerType.MySql))
+    .UseMySql(connectionString, ServerVersion.Create(new Version(8, 0, 0), Pomelo.EntityFrameworkCore.MySql.Infrastructure.ServerType.MySql),
+        mySqlOptions => mySqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null))
     .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)));
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
@@ -189,54 +190,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-var employeeApi = app.MapGroup("/api/employees").RequireAuthorization();
-employeeApi.MapPost("", async (EmployeeCreateRequest request, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-{
-    var created = await service.CreateAsync(RequireTenant(http), request, RequestContext(http), ct);
-    return Results.Created($"/api/employees/{created.Employee.Id}", created);
-}).RequireAuthorization(policy => policy.RequireRole("Admin", "HR Manager", "HR Officer"));
-
-employeeApi.MapPatch("{id:int}/status", async (int id, EmployeeStatusChangeRequest request, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-{
-    var updated = await service.ChangeStatusAsync(RequireTenant(http), id, request, RequestContext(http), ct);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
-}).RequireAuthorization(policy => policy.RequireRole("Admin", "HR Manager", "HR Officer"));
-
-employeeApi.MapGet("{id:int}/documents", async (int id, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.GetDocumentsAsync(RequireTenant(http), id, ct)));
-
-employeeApi.MapGet("{id:int}/history", async (int id, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.GetHistoryAsync(RequireTenant(http), id, ct)));
-
-employeeApi.MapPost("{id:int}/transfer", async (int id, EmployeeTransferCreateRequest request, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-{
-    var transfer = await service.RequestTransferAsync(RequireTenant(http), id, request, RequestContext(http), ct);
-    return transfer is null ? Results.NotFound() : Results.Created($"/api/employees/{id}/transfer/{transfer.Id}", transfer);
-}).RequireAuthorization(policy => policy.RequireRole("Admin", "HR Manager", "HR Officer", "Manager"));
-
-employeeApi.MapPost("{id:int}/activate", async (int id, EmployeeStatusChangeRequest request, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-{
-    var updated = await service.ActivateAsync(RequireTenant(http), id, request, RequestContext(http), ct);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
-}).RequireAuthorization(policy => policy.RequireRole("Admin", "HR Manager", "HR Officer"));
-
-employeeApi.MapPost("{id:int}/terminate", async (int id, EmployeeStatusChangeRequest request, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-{
-    var updated = await service.TerminateAsync(RequireTenant(http), id, request, RequestContext(http), ct);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
-}).RequireAuthorization(policy => policy.RequireRole("Admin", "HR Manager", "HR Officer"));
-
-employeeApi.MapGet("reports/headcount", async (IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.HeadcountAsync(RequireTenant(http), ct)));
-
-employeeApi.MapGet("reports/expiring-documents", async ([FromQuery] int days, IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.ExpiringDocumentsAsync(RequireTenant(http), days <= 0 ? 60 : days, ct)));
-
-employeeApi.MapGet("reports/missing-documents", async (IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.MissingDocumentsAsync(RequireTenant(http), ct)));
-
-employeeApi.MapGet("reports/status-summary", async (IEmployeeManagementService service, HttpContext http, CancellationToken ct) =>
-    Results.Ok(await service.StatusSummaryAsync(RequireTenant(http), ct)));
+// NOTE: employee endpoints live exclusively in EmployeesController — the former
+// minimal-API duplicates here caused AmbiguousMatchException on /api/employees/reports/*.
 
 using (var scope = app.Services.CreateScope())
 {
@@ -254,17 +209,3 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
-
-static Guid RequireTenant(HttpContext http)
-{
-    var value = http.User.FindFirstValue("tenant_id");
-    return Guid.TryParse(value, out var tenantId) ? tenantId : throw new UnauthorizedAccessException("Tenant claim missing.");
-}
-
-static RequestContext RequestContext(HttpContext http)
-{
-    Guid? userId = null;
-    var value = http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? http.User.FindFirstValue("sub");
-    if (Guid.TryParse(value, out var parsed)) userId = parsed;
-    return new RequestContext(http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString(), userId, RequireTenant(http));
-}

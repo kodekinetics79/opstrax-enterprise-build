@@ -105,16 +105,22 @@ public class RecruitmentReportsController : ControllerBase
     {
         var tid = GetTenantId();
 
-        var openings = await _db.JobOpenings
+        var rows = await _db.JobOpenings
             .Where(x => x.TenantId == tid && x.Status == "Open")
             .Select(o => new
             {
                 o.Id, o.JobCode, o.Title, o.DepartmentName, o.HeadCount, o.FilledCount,
                 remaining = o.HeadCount - o.FilledCount,
-                daysSincePosted = (DateTime.UtcNow - o.CreatedAtUtc).TotalDays,
+                o.CreatedAtUtc,
             })
-            .OrderByDescending(x => x.daysSincePosted)
+            .OrderBy(x => x.CreatedAtUtc)
             .ToListAsync(ct);
+
+        var openings = rows.Select(o => new
+        {
+            o.Id, o.JobCode, o.Title, o.DepartmentName, o.HeadCount, o.FilledCount, o.remaining,
+            daysSincePosted = (DateTime.UtcNow - o.CreatedAtUtc).TotalDays,
+        }).ToList();
 
         return Ok(new { total = openings.Count, openings });
     }
@@ -128,20 +134,22 @@ public class RecruitmentReportsController : ControllerBase
 
         // Compute bottleneck detection — stage with the most applications stuck > 7 days
         var now = DateTime.UtcNow;
+        var stuckCutoff = now.AddDays(-7);
         var stageAge = await _db.JobApplications
             .Where(x => x.TenantId == tid && x.Status == "Active"
                 && x.StageChangedAtUtc.HasValue
-                && (now - x.StageChangedAtUtc.Value).TotalDays > 7)
+                && x.StageChangedAtUtc.Value < stuckCutoff)
             .GroupBy(x => x.Stage)
             .Select(g => new { stage = g.Key, stuckCount = g.Count() })
             .OrderByDescending(g => g.stuckCount)
             .ToListAsync(ct);
 
         // Drop-off prediction: applications in Screening that are > 14 days old
+        var dropOffCutoff = now.AddDays(-14);
         var dropOffRisk = await _db.JobApplications
             .CountAsync(x => x.TenantId == tid && x.Stage == "Screening" && x.Status == "Active"
                 && x.StageChangedAtUtc.HasValue
-                && (now - x.StageChangedAtUtc.Value).TotalDays > 14, ct);
+                && x.StageChangedAtUtc.Value < dropOffCutoff, ct);
 
         // Demand forecast: approved requisitions without openings
         var unresolvedReqs = await _db.ManpowerRequisitions

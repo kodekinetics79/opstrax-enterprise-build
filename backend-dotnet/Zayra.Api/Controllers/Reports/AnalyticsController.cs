@@ -126,11 +126,14 @@ public class AnalyticsController : ControllerBase
     {
         var tid = GetTenantId();
         var from = DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(-months));
-        return Ok(await _db.LeaveRequests
+        var rows = await _db.LeaveRequests
             .Where(x => x.TenantId == tid && x.Status == "Approved" && x.StartDate >= from)
             .GroupBy(x => new { x.StartDate.Year, x.StartDate.Month })
-            .Select(g => new { period = $"{g.Key.Year}-{g.Key.Month:D2}", totalRequests = g.Count(), totalDays = g.Sum(x => x.TotalDays) })
-            .OrderBy(x => x.period).ToListAsync(ct));
+            .Select(g => new { g.Key.Year, g.Key.Month, totalRequests = g.Count(), totalDays = g.Sum(x => x.TotalDays) })
+            .ToListAsync(ct);
+        return Ok(rows
+            .Select(r => new { period = $"{r.Year}-{r.Month:D2}", r.totalRequests, r.totalDays })
+            .OrderBy(x => x.period));
     }
 
     // GET /api/analytics/trends/overtime
@@ -139,11 +142,14 @@ public class AnalyticsController : ControllerBase
     {
         var tid = GetTenantId();
         var from = DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(-months));
-        return Ok(await _db.OvertimeRequests
+        var rows = await _db.OvertimeRequests
             .Where(x => x.TenantId == tid && x.Status == "Approved" && x.WorkDate >= from)
             .GroupBy(x => new { x.WorkDate.Year, x.WorkDate.Month })
-            .Select(g => new { period = $"{g.Key.Year}-{g.Key.Month:D2}", totalHours = g.Sum(x => x.RequestedMinutes) / 60.0, count = g.Count() })
-            .OrderBy(x => x.period).ToListAsync(ct));
+            .Select(g => new { g.Key.Year, g.Key.Month, totalMinutes = g.Sum(x => x.RequestedMinutes), count = g.Count() })
+            .ToListAsync(ct);
+        return Ok(rows
+            .Select(r => new { period = $"{r.Year}-{r.Month:D2}", totalHours = r.totalMinutes / 60.0, r.count })
+            .OrderBy(x => x.period));
     }
 
     // GET /api/analytics/department-comparison

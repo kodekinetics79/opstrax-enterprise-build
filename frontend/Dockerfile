@@ -4,4 +4,4 @@ COPY package*.json ./
 RUN npm ci
 COPY . ./
 EXPOSE 5173
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "dev", "--", "-p", "5173", "-H", "0.0.0.0"]

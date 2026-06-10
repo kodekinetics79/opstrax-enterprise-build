@@ -45,6 +45,8 @@ services:
       SeedAdmin__FullName: ${SEED_ADMIN_NAME:-KynexOne Admin}
       SeedAdmin__Password: ${SEED_ADMIN_PASSWORD:-ChangeMe123!}
       SeedAdmin__SeedDemoData: ${SEED_DEMO_DATA:-true}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-platform@kynexone.com}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-PlatformAdmin123!}
     ports:
       - "${BACKEND_PORT:-5117}:5117"
     extra_hosts:
@@ -60,7 +62,9 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:5117}
+      # Server-side: Next.js rewrites proxy /api/* to the backend over the Docker network.
+      # Browser-side: the app uses relative URLs, so no public API URL is needed.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:5117}
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
 
