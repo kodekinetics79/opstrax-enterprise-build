@@ -221,16 +221,15 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        {/* fixed header */}
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-10">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
-          <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
 
-        {/* scrollable body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -290,11 +289,11 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
           </div>
         </div>
 
-        {/* fixed footer — always visible */}
         <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Requisition'}</button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -447,13 +446,14 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-10">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Title *</label>
@@ -490,11 +490,11 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Location</label>
-                <input className="input w-full" placeholder="e.g. Dubai, UAE" value={form.location} onChange={e => set('location', e.target.value)} />
+                <input className="input w-full" placeholder="e.g. Dubai, UAE" aria-label="Location" value={form.location} onChange={e => set('location', e.target.value)} />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Assigned HR</label>
-                <input className="input w-full" placeholder="HR name" value={form.assignedHrName} onChange={e => set('assignedHrName', e.target.value)} />
+                <input className="input w-full" placeholder="HR name" aria-label="Assigned HR name" value={form.assignedHrName} onChange={e => set('assignedHrName', e.target.value)} />
               </div>
             </div>
             {error && <p className="text-xs text-rose-500">{error}</p>}
@@ -504,6 +504,7 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Opening'}</button>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -706,7 +707,7 @@ function ApplicationDrawer({ id, onClose, onRefresh }: { id: string; onClose: ()
               )}
             </div>
           </div>
-          <button type="button" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
 
         {/* Stage advance/reject actions */}
@@ -1014,7 +1015,7 @@ function PipelineView({ opening, onBack }: { opening: JobOpening; onBack: () => 
           <div className="w-96 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Add Candidate to Pipeline</h3>
-              <button type="button" onClick={() => setAddModalOpen(false)} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+              <button type="button" aria-label="Close" onClick={() => setAddModalOpen(false)} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
             </div>
             <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Select Candidate</label>
             <select className="select w-full" value={selectedCandidateId} onChange={e => setSelectedCandidateId(e.target.value)} aria-label="Select candidate">
@@ -1066,13 +1067,14 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
+      <div className="flex min-h-full items-start justify-center p-4 pt-10">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">First Name *</label><input className="input w-full" placeholder="First name" aria-label="First name" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
@@ -1110,6 +1112,7 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" disabled={saving} onClick={save}>{saving ? 'Adding…' : 'Add Candidate'}</button>
         </div>
+      </div>
       </div>
     </div>
   );
