@@ -23,6 +23,7 @@ const employeesImportExport = {
 import { branchesApi, companiesApi, costCentersApi, departmentsApi, designationsApi, gradesApi } from '../api/organization';
 import type { BranchDto, CompanyDto, CostCenterDto, DepartmentDto, DesignationDto, GradeDto } from '../api/organization';
 import { Avatar } from '../components/Avatar';
+import { InfoTip } from '../components/InfoTip';
 import { Modal } from '../components/Modal';
 import { StatusChip } from '../components/StatusChip';
 
@@ -534,19 +535,19 @@ export function EmployeesPage() {
       }>
         <div className="grid gap-5 lg:grid-cols-2">
           <Section title="Master Profile">
-            <Input label="Employee code" value={form.employeeCode ?? ''} onChange={(v) => setField('employeeCode', v)} placeholder="Leave blank for auto generation" />
+            <Input label="Employee code" value={form.employeeCode ?? ''} onChange={(v) => setField('employeeCode', v)} placeholder="Leave blank for auto generation" info="Unique staff ID, e.g. KNX-0001. Leave blank and the system generates the next number automatically; tick 'Manual override' to type your own." />
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
               <input type="checkbox" checked={form.manualEmployeeCode} onChange={(e) => setField('manualEmployeeCode', e.target.checked)} className="h-4 w-4 accent-sapphire" />
               Manual override
             </label>
-            <Input label="English full name" required value={form.englishName} onChange={(v) => setField('englishName', v)} />
+            <Input label="English full name" required value={form.englishName} onChange={(v) => setField('englishName', v)} info="Employee's full legal name in English, exactly as on their passport or ID. Required." />
             <Input label="Arabic full name" value={form.arabicName ?? ''} onChange={(v) => setField('arabicName', v)} rtl />
             <Input label="Preferred name" value={form.preferredName ?? ''} onChange={(v) => setField('preferredName', v)} />
             <Select label="Gender" required value={form.gender} onChange={(v) => setField('gender', v)} options={['Male', 'Female', 'Other']} />
             <Input label="Nationality" value={form.nationality ?? ''} onChange={(v) => setField('nationality', v)} />
             <Input label="Personal email" value={form.personalEmail ?? ''} onChange={(v) => setField('personalEmail', v)} type="email" />
-            <Input label="Work email" value={form.workEmail ?? ''} onChange={(v) => setField('workEmail', v)} type="email" />
-            <Input label="Mobile number" value={form.mobileNumber ?? ''} onChange={(v) => setField('mobileNumber', v)} />
+            <Input label="Work email" value={form.workEmail ?? ''} onChange={(v) => setField('workEmail', v)} type="email" info="Company email address. Also used to link this employee to their login account for self-service (ESS)." />
+            <Input label="Mobile number" value={form.mobileNumber ?? ''} onChange={(v) => setField('mobileNumber', v)} info="Personal mobile with country code, e.g. +971 50 123 4567." />
           </Section>
 
           <Section title="Employment Details">
@@ -557,15 +558,15 @@ export function EmployeesPage() {
             <Lookup label="Grade" value={form.gradeId ?? ''} onChange={(v) => setField('gradeId', v)} items={grades} textKey="name" />
             <Lookup label="Cost center" value={form.costCenterId ?? ''} onChange={(v) => setField('costCenterId', v)} items={costCenters} textKey="name" />
             <Input label="Job title" value={form.jobTitle ?? ''} onChange={(v) => setField('jobTitle', v)} />
-            <Select label="Employment type" value={form.employmentType ?? ''} onChange={(v) => setField('employmentType', v)} options={['Full-Time', 'Part-Time', 'Contractor', 'Intern']} />
+            <Select label="Employment type" value={form.employmentType ?? ''} onChange={(v) => setField('employmentType', v)} options={['Full-Time', 'Part-Time', 'Contractor', 'Intern']} info="How the employee is engaged. Affects payroll, leave entitlements and reports." />
             <Select label="Contract type" value={form.contractType ?? ''} onChange={(v) => setField('contractType', v)} options={['Unlimited', 'Fixed-Term', 'Temporary']} />
-            <Input label="Joining date" value={form.joiningDate ?? ''} onChange={(v) => setField('joiningDate', v)} type="date" />
+            <Input label="Joining date" value={form.joiningDate ?? ''} onChange={(v) => setField('joiningDate', v)} type="date" info="First working day. Used for probation tracking, leave accrual and end-of-service (EOSB) calculations." />
             <Input label="Work location" value={form.workLocation ?? ''} onChange={(v) => setField('workLocation', v)} />
           </Section>
 
           <Section title="Payroll Profile">
             <Input label="Bank name" value={form.payrollProfile?.bankName ?? ''} onChange={(v) => setPayrollField('bankName', v)} />
-            <Input label="IBAN" value={form.payrollProfile?.iban ?? ''} onChange={(v) => setPayrollField('iban', v)} />
+            <Input label="IBAN" value={form.payrollProfile?.iban ?? ''} onChange={(v) => setPayrollField('iban', v)} info="International bank account number for salary transfers, e.g. AE07 0331 2345 6789 0123 456. No spaces needed." />
             <Input label="Account number" value={form.payrollProfile?.accountNumber ?? ''} onChange={(v) => setPayrollField('accountNumber', v)} />
             <Select label="Salary currency" value={form.payrollProfile?.salaryCurrency ?? 'AED'} onChange={(v) => setPayrollField('salaryCurrency', v)} options={['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD']} />
             <Input label="Payroll group" value={form.payrollProfile?.payrollGroup ?? ''} onChange={(v) => setPayrollField('payrollGroup', v)} />
@@ -616,19 +617,19 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return <fieldset className="space-y-3"><legend className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-400">{title}</legend>{children}</fieldset>;
 }
 
-function Input({ label, value, onChange, required, type = 'text', placeholder, rtl }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string; placeholder?: string; rtl?: boolean }) {
+function Input({ label, value, onChange, required, type = 'text', placeholder, rtl, info }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string; placeholder?: string; rtl?: boolean; info?: string }) {
   return (
     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-      <span>{label} {required && <span className="text-red-500">*</span>}</span>
+      <span>{label} {required && <span className="text-red-500">*</span>}{info && <InfoTip text={info} className="ml-1" />}</span>
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} dir={rtl ? 'rtl' : undefined} className="input mt-1.5 w-full" />
     </label>
   );
 }
 
-function Select({ label, value, onChange, options, required }: { label: string; value: string; onChange: (value: string) => void; options: string[]; required?: boolean }) {
+function Select({ label, value, onChange, options, required, info }: { label: string; value: string; onChange: (value: string) => void; options: string[]; required?: boolean; info?: string }) {
   return (
     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-      <span>{label} {required && <span className="text-red-500">*</span>}</span>
+      <span>{label} {required && <span className="text-red-500">*</span>}{info && <InfoTip text={info} className="ml-1" />}</span>
       <select value={value} onChange={(e) => onChange(e.target.value)} className="select mt-1.5 w-full">
         <option value="">Select</option>
         {options.map((option) => <option key={option} value={option}>{option}</option>)}

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Logo } from '../components/Logo';
+import { InfoTip } from '../components/InfoTip';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -48,8 +49,9 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Email address
+                <InfoTip text="The work email your company admin registered you with, e.g. you@company.com." />
               </label>
               <input
                 type="email"
@@ -63,8 +65,9 @@ export function LoginPage() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Password
+                <InfoTip text="Your account password (case-sensitive). Use 'Forgot password' or contact your HR admin if you can't sign in." />
               </label>
               <div className="relative">
                 <input
@@ -89,8 +92,9 @@ export function LoginPage() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Workspace
+                <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries). It was shared with your admin when the workspace was created." />
               </label>
               <input
                 type="text"

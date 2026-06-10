@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { platformApi } from '@/src/api/platform';
+import { InfoTip } from '@/src/components/InfoTip';
 
 export default function PlatformLoginPage() {
   const router = useRouter();
@@ -41,7 +42,10 @@ export default function PlatformLoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-white/10 bg-sidebarDark p-6">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">Email</label>
+            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+              Email
+              <InfoTip text="The platform owner email configured for this KynexOne instance. This is NOT a tenant login — clients sign in on the regular login page." />
+            </label>
             <input
               type="email"
               value={email}
@@ -54,7 +58,10 @@ export default function PlatformLoginPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">Password</label>
+            <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+              Password
+              <InfoTip text="The platform owner password (case-sensitive), set in the server configuration." />
+            </label>
             <input
               type="password"
               value={password}

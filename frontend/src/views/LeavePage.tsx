@@ -18,6 +18,7 @@ import type {
   LeaveCalendarEntry, LeaveAIInsight, LeaveDashboard,
 } from '../api/leave';
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import { InfoTip } from '../components/InfoTip';
 import client from '../api/client';
 
 // ── Leave import/export helpers ───────────────────────────────────────────────
@@ -124,10 +125,10 @@ function Modal({ title, onClose, children, wide }: {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, info }: { label: string; children: React.ReactNode; info?: string }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">{label}</label>
+      <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">{label}{info && <InfoTip text={info} />}</label>
       {children}
     </div>
   );
@@ -406,7 +407,7 @@ function ApplyLeaveTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+          <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required."><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
           <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
           <Field label="Department"><input className={inp} value={form.departmentName} onChange={e => set('departmentName', e.target.value)} /></Field>
           <Field label="Designation"><input className={inp} value={form.designationTitle} onChange={e => set('designationTitle', e.target.value)} /></Field>
@@ -416,7 +417,7 @@ function ApplyLeaveTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Leave Details</p>
         <div className="space-y-4">
-          <Field label="Leave Type *">
+          <Field label="Leave Type *" info="The category of leave (annual, sick, etc.). Determines the balance used, whether a reason or attachment is required, and the approval flow.">
             <select className={sel} value={form.leaveTypeId} onChange={e => set('leaveTypeId', e.target.value)}>
               <option value="">Select leave type…</option>
               {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.nameEn}{!t.isPaid ? ' (Unpaid)' : ''}</option>)}
@@ -436,8 +437,8 @@ function ApplyLeaveTab() {
           )}
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Start Date *"><input type="date" className={inp} value={form.startDate} onChange={e => set('startDate', e.target.value)} /></Field>
-            <Field label="End Date *"><input type="date" className={inp} value={form.endDate} onChange={e => set('endDate', e.target.value)} /></Field>
+            <Field label="Start Date *" info="First day of leave (inclusive). Must be on or before the end date."><input type="date" className={inp} value={form.startDate} onChange={e => set('startDate', e.target.value)} /></Field>
+            <Field label="End Date *" info="Last day of leave (inclusive). Total days are calculated automatically from the policy and day type."><input type="date" className={inp} value={form.endDate} onChange={e => set('endDate', e.target.value)} /></Field>
           </div>
 
           {requestedDays > 0 && (
@@ -446,7 +447,7 @@ function ApplyLeaveTab() {
             </div>
           )}
 
-          <Field label="Day Type">
+          <Field label="Day Type" info="Full day, half day or hourly leave. Half day and hourly count as partial days against the balance.">
             <select className={sel} value={form.dayType} onChange={e => set('dayType', e.target.value)}>
               <option value="Full">Full Day</option>
               {selectedType?.isHalfDayAllowed && <><option value="Half-AM">Half Day (Morning)</option><option value="Half-PM">Half Day (Afternoon)</option></>}
@@ -865,7 +866,7 @@ function CreatePolicyModal({ leaveTypes, onClose, onSaved }: { leaveTypes: Leave
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Policy Name *"><input className={inp} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. UAE Annual Leave — Full-Time" /></Field>
-          <Field label="Leave Type *">
+          <Field label="Leave Type *" info="The category of leave (annual, sick, etc.). Determines the balance used, whether a reason or attachment is required, and the approval flow.">
             <select className={sel} value={form.leaveTypeId} onChange={e => set('leaveTypeId', e.target.value)}>
               <option value="">Select…</option>
               {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.nameEn}</option>)}
@@ -1227,10 +1228,10 @@ function EncashmentTab() {
         <Modal title="Leave Encashment Request" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+              <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required."><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
               <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
             </div>
-            <Field label="Leave Type *">
+            <Field label="Leave Type *" info="The category of leave (annual, sick, etc.). Determines the balance used, whether a reason or attachment is required, and the approval flow.">
               <select className={sel} value={form.leaveTypeId} onChange={e => set('leaveTypeId', e.target.value)}>
                 <option value="">Select…</option>
                 {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.nameEn}</option>)}
@@ -1310,7 +1311,7 @@ function CompOffTab() {
         <Modal title="Create Comp-Off Credit" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+              <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required."><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
               <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">

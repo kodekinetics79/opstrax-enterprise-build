@@ -10,6 +10,9 @@ import {
   type CreateTenantResult,
   type TenantAdminUser,
 } from '@/src/api/platform';
+import { InfoTip } from '@/src/components/InfoTip';
+
+const labelCls = 'mb-1 flex items-center gap-1.5 text-xs text-slate-400';
 
 const FEATURE_KEYS = [
   { key: 'ai_assistant', label: 'AI HR Assistant' },
@@ -128,27 +131,27 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <div className="px-6 py-5 space-y-4 overflow-y-auto">
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <label className="block text-xs text-slate-400 mb-1">Client / Company Name</label>
+                <label className={labelCls}>Client / Company Name<InfoTip text="Your client's legal or trading name. Shown across their workspace and reports. Free text, e.g. Acme Industries LLC." /></label>
                 <input type="text" value={form.name} onChange={e => onNameChange(e.target.value)} className={inputCls} placeholder="Acme Industries LLC" />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs text-slate-400 mb-1">Tenant Slug (used at login)</label>
+                <label className={labelCls}>Tenant Slug (used at login)<InfoTip text="Unique workspace ID your client types on the login page. 3-40 chars: lowercase letters, digits and hyphens only. Cannot be changed later." /></label>
                 <input type="text" value={form.slug} onChange={e => set({ slug: e.target.value.toLowerCase() })} className={`${inputCls} font-mono`} placeholder="acme-industries" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Admin Email</label>
+                <label className={labelCls}>Admin Email<InfoTip text="Email address of the client's first administrator. They will sign in with this — must be a valid, unique email." /></label>
                 <input type="email" value={form.adminEmail} onChange={e => set({ adminEmail: e.target.value })} className={inputCls} placeholder="admin@acme.com" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Admin Full Name</label>
+                <label className={labelCls}>Admin Full Name<InfoTip text="Display name for the client's administrator, e.g. Jane Doe. Optional — defaults to 'Tenant Administrator'." /></label>
                 <input type="text" value={form.adminFullName} onChange={e => set({ adminFullName: e.target.value })} className={inputCls} placeholder="Jane Doe" />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs text-slate-400 mb-1">Admin Password (min 10 characters)</label>
+                <label className={labelCls}>Admin Password (min 10 characters)<InfoTip text="Initial password for the client's admin — at least 10 characters. Shown in plain text so you can copy and share it securely; advise the client to change it after first login." /></label>
                 <input type="text" value={form.adminPassword} onChange={e => set({ adminPassword: e.target.value })} className={`${inputCls} font-mono`} placeholder="Set an initial password" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Plan</label>
+                <label className={labelCls}>Plan<InfoTip text="Subscription tier. Picking a plan auto-fills its user/employee limits: Trial 3/10, Starter 10/50, Growth 50/250, Enterprise unlimited. You can override the limits below." /></label>
                 <select
                   value={form.plan}
                   onChange={e => {
@@ -162,26 +165,26 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Billing Cycle</label>
+                <label className={labelCls}>Billing Cycle<InfoTip text="How often you invoice this client: Monthly or Annual. Informational — does not auto-charge." /></label>
                 <select value={form.billingCycle} onChange={e => set({ billingCycle: e.target.value })} className={inputCls}>
                   <option value="Monthly">Monthly</option>
                   <option value="Annual">Annual</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Max Users (0 = unlimited)</label>
+                <label className={labelCls}>Max Users (0 = unlimited)<InfoTip text="Maximum login accounts the client can create. Whole number; enter 0 for unlimited. Enforced when they add users." /></label>
                 <input type="number" min={0} value={form.maxUsers} onChange={e => set({ maxUsers: Number(e.target.value) })} className={inputCls} />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Max Employees (0 = unlimited)</label>
+                <label className={labelCls}>Max Employees (0 = unlimited)<InfoTip text="Maximum active employee records the client can hold. Whole number; enter 0 for unlimited. Enforced when they add employees." /></label>
                 <input type="number" min={0} value={form.maxEmployees} onChange={e => set({ maxEmployees: Number(e.target.value) })} className={inputCls} />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Monthly Amount</label>
+                <label className={labelCls}>Monthly Amount<InfoTip text="The price you charge this client per month, in the selected currency. Numbers only; informational for billing records." /></label>
                 <input type="number" min={0} value={form.monthlyAmount} onChange={e => set({ monthlyAmount: Number(e.target.value) })} className={inputCls} />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Expires At (blank = never)</label>
+                <label className={labelCls}>Expires At (blank = never)<InfoTip text="Date the subscription ends. After this date the client's workspace is blocked until you renew. Leave blank for no expiry." /></label>
                 <input type="date" value={form.expiresAtUtc} onChange={e => set({ expiresAtUtc: e.target.value })} className={inputCls} />
               </div>
             </div>
@@ -408,7 +411,7 @@ function TenantPanel({
                 <div className="bg-darkSlate/60 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Plan</label>
+                      <label className={labelCls}>Plan<InfoTip text="Subscription tier. Changing it auto-fills that tier's user/employee limits, which you can still override for custom deals." /></label>
                       <select
                         value={subForm.plan}
                         onChange={e => {
@@ -426,7 +429,7 @@ function TenantPanel({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Status</label>
+                      <label className={labelCls}>Status<InfoTip text="Active/Trial = client can use the app. Suspended or Cancelled = the client's workspace is blocked immediately (they see a payment-required message)." /></label>
                       <select
                         value={subForm.status}
                         onChange={e => setSubForm(p => ({ ...p, status: e.target.value }))}
@@ -439,9 +442,10 @@ function TenantPanel({
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">
+                      <label className={labelCls}>
                         Max Users
-                        {subForm.plan === 'Enterprise' && <span className="ml-1 text-slate-500">(0 = unlimited)</span>}
+                        {subForm.plan === 'Enterprise' && <span className="text-slate-500">(0 = unlimited)</span>}
+                        <InfoTip text="Maximum login accounts this client can have. Whole number; 0 means unlimited." />
                       </label>
                       <input
                         type="number"
@@ -453,9 +457,10 @@ function TenantPanel({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">
+                      <label className={labelCls}>
                         Max Employees
-                        {subForm.plan === 'Enterprise' && <span className="ml-1 text-slate-500">(0 = unlimited)</span>}
+                        {subForm.plan === 'Enterprise' && <span className="text-slate-500">(0 = unlimited)</span>}
+                        <InfoTip text="Maximum active employee records this client can hold. Whole number; 0 means unlimited." />
                       </label>
                       <input
                         type="number"
@@ -467,7 +472,7 @@ function TenantPanel({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Monthly Amount (AED)</label>
+                      <label className={labelCls}>Monthly Amount<InfoTip text="The price you charge this client per month, in their currency. Numbers only." /></label>
                       <input
                         type="number"
                         min={0}
@@ -477,7 +482,7 @@ function TenantPanel({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Billing Cycle</label>
+                      <label className={labelCls}>Billing Cycle<InfoTip text="How often you invoice this client: Monthly or Annual." /></label>
                       <select
                         value={subForm.billingCycle}
                         onChange={e => setSubForm(p => ({ ...p, billingCycle: e.target.value }))}
@@ -488,7 +493,7 @@ function TenantPanel({
                       </select>
                     </div>
                     <div className="col-span-2">
-                      <label className="block text-xs text-slate-400 mb-1">Billing Email</label>
+                      <label className={labelCls}>Billing Email<InfoTip text="Where the client's invoices and billing notices go. Must be a valid email address." /></label>
                       <input
                         type="email"
                         value={subForm.billingEmail}
@@ -497,7 +502,7 @@ function TenantPanel({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Start Date</label>
+                      <label className={labelCls}>Start Date<InfoTip text="When this subscription began. Used for billing records." /></label>
                       <input
                         type="date"
                         value={subForm.startedAtUtc}
@@ -506,9 +511,10 @@ function TenantPanel({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">
+                      <label className={labelCls}>
                         Expires At
-                        {subForm.plan === 'Enterprise' && <span className="ml-1 text-slate-500">(leave blank = never)</span>}
+                        {subForm.plan === 'Enterprise' && <span className="text-slate-500">(leave blank = never)</span>}
+                        <InfoTip text="Date the subscription ends — after this the client's workspace is blocked until renewed. Leave blank for no expiry." />
                       </label>
                       <input
                         type="date"
