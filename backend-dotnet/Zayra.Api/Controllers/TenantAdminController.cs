@@ -250,6 +250,33 @@ public class TenantAdminController : ControllerBase
         return NoContent();
     }
 
+    // ── Usage Stats ──────────────────────────────────────────────────────────
+
+    [HttpGet("usage")]
+    public async Task<IActionResult> GetUsage(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var activeEmployees = await _db.Employees
+            .CountAsync(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted, ct);
+
+        var activeUsers = await _db.Users
+            .CountAsync(u => u.TenantId == tenantId && u.IsActive && !u.IsDeleted, ct);
+
+        var sub = await _db.TenantSubscriptions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+
+        return Ok(new
+        {
+            activeEmployees,
+            maxEmployees = sub?.MaxEmployees ?? 0,
+            activeUsers,
+            storageUsedMb = 0.0f  // placeholder — real value requires blob storage integration
+        });
+    }
+
     /// <summary>Delete an entire country pack (all rules for a country). Defaults are deletable.</summary>
     [HttpDelete("country-rules/country/{countryCode}")]
     public async Task<IActionResult> DeleteCountryPack(string countryCode, CancellationToken ct)
