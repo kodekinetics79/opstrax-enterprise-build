@@ -221,77 +221,80 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-12">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="mb-5 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+        {/* fixed header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
           <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
 
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Department *</label>
-              <input className="input w-full" placeholder="e.g. Engineering" value={form.departmentName} onChange={e => set('departmentName', e.target.value)} />
+        {/* scrollable body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Department *</label>
+                <input className="input w-full" placeholder="e.g. Engineering" value={form.departmentName} onChange={e => set('departmentName', e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Designation *</label>
+                <input className="input w-full" placeholder="e.g. Software Engineer" value={form.designationTitle} onChange={e => set('designationTitle', e.target.value)} />
+              </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Designation *</label>
-              <input className="input w-full" placeholder="e.g. Software Engineer" value={form.designationTitle} onChange={e => set('designationTitle', e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Head Count</label>
-              <input type="number" className="input w-full" min={1} value={form.headCount} onChange={e => set('headCount', Number(e.target.value))} aria-label="Head count" />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Type</label>
-              <select className="select w-full" value={form.employmentType} onChange={e => set('employmentType', e.target.value)} aria-label="Employment type">
-                {['Full-Time', 'Part-Time', 'Contract', 'Internship'].map(t => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Priority</label>
-              <select className="select w-full" value={form.priority} onChange={e => set('priority', e.target.value)} aria-label="Priority">
-                {['Low', 'Medium', 'High', 'Critical'].map(p => <option key={p}>{p}</option>)}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Justification *</label>
-            <textarea className="input w-full resize-none" rows={3} placeholder="Business need and justification…" value={form.justification} onChange={e => set('justification', e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Required Skills</label>
-            <textarea className="input w-full resize-none" rows={2} placeholder="e.g. React, TypeScript, Node.js…" value={form.requiredSkills} onChange={e => set('requiredSkills', e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Budget Range (AED/mo)</label>
-              <div className="flex items-center gap-1">
-                <input className="input w-full" type="number" placeholder="From" value={form.budgetFrom} onChange={e => set('budgetFrom', e.target.value)} aria-label="Budget from" />
-                <span className="text-slate-400">–</span>
-                <input className="input w-full" type="number" placeholder="To" value={form.budgetTo} onChange={e => set('budgetTo', e.target.value)} aria-label="Budget to" />
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Head Count</label>
+                <input type="number" className="input w-full" min={1} value={form.headCount} onChange={e => set('headCount', Number(e.target.value))} aria-label="Head count" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Type</label>
+                <select className="select w-full" value={form.employmentType} onChange={e => set('employmentType', e.target.value)} aria-label="Employment type">
+                  {['Full-Time', 'Part-Time', 'Contract', 'Internship'].map(t => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Priority</label>
+                <select className="select w-full" value={form.priority} onChange={e => set('priority', e.target.value)} aria-label="Priority">
+                  {['Low', 'Medium', 'High', 'Critical'].map(p => <option key={p}>{p}</option>)}
+                </select>
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Target Join Date</label>
-              <input type="date" className="input w-full" value={form.targetJoiningDate} onChange={e => set('targetJoiningDate', e.target.value)} aria-label="Target joining date" />
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Justification *</label>
+              <textarea className="input w-full resize-none" rows={3} placeholder="Business need and justification…" value={form.justification} onChange={e => set('justification', e.target.value)} />
             </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Required Skills</label>
+              <textarea className="input w-full resize-none" rows={2} placeholder="e.g. React, TypeScript, Node.js…" value={form.requiredSkills} onChange={e => set('requiredSkills', e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Budget Range (AED/mo)</label>
+                <div className="flex items-center gap-1">
+                  <input className="input w-full" type="number" placeholder="From" value={form.budgetFrom} onChange={e => set('budgetFrom', e.target.value)} aria-label="Budget from" />
+                  <span className="text-slate-400">–</span>
+                  <input className="input w-full" type="number" placeholder="To" value={form.budgetTo} onChange={e => set('budgetTo', e.target.value)} aria-label="Budget to" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Target Join Date</label>
+                <input type="date" className="input w-full" value={form.targetJoiningDate} onChange={e => set('targetJoiningDate', e.target.value)} aria-label="Target joining date" />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Requested By</label>
+              <input className="input w-full" placeholder="Your name" value={form.requestedByName} onChange={e => set('requestedByName', e.target.value)} />
+            </div>
+            {error && <p className="text-xs text-rose-500">{error}</p>}
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Requested By</label>
-            <input className="input w-full" placeholder="Your name" value={form.requestedByName} onChange={e => set('requestedByName', e.target.value)} />
-          </div>
-          {error && <p className="text-xs text-rose-500">{error}</p>}
         </div>
 
-        <div className="mt-5 flex justify-end gap-2">
+        {/* fixed footer — always visible */}
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Requisition'}</button>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -444,63 +447,63 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-12">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="mb-4 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
-          <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Title *</label>
-            <input className="input w-full" value={form.title} onChange={e => set('title', e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Department *</label>
-              <input className="input w-full" value={form.departmentName} onChange={e => set('departmentName', e.target.value)} />
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Title *</label>
+              <input className="input w-full" placeholder="e.g. Senior Software Engineer" aria-label="Job title" value={form.title} onChange={e => set('title', e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Department *</label>
+                <input className="input w-full" placeholder="e.g. Engineering" aria-label="Department" value={form.departmentName} onChange={e => set('departmentName', e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Head Count</label>
+                <input type="number" className="input w-full" min={1} value={form.headCount} onChange={e => set('headCount', Number(e.target.value))} aria-label="Head count" />
+              </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Head Count</label>
-              <input type="number" className="input w-full" min={1} value={form.headCount} onChange={e => set('headCount', Number(e.target.value))} aria-label="Head count" />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Description</label>
-            <textarea className="input w-full resize-none" rows={3} value={form.description} onChange={e => set('description', e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Requirements (one per line)</label>
-            <textarea className="input w-full resize-none" rows={3} placeholder="5+ years of experience&#10;Strong TypeScript skills…" value={form.requirements} onChange={e => set('requirements', e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Salary From (AED)</label>
-              <input type="number" className="input w-full" value={form.salaryFrom} onChange={e => set('salaryFrom', e.target.value)} aria-label="Salary from" />
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Description</label>
+              <textarea className="input w-full resize-none" rows={3} placeholder="Describe the role and responsibilities…" aria-label="Job description" value={form.description} onChange={e => set('description', e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Salary To (AED)</label>
-              <input type="number" className="input w-full" value={form.salaryTo} onChange={e => set('salaryTo', e.target.value)} aria-label="Salary to" />
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Requirements (one per line)</label>
+              <textarea className="input w-full resize-none" rows={3} placeholder="5+ years of experience&#10;Strong TypeScript skills…" value={form.requirements} onChange={e => set('requirements', e.target.value)} />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Salary From (AED)</label>
+                <input type="number" className="input w-full" value={form.salaryFrom} onChange={e => set('salaryFrom', e.target.value)} aria-label="Salary from" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Salary To (AED)</label>
+                <input type="number" className="input w-full" value={form.salaryTo} onChange={e => set('salaryTo', e.target.value)} aria-label="Salary to" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Location</label>
+                <input className="input w-full" placeholder="e.g. Dubai, UAE" value={form.location} onChange={e => set('location', e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Assigned HR</label>
+                <input className="input w-full" placeholder="HR name" value={form.assignedHrName} onChange={e => set('assignedHrName', e.target.value)} />
+              </div>
+            </div>
+            {error && <p className="text-xs text-rose-500">{error}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Location</label>
-              <input className="input w-full" placeholder="e.g. Dubai, UAE" value={form.location} onChange={e => set('location', e.target.value)} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Assigned HR</label>
-              <input className="input w-full" placeholder="HR name" value={form.assignedHrName} onChange={e => set('assignedHrName', e.target.value)} />
-            </div>
-          </div>
-          {error && <p className="text-xs text-rose-500">{error}</p>}
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Opening'}</button>
         </div>
-      </div>
       </div>
     </div>
   );
