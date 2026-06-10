@@ -9,6 +9,9 @@ using Microsoft.IdentityModel.Tokens;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
+using Zayra.Api.Domain.Entities;
+using Zayra.Api.Infrastructure.Auth;
+using Zayra.Api.Infrastructure.Subscriptions;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -19,11 +22,15 @@ public class PlatformController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly JwtOptions _jwt;
+    private readonly IPasswordHasher _passwordHasher;
+    private readonly IAuthSeeder _authSeeder;
 
-    public PlatformController(ZayraDbContext db, IOptions<JwtOptions> jwt)
+    public PlatformController(ZayraDbContext db, IOptions<JwtOptions> jwt, IPasswordHasher passwordHasher, IAuthSeeder authSeeder)
     {
         _db = db;
         _jwt = jwt.Value;
+        _passwordHasher = passwordHasher;
+        _authSeeder = authSeeder;
     }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
@@ -251,6 +258,135 @@ public class PlatformController : ControllerBase
         });
     }
 
+    // ── Client Provisioning ───────────────────────────────────────────────────
+
+    /// <summary>Provision a new client: tenant + full role set + tenant admin ("sub admin") + subscription.</summary>
+    [HttpPost("tenants")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> CreateTenant([FromBody] CreateTenantRequest req, CancellationToken ct)
+    {
+        var name = req.Name?.Trim();
+        var slug = req.Slug?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { message = "Tenant name is required." });
+        if (string.IsNullOrWhiteSpace(slug) || !System.Text.RegularExpressions.Regex.IsMatch(slug, "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$"))
+            return BadRequest(new { message = "Slug must be 3-40 chars: lowercase letters, digits and hyphens." });
+        if (string.IsNullOrWhiteSpace(req.AdminEmail) || !req.AdminEmail.Contains('@'))
+            return BadRequest(new { message = "A valid admin email is required." });
+        if (string.IsNullOrWhiteSpace(req.AdminPassword) || req.AdminPassword.Length < 10)
+            return BadRequest(new { message = "Admin password must be at least 10 characters." });
+
+        if (await _db.Tenants.AsNoTracking().AnyAsync(t => t.Slug == slug, ct))
+            return Conflict(new { message = $"A tenant with slug '{slug}' already exists." });
+
+        var tenant = new Tenant { Name = name, Slug = slug };
+        _db.Tenants.Add(tenant);
+        await _db.SaveChangesAsync(ct);
+
+        // Full standard RBAC set (Admin → Employee), same as the seeded tenant
+        var adminRole = await _authSeeder.EnsureTenantRolesAsync(tenant.Id, ct);
+
+        var admin = new User
+        {
+            TenantId = tenant.Id,
+            Email = req.AdminEmail.Trim().ToLowerInvariant(),
+            NormalizedEmail = AuthService.Normalize(req.AdminEmail),
+            FullName = string.IsNullOrWhiteSpace(req.AdminFullName) ? "Tenant Administrator" : req.AdminFullName.Trim(),
+            PasswordHash = _passwordHasher.Hash(req.AdminPassword),
+            AccessMode = "FullPortal",
+            Status = "Active",
+            IsActive = true,
+            IsEmailConfirmed = true
+        };
+        admin.UserRoles.Add(new UserRole { User = admin, Role = adminRole });
+        _db.Users.Add(admin);
+
+        var plan = string.IsNullOrWhiteSpace(req.Plan) ? "Trial" : req.Plan;
+        var (defaultMaxUsers, defaultMaxEmployees) = SubscriptionTiers.GetDefaults(plan);
+        _db.TenantSubscriptions.Add(new TenantSubscription
+        {
+            TenantId = tenant.Id,
+            Plan = plan,
+            Status = "Active",
+            MaxUsers = req.MaxUsers ?? defaultMaxUsers,
+            MaxEmployees = req.MaxEmployees ?? defaultMaxEmployees,
+            BillingEmail = req.BillingEmail ?? req.AdminEmail.Trim().ToLowerInvariant(),
+            BillingCycle = req.BillingCycle ?? "Monthly",
+            MonthlyAmount = req.MonthlyAmount ?? 0,
+            CurrencyCode = req.CurrencyCode ?? "USD",
+            ExpiresAtUtc = req.ExpiresAtUtc
+        });
+
+        await _db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(GetTenant), new { tenantId = tenant.Id }, new
+        {
+            tenantId = tenant.Id,
+            tenant.Name,
+            tenant.Slug,
+            adminUserId = admin.Id,
+            adminEmail = admin.Email,
+            plan,
+            loginHint = $"Tenant slug '{tenant.Slug}' + admin email/password on the login page."
+        });
+    }
+
+    // ── Tenant Admins ("sub admins") ─────────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/admins")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ListTenantAdmins(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+
+        var admins = await _db.Users.AsNoTracking()
+            .Where(u => u.TenantId == tenantId && !u.IsDeleted
+                && u.UserRoles.Any(ur => ur.Role != null && ur.Role.Name == "Admin"))
+            .OrderBy(u => u.Email)
+            .Select(u => new { u.Id, u.Email, u.FullName, u.IsActive, u.Status, u.CreatedAtUtc })
+            .ToListAsync(ct);
+
+        return Ok(admins);
+    }
+
+    [HttpPost("tenants/{tenantId:guid}/admins")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> AddTenantAdmin(Guid tenantId, [FromBody] AddTenantAdminRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound(new { message = "Tenant not found." });
+
+        if (string.IsNullOrWhiteSpace(req.Email) || !req.Email.Contains('@'))
+            return BadRequest(new { message = "A valid email is required." });
+        if (string.IsNullOrWhiteSpace(req.Password) || req.Password.Length < 10)
+            return BadRequest(new { message = "Password must be at least 10 characters." });
+
+        var normalizedEmail = AuthService.Normalize(req.Email);
+        if (await _db.Users.AsNoTracking().AnyAsync(u => u.TenantId == tenantId && u.NormalizedEmail == normalizedEmail, ct))
+            return Conflict(new { message = "A user with this email already exists in the tenant." });
+
+        var adminRole = await _db.Roles.FirstOrDefaultAsync(r => r.TenantId == tenantId && r.Name == "Admin" && !r.IsDeleted, ct)
+            ?? await _authSeeder.EnsureTenantRolesAsync(tenantId, ct);
+
+        var user = new User
+        {
+            TenantId = tenantId,
+            Email = req.Email.Trim().ToLowerInvariant(),
+            NormalizedEmail = normalizedEmail,
+            FullName = string.IsNullOrWhiteSpace(req.FullName) ? "Tenant Administrator" : req.FullName.Trim(),
+            PasswordHash = _passwordHasher.Hash(req.Password),
+            AccessMode = "FullPortal",
+            Status = "Active",
+            IsActive = true,
+            IsEmailConfirmed = true
+        };
+        user.UserRoles.Add(new UserRole { User = user, Role = adminRole });
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new { user.Id, user.Email, user.FullName, tenantSlug = tenant.Slug });
+    }
+
     // ── Platform Stats ────────────────────────────────────────────────────────
 
     [HttpGet("stats")]
@@ -262,11 +398,12 @@ public class PlatformController : ControllerBase
         var totalUsers = await _db.Users.AsNoTracking().CountAsync(u => !u.IsDeleted, ct);
         var totalEmployees = await _db.Employees.AsNoTracking().CountAsync(e => !e.IsDeleted, ct);
 
-        var tenantsByPlan = await _db.TenantSubscriptions
+        var planCounts = await _db.TenantSubscriptions
             .AsNoTracking()
             .GroupBy(s => s.Plan)
             .Select(g => new { Plan = g.Key, Count = g.Count() })
             .ToListAsync(ct);
+        int PlanCount(string plan) => planCounts.FirstOrDefault(p => string.Equals(p.Plan, plan, StringComparison.OrdinalIgnoreCase))?.Count ?? 0;
 
         return Ok(new
         {
@@ -274,10 +411,33 @@ public class PlatformController : ControllerBase
             activeTenants,
             totalUsers,
             totalEmployees,
-            tenantsByPlan
+            tenantsByPlan = new
+            {
+                trial = PlanCount("Trial"),
+                starter = PlanCount("Starter"),
+                growth = PlanCount("Growth"),
+                enterprise = PlanCount("Enterprise")
+            }
         });
     }
 }
 
 public record PlatformLoginRequest(string Email, string Password);
 public record ImpersonateRequest(Guid UserId);
+
+public record CreateTenantRequest(
+    string Name,
+    string Slug,
+    string AdminEmail,
+    string? AdminFullName,
+    string AdminPassword,
+    string? Plan,
+    int? MaxUsers,
+    int? MaxEmployees,
+    string? BillingEmail,
+    string? BillingCycle,
+    decimal? MonthlyAmount,
+    string? CurrencyCode,
+    DateTime? ExpiresAtUtc);
+
+public record AddTenantAdminRequest(string Email, string? FullName, string Password);

@@ -34,102 +34,7 @@ public class AuthSeeder : IAuthSeeder
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var permissions = await EnsurePermissions(cancellationToken);
-        var Ps = (string[] keys) => permissions.Where(x => keys.Contains(x.Key)).ToList();
-
-        // Level 1 — Admin: all permissions
-        var adminRole = await EnsureRole(tenant.Id, "Admin", "Tenant system administrator with full access", permissions, 1, false, cancellationToken);
-
-        // Level 2 — HR Director: full HR + payroll visibility + reports + compliance
-        await EnsureRole(tenant.Id, "HR Director", "Senior HR leader with strategic visibility", permissions.Where(x =>
-            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
-            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
-            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
-            x.Key.StartsWith("performance.") || x.Key.StartsWith("compliance.") || x.Key.StartsWith("reports.") ||
-            x.Key.StartsWith("recruitment.") || x.Key is "payroll.read" or "loans.read" or "audit.read" or
-            "roles.manage" or "users.manage" or "manager.read" or "manager.approve"
-        ).ToList(), 2, true, cancellationToken);
-
-        // Level 3 — HR Manager: operational HR management
-        await EnsureRole(tenant.Id, "HR Manager", "HR operations manager", permissions.Where(x =>
-            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
-            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
-            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
-            x.Key is "audit.read" or "manager.read" or "manager.approve" or "reports.read"
-        ).ToList(), 3, true, cancellationToken);
-
-        // Level 4 — Payroll Manager: payroll + finance + employees
-        await EnsureRole(tenant.Id, "Payroll Manager", "Manages payroll processing and WPS submissions", Ps(new[] {
-            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read", "leave.read",
-            "overtime.read", "payroll.read", "payroll.write", "payroll.approve", "loans.read", "loans.approve",
-            "approvals.read", "approvals.decide", "reports.read", "notifications.read"
-        }), 4, true, cancellationToken);
-
-        // Level 5 — HR Officer: HR operations specialist
-        await EnsureRole(tenant.Id, "HR Officer", "HR operations specialist", Ps(new[] {
-            "dashboard.read", "employees.read", "employees.write", "employees.documents", "employees.templates",
-            "organization.read", "approvals.read", "approvals.write", "notifications.read", "localization.read",
-            "leave.read", "leave.write", "attendance.read", "overtime.read", "profile.read"
-        }), 5, true, cancellationToken);
-
-        // Level 6 — Payroll Officer: payroll processing
-        await EnsureRole(tenant.Id, "Payroll Officer", "Payroll and WPS specialist", Ps(new[] {
-            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read",
-            "payroll.read", "payroll.write", "loans.read", "notifications.read", "reports.read"
-        }), 6, true, cancellationToken);
-
-        // Level 7 — Finance Approver: finance approvals
-        await EnsureRole(tenant.Id, "Finance Approver", "Finance approver for loans, advances and payroll", Ps(new[] {
-            "dashboard.read", "employees.read", "payroll.read", "payroll.approve",
-            "loans.read", "loans.approve", "approvals.read", "approvals.decide"
-        }), 7, true, cancellationToken);
-
-        // Level 8 — Compliance Officer: compliance and contracts
-        await EnsureRole(tenant.Id, "Compliance Officer", "Manages compliance, contracts and regulatory records", Ps(new[] {
-            "dashboard.read", "employees.read", "employees.documents", "organization.read",
-            "compliance.read", "compliance.write", "approvals.read", "audit.read", "reports.read", "notifications.read"
-        }), 8, true, cancellationToken);
-
-        // Level 9 — Manager: team management and approvals
-        await EnsureRole(tenant.Id, "Manager", "People manager with team oversight and approval authority", Ps(new[] {
-            "dashboard.read", "employees.read", "approvals.read", "approvals.decide", "notifications.read",
-            "manager.read", "manager.approve", "ess.read", "ess.write", "leave.read", "leave.approve",
-            "attendance.read", "overtime.read", "overtime.approve", "profile.read"
-        }), 9, true, cancellationToken);
-
-        // Level 10 — Supervisor: front-line supervision
-        await EnsureRole(tenant.Id, "Supervisor", "Front-line supervisor for operational staff", Ps(new[] {
-            "dashboard.read", "employees.read", "attendance.read", "attendance.write",
-            "manager.read", "manager.approve", "leave.read", "overtime.read", "ess.read", "ess.write", "profile.read"
-        }), 10, true, cancellationToken);
-
-        // Level 11 — Recruiter: talent acquisition
-        await EnsureRole(tenant.Id, "Recruiter", "Recruitment and hiring specialist", Ps(new[] {
-            "dashboard.read", "employees.read", "recruitment.read", "recruitment.write",
-            "notifications.read", "organization.read", "profile.read"
-        }), 11, true, cancellationToken);
-
-        // Level 12 — HR Assistant: limited HR support
-        await EnsureRole(tenant.Id, "HR Assistant", "Junior HR support with limited write access", Ps(new[] {
-            "dashboard.read", "employees.read", "organization.read", "notifications.read",
-            "attendance.read", "leave.read", "ess.read", "profile.read", "localization.read"
-        }), 12, true, cancellationToken);
-
-        // Level 13 — Auditor: read-only audit
-        await EnsureRole(tenant.Id, "Auditor", "Read-only audit and compliance reviewer", Ps(new[] {
-            "dashboard.read", "employees.read", "organization.read", "approvals.read",
-            "audit.read", "payroll.read", "attendance.read", "leave.read", "compliance.read", "reports.read"
-        }), 13, true, cancellationToken);
-
-        // Level 14 — Kiosk Operator: attendance kiosk only
-        await EnsureRole(tenant.Id, "Kiosk Operator", "Restricted to kiosk attendance capture only", Ps(new[] {
-            "attendance.kiosk"
-        }), 14, true, cancellationToken);
-
-        // Level 15 — Employee: self-service only
-        await EnsureRole(tenant.Id, "Employee", "Employee self-service user", Ps(new[] {
-            "dashboard.read", "profile.read", "ess.read", "ess.write"
-        }), 15, true, cancellationToken);
+        var adminRole = await EnsureTenantRolesAsync(tenant.Id, cancellationToken);
 
         var normalizedEmail = AuthService.Normalize(_options.Email);
         var admin = await _db.Users
@@ -172,6 +77,108 @@ public class AuthSeeder : IAuthSeeder
         {
             await EnsureFoundationSeedData(tenant.Id, cancellationToken);
         }
+    }
+
+    public async Task<Role> EnsureTenantRolesAsync(Guid tenantId, CancellationToken cancellationToken = default)
+    {
+        var permissions = await EnsurePermissions(cancellationToken);
+        var Ps = (string[] keys) => permissions.Where(x => keys.Contains(x.Key)).ToList();
+
+        // Level 1 — Admin: all permissions
+        var adminRole = await EnsureRole(tenantId, "Admin", "Tenant system administrator with full access", permissions, 1, false, cancellationToken);
+
+        // Level 2 — HR Director: full HR + payroll visibility + reports + compliance
+        await EnsureRole(tenantId, "HR Director", "Senior HR leader with strategic visibility", permissions.Where(x =>
+            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
+            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
+            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
+            x.Key.StartsWith("performance.") || x.Key.StartsWith("compliance.") || x.Key.StartsWith("reports.") ||
+            x.Key.StartsWith("recruitment.") || x.Key is "payroll.read" or "loans.read" or "audit.read" or
+            "roles.manage" or "users.manage" or "manager.read" or "manager.approve"
+        ).ToList(), 2, true, cancellationToken);
+
+        // Level 3 — HR Manager: operational HR management
+        await EnsureRole(tenantId, "HR Manager", "HR operations manager", permissions.Where(x =>
+            x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
+            x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
+            x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
+            x.Key is "audit.read" or "manager.read" or "manager.approve" or "reports.read"
+        ).ToList(), 3, true, cancellationToken);
+
+        // Level 4 — Payroll Manager: payroll + finance + employees
+        await EnsureRole(tenantId, "Payroll Manager", "Manages payroll processing and WPS submissions", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read", "leave.read",
+            "overtime.read", "payroll.read", "payroll.write", "payroll.approve", "loans.read", "loans.approve",
+            "approvals.read", "approvals.decide", "reports.read", "notifications.read"
+        }), 4, true, cancellationToken);
+
+        // Level 5 — HR Officer: HR operations specialist
+        await EnsureRole(tenantId, "HR Officer", "HR operations specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.write", "employees.documents", "employees.templates",
+            "organization.read", "approvals.read", "approvals.write", "notifications.read", "localization.read",
+            "leave.read", "leave.write", "attendance.read", "overtime.read", "profile.read"
+        }), 5, true, cancellationToken);
+
+        // Level 6 — Payroll Officer: payroll processing
+        await EnsureRole(tenantId, "Payroll Officer", "Payroll and WPS specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.sensitive", "attendance.read",
+            "payroll.read", "payroll.write", "loans.read", "notifications.read", "reports.read"
+        }), 6, true, cancellationToken);
+
+        // Level 7 — Finance Approver: finance approvals
+        await EnsureRole(tenantId, "Finance Approver", "Finance approver for loans, advances and payroll", Ps(new[] {
+            "dashboard.read", "employees.read", "payroll.read", "payroll.approve",
+            "loans.read", "loans.approve", "approvals.read", "approvals.decide"
+        }), 7, true, cancellationToken);
+
+        // Level 8 — Compliance Officer: compliance and contracts
+        await EnsureRole(tenantId, "Compliance Officer", "Manages compliance, contracts and regulatory records", Ps(new[] {
+            "dashboard.read", "employees.read", "employees.documents", "organization.read",
+            "compliance.read", "compliance.write", "approvals.read", "audit.read", "reports.read", "notifications.read"
+        }), 8, true, cancellationToken);
+
+        // Level 9 — Manager: team management and approvals
+        await EnsureRole(tenantId, "Manager", "People manager with team oversight and approval authority", Ps(new[] {
+            "dashboard.read", "employees.read", "approvals.read", "approvals.decide", "notifications.read",
+            "manager.read", "manager.approve", "ess.read", "ess.write", "leave.read", "leave.approve",
+            "attendance.read", "overtime.read", "overtime.approve", "profile.read"
+        }), 9, true, cancellationToken);
+
+        // Level 10 — Supervisor: front-line supervision
+        await EnsureRole(tenantId, "Supervisor", "Front-line supervisor for operational staff", Ps(new[] {
+            "dashboard.read", "employees.read", "attendance.read", "attendance.write",
+            "manager.read", "manager.approve", "leave.read", "overtime.read", "ess.read", "ess.write", "profile.read"
+        }), 10, true, cancellationToken);
+
+        // Level 11 — Recruiter: talent acquisition
+        await EnsureRole(tenantId, "Recruiter", "Recruitment and hiring specialist", Ps(new[] {
+            "dashboard.read", "employees.read", "recruitment.read", "recruitment.write",
+            "notifications.read", "organization.read", "profile.read"
+        }), 11, true, cancellationToken);
+
+        // Level 12 — HR Assistant: limited HR support
+        await EnsureRole(tenantId, "HR Assistant", "Junior HR support with limited write access", Ps(new[] {
+            "dashboard.read", "employees.read", "organization.read", "notifications.read",
+            "attendance.read", "leave.read", "ess.read", "profile.read", "localization.read"
+        }), 12, true, cancellationToken);
+
+        // Level 13 — Auditor: read-only audit
+        await EnsureRole(tenantId, "Auditor", "Read-only audit and compliance reviewer", Ps(new[] {
+            "dashboard.read", "employees.read", "organization.read", "approvals.read",
+            "audit.read", "payroll.read", "attendance.read", "leave.read", "compliance.read", "reports.read"
+        }), 13, true, cancellationToken);
+
+        // Level 14 — Kiosk Operator: attendance kiosk only
+        await EnsureRole(tenantId, "Kiosk Operator", "Restricted to kiosk attendance capture only", Ps(new[] {
+            "attendance.kiosk"
+        }), 14, true, cancellationToken);
+
+        // Level 15 — Employee: self-service only
+        await EnsureRole(tenantId, "Employee", "Employee self-service user", Ps(new[] {
+            "dashboard.read", "profile.read", "ess.read", "ess.write"
+        }), 15, true, cancellationToken);
+
+        return adminRole;
     }
 
     private async Task EnsureGlobalCountryRules(Guid tenantId, CancellationToken ct)

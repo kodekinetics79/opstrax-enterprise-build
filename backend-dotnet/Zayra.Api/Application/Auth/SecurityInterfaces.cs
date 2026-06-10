@@ -23,4 +23,7 @@ public interface IAuditService
 public interface IAuthSeeder
 {
     Task SeedAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Creates the full standard role set (Admin → Employee) for a tenant and returns its Admin role. Idempotent.</summary>
+    Task<Zayra.Api.Domain.Entities.Role> EnsureTenantRolesAsync(Guid tenantId, CancellationToken cancellationToken = default);
 }

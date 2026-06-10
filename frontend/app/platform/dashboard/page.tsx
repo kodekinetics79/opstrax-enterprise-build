@@ -7,6 +7,8 @@ import {
   type PlatformStats,
   type PlatformTenantSummary,
   type PlatformTenantDetail,
+  type CreateTenantResult,
+  type TenantAdminUser,
 } from '@/src/api/platform';
 
 const FEATURE_KEYS = [
@@ -49,6 +51,154 @@ const PLAN_DEFAULTS: Record<string, { maxUsers: number; maxEmployees: number }> 
   Enterprise: { maxUsers: 0,  maxEmployees: 0 },
 };
 
+const inputCls = 'w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sapphire';
+
+function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [form, setForm] = useState({
+    name: '', slug: '', adminEmail: '', adminFullName: '', adminPassword: '',
+    plan: 'Trial', maxUsers: PLAN_DEFAULTS.Trial.maxUsers, maxEmployees: PLAN_DEFAULTS.Trial.maxEmployees,
+    billingEmail: '', billingCycle: 'Monthly', monthlyAmount: 0, currencyCode: 'USD', expiresAtUtc: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<CreateTenantResult | null>(null);
+
+  const set = (patch: Partial<typeof form>) => setForm(p => ({ ...p, ...patch }));
+
+  function onNameChange(name: string) {
+    const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    setForm(p => ({ ...p, name, slug: p.slug === '' || p.slug === slugFrom(p.name) ? slug : p.slug }));
+  }
+  function slugFrom(name: string) {
+    return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  async function submit() {
+    setError('');
+    if (!form.name.trim() || !form.slug.trim()) { setError('Client name and slug are required.'); return; }
+    if (!form.adminEmail.includes('@')) { setError('A valid admin email is required.'); return; }
+    if (form.adminPassword.length < 10) { setError('Admin password must be at least 10 characters.'); return; }
+    setSaving(true);
+    try {
+      const res = await platformApi.createTenant({
+        name: form.name.trim(),
+        slug: form.slug.trim(),
+        adminEmail: form.adminEmail.trim(),
+        adminFullName: form.adminFullName.trim() || undefined,
+        adminPassword: form.adminPassword,
+        plan: form.plan,
+        maxUsers: form.maxUsers,
+        maxEmployees: form.maxEmployees,
+        billingEmail: form.billingEmail.trim() || undefined,
+        billingCycle: form.billingCycle,
+        monthlyAmount: form.monthlyAmount,
+        currencyCode: form.currencyCode,
+        expiresAtUtc: form.expiresAtUtc ? new Date(form.expiresAtUtc).toISOString() : null,
+      });
+      setResult(res);
+      onCreated();
+    } catch (err: unknown) {
+      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to create client.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative w-full max-w-xl bg-sidebarDark border border-white/10 rounded-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+          <h2 className="text-lg font-semibold text-white">{result ? 'Client Created' : 'New Client'}</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors text-xl leading-none">&times;</button>
+        </div>
+
+        {result ? (
+          <div className="px-6 py-5 space-y-4">
+            <p className="text-sm text-green-400">Client provisioned successfully with the full role set and an active {result.plan} subscription.</p>
+            <div className="bg-darkSlate/60 border border-white/10 rounded-xl p-4 space-y-2 text-sm">
+              <p className="text-slate-300"><span className="text-slate-500">Tenant:</span> {result.name} <span className="font-mono text-xs">/{result.slug}</span></p>
+              <p className="text-slate-300"><span className="text-slate-500">Admin login:</span> {result.adminEmail}</p>
+              <p className="text-slate-300"><span className="text-slate-500">Tenant slug for login:</span> <span className="font-mono">{result.slug}</span></p>
+              <p className="text-xs text-amber-500 pt-1">Share the slug, email and the password you set with your client&apos;s admin. They sign in on the regular login page.</p>
+            </div>
+            <button onClick={onClose} className="px-4 py-2 bg-sapphire hover:opacity-90 text-white text-xs font-medium rounded-lg">Done</button>
+          </div>
+        ) : (
+          <div className="px-6 py-5 space-y-4 overflow-y-auto">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="block text-xs text-slate-400 mb-1">Client / Company Name</label>
+                <input type="text" value={form.name} onChange={e => onNameChange(e.target.value)} className={inputCls} placeholder="Acme Industries LLC" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-slate-400 mb-1">Tenant Slug (used at login)</label>
+                <input type="text" value={form.slug} onChange={e => set({ slug: e.target.value.toLowerCase() })} className={`${inputCls} font-mono`} placeholder="acme-industries" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Admin Email</label>
+                <input type="email" value={form.adminEmail} onChange={e => set({ adminEmail: e.target.value })} className={inputCls} placeholder="admin@acme.com" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Admin Full Name</label>
+                <input type="text" value={form.adminFullName} onChange={e => set({ adminFullName: e.target.value })} className={inputCls} placeholder="Jane Doe" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-slate-400 mb-1">Admin Password (min 10 characters)</label>
+                <input type="text" value={form.adminPassword} onChange={e => set({ adminPassword: e.target.value })} className={`${inputCls} font-mono`} placeholder="Set an initial password" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Plan</label>
+                <select
+                  value={form.plan}
+                  onChange={e => {
+                    const plan = e.target.value;
+                    const d = PLAN_DEFAULTS[plan];
+                    set({ plan, ...(d ? { maxUsers: d.maxUsers, maxEmployees: d.maxEmployees } : {}) });
+                  }}
+                  className={inputCls}
+                >
+                  {Object.keys(PLAN_DEFAULTS).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Billing Cycle</label>
+                <select value={form.billingCycle} onChange={e => set({ billingCycle: e.target.value })} className={inputCls}>
+                  <option value="Monthly">Monthly</option>
+                  <option value="Annual">Annual</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Users (0 = unlimited)</label>
+                <input type="number" min={0} value={form.maxUsers} onChange={e => set({ maxUsers: Number(e.target.value) })} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Employees (0 = unlimited)</label>
+                <input type="number" min={0} value={form.maxEmployees} onChange={e => set({ maxEmployees: Number(e.target.value) })} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Monthly Amount</label>
+                <input type="number" min={0} value={form.monthlyAmount} onChange={e => set({ monthlyAmount: Number(e.target.value) })} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Expires At (blank = never)</label>
+                <input type="date" value={form.expiresAtUtc} onChange={e => set({ expiresAtUtc: e.target.value })} className={inputCls} />
+              </div>
+            </div>
+            {error && <p className="text-xs text-rose-400">{error}</p>}
+            <div className="flex items-center gap-2 pt-1 pb-1">
+              <button onClick={submit} disabled={saving} className="px-4 py-2 bg-sapphire hover:opacity-90 disabled:opacity-50 text-white text-xs font-medium rounded-lg">
+                {saving ? 'Provisioning...' : 'Create Client'}
+              </button>
+              <button onClick={onClose} className="px-4 py-2 bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-medium rounded-lg">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TenantPanel({
   tenant,
   onClose,
@@ -78,6 +228,11 @@ function TenantPanel({
   const [impersonating, setImpersonating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [togglingFeature, setTogglingFeature] = useState<string | null>(null);
+  const [admins, setAdmins] = useState<TenantAdminUser[]>([]);
+  const [adminForm, setAdminForm] = useState({ email: '', fullName: '', password: '' });
+  const [addingAdmin, setAddingAdmin] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [showAddAdmin, setShowAddAdmin] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -103,7 +258,32 @@ function TenantPanel({
     }
   }, [tenant.id]);
 
-  useEffect(() => { loadDetail(); }, [loadDetail]);
+  const loadAdmins = useCallback(async () => {
+    try { setAdmins(await platformApi.listAdmins(tenant.id)); } catch { /**/ }
+  }, [tenant.id]);
+
+  useEffect(() => { loadDetail(); loadAdmins(); }, [loadDetail, loadAdmins]);
+
+  async function addAdmin() {
+    setAdminError('');
+    if (!adminForm.email.includes('@')) { setAdminError('A valid email is required.'); return; }
+    if (adminForm.password.length < 10) { setAdminError('Password must be at least 10 characters.'); return; }
+    setAddingAdmin(true);
+    try {
+      await platformApi.addAdmin(tenant.id, {
+        email: adminForm.email.trim(),
+        fullName: adminForm.fullName.trim() || undefined,
+        password: adminForm.password,
+      });
+      setAdminForm({ email: '', fullName: '', password: '' });
+      setShowAddAdmin(false);
+      loadAdmins();
+    } catch (err: unknown) {
+      setAdminError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to add admin.');
+    } finally {
+      setAddingAdmin(false);
+    }
+  }
 
   async function saveSubscription() {
     setSubSaving(true);
@@ -390,6 +570,89 @@ function TenantPanel({
               </div>
             </section>
 
+            {/* Tenant Admins */}
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Tenant Admins</h3>
+                {!showAddAdmin && (
+                  <button
+                    onClick={() => setShowAddAdmin(true)}
+                    className="text-xs text-sapphire hover:text-cyanAccent border border-sapphire/30 rounded px-2 py-1 transition-colors"
+                  >
+                    Add Admin
+                  </button>
+                )}
+              </div>
+              <div className="bg-darkSlate/60 border border-white/10 rounded-xl divide-y divide-white/10">
+                {admins.length === 0 && (
+                  <p className="px-4 py-3 text-xs text-slate-500">No admin users found for this tenant.</p>
+                )}
+                {admins.map(a => (
+                  <div key={a.id} className="flex items-center justify-between px-4 py-3 gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm text-white truncate">{a.fullName}</p>
+                      <p className="text-xs text-slate-500 truncate">{a.email} · <span className="font-mono">{a.id}</span></p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${a.isActive ? 'bg-green-900 text-green-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                        {a.isActive ? 'Active' : 'Inactive'}
+                      </span>
+                      <button
+                        onClick={() => setImpersonateUserId(a.id)}
+                        className="text-xs text-slate-400 hover:text-white border border-white/10 rounded px-2 py-1 transition-colors"
+                        title="Use this user ID for impersonation below"
+                      >
+                        Impersonate
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {showAddAdmin && (
+                  <div className="px-4 py-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="email"
+                        value={adminForm.email}
+                        onChange={e => setAdminForm(p => ({ ...p, email: e.target.value }))}
+                        placeholder="admin@client.com"
+                        className="bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sapphire"
+                      />
+                      <input
+                        type="text"
+                        value={adminForm.fullName}
+                        onChange={e => setAdminForm(p => ({ ...p, fullName: e.target.value }))}
+                        placeholder="Full name"
+                        className="bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sapphire"
+                      />
+                      <input
+                        type="text"
+                        value={adminForm.password}
+                        onChange={e => setAdminForm(p => ({ ...p, password: e.target.value }))}
+                        placeholder="Password (min 10 chars)"
+                        className="col-span-2 bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sapphire font-mono"
+                      />
+                    </div>
+                    {adminError && <p className="text-xs text-rose-400">{adminError}</p>}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={addAdmin}
+                        disabled={addingAdmin}
+                        className="px-3 py-1.5 bg-sapphire hover:opacity-90 disabled:opacity-50 text-white text-xs font-medium rounded-lg"
+                      >
+                        {addingAdmin ? 'Adding...' : 'Add Admin'}
+                      </button>
+                      <button
+                        onClick={() => { setShowAddAdmin(false); setAdminError(''); }}
+                        className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-medium rounded-lg"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
             {/* Impersonation */}
             <section>
               <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-3">Impersonate User</h3>
@@ -452,6 +715,7 @@ export default function PlatformDashboard() {
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingTenants, setLoadingTenants] = useState(true);
   const [selectedTenant, setSelectedTenant] = useState<PlatformTenantSummary | null>(null);
+  const [showNewClient, setShowNewClient] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('platform_access_token');
@@ -545,7 +809,8 @@ export default function PlatformDashboard() {
         {stats && (
           <section>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Tenants by Plan</h2>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <StatCard label="Trial" value={stats.tenantsByPlan.trial ?? 0} />
               <StatCard label="Starter" value={stats.tenantsByPlan.starter} />
               <StatCard label="Growth" value={stats.tenantsByPlan.growth} />
               <StatCard label="Enterprise" value={stats.tenantsByPlan.enterprise} />
@@ -555,7 +820,15 @@ export default function PlatformDashboard() {
 
         {/* Tenants table */}
         <section>
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Tenants</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Tenants</h2>
+            <button
+              onClick={() => setShowNewClient(true)}
+              className="px-3 py-1.5 bg-sapphire hover:opacity-90 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              + New Client
+            </button>
+          </div>
           <div className="bg-sidebarDark border border-white/10 rounded-xl overflow-hidden">
             {loadingTenants ? (
               <div className="flex items-center justify-center py-12">
@@ -612,6 +885,14 @@ export default function PlatformDashboard() {
         <TenantPanel
           tenant={selectedTenant}
           onClose={() => setSelectedTenant(null)}
+        />
+      )}
+
+      {/* New client modal */}
+      {showNewClient && (
+        <NewClientModal
+          onClose={() => setShowNewClient(false)}
+          onCreated={() => { loadTenants(); loadStats(); }}
         />
       )}
     </div>

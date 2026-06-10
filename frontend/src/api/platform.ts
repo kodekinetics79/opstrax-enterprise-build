@@ -18,10 +18,46 @@ export interface PlatformStats {
   totalUsers: number;
   totalEmployees: number;
   tenantsByPlan: {
+    trial: number;
     starter: number;
     growth: number;
     enterprise: number;
   };
+}
+
+export interface CreateTenantBody {
+  name: string;
+  slug: string;
+  adminEmail: string;
+  adminFullName?: string;
+  adminPassword: string;
+  plan?: string;
+  maxUsers?: number | null;
+  maxEmployees?: number | null;
+  billingEmail?: string;
+  billingCycle?: string;
+  monthlyAmount?: number;
+  currencyCode?: string;
+  expiresAtUtc?: string | null;
+}
+
+export interface CreateTenantResult {
+  tenantId: string;
+  name: string;
+  slug: string;
+  adminUserId: string;
+  adminEmail: string;
+  plan: string;
+  loginHint: string;
+}
+
+export interface TenantAdminUser {
+  id: string;
+  email: string;
+  fullName: string;
+  isActive: boolean;
+  status: string;
+  createdAtUtc: string;
 }
 
 export interface PlatformTenantSummary {
@@ -95,4 +131,13 @@ export const platformApi = {
 
   impersonate: (tenantId: string, userId: string) =>
     platform.post<{ token: string }>(`/api/platform/tenants/${tenantId}/impersonate`, { userId }).then(r => r.data),
+
+  createTenant: (body: CreateTenantBody) =>
+    platform.post<CreateTenantResult>('/api/platform/tenants', body).then(r => r.data),
+
+  listAdmins: (tenantId: string) =>
+    platform.get<TenantAdminUser[]>(`/api/platform/tenants/${tenantId}/admins`).then(r => r.data),
+
+  addAdmin: (tenantId: string, body: { email: string; fullName?: string; password: string }) =>
+    platform.post<TenantAdminUser>(`/api/platform/tenants/${tenantId}/admins`, body).then(r => r.data),
 };
