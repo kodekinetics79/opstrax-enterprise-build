@@ -1325,7 +1325,7 @@ export function PayrollPage() {
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">End-to-end payroll lifecycle — salary structures, runs, WPS/bank files, payslips, and AI validation.</p>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5">
+      <div className="scrollbar-hide flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5">
         {TABS.map(t => (
           <button
             key={t.key}
@@ -1333,8 +1333,8 @@ export function PayrollPage() {
             onClick={() => setActiveTab(t.key)}
             className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === t.key ? 'bg-white shadow-sm text-sapphire dark:bg-slate-800 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
           >
-            <t.icon className="h-3.5 w-3.5" />
-            {t.label}
+            <t.icon className="h-3.5 w-3.5 shrink-0" />
+            <span className="whitespace-nowrap">{t.label}</span>
           </button>
         ))}
       </div>

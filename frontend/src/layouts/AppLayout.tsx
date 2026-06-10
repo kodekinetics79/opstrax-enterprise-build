@@ -296,7 +296,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   }, [activeIndex, commandOpen, paletteItems]);
 
   return (
-    <div className="min-h-screen bg-lightBg text-slate-950 dark:bg-midnight dark:text-white">
+    <div className="min-h-screen overflow-x-hidden bg-lightBg text-slate-950 dark:bg-midnight dark:text-white">
       <div className="flex min-h-screen">
         <Sidebar
           isOpen={sidebarOpen}
@@ -308,7 +308,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
             return next;
           })}
         />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-x-hidden">
           <TopBar
             theme={theme}
             onToggleTheme={onToggleTheme}
