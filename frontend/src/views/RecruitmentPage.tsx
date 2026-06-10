@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus, ChevronLeft, Users, Briefcase, ClipboardList, UserPlus,
   CheckCircle, Clock, XCircle, ChevronRight, X, Star, Send,
@@ -222,8 +223,8 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
@@ -295,7 +296,8 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Requisition'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -445,8 +447,8 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
     } catch { setError('Failed to create opening.'); setSaving(false); }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
@@ -504,7 +506,8 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Opening'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1064,8 +1067,8 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
@@ -1110,7 +1113,8 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
           <button type="button" className="btn-primary text-sm" disabled={saving} onClick={save}>{saving ? 'Adding…' : 'Add Candidate'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
