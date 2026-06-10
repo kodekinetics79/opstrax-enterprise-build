@@ -1,17 +1,30 @@
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/src/contexts/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  /** Redirect to /dashboard if the user holds none of these permissions. */
   requiredPermissions?: string[];
 }
 
 export function ProtectedRoute({ children, requiredPermissions }: ProtectedRouteProps) {
   const { user, isLoading, hasPermission } = useAuth();
-  const location = useLocation();
+  const router = useRouter();
 
-  if (isLoading) {
+  useEffect(() => {
+    if (!isLoading && !user) router.replace('/login');
+  }, [isLoading, user, router]);
+
+  useEffect(() => {
+    if (user && requiredPermissions?.length) {
+      const hasAccess = requiredPermissions.some(p => hasPermission(p));
+      if (!hasAccess) router.replace('/dashboard');
+    }
+  }, [user, requiredPermissions, hasPermission, router]);
+
+  if (isLoading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-lightBg dark:bg-midnight">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
@@ -19,15 +32,8 @@ export function ProtectedRoute({ children, requiredPermissions }: ProtectedRoute
     );
   }
 
-  if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  if (requiredPermissions && requiredPermissions.length > 0) {
-    const hasAccess = requiredPermissions.some(p => hasPermission(p));
-    if (!hasAccess) {
-      return <Navigate to="/dashboard" replace />;
-    }
+  if (requiredPermissions?.length && !requiredPermissions.some(p => hasPermission(p))) {
+    return null;
   }
 
   return <>{children}</>;

@@ -1,3 +1,5 @@
+'use client';
+
 import { TrendingDown, TrendingUp } from 'lucide-react';
 import type { KpiMetric } from '../types/ui';
 

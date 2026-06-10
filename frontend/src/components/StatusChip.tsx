@@ -1,3 +1,5 @@
+'use client';
+
 interface StatusChipProps {
   label: string;
   tone?: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'slate';

@@ -1,6 +1,8 @@
+'use client';
+
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Search, X } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useRouter, usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { employeesApi } from '../api/employees';
@@ -25,11 +27,11 @@ interface PaletteItem {
 }
 
 export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const router = useRouter();
+  const pathname = usePathname();
   const { hasPermission } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== 'undefined' && localStorage.getItem('sidebar-collapsed') === 'true');
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [employeeResults, setEmployeeResults] = useState<Array<{ id: number; label: string; sublabel: string }>>([]);
@@ -195,22 +197,22 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   const closeCommandPalette = () => setCommandOpen(false);
 
   const runCommand = (path: string) => {
-    navigate(path);
+    router.push(path);
     closeCommandPalette();
   };
 
   const openEmployeeResult = (id: number) => {
-    navigate(`/people?employeeId=${id}`);
+    router.push(`/people?employeeId=${id}`);
     closeCommandPalette();
   };
 
   const openUserResult = (searchText: string) => {
-    navigate(`/user-management?search=${encodeURIComponent(searchText)}`);
+    router.push(`/user-management?search=${encodeURIComponent(searchText)}`);
     closeCommandPalette();
   };
 
   const openReportResult = (key: string) => {
-    navigate(`/reports?report=${encodeURIComponent(key)}`);
+    router.push(`/reports?report=${encodeURIComponent(key)}`);
     closeCommandPalette();
   };
 
@@ -314,7 +316,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
             onToggleTheme={onToggleTheme}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenSearch={openCommandPalette}
-            onAskKynexOne={() => navigate('/ai-assistant')}
+            onAskKynexOne={() => router.push('/ai-assistant')}
           />
           <main key={pathname} className="animate-fade-in-up px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>

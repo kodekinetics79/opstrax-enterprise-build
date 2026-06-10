@@ -5,7 +5,7 @@ function resolveApiUrl(raw: string | undefined): string {
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `https://${raw}`;
 }
-export const BASE_URL = resolveApiUrl(import.meta.env.VITE_API_URL);
+export const BASE_URL = resolveApiUrl(process.env.NEXT_PUBLIC_API_URL);
 
 const client = axios.create({ baseURL: BASE_URL });
 

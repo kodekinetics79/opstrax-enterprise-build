@@ -1,3 +1,5 @@
+'use client';
+
 interface LogoProps {
   collapsed?: boolean;
   size?: 'sm' | 'md' | 'lg';

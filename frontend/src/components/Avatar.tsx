@@ -1,3 +1,5 @@
+'use client';
+
 interface AvatarProps {
   name: string;
   size?: 'xs' | 'sm' | 'md' | 'lg';

@@ -1,3 +1,5 @@
+'use client';
+
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { authApi } from '../api/auth';
 import type { AuthUser } from '../api/auth';

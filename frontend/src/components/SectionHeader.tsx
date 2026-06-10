@@ -1,3 +1,5 @@
+'use client';
+
 interface SectionHeaderProps {
   eyebrow?: string;
   title: string;

@@ -1,6 +1,8 @@
+'use client';
+
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, LogOut, X } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useRouter, usePathname } from 'next/navigation';
 import { Avatar } from '../components/Avatar';
 import { Logo } from '../components/Logo';
 import { navigationGroups } from '../routes/navigation';
@@ -14,8 +16,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: SidebarProps) {
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const router = useRouter();
+  const pathname = usePathname();
   const { user, logout, hasPermission } = useAuth();
 
   // All groups expanded by default
@@ -38,19 +40,19 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
   };
 
   const handleNav = (path?: string) => {
-    if (path) navigate(path);
+    if (path) router.push(path);
     onClose();
   };
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login', { replace: true });
+    router.replace('/login');
   };
 
   const isActive = (path?: string) => {
     if (!path) return false;
     if (path === '/dashboard') return pathname === '/dashboard' || pathname === '/';
-    return pathname.startsWith(path);
+    return pathname?.startsWith(path) ?? false;
   };
 
   return (

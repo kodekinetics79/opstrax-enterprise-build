@@ -1,6 +1,8 @@
+'use client';
+
 import { Bell, BellOff, Bot, CheckCheck, LogOut, Menu, Moon, Sun, Trash2, UserCircle2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { Avatar } from '../components/Avatar';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsApi } from '../api/notifications';
@@ -158,7 +160,7 @@ function NotificationPanel({ onClose, onCountChange }: { onClose: () => void; on
 export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAskKynexOne }: TopBarProps) {
   const ThemeIcon = theme === 'dark' ? Sun : Moon;
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const router = useRouter();
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -282,14 +284,14 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAs
               </div>
               <button
                 type="button"
-                onClick={() => { setUserMenuOpen(false); navigate('/ess'); }}
+                onClick={() => { setUserMenuOpen(false); router.push('/ess'); }}
                 className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/[0.04]"
               >
                 <UserCircle2 className="h-4 w-4 text-slate-400" /> My Profile
               </button>
               <button
                 type="button"
-                onClick={async () => { setUserMenuOpen(false); await logout(); navigate('/login', { replace: true }); }}
+                onClick={async () => { setUserMenuOpen(false); await logout(); router.replace('/login'); }}
                 className="flex w-full items-center gap-2.5 border-t border-slate-100 px-4 py-2.5 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:border-white/[0.07] dark:text-rose-400 dark:hover:bg-rose-500/10"
               >
                 <LogOut className="h-4 w-4" /> Sign out

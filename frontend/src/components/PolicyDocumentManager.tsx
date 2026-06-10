@@ -1,3 +1,5 @@
+'use client';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Upload, FileText, Trash2, Bot, CheckCircle, XCircle, Clock, Send,
