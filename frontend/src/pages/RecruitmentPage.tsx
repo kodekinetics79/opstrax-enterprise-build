@@ -1227,7 +1227,7 @@ function WorkforcePlanningTab() {
               <div className={`h-8 w-8 shrink-0 rounded-lg grid place-items-center ${k.color}`}>
                 <Target className="h-4 w-4" />
               </div>
-              <div><p className="text-xl font-bold text-slate-900 dark:text-white">{k.value}</p><p className="text-xs text-slate-500 dark:text-slate-400">{k.label}</p></div>
+              <div><p className="text-2xl font-extrabold text-slate-950 dark:text-white">{k.value}</p><p className="text-xs text-slate-500 dark:text-slate-400">{k.label}</p></div>
             </div>
           ))}
         </div>
@@ -1733,7 +1733,7 @@ export function RecruitmentPage() {
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Recruitment & Requisitions</h1>
+        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Recruitment & Requisitions</h1>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
           Manage manpower requisitions, job openings, and candidate pipeline end-to-end.
         </p>

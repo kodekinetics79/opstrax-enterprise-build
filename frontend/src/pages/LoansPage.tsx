@@ -875,7 +875,7 @@ export function LoansPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Loans, Advances & Bonuses</h1>
+        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Loans, Advances & Bonuses</h1>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
           Manage employee financial benefits and deductions
         </p>

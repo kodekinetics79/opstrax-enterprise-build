@@ -1321,7 +1321,7 @@ export function PayrollPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Payroll Management</h1>
+        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Payroll Management</h1>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">End-to-end payroll lifecycle — salary structures, runs, WPS/bank files, payslips, and AI validation.</p>
       </div>
 

@@ -662,7 +662,7 @@ export function ShiftsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-white">Shifts & Rosters</h1>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Shifts & Rosters</h1>
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Manage shift definitions and assign employees to weekly schedules.</p>
         </div>
         <button

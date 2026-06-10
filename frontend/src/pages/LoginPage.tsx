@@ -37,7 +37,7 @@ export function LoginPage() {
         </div>
 
         <div className="surface p-8">
-          <h1 className="mb-1 text-xl font-bold text-slate-900 dark:text-white">Sign in</h1>
+          <h1 className="mb-1 text-2xl font-extrabold text-slate-950 dark:text-white">Sign in</h1>
           <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
             Welcome back to KynexOne
           </p>

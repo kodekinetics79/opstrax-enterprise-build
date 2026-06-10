@@ -145,7 +145,7 @@ export default function AIAssistantPage() {
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center text-white text-xl font-bold">Z</div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">AI HR Intelligence</h1>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">AI HR Intelligence</h1>
           <p className="text-sm text-gray-500">Advisory only — AI assists HR decisions but never replaces them</p>
         </div>
         <div className="ml-auto flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs text-amber-700 font-medium">

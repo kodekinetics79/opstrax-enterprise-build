@@ -162,7 +162,7 @@ export function DashboardPage() {
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-sapphire dark:text-cyanAccent">Command Center</p>
             <StatusChip label="Live" tone="emerald" dot />
           </div>
-          <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
             Workforce Command Center
           </h1>
           <p className="mt-0.5 truncate text-sm text-slate-500 dark:text-slate-400">

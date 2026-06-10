@@ -90,9 +90,9 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                 type="button"
                 aria-label="Collapse sidebar"
                 onClick={onToggleCollapse}
-                className="hidden h-7 w-7 place-items-center rounded-md text-slate-300 hover:bg-slate-100 hover:text-slate-600 lg:grid dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-300"
+                className="hidden h-8 w-8 place-items-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 lg:grid dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
+                <ChevronLeft className="h-5 w-5" />
               </button>
             )}
           </div>
@@ -215,9 +215,9 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                 type="button"
                 aria-label="Expand sidebar"
                 onClick={onToggleCollapse}
-                className="hidden h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600 lg:flex dark:hover:bg-white/10 dark:hover:text-slate-300"
+                className="hidden h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 lg:flex dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
               >
-                <ChevronRight className="h-3.5 w-3.5" />
+                <ChevronRight className="h-5 w-5" />
               </button>
               <button
                 type="button"

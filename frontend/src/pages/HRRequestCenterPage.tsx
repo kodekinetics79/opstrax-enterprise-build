@@ -120,7 +120,7 @@ export default function HRRequestCenterPage() {
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">HR Request Center</h1>
+        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">HR Request Center</h1>
         <p className="text-sm text-gray-500">Employee service desk — submit, track, and resolve HR requests</p>
       </div>
 

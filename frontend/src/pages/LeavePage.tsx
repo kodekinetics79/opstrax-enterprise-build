@@ -1548,7 +1548,7 @@ export function LeavePage() {
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Leave &amp; Absence Management</h1>
+        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Leave &amp; Absence Management</h1>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
           GCC-ready enterprise leave — configurable policies, balance engine, workflows, encashment, comp-off, absence intelligence, and AI insights.
         </p>
