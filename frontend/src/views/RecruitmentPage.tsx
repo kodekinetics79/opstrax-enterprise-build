@@ -223,15 +223,14 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-10">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -291,11 +290,10 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Requisition'}</button>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -448,14 +446,13 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-10">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Title *</label>
@@ -502,11 +499,10 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
             {error && <p className="text-xs text-rose-500">{error}</p>}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Opening'}</button>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -1069,14 +1065,13 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-10">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+      <div className="flex w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">First Name *</label><input className="input w-full" placeholder="First name" aria-label="First name" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
@@ -1110,11 +1105,10 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
             {error && <p className="text-xs text-rose-500">{error}</p>}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" disabled={saving} onClick={save}>{saving ? 'Adding…' : 'Add Candidate'}</button>
         </div>
-      </div>
       </div>
     </div>
   );
