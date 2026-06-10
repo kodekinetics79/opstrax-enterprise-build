@@ -62,6 +62,7 @@ export interface Candidate {
   educationLevel: string;
   nationality: string;
   linkedInUrl: string;
+  resumeUrl: string;
   source: string;
   status: string;
   tags: string;
@@ -220,7 +221,7 @@ export const candidatesApi = {
   create: (body: {
     firstName: string; lastName: string; email: string; phone: string;
     currentJobTitle: string; currentCompany: string; totalExperienceYears: number;
-    educationLevel: string; nationality: string; linkedInUrl: string; source: string; tags: string;
+    educationLevel: string; nationality: string; linkedInUrl: string; source: string; tags: string; resumeUrl?: string;
   }) => client.post<Candidate>('/api/recruitment/candidates', body).then(r => r.data),
 };
 
@@ -452,6 +453,9 @@ export const recruitmentReportsApi = {
 };
 
 export const applicationsApi = {
+  list: (params: { jobOpeningId?: string; stage?: string; status?: string; page?: number; pageSize?: number } = {}) =>
+    client.get<{ items: JobApplication[]; total: number }>('/api/recruitment/applications', { params }).then(r => r.data),
+
   kanban: (jobOpeningId: string) =>
     client.get<{ stages: KanbanStage[]; rejected: JobApplication[] }>(`/api/recruitment/applications/kanban/${jobOpeningId}`).then(r => r.data),
 

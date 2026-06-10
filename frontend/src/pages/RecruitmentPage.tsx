@@ -1043,7 +1043,7 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', currentJobTitle: '',
     currentCompany: '', totalExperienceYears: 0, educationLevel: 'Bachelor',
-    nationality: '', linkedInUrl: '', source: 'Direct', tags: '',
+    nationality: '', linkedInUrl: '', source: 'Direct', tags: '', resumeUrl: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1099,6 +1099,7 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
             </div>
           </div>
           <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Nationality</label><input className="input w-full" value={form.nationality} onChange={e => set('nationality', e.target.value)} /></div>
+          <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Resume / CV URL <span className="text-slate-400 font-normal">(LinkedIn, Google Drive, etc.)</span></label><input type="url" className="input w-full" placeholder="https://…" value={form.resumeUrl} onChange={e => set('resumeUrl', e.target.value)} /></div>
           {error && <p className="text-xs text-rose-500">{error}</p>}
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -1148,14 +1149,14 @@ function CandidatesTab() {
         <table className="min-w-full text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/[0.03]">
             <tr>
-              {['Name', 'Title / Company', 'Experience', 'Education', 'Source', 'Applied'].map(h => (
+              {['Name', 'Title / Company', 'Experience', 'Education', 'Source', 'CV', 'Applied'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-white/[0.06]">
-            {loading && <tr><td colSpan={6} className="py-10 text-center"><div className="mx-auto h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>}
-            {!loading && items.length === 0 && <tr><td colSpan={6} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">No candidates yet. Add your first candidate to the talent pool.</td></tr>}
+            {loading && <tr><td colSpan={7} className="py-10 text-center"><div className="mx-auto h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">No candidates yet. Add your first candidate to the talent pool.</td></tr>}
             {!loading && items.map(c => (
               <tr key={c.id} className="hover:bg-slate-50/60 dark:hover:bg-white/[0.02]">
                 <td className="px-4 py-3">
@@ -1170,6 +1171,13 @@ function CandidatesTab() {
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{c.educationLevel || '—'}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-white/10 dark:text-slate-400">{c.source}</span>
+                </td>
+                <td className="px-4 py-3">
+                  {c.resumeUrl ? (
+                    <a href={c.resumeUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs font-medium text-sapphire hover:underline dark:text-cyanAccent">
+                      <FileText className="h-3.5 w-3.5" />View CV
+                    </a>
+                  ) : <span className="text-xs text-slate-300 dark:text-slate-600">—</span>}
                 </td>
                 <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{c.applicationCount ?? 0}</td>
               </tr>
@@ -1308,13 +1316,47 @@ function InterviewsTab() {
   const [interviews, setInterviews] = useState<ExtInterviewSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [schedForm, setSchedForm] = useState({
+    applicationId: '', interviewType: 'Technical', interviewerNames: '',
+    scheduledAt: '', durationMinutes: 60, mode: 'Video', meetingLink: '', location: '',
+  });
+  const [schedSaving, setSchedSaving] = useState(false);
+  const [schedError, setSchedError] = useState('');
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     try { const r = await interviewsApi.list(undefined, statusFilter || undefined); setInterviews(r.items); } catch {} finally { setLoading(false); }
   };
 
+  const loadApps = async () => {
+    try { const r = await applicationsApi.list({ pageSize: 100 }); setApplications(r.items); } catch {}
+  };
+
   useEffect(() => { load(); }, [statusFilter]);
+
+  const openSchedule = () => { loadApps(); setShowSchedule(true); };
+
+  const submitSchedule = async () => {
+    if (!schedForm.applicationId || !schedForm.interviewerNames || !schedForm.scheduledAt) {
+      setSchedError('Application, interviewers and scheduled date/time are required.'); return;
+    }
+    setSchedSaving(true); setSchedError('');
+    try {
+      await interviewsApi.schedule({ ...schedForm, durationMinutes: Number(schedForm.durationMinutes) });
+      setShowSchedule(false);
+      setSchedForm({ applicationId: '', interviewType: 'Technical', interviewerNames: '', scheduledAt: '', durationMinutes: 60, mode: 'Video', meetingLink: '', location: '' });
+      load();
+    } catch { setSchedError('Failed to schedule interview.'); }
+    finally { setSchedSaving(false); }
+  };
+
+  const cancelInterview = async (id: string) => {
+    setCancelling(id);
+    try { await interviewsApi.cancel(id); load(); } catch {} finally { setCancelling(null); }
+  };
 
   const MODE_ICON: Record<string, string> = { InPerson: '🏢', Video: '📹', Phone: '📞' };
   const RECOMMENDATION_COLORS: Record<string, string> = {
@@ -1332,10 +1374,79 @@ function InterviewsTab() {
           <option value="">All Statuses</option>
           {['Scheduled', 'Completed', 'Cancelled', 'NoShow'].map(s => <option key={s}>{s}</option>)}
         </select>
+        <button type="button" onClick={openSchedule} className="ml-auto flex items-center gap-1.5 rounded-lg bg-sapphire px-3 py-1.5 text-sm font-medium text-white hover:bg-sapphire/90">
+          <Calendar className="h-3.5 w-3.5" />Schedule Interview
+        </button>
       </div>
 
+      {showSchedule && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.03] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">Schedule New Interview</h4>
+            <button type="button" aria-label="Close" title="Close" onClick={() => setShowSchedule(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Application *</label>
+              <select title="Select application" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={schedForm.applicationId} onChange={e => setSchedForm(f => ({ ...f, applicationId: e.target.value }))}>
+                <option value="">— Select candidate/application —</option>
+                {applications.map(a => <option key={a.id} value={a.id}>{a.candidateName} — {a.jobTitle} ({a.stage})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Interview Type</label>
+              <select title="Interview type" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={schedForm.interviewType} onChange={e => setSchedForm(f => ({ ...f, interviewType: e.target.value }))}>
+                {['Technical', 'HR', 'Culture Fit', 'Final', 'Panel'].map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Mode</label>
+              <select title="Interview mode" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={schedForm.mode} onChange={e => setSchedForm(f => ({ ...f, mode: e.target.value }))}>
+                {['Video', 'InPerson', 'Phone'].map(m => <option key={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Interviewer(s) *</label>
+              <input className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                placeholder="e.g. Sarah Ahmed, John Doe" value={schedForm.interviewerNames} onChange={e => setSchedForm(f => ({ ...f, interviewerNames: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Duration (minutes)</label>
+              <input type="number" min={15} step={15} title="Duration in minutes" placeholder="60" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={schedForm.durationMinutes} onChange={e => setSchedForm(f => ({ ...f, durationMinutes: Number(e.target.value) }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Date & Time *</label>
+              <input type="datetime-local" title="Interview date and time" placeholder="Select date and time" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={schedForm.scheduledAt} onChange={e => setSchedForm(f => ({ ...f, scheduledAt: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Meeting Link</label>
+              <input type="url" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                placeholder="https://meet.google.com/…" value={schedForm.meetingLink} onChange={e => setSchedForm(f => ({ ...f, meetingLink: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Location</label>
+              <input className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                placeholder="Office / Room" value={schedForm.location} onChange={e => setSchedForm(f => ({ ...f, location: e.target.value }))} />
+            </div>
+          </div>
+          {schedError && <p className="text-xs text-rose-500">{schedError}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" onClick={submitSchedule} disabled={schedSaving}
+              className="rounded-lg bg-sapphire px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-sapphire/90">
+              {schedSaving ? 'Scheduling…' : 'Schedule'}
+            </button>
+            <button type="button" onClick={() => setShowSchedule(false)} className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+          </div>
+        </div>
+      )}
+
       {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : interviews.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No interviews found.</p>
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No interviews found. Schedule the first one above.</p>
       ) : (
         <div className="space-y-2">
           {interviews.map(iv => (
@@ -1360,12 +1471,20 @@ function InterviewsTab() {
                     </p>
                   )}
                 </div>
-                {iv.overallRating && (
-                  <div className="text-right shrink-0">
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{iv.overallRating}/5</p>
-                    <p className="text-xs text-slate-400">Rating</p>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {iv.overallRating && (
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-slate-900 dark:text-white">{iv.overallRating}/5</p>
+                      <p className="text-xs text-slate-400">Rating</p>
+                    </div>
+                  )}
+                  {iv.status === 'Scheduled' && (
+                    <button type="button" onClick={() => cancelInterview(iv.id)} disabled={cancelling === iv.id}
+                      className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10">
+                      {cancelling === iv.id ? '…' : 'Cancel'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -1381,6 +1500,14 @@ function AssessmentsTab() {
   const [assessments, setAssessments] = useState<CandidateAssessment[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [showAssign, setShowAssign] = useState(false);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [templates, setTemplates] = useState<{ id: string; title: string; assessmentType: string; durationMinutes: number }[]>([]);
+  const [assignForm, setAssignForm] = useState({ applicationId: '', templateId: '', expiryDays: 7 });
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState('');
+  const [recording, setRecording] = useState<string | null>(null);
+  const [scoreInput, setScoreInput] = useState<Record<string, string>>({});
 
   const load = async () => {
     setLoading(true);
@@ -1388,6 +1515,35 @@ function AssessmentsTab() {
   };
 
   useEffect(() => { load(); }, [statusFilter]);
+
+  const openAssign = async () => {
+    try {
+      const [appsRes, tmplRes] = await Promise.all([applicationsApi.list({ pageSize: 100 }), assessmentsApi.listTemplates()]);
+      setApplications(appsRes.items);
+      setTemplates(tmplRes);
+    } catch {}
+    setShowAssign(true);
+  };
+
+  const submitAssign = async () => {
+    if (!assignForm.applicationId || !assignForm.templateId) { setAssignError('Application and template are required.'); return; }
+    setAssignSaving(true); setAssignError('');
+    try {
+      await assessmentsApi.send({ ...assignForm, expiryDays: Number(assignForm.expiryDays) });
+      setShowAssign(false);
+      setAssignForm({ applicationId: '', templateId: '', expiryDays: 7 });
+      load();
+    } catch { setAssignError('Failed to assign assessment.'); }
+    finally { setAssignSaving(false); }
+  };
+
+  const recordResult = async (id: string) => {
+    const raw = scoreInput[id];
+    const score = Number(raw);
+    if (!raw || isNaN(score) || score < 0 || score > 100) return;
+    setRecording(id);
+    try { await assessmentsApi.recordResult(id, score); load(); } catch {} finally { setRecording(null); }
+  };
 
   const STATUS_COLORS: Record<string, string> = {
     Pending: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
@@ -1404,16 +1560,59 @@ function AssessmentsTab() {
           <option value="">All Statuses</option>
           {['Pending', 'Sent', 'InProgress', 'Completed', 'Expired'].map(s => <option key={s}>{s}</option>)}
         </select>
+        <button type="button" onClick={openAssign} className="ml-auto flex items-center gap-1.5 rounded-lg bg-sapphire px-3 py-1.5 text-sm font-medium text-white hover:bg-sapphire/90">
+          <ClipboardList className="h-3.5 w-3.5" />Assign Assessment
+        </button>
       </div>
 
+      {showAssign && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.03] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">Assign Assessment</h4>
+            <button type="button" aria-label="Close" title="Close" onClick={() => setShowAssign(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Application *</label>
+              <select title="Select application" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={assignForm.applicationId} onChange={e => setAssignForm(f => ({ ...f, applicationId: e.target.value }))}>
+                <option value="">— Select candidate —</option>
+                {applications.map(a => <option key={a.id} value={a.id}>{a.candidateName} — {a.jobTitle}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Assessment Template *</label>
+              <select title="Select template" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={assignForm.templateId} onChange={e => setAssignForm(f => ({ ...f, templateId: e.target.value }))}>
+                <option value="">— Select template —</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.title} ({t.assessmentType}, {t.durationMinutes}min)</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Expires in (days)</label>
+              <input type="number" min={1} max={30} title="Expiry days" placeholder="7" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={assignForm.expiryDays} onChange={e => setAssignForm(f => ({ ...f, expiryDays: Number(e.target.value) }))} />
+            </div>
+          </div>
+          {assignError && <p className="text-xs text-rose-500">{assignError}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" onClick={submitAssign} disabled={assignSaving}
+              className="rounded-lg bg-sapphire px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-sapphire/90">
+              {assignSaving ? 'Sending…' : 'Send Assessment'}
+            </button>
+            <button type="button" onClick={() => setShowAssign(false)} className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+          </div>
+        </div>
+      )}
+
       {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : assessments.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No assessments found.</p>
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No assessments found. Assign one above.</p>
       ) : (
         <div className="surface overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 dark:border-white/10">
-                {['Assessment', 'Status', 'Sent', 'Expires', 'Score', 'Result'].map(h => (
+                {['Assessment', 'Status', 'Sent', 'Expires', 'Score', 'Result', 'Actions'].map(h => (
                   <th key={h} className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -1433,6 +1632,19 @@ function AssessmentsTab() {
                     {a.passed === false && <span className="text-xs font-medium text-rose-600 dark:text-rose-400">✗ Failed</span>}
                     {a.passed == null && <span className="text-xs text-slate-400">—</span>}
                   </td>
+                  <td className="p-3">
+                    {a.status === 'Completed' && a.scorePercentage == null && (
+                      <div className="flex items-center gap-1">
+                        <input type="number" min={0} max={100} title="Score (0–100)" placeholder="Score 0–100"
+                          className="w-24 rounded-md border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-2 py-1 text-xs text-slate-800 dark:text-slate-200"
+                          value={scoreInput[a.id] ?? ''} onChange={e => setScoreInput(s => ({ ...s, [a.id]: e.target.value }))} />
+                        <button type="button" onClick={() => recordResult(a.id)} disabled={recording === a.id}
+                          className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                          {recording === a.id ? '…' : 'Save'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1449,6 +1661,16 @@ function OffersTab() {
   const [offers, setOffers] = useState<OfferLetter[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [offerForm, setOfferForm] = useState({
+    applicationId: '', offeredJobTitle: '', offeredDepartment: '', startDate: '',
+    basicSalary: 0, housingAllowance: 0, transportAllowance: 0, otherAllowances: 0,
+    probationMonths: 3, responseDeadline: '',
+  });
+  const [offerSaving, setOfferSaving] = useState(false);
+  const [offerError, setOfferError] = useState('');
+  const [actioning, setActioning] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -1456,6 +1678,40 @@ function OffersTab() {
   };
 
   useEffect(() => { load(); }, [statusFilter]);
+
+  const openCreate = async () => {
+    try { const r = await applicationsApi.list({ pageSize: 100 }); setApplications(r.items); } catch {}
+    setShowCreate(true);
+  };
+
+  const submitOffer = async () => {
+    if (!offerForm.applicationId || !offerForm.offeredJobTitle || !offerForm.startDate) {
+      setOfferError('Application, job title and start date are required.'); return;
+    }
+    setOfferSaving(true); setOfferError('');
+    try {
+      await offersApi.create({ ...offerForm, basicSalary: Number(offerForm.basicSalary), housingAllowance: Number(offerForm.housingAllowance), transportAllowance: Number(offerForm.transportAllowance), otherAllowances: Number(offerForm.otherAllowances), probationMonths: Number(offerForm.probationMonths) });
+      setShowCreate(false);
+      setOfferForm({ applicationId: '', offeredJobTitle: '', offeredDepartment: '', startDate: '', basicSalary: 0, housingAllowance: 0, transportAllowance: 0, otherAllowances: 0, probationMonths: 3, responseDeadline: '' });
+      load();
+    } catch { setOfferError('Failed to create offer.'); }
+    finally { setOfferSaving(false); }
+  };
+
+  const sendOffer = async (id: string) => {
+    setActioning(id);
+    try { await offersApi.send(id); load(); } catch {} finally { setActioning(null); }
+  };
+
+  const acceptOffer = async (id: string) => {
+    setActioning(id);
+    try { await offersApi.accept(id); load(); } catch {} finally { setActioning(null); }
+  };
+
+  const declineOffer = async (id: string) => {
+    setActioning(id);
+    try { await offersApi.decline(id, 'Declined by candidate'); load(); } catch {} finally { setActioning(null); }
+  };
 
   const STATUS_COLORS: Record<string, string> = {
     Draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
@@ -1474,10 +1730,72 @@ function OffersTab() {
           <option value="">All Statuses</option>
           {['Draft', 'PendingApproval', 'Approved', 'Sent', 'Accepted', 'Declined', 'Expired'].map(s => <option key={s}>{s}</option>)}
         </select>
+        <button type="button" onClick={openCreate} className="ml-auto flex items-center gap-1.5 rounded-lg bg-sapphire px-3 py-1.5 text-sm font-medium text-white hover:bg-sapphire/90">
+          <FileText className="h-3.5 w-3.5" />Create Offer
+        </button>
       </div>
 
+      {showCreate && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.03] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">New Offer Letter</h4>
+            <button type="button" aria-label="Close" title="Close" onClick={() => setShowCreate(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Application *</label>
+              <select title="Select application" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.applicationId} onChange={e => setOfferForm(f => ({ ...f, applicationId: e.target.value }))}>
+                <option value="">— Select candidate —</option>
+                {applications.map(a => <option key={a.id} value={a.id}>{a.candidateName} — {a.jobTitle}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Offered Job Title *</label>
+              <input placeholder="e.g. Senior Software Engineer" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.offeredJobTitle} onChange={e => setOfferForm(f => ({ ...f, offeredJobTitle: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Department</label>
+              <input placeholder="e.g. Engineering" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.offeredDepartment} onChange={e => setOfferForm(f => ({ ...f, offeredDepartment: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Start Date *</label>
+              <input type="date" title="Start date" placeholder="Start date" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.startDate} onChange={e => setOfferForm(f => ({ ...f, startDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Response Deadline</label>
+              <input type="date" title="Response deadline" placeholder="Response deadline" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.responseDeadline} onChange={e => setOfferForm(f => ({ ...f, responseDeadline: e.target.value }))} />
+            </div>
+            {[['basicSalary', 'Basic Salary'], ['housingAllowance', 'Housing Allowance'], ['transportAllowance', 'Transport Allowance'], ['otherAllowances', 'Other Allowances']].map(([k, l]) => (
+              <div key={k}>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{l} (AED)</label>
+                <input type="number" min={0} title={l} placeholder="0" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                  value={(offerForm as Record<string, unknown>)[k] as number} onChange={e => setOfferForm(f => ({ ...f, [k]: Number(e.target.value) }))} />
+              </div>
+            ))}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Probation (months)</label>
+              <input type="number" min={0} max={12} title="Probation months" placeholder="3" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={offerForm.probationMonths} onChange={e => setOfferForm(f => ({ ...f, probationMonths: Number(e.target.value) }))} />
+            </div>
+          </div>
+          {offerError && <p className="text-xs text-rose-500">{offerError}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" onClick={submitOffer} disabled={offerSaving}
+              className="rounded-lg bg-sapphire px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-sapphire/90">
+              {offerSaving ? 'Creating…' : 'Create Offer'}
+            </button>
+            <button type="button" onClick={() => setShowCreate(false)} className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+          </div>
+        </div>
+      )}
+
       {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : offers.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No offers found.</p>
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No offers found. Create one above.</p>
       ) : (
         <div className="space-y-2">
           {offers.map(o => (
@@ -1491,7 +1809,27 @@ function OffersTab() {
                     {o.responseDeadline && ` · Deadline: ${new Date(o.responseDeadline).toLocaleDateString()}`}
                   </p>
                 </div>
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[o.status] ?? ''}`}>{o.status}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[o.status] ?? ''}`}>{o.status}</span>
+                  {o.status === 'Draft' && (
+                    <button type="button" onClick={() => sendOffer(o.id)} disabled={actioning === o.id}
+                      className="rounded-lg bg-sapphire px-2.5 py-1 text-xs font-medium text-white hover:bg-sapphire/90 disabled:opacity-50">
+                      {actioning === o.id ? '…' : 'Send'}
+                    </button>
+                  )}
+                  {o.status === 'Sent' && (
+                    <>
+                      <button type="button" onClick={() => acceptOffer(o.id)} disabled={actioning === o.id}
+                        className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                        {actioning === o.id ? '…' : 'Accept'}
+                      </button>
+                      <button type="button" onClick={() => declineOffer(o.id)} disabled={actioning === o.id}
+                        className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-400">
+                        Decline
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -1508,6 +1846,13 @@ function OnboardingTab() {
   const [summary, setSummary] = useState<{ total: number; pending: number; completed: number; blocked: number; completionPct: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [taskForm, setTaskForm] = useState({
+    taskTitle: '', taskDescription: '', category: 'General', assignedToName: '', dueDate: '', isMandatory: false,
+  });
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState('');
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -1521,6 +1866,23 @@ function OnboardingTab() {
   };
 
   useEffect(() => { load(); }, [statusFilter]);
+
+  const submitTask = async () => {
+    if (!taskForm.taskTitle) { setTaskError('Task title is required.'); return; }
+    setTaskSaving(true); setTaskError('');
+    try {
+      await onboardingApi.createTask({ ...taskForm });
+      setShowAdd(false);
+      setTaskForm({ taskTitle: '', taskDescription: '', category: 'General', assignedToName: '', dueDate: '', isMandatory: false });
+      load();
+    } catch { setTaskError('Failed to create task.'); }
+    finally { setTaskSaving(false); }
+  };
+
+  const updateStatus = async (id: string, status: string) => {
+    setUpdatingStatus(id);
+    try { await onboardingApi.updateStatus(id, status); load(); } catch {} finally { setUpdatingStatus(null); }
+  };
 
   const STATUS_COLORS: Record<string, string> = {
     Pending: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
@@ -1560,10 +1922,64 @@ function OnboardingTab() {
           <option value="">All Statuses</option>
           {['Pending', 'InProgress', 'Completed', 'Blocked', 'Skipped'].map(s => <option key={s}>{s}</option>)}
         </select>
+        <button type="button" onClick={() => setShowAdd(true)} className="ml-auto flex items-center gap-1.5 rounded-lg bg-sapphire px-3 py-1.5 text-sm font-medium text-white hover:bg-sapphire/90">
+          <Plus className="h-3.5 w-3.5" />Add Task
+        </button>
       </div>
 
+      {showAdd && (
+        <div className="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/[0.03] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-800 dark:text-white">New Onboarding Task</h4>
+            <button type="button" aria-label="Close" title="Close" onClick={() => setShowAdd(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Task Title *</label>
+              <input placeholder="e.g. Complete employment contract" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={taskForm.taskTitle} onChange={e => setTaskForm(f => ({ ...f, taskTitle: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Description</label>
+              <input placeholder="Optional details" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={taskForm.taskDescription} onChange={e => setTaskForm(f => ({ ...f, taskDescription: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Category</label>
+              <select title="Category" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={taskForm.category} onChange={e => setTaskForm(f => ({ ...f, category: e.target.value }))}>
+                {['General', 'Document', 'IT', 'Training', 'Policy', 'Access'].map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Assigned To</label>
+              <input placeholder="Name of responsible person" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={taskForm.assignedToName} onChange={e => setTaskForm(f => ({ ...f, assignedToName: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Due Date</label>
+              <input type="date" title="Due date" placeholder="Due date" className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200"
+                value={taskForm.dueDate} onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))} />
+            </div>
+            <div className="flex items-center gap-2 pt-4">
+              <input type="checkbox" id="ob-mandatory" className="h-4 w-4 rounded border-slate-300 text-sapphire"
+                checked={taskForm.isMandatory} onChange={e => setTaskForm(f => ({ ...f, isMandatory: e.target.checked }))} />
+              <label htmlFor="ob-mandatory" className="text-xs font-medium text-slate-600 dark:text-slate-400">Mandatory task</label>
+            </div>
+          </div>
+          {taskError && <p className="text-xs text-rose-500">{taskError}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" onClick={submitTask} disabled={taskSaving}
+              className="rounded-lg bg-sapphire px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-sapphire/90">
+              {taskSaving ? 'Creating…' : 'Create Task'}
+            </button>
+            <button type="button" onClick={() => setShowAdd(false)} className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400">Cancel</button>
+          </div>
+        </div>
+      )}
+
       {loading ? <p className="text-center text-sm text-slate-400 py-8">Loading…</p> : tasks.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No onboarding tasks found.</p>
+        <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No onboarding tasks found. Add the first task above.</p>
       ) : (
         <div className="space-y-2">
           {tasks.map(t => (
@@ -1576,6 +1992,18 @@ function OnboardingTab() {
               <div className="flex items-center gap-2 shrink-0">
                 {t.isMandatory && <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Required</span>}
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[t.status] ?? ''}`}>{t.status}</span>
+                {t.status !== 'Completed' && (
+                  <button type="button" onClick={() => updateStatus(t.id, 'Completed')} disabled={updatingStatus === t.id}
+                    className="rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                    {updatingStatus === t.id ? '…' : '✓ Done'}
+                  </button>
+                )}
+                {t.status === 'Pending' && (
+                  <button type="button" onClick={() => updateStatus(t.id, 'InProgress')} disabled={updatingStatus === t.id}
+                    className="rounded-md border border-blue-200 px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-500/30 dark:text-blue-400">
+                    Start
+                  </button>
+                )}
               </div>
             </div>
           ))}

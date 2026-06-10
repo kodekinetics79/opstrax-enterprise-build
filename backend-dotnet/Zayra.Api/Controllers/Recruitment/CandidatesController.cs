@@ -103,6 +103,7 @@ public class CandidatesController : ControllerBase
             EducationLevel = req.EducationLevel,
             Nationality = req.Nationality,
             LinkedInUrl = req.LinkedInUrl,
+            ResumeUrl = req.ResumeUrl ?? "",
             Source = req.Source,
             Tags = req.Tags,
         };
@@ -151,4 +152,5 @@ public class CandidatesController : ControllerBase
 public record CandidateRequest(
     string FirstName, string LastName, string Email, string Phone,
     string CurrentJobTitle, string CurrentCompany, decimal TotalExperienceYears,
-    string EducationLevel, string Nationality, string LinkedInUrl, string Source, string Tags);
+    string EducationLevel, string Nationality, string LinkedInUrl, string Source, string Tags,
+    string? ResumeUrl = null);
