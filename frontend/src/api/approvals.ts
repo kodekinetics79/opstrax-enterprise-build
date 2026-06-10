@@ -30,6 +30,6 @@ export const approvalsApi = {
   get: (id: string) =>
     client.get<ApprovalRequest>(`/api/approval-requests/${id}`).then((r) => r.data),
 
-  decide: (id: string, decision: 'Approved' | 'Rejected', comments = '') =>
+  decide: (id: string, decision: 'Approve' | 'Reject', comments = '') =>
     client.post<ApprovalRequest>(`/api/approval-requests/${id}/decisions`, { decision, comments }).then((r) => r.data),
 };

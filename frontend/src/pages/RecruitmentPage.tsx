@@ -230,7 +230,7 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
         </div>
 
         {/* scrollable body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -453,7 +453,7 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Job Title *</label>
@@ -1066,50 +1066,50 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40">
-      <div className="flex min-h-full items-start justify-center p-4 pt-12">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
-        <div className="mb-4 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0D1221]">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
-          <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">First Name *</label><input className="input w-full" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Last Name</label><input className="input w-full" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></div>
-          </div>
-          <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Email *</label><input type="email" className="input w-full" value={form.email} onChange={e => set('email', e.target.value)} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Phone</label><input className="input w-full" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Experience (years)</label><input type="number" className="input w-full" min={0} value={form.totalExperienceYears} onChange={e => set('totalExperienceYears', Number(e.target.value))} aria-label="Experience years" /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Current Title</label><input className="input w-full" value={form.currentJobTitle} onChange={e => set('currentJobTitle', e.target.value)} /></div>
-            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Current Company</label><input className="input w-full" value={form.currentCompany} onChange={e => set('currentCompany', e.target.value)} /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Education</label>
-              <select className="select w-full" value={form.educationLevel} onChange={e => set('educationLevel', e.target.value)} aria-label="Education level">
-                {['High School', 'Diploma', 'Bachelor', 'Master', 'PhD'].map(l => <option key={l}>{l}</option>)}
-              </select>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">First Name *</label><input className="input w-full" placeholder="First name" aria-label="First name" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Last Name</label><input className="input w-full" placeholder="Last name" aria-label="Last name" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Source</label>
-              <select className="select w-full" value={form.source} onChange={e => set('source', e.target.value)} aria-label="Source">
-                {['Direct', 'LinkedIn', 'Referral', 'JobBoard', 'Walk-In', 'Agency'].map(s => <option key={s}>{s}</option>)}
-              </select>
+            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Email *</label><input type="email" className="input w-full" placeholder="email@example.com" value={form.email} onChange={e => set('email', e.target.value)} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Phone</label><input className="input w-full" placeholder="+971 50 000 0000" aria-label="Phone" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Experience (years)</label><input type="number" className="input w-full" min={0} value={form.totalExperienceYears} onChange={e => set('totalExperienceYears', Number(e.target.value))} aria-label="Experience years" /></div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Current Title</label><input className="input w-full" placeholder="e.g. Senior Developer" aria-label="Current job title" value={form.currentJobTitle} onChange={e => set('currentJobTitle', e.target.value)} /></div>
+              <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Current Company</label><input className="input w-full" placeholder="Company name" aria-label="Current company" value={form.currentCompany} onChange={e => set('currentCompany', e.target.value)} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Education</label>
+                <select className="select w-full" value={form.educationLevel} onChange={e => set('educationLevel', e.target.value)} aria-label="Education level">
+                  {['High School', 'Diploma', 'Bachelor', 'Master', 'PhD'].map(l => <option key={l}>{l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Source</label>
+                <select className="select w-full" value={form.source} onChange={e => set('source', e.target.value)} aria-label="Source">
+                  {['Direct', 'LinkedIn', 'Referral', 'JobBoard', 'Walk-In', 'Agency'].map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Nationality</label><input className="input w-full" placeholder="e.g. UAE" aria-label="Nationality" value={form.nationality} onChange={e => set('nationality', e.target.value)} /></div>
+            <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Resume / CV URL <span className="text-slate-400 font-normal">(LinkedIn, Google Drive, etc.)</span></label><input type="url" className="input w-full" placeholder="https://…" value={form.resumeUrl} onChange={e => set('resumeUrl', e.target.value)} /></div>
+            {error && <p className="text-xs text-rose-500">{error}</p>}
           </div>
-          <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Nationality</label><input className="input w-full" value={form.nationality} onChange={e => set('nationality', e.target.value)} /></div>
-          <div><label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Resume / CV URL <span className="text-slate-400 font-normal">(LinkedIn, Google Drive, etc.)</span></label><input type="url" className="input w-full" placeholder="https://…" value={form.resumeUrl} onChange={e => set('resumeUrl', e.target.value)} /></div>
-          {error && <p className="text-xs text-rose-500">{error}</p>}
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-white/10">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button type="button" className="btn-primary text-sm" disabled={saving} onClick={save}>{saving ? 'Adding…' : 'Add Candidate'}</button>
         </div>
-      </div>
       </div>
     </div>
   );

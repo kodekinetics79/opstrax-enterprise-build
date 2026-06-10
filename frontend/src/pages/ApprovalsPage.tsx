@@ -39,14 +39,18 @@ export function ApprovalsPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [statusFilter]);
 
-  const handleDecide = async (decision: 'Approved' | 'Rejected') => {
+  const handleDecide = async (decision: 'Approve' | 'Reject') => {
     if (!selected) return;
     setDeciding(true);
     try {
       await approvalsApi.decide(selected.id, decision, comments);
       setSelected(null);
+      setComments('');
       load();
-    } catch { /**/ }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      alert(msg ?? 'Failed to submit decision. Please try again.');
+    }
     finally { setDeciding(false); }
   };
 
@@ -131,8 +135,8 @@ export function ApprovalsPage() {
         footer={
           <>
             <button type="button" onClick={() => setSelected(null)} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={() => handleDecide('Rejected')} disabled={deciding} className="btn-secondary text-rose-500 hover:border-rose-300 disabled:opacity-60">Reject</button>
-            <button type="button" onClick={() => handleDecide('Approved')} disabled={deciding} className="btn-primary disabled:opacity-60">{deciding ? 'Saving…' : 'Approve'}</button>
+            <button type="button" onClick={() => handleDecide('Reject')} disabled={deciding} className="btn-secondary text-rose-500 hover:border-rose-300 disabled:opacity-60">Reject</button>
+            <button type="button" onClick={() => handleDecide('Approve')} disabled={deciding} className="btn-primary disabled:opacity-60">{deciding ? 'Saving…' : 'Approve'}</button>
           </>
         }>
         {selected && (
