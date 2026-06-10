@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -16,11 +17,59 @@ public class ZayraDbContext : DbContext
     /// </summary>
     private readonly Guid? _tenantId;
 
+    /// <summary>
+    /// Current authenticated user ID. Used by <see cref="SaveChangesAsync"/> to auto-stamp
+    /// CreatedBy / UpdatedBy on every entity mutation, eliminating the need for each service
+    /// to set these fields manually (and preventing audit gaps when they forget to).
+    /// </summary>
+    private readonly Guid? _actorId;
+
     public ZayraDbContext(DbContextOptions<ZayraDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
         : base(options)
     {
-        var claim = httpContextAccessor?.HttpContext?.User?.FindFirst("tenant_id")?.Value;
-        if (Guid.TryParse(claim, out var tid)) _tenantId = tid;
+        var user = httpContextAccessor?.HttpContext?.User;
+        if (user is null) return;
+        if (Guid.TryParse(user.FindFirstValue("tenant_id"), out var tid)) _tenantId = tid;
+        var sub = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
+        if (Guid.TryParse(sub, out var uid)) _actorId = uid;
+    }
+
+    /// <summary>
+    /// Intercepts every write to auto-populate timestamp and actor audit fields.
+    /// This is the single authoritative place where CreatedAtUtc / UpdatedAtUtc are set —
+    /// services should never set them manually (doing so is harmless but redundant).
+    /// </summary>
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                TryStamp(entry, "CreatedAtUtc", now, skipIfSet: true);
+                TryStamp(entry, "UpdatedAtUtc", now);
+                if (_actorId.HasValue) TryStamp(entry, "CreatedBy", _actorId.Value, skipIfSet: true);
+                if (_actorId.HasValue) TryStamp(entry, "UpdatedBy", _actorId.Value);
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                TryStamp(entry, "UpdatedAtUtc", now);
+                if (_actorId.HasValue) TryStamp(entry, "UpdatedBy", _actorId.Value);
+            }
+        }
+        return await base.SaveChangesAsync(cancellationToken);
+    }
+
+    private static void TryStamp(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry, string prop, object value, bool skipIfSet = false)
+    {
+        if (entry.Metadata.FindProperty(prop) is null) return;
+        if (skipIfSet)
+        {
+            var cur = entry.Property(prop).CurrentValue;
+            if (cur is DateTime dt && dt != default) return;
+            if (cur is Guid g && g != Guid.Empty) return;
+        }
+        entry.Property(prop).CurrentValue = value;
     }
 
     public DbSet<Employee> Employees => Set<Employee>();
@@ -1986,15 +2035,34 @@ public class ZayraDbContext : DbContext
         }
     }
 
-    // The lambdas close over the instance field _tenantId so EF Core re-parameterises it
-    // per request (the compiled model is shared; only the parameter value changes).
+    // The lambdas close over instance field _tenantId so EF Core re-parameterises per request.
+    // Each method also AND-s in the soft-delete guard when the entity has an `IsDeleted` property,
+    // giving two automatic safety nets in one filter expression (EF Core only supports one
+    // HasQueryFilter call per entity type — combining both here is the correct pattern).
+    // Code that intentionally needs deleted records must call .IgnoreQueryFilters().
     private void SetTenantFilterNonNull<TEntity>(ModelBuilder modelBuilder) where TEntity : class
-        => modelBuilder.Entity<TEntity>().HasQueryFilter(
-            e => _tenantId == null || EF.Property<Guid>(e, "TenantId") == _tenantId);
+    {
+        var hasSoftDelete = typeof(TEntity).GetProperty("IsDeleted") != null;
+        if (hasSoftDelete)
+            modelBuilder.Entity<TEntity>().HasQueryFilter(
+                e => (_tenantId == null || EF.Property<Guid>(e, "TenantId") == _tenantId)
+                     && !EF.Property<bool>(e, "IsDeleted"));
+        else
+            modelBuilder.Entity<TEntity>().HasQueryFilter(
+                e => _tenantId == null || EF.Property<Guid>(e, "TenantId") == _tenantId);
+    }
 
     private void SetTenantFilterNullable<TEntity>(ModelBuilder modelBuilder) where TEntity : class
-        => modelBuilder.Entity<TEntity>().HasQueryFilter(
-            e => _tenantId == null || EF.Property<Guid?>(e, "TenantId") == _tenantId);
+    {
+        var hasSoftDelete = typeof(TEntity).GetProperty("IsDeleted") != null;
+        if (hasSoftDelete)
+            modelBuilder.Entity<TEntity>().HasQueryFilter(
+                e => (_tenantId == null || EF.Property<Guid?>(e, "TenantId") == _tenantId)
+                     && !EF.Property<bool>(e, "IsDeleted"));
+        else
+            modelBuilder.Entity<TEntity>().HasQueryFilter(
+                e => _tenantId == null || EF.Property<Guid?>(e, "TenantId") == _tenantId);
+    }
 
     private static void ApplySnakeCaseColumns(ModelBuilder modelBuilder)
     {

@@ -140,6 +140,30 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Global exception handler — must be the outermost middleware.
+// Converts unhandled exceptions into structured JSON so clients always get a typed error body
+// instead of an empty 500. InvalidOperationException (the service-layer sentinel for bad state)
+// maps to 400; everything else is 500 with a traceId for support correlation.
+app.UseExceptionHandler(errApp => errApp.Run(async ctx =>
+{
+    var feature = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+    var ex = feature?.Error;
+    var log = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GlobalExceptionHandler");
+    var traceId = ctx.TraceIdentifier;
+    log.LogError(ex, "Unhandled exception. TraceId={TraceId} Path={Path}", traceId, ctx.Request.Path);
+
+    ctx.Response.ContentType = "application/json";
+    ctx.Response.StatusCode = ex is InvalidOperationException ? 400 : 500;
+    await ctx.Response.WriteAsJsonAsync(new
+    {
+        traceId,
+        code = ex is InvalidOperationException ? "bad_request" : "internal_error",
+        message = ex is InvalidOperationException
+            ? ex.Message
+            : "An unexpected error occurred. Quote your traceId when contacting support.",
+    });
+}));
+
 // Security response headers (SOC defence-in-depth: anti-sniffing, anti-clickjacking).
 app.Use(async (context, next) =>
 {

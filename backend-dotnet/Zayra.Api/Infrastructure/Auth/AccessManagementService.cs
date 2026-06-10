@@ -201,19 +201,31 @@ public class AccessManagementService : IAccessManagementService
 
     public async Task<IReadOnlyCollection<EmployeeTeamMemberDto>> GetTeamAsync(Guid tenantId, int managerEmployeeId, CancellationToken cancellationToken)
     {
-        var all = await _db.Employees.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
+        // BFS level-by-level: each iteration issues one SQL IN query for exactly the next
+        // level of direct reports. This is O(depth) queries with each fetching only the
+        // columns needed — no full-table load regardless of org size.
         var result = new List<EmployeeTeamMemberDto>();
-        var frontier = all.Where(x => x.ManagerEmployeeId == managerEmployeeId).Select(x => (Employee: x, Depth: 1)).ToList();
-        while (frontier.Count > 0)
+        var currentLevel = new List<int> { managerEmployeeId };
+        var depth = 0;
+        const int maxDepth = 15; // guard against circular manager relationships
+
+        while (currentLevel.Count > 0 && depth < maxDepth)
         {
-            var next = new List<(Employee Employee, int Depth)>();
-            foreach (var item in frontier)
-            {
-                result.Add(new EmployeeTeamMemberDto(item.Employee.Id, item.Employee.EmployeeCode, item.Employee.FullName, item.Employee.Department, item.Employee.Designation, item.Employee.ManagerEmployeeId, item.Depth));
-                next.AddRange(all.Where(x => x.ManagerEmployeeId == item.Employee.Id).Select(x => (x, item.Depth + 1)));
-            }
-            frontier = next;
+            depth++;
+            var reports = await _db.Employees
+                .AsNoTracking()
+                .Where(x => x.TenantId == tenantId && !x.IsDeleted
+                            && x.ManagerEmployeeId.HasValue
+                            && currentLevel.Contains(x.ManagerEmployeeId!.Value))
+                .Select(x => new { x.Id, x.EmployeeCode, x.FullName, x.Department, x.Designation, x.ManagerEmployeeId })
+                .ToListAsync(cancellationToken);
+
+            if (reports.Count == 0) break;
+            result.AddRange(reports.Select(x =>
+                new EmployeeTeamMemberDto(x.Id, x.EmployeeCode, x.FullName, x.Department, x.Designation, x.ManagerEmployeeId, depth)));
+            currentLevel = reports.Select(x => x.Id).ToList();
         }
+
         return result;
     }
 
