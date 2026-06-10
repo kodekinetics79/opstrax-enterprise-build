@@ -224,7 +224,7 @@ function CreateReqModal({ onClose, onSaved }: CreateReqModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
-      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Manpower Requisition</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
@@ -447,7 +447,7 @@ function CreateOpeningModal({ requisition, onClose, onSaved }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
-      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+      <div className="flex w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">New Job Opening{requisition ? ` from ${requisition.requisitionNumber}` : ''}</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
@@ -1066,7 +1066,7 @@ function AddCandidateModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
-      <div className="flex w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[min(90vh,700px)] dark:border-white/10 dark:bg-[#0D1221]">
+      <div className="flex w-full max-w-md flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90vh] dark:border-white/10 dark:bg-[#0D1221]">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/10">
           <h3 className="font-semibold text-slate-900 dark:text-white">Add to Talent Pool</h3>
           <button type="button" aria-label="Close" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
