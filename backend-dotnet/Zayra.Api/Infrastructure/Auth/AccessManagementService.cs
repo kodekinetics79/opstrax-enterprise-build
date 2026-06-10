@@ -45,7 +45,7 @@ public class AccessManagementService : IAccessManagementService
         var tenant = await _db.Tenants.FirstOrDefaultAsync(x => x.Id == tenantId && x.IsActive, cancellationToken)
             ?? throw new InvalidOperationException("Tenant not found.");
         var normalizedEmail = AuthService.Normalize(request.Email);
-        var exists = await _db.Users.AnyAsync(x => x.TenantId == tenantId && x.NormalizedEmail == normalizedEmail, cancellationToken);
+        var exists = await _db.Users.AnyAsync(x => x.TenantId == tenantId && x.NormalizedEmail == normalizedEmail && x.IsActive, cancellationToken);
         if (exists) throw new InvalidOperationException("A user with this email already exists in this tenant.");
 
         var roles = await LoadRoles(tenantId, request.Roles, cancellationToken);
@@ -95,6 +95,12 @@ public class AccessManagementService : IAccessManagementService
                 IsEmailConfirmed = false
             };
             _db.Users.Add(user);
+        }
+        else if (!user.IsActive && accessMode != AccessModes.NoLogin)
+        {
+            user.IsActive = true;
+            user.FullName = employee.FullName;
+            user.AccessMode = accessMode;
         }
 
         var roles = await LoadRoles(tenantId, request.Roles is { Count: > 0 } ? request.Roles : DefaultRoles(accessMode), cancellationToken);

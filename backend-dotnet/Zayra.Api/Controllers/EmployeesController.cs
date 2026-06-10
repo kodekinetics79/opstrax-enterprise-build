@@ -773,7 +773,8 @@ public class EmployeesController : ControllerBase
         if (string.IsNullOrWhiteSpace(employee.WorkEmail) || employee.TenantId is null) return null;
         var normalized = AuthService.Normalize(employee.WorkEmail);
         var exists = await _db.Users.FirstOrDefaultAsync(x => x.TenantId == employee.TenantId && x.NormalizedEmail == normalized, cancellationToken);
-        if (exists is not null) return exists.Id;
+        if (exists is not null && exists.IsActive) return exists.Id;
+        if (exists is not null && !exists.IsActive) { exists.IsActive = true; exists.FullName = employee.FullName; await _db.SaveChangesAsync(cancellationToken); return exists.Id; }
         var role = await _db.Roles.FirstOrDefaultAsync(x => x.TenantId == employee.TenantId && x.NormalizedName == "EMPLOYEE", cancellationToken);
         var user = new User { TenantId = employee.TenantId.Value, Email = employee.WorkEmail.Trim().ToLowerInvariant(), NormalizedEmail = normalized, FullName = employee.FullName, PasswordHash = _passwordHasher.Hash("ChangeMe123!"), IsActive = true, IsEmailConfirmed = false };
         _db.Users.Add(user);
