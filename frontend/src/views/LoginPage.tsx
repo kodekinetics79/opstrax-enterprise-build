@@ -13,9 +13,9 @@ export function LoginPage() {
   const searchParams = useSearchParams();
   const from = searchParams?.get('from') ?? '/dashboard';
 
-  const [email, setEmail] = useState('admin@kynexone.com');
-  const [password, setPassword] = useState('KynexOne@2025');
-  const [tenantSlug, setTenantSlug] = useState('zayra');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [tenantSlug, setTenantSlug] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
