@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FileUp, History, Plus, RefreshCw, Search, Send, UserRound, Users } from 'lucide-react';
+import { FileUp, History, Pencil, Plus, RefreshCw, Search, Send, UserRound, Users } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { employeesApi } from '../api/employees';
 import type { EmployeeCreateRequest, EmployeeDetail, EmployeeListItem } from '../api/employees';
@@ -86,6 +86,41 @@ const emptyEmployee = (): EmployeeCreateRequest => ({
   ],
 });
 
+// Editable fields for the Edit Details modal. Sensitive ones are routed by the
+// backend into an approval workflow (202) instead of applying immediately.
+const EDIT_FIELDS: { key: string; label: string; type?: 'text' | 'email' | 'date' | 'number' | 'select'; options?: string[]; sensitive?: boolean; section: string }[] = [
+  { section: 'Personal', key: 'englishName', label: 'English full name' },
+  { section: 'Personal', key: 'arabicName', label: 'Arabic name' },
+  { section: 'Personal', key: 'preferredName', label: 'Preferred name' },
+  { section: 'Personal', key: 'gender', label: 'Gender', type: 'select', options: ['Male', 'Female', 'Other'] },
+  { section: 'Personal', key: 'nationality', label: 'Nationality' },
+  { section: 'Personal', key: 'maritalStatus', label: 'Marital status', type: 'select', options: ['Single', 'Married', 'Divorced', 'Widowed'] },
+  { section: 'Personal', key: 'dateOfBirth', label: 'Date of birth', type: 'date', sensitive: true },
+  { section: 'Personal', key: 'personalEmail', label: 'Personal email', type: 'email' },
+  { section: 'Personal', key: 'workEmail', label: 'Work email', type: 'email' },
+  { section: 'Personal', key: 'phone', label: 'Mobile number' },
+  { section: 'Personal', key: 'emergencyContactName', label: 'Emergency contact name' },
+  { section: 'Personal', key: 'emergencyContactPhone', label: 'Emergency contact phone' },
+  { section: 'Employment', key: 'department', label: 'Department' },
+  { section: 'Employment', key: 'designation', label: 'Designation' },
+  { section: 'Employment', key: 'jobTitle', label: 'Job title' },
+  { section: 'Employment', key: 'employmentType', label: 'Employment type', type: 'select', options: ['Full-Time', 'Part-Time', 'Contractor', 'Intern'] },
+  { section: 'Employment', key: 'contractType', label: 'Contract type', type: 'select', options: ['Unlimited', 'Fixed-Term', 'Temporary'] },
+  { section: 'Employment', key: 'workLocation', label: 'Work location' },
+  { section: 'Employment', key: 'grade', label: 'Grade' },
+  { section: 'Employment', key: 'costCenter', label: 'Cost center' },
+  { section: 'Employment', key: 'joiningDate', label: 'Joining date', type: 'date' },
+  { section: 'Employment', key: 'managerEmployeeId', label: 'Manager employee ID', type: 'number' },
+  { section: 'Payroll & Banking', key: 'salary', label: 'Salary', type: 'number', sensitive: true },
+  { section: 'Payroll & Banking', key: 'bankName', label: 'Bank name', sensitive: true },
+  { section: 'Payroll & Banking', key: 'bankIban', label: 'IBAN', sensitive: true },
+  { section: 'Compliance Documents', key: 'passportNumber', label: 'Passport number', sensitive: true },
+  { section: 'Compliance Documents', key: 'passportExpiryDate', label: 'Passport expiry', type: 'date', sensitive: true },
+  { section: 'Compliance Documents', key: 'emiratesId', label: 'Emirates ID', sensitive: true },
+  { section: 'Compliance Documents', key: 'visaNumber', label: 'Visa number', sensitive: true },
+  { section: 'Compliance Documents', key: 'visaExpiryDate', label: 'Visa expiry', type: 'date', sensitive: true },
+];
+
 interface EmployeeUsageData {
   activeEmployees: number;
   maxEmployees: number;
@@ -116,6 +151,11 @@ export function EmployeesPage() {
   const [newStatus, setNewStatus] = useState<StatusFilter>('Active');
   const [transferReason, setTransferReason] = useState('');
   const [transferDepartment, setTransferDepartment] = useState('');
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState<Record<string, string>>({});
+  const [editOriginal, setEditOriginal] = useState<Record<string, string>>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editNotice, setEditNotice] = useState('');
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState('Passport');
   const [documentExpiry, setDocumentExpiry] = useState('');
@@ -244,6 +284,55 @@ export function EmployeesPage() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openEdit = () => {
+    if (!selectedEmployee) return;
+    const source = selectedEmployee as unknown as Record<string, unknown>;
+    const snapshot: Record<string, string> = {};
+    for (const f of EDIT_FIELDS) {
+      const raw = source[f.key];
+      if (raw === null || raw === undefined) { snapshot[f.key] = ''; continue; }
+      snapshot[f.key] = f.type === 'date' ? String(raw).slice(0, 10) : String(raw);
+    }
+    setEditOriginal(snapshot);
+    setEditForm({ ...snapshot });
+    setEditNotice('');
+    setEditOpen(true);
+  };
+
+  const editChangedKeys = Object.keys(editForm).filter((k) => editForm[k] !== editOriginal[k]);
+
+  const saveEdit = async () => {
+    if (!selectedId || editChangedKeys.length === 0) return;
+    setEditSaving(true);
+    setEditNotice('');
+    try {
+      const changes: Record<string, unknown> = {};
+      for (const key of editChangedKeys) {
+        const field = EDIT_FIELDS.find((f) => f.key === key)!;
+        const value = editForm[key].trim();
+        if (value === '') changes[key] = null;
+        else if (field.type === 'number') changes[key] = Number(value);
+        else changes[key] = value;
+      }
+      const res = await employeesApi.update(selectedId, new Date().toISOString().slice(0, 10), changes);
+      if (res.status === 202) {
+        const fields = (res.data as { sensitiveFields?: string[] })?.sensitiveFields ?? [];
+        setEditNotice(`Submitted for approval — sensitive fields need sign-off before they apply: ${fields.join(', ')}.`);
+        setEditOriginal({ ...editForm });
+      } else {
+        setEditOpen(false);
+        await openDetail(selectedId);
+        await load();
+      }
+    } catch (e: unknown) {
+      const data = (e as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } })?.response?.data;
+      const detailMsg = data?.message ?? (data?.errors ? Object.entries(data.errors).map(([f, m]) => `${f}: ${m.join(' ')}`).join(' · ') : '');
+      setEditNotice(detailMsg ? `Could not save — ${detailMsg}` : 'Could not save the changes. Please review the values and try again.');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -418,10 +507,14 @@ export function EmployeesPage() {
               <div className="border-b border-slate-100 p-4 dark:border-white/[0.07]">
                 <div className="flex items-center gap-3">
                   <Avatar name={selectedEmployee.fullName} />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate font-bold text-slate-900 dark:text-white">{selectedEmployee.fullName}</p>
                     <p className="text-xs text-slate-500">{selectedEmployee.employeeCode} · {selectedEmployee.status}</p>
                   </div>
+                  <button type="button" onClick={openEdit} className="btn-secondary h-8 shrink-0 px-3 text-xs">
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
+                  </button>
                 </div>
                 <div className="mt-4 flex gap-1 overflow-x-auto">
                   {tabs.map((tab) => (
@@ -551,6 +644,53 @@ export function EmployeesPage() {
           )}
         </aside>
       </div>
+
+      <Modal isOpen={editOpen} title={`Edit Employee — ${selectedEmployee?.fullName ?? ''}`} size="lg" onClose={() => setEditOpen(false)} footer={
+        <>
+          <button type="button" onClick={() => setEditForm({ ...editOriginal })} disabled={editChangedKeys.length === 0} className="btn-secondary disabled:opacity-40">
+            Revert changes
+          </button>
+          <button type="button" onClick={() => setEditOpen(false)} className="btn-secondary">Cancel</button>
+          <button type="button" onClick={saveEdit} disabled={editSaving || editChangedKeys.length === 0} className="btn-primary disabled:opacity-60">
+            {editSaving ? 'Saving...' : editChangedKeys.length > 0 ? `Save ${editChangedKeys.length} change${editChangedKeys.length === 1 ? '' : 's'}` : 'No changes'}
+          </button>
+        </>
+      }>
+        <div className="space-y-5">
+          {editNotice && (
+            <p className={`rounded-lg px-3 py-2.5 text-sm ${editNotice.startsWith('Submitted') ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' : 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'}`}>{editNotice}</p>
+          )}
+          {[...new Set(EDIT_FIELDS.map((f) => f.section))].map((section) => (
+            <fieldset key={section} className="space-y-3">
+              <legend className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+                {section}
+                {EDIT_FIELDS.some((f) => f.section === section && f.sensitive) && (
+                  <InfoTip text="Fields marked 'approval' are sensitive (payroll/identity). Saving them submits a change request that an authorised approver must sign off before it takes effect." />
+                )}
+              </legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {EDIT_FIELDS.filter((f) => f.section === section).map((f) => (
+                  <label key={f.key} className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    <span className="flex items-center gap-1.5">
+                      {f.label}
+                      {f.sensitive && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">approval</span>}
+                      {editForm[f.key] !== editOriginal[f.key] && <span className="h-1.5 w-1.5 rounded-full bg-sapphire" title="Modified" />}
+                    </span>
+                    {f.type === 'select' ? (
+                      <select value={editForm[f.key] ?? ''} onChange={(e) => setEditForm((p) => ({ ...p, [f.key]: e.target.value }))} className="select mt-1.5 w-full">
+                        <option value="">Select</option>
+                        {f.options!.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    ) : (
+                      <input type={f.type ?? 'text'} value={editForm[f.key] ?? ''} onChange={(e) => setEditForm((p) => ({ ...p, [f.key]: e.target.value }))} className="input mt-1.5 w-full" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+      </Modal>
 
       <Modal isOpen={formOpen} title="Add Employee" size="lg" onClose={() => setFormOpen(false)} footer={
         <>

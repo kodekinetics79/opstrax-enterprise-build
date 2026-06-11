@@ -230,7 +230,9 @@ export const employeesApi = {
 
   create: (data: EmployeeCreateRequest) => client.post<EmployeeDetail>('/api/employees', data).then((r) => r.data),
 
-  update: (id: number, data: EmployeeCreateRequest) => client.put<EmployeeDetail>(`/api/employees/${id}`, data).then((r) => r.data),
+  /** Sends only the changed fields; sensitive fields (salary, passport, bank…) return 202 and go to an approval workflow. */
+  update: (id: number, effectiveDate: string, changes: Record<string, unknown>) =>
+    client.put(`/api/employees/${id}`, { effectiveDate, changes }),
 
   remove: (id: number) => client.delete(`/api/employees/${id}`),
 

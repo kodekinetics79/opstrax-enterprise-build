@@ -828,6 +828,23 @@ public class EmployeesController : ControllerBase
         {
             switch (field)
             {
+                case "englishName":
+                    employee.EnglishName = value.GetString() ?? employee.EnglishName;
+                    employee.FullName = employee.EnglishName;
+                    break;
+                case "arabicName": employee.ArabicName = value.GetString() ?? employee.ArabicName; break;
+                case "preferredName": employee.PreferredName = value.GetString() ?? employee.PreferredName; break;
+                case "gender": employee.Gender = value.GetString() ?? employee.Gender; break;
+                case "nationality": employee.Nationality = value.GetString() ?? employee.Nationality; break;
+                case "personalEmail": employee.PersonalEmail = value.GetString() ?? employee.PersonalEmail; break;
+                case "workEmail": employee.WorkEmail = value.GetString() ?? employee.WorkEmail; break;
+                case "phone": employee.Phone = value.GetString() ?? employee.Phone; break;
+                case "jobTitle": employee.JobTitle = value.GetString() ?? employee.JobTitle; break;
+                case "employmentType": employee.EmploymentType = value.GetString() ?? employee.EmploymentType; break;
+                case "joiningDate":
+                    if (value.ValueKind == JsonValueKind.String && DateTime.TryParse(value.GetString(), out var joining))
+                        employee.JoiningDate = joining;
+                    break;
                 case "department": employee.Department = value.GetString() ?? employee.Department; break;
                 case "designation": employee.Designation = value.GetString() ?? employee.Designation; break;
                 case "branch": employee.Branch = value.GetString() ?? employee.Branch; break;
