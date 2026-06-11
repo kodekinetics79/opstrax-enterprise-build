@@ -105,6 +105,11 @@ public class LeaveBalancesController : ControllerBase
             performedByName,
             ct);
 
+        await _leaveService.LogAuditAsync(tenantId.Value, "EmployeeLeaveBalance",
+            $"{req.EmployeeId}/{req.LeaveTypeId}/{year}", "Adjusted",
+            string.Empty, req.Amount.ToString("F2"),
+            req.Reason ?? string.Empty, performedByName, ct);
+
         var balance = await _db.EmployeeLeaveBalances
             .FirstOrDefaultAsync(b => b.TenantId == tenantId && b.EmployeeId == req.EmployeeId
                 && b.LeaveTypeId == req.LeaveTypeId && b.Year == year, ct);

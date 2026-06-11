@@ -262,6 +262,9 @@ public class LeaveService : ILeaveService
         if (leaveType.RequiresReason && string.IsNullOrWhiteSpace(request.Reason))
             throw new InvalidOperationException("A reason is required for this leave type.");
 
+        if (leaveType.MaxConsecutiveDays > 0 && workingDays > leaveType.MaxConsecutiveDays)
+            throw new InvalidOperationException($"This leave type allows a maximum of {leaveType.MaxConsecutiveDays} consecutive day(s). Requested: {workingDays}.");
+
         var sufficient = await HasSufficientBalanceAsync(tenantId, request.EmployeeId, request.LeaveTypeId, workingDays, year, ct);
         if (!sufficient)
             throw new InvalidOperationException("Insufficient leave balance.");
@@ -290,6 +293,12 @@ public class LeaveService : ILeaveService
 
         if (request.Status != "Submitted" && request.Status != "PendingManagerApproval" && request.Status != "PendingHRApproval")
             throw new InvalidOperationException($"Cannot approve a request with status '{request.Status}'.");
+
+        // An employee cannot approve their own leave request.
+        var requesterEmployee = await _db.Employees.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == request.EmployeeId, ct);
+        if (requesterEmployee?.UserAccountId is not null && requesterEmployee.UserAccountId == approverId)
+            throw new InvalidOperationException("An employee cannot approve their own leave request.");
 
         var previousStatus = request.Status;
         request.Status = "Approved";

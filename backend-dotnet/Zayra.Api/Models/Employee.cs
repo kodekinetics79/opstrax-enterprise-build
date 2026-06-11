@@ -1,5 +1,27 @@
 namespace Zayra.Api.Models;
 
+// ── Employee status constants ─────────────────────────────────────────────────
+public static class EmployeeStatuses
+{
+    /// <summary>Created by HR, not yet visible to the employee.</summary>
+    public const string Draft      = "Draft";
+    /// <summary>Login invite sent; employee has not yet accepted.</summary>
+    public const string Invited    = "Invited";
+    /// <summary>Fully onboarded and currently employed.</summary>
+    public const string Active     = "Active";
+    /// <summary>Access temporarily suspended (e.g. disciplinary hold).</summary>
+    public const string Suspended  = "Suspended";
+    /// <summary>Separation initiated; offboarding checklist in progress.</summary>
+    public const string Offboarded = "Offboarded";
+    /// <summary>Separation complete; record retained for historical / compliance purposes.</summary>
+    public const string Archived   = "Archived";
+
+    // Statuses from earlier code paths — kept for backward compat.
+    public const string Inactive   = "Inactive";
+    public const string Terminated = "Terminated";
+    public const string Exited     = "Exited";
+}
+
 public class Employee
 {
     public int Id { get; set; }
@@ -74,6 +96,41 @@ public class Employee
     public string WorkPermitNumber { get; set; } = string.Empty;
     public string CivilId { get; set; } = string.Empty;
     public string ResidencyNumber { get; set; } = string.Empty;
+
+    // ── Qiwa-ready fields (Saudi HR compliance integration) ───────────────────
+    // These fields are stored locally and will be forwarded to Qiwa once the
+    // integration is live.  No external API is called yet.
+
+    /// <summary>"Saudi" or "NonSaudi" — required by Qiwa for all employees.</summary>
+    public string SaudiOrNonSaudi { get; set; } = string.Empty;
+
+    /// <summary>Primary government ID type: NationalId | Iqama | Passport | EmiratesId | Qid | BorderNumber.</summary>
+    public string IdType { get; set; } = string.Empty;
+
+    /// <summary>Primary government ID number matching IdType.</summary>
+    public string IdNumber { get; set; } = string.Empty;
+
+    /// <summary>ISCO-88 / Qiwa occupation code.</summary>
+    public string OccupationCode { get; set; } = string.Empty;
+
+    /// <summary>MOL establishment ID in Qiwa (e.g. "7000123456").</summary>
+    public string EstablishmentId { get; set; } = string.Empty;
+
+    /// <summary>Qiwa work location ID within the establishment.</summary>
+    public string WorkLocationId { get; set; } = string.Empty;
+
+    /// <summary>Qiwa labour contract reference number.</summary>
+    public string ContractReference { get; set; } = string.Empty;
+
+    /// <summary>Work permit reference in Qiwa (distinct from local WorkPermitNumber).</summary>
+    public string WorkPermitReference { get; set; } = string.Empty;
+
+    /// <summary>Qiwa's own employee reference once the record is registered.</summary>
+    public string QiwaEmployeeReference { get; set; } = string.Empty;
+
+    /// <summary>Current Qiwa sync state.  See QiwaSyncStatuses constants.</summary>
+    public string QiwaSyncStatus { get; set; } = string.Empty;
+
     public string MedicalInformation { get; set; } = string.Empty;
     public string DisciplinaryRecords { get; set; } = string.Empty;
     public string TerminationReason { get; set; } = string.Empty;

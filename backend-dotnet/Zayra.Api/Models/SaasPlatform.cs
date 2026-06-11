@@ -29,8 +29,9 @@ public static class FeatureKeys
     public const string Payroll     = "payroll";
     public const string Shifts      = "shifts";
     public const string Overtime    = "overtime";
-    public const string MobileApp   = "mobile_app";
-    public const string WpsExport   = "wps_export";
+    public const string MobileApp        = "mobile_app";
+    public const string WpsExport        = "wps_export";
+    public const string QiwaIntegration  = "qiwa_integration";
 }
 
 // ── Tenant Subscription ───────────────────────────────────────────────────────

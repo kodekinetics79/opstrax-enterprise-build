@@ -295,6 +295,9 @@ public class ZayraDbContext : DbContext
     public DbSet<FiscalYear> FiscalYears => Set<FiscalYear>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+    // ── Qiwa Integration ───────────────────────────────────────────────────────
+    public DbSet<QiwaTenantConnection> QiwaTenantConnections => Set<QiwaTenantConnection>();
+    public DbSet<QiwaSyncLog> QiwaSyncLogs => Set<QiwaSyncLog>();
     // ── Loans, Advances & Bonuses ──────────────────────────────────────────────
     public DbSet<LoanType> LoanTypes => Set<LoanType>();
     public DbSet<LoanPolicy> LoanPolicies => Set<LoanPolicy>();

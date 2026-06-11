@@ -34,6 +34,7 @@ using Zayra.Api.Infrastructure.AI;
 using Zayra.Api.Infrastructure.Email;
 using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Infrastructure.Filters;
+using Zayra.Api.Infrastructure.Qiwa;
 
 var builder = WebApplication.CreateBuilder(args);
 // Railway injects PORT; fall back to ASPNETCORE_URLS, then local default.
@@ -129,6 +130,7 @@ builder.Services.AddScoped<IAiAuditService, AiAuditService>();
 builder.Services.AddScoped<IAiResponseCacheService, AiResponseCacheService>();
 builder.Services.AddScoped<IAiAdvisoryService, AiAdvisoryService>();
 builder.Services.AddScoped<IPolicyDocumentService, PolicyDocumentService>();
+builder.Services.AddScoped<IQiwaIntegrationService, QiwaIntegrationService>();
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 

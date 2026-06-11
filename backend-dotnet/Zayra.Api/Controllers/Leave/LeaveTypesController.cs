@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Leave;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -14,17 +15,24 @@ namespace Zayra.Api.Controllers.Leave;
 public class LeaveTypesController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly ILeaveService _leaveService;
 
-    public LeaveTypesController(ZayraDbContext db) => _db = db;
+    public LeaveTypesController(ZayraDbContext db, ILeaveService leaveService)
+    {
+        _db = db;
+        _leaveService = leaveService;
+    }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] bool? includeInactive, CancellationToken ct)
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        var showAll = includeInactive == true && (User.IsInRole("Admin") || User.IsInRole("HR Manager"));
+
         var items = await _db.LeaveTypes
-            .Where(t => t.TenantId == tenantId && t.IsActive)
+            .Where(t => t.TenantId == tenantId && (showAll || t.IsActive))
             .OrderBy(t => t.SortOrder)
             .ThenBy(t => t.NameEn)
             .ToListAsync(ct);
@@ -64,6 +72,11 @@ public class LeaveTypesController : ControllerBase
 
         _db.LeaveTypes.Add(leaveType);
         await _db.SaveChangesAsync(ct);
+
+        await _leaveService.LogAuditAsync(tenantId.Value, "LeaveType", leaveType.Id.ToString(),
+            "Created", string.Empty, leaveType.NameEn, "Leave type created",
+            User.Identity?.Name ?? "Admin", ct);
+
         return Created($"/api/leave/types/{leaveType.Id}", leaveType);
     }
 
@@ -78,6 +91,7 @@ public class LeaveTypesController : ControllerBase
             .FirstOrDefaultAsync(t => t.Id == id && t.TenantId == tenantId, ct);
         if (leaveType is null) return NotFound();
 
+        var before = leaveType.NameEn;
         if (!string.IsNullOrWhiteSpace(req.NameEn)) leaveType.NameEn = req.NameEn;
         if (req.NameAr is not null) leaveType.NameAr = req.NameAr;
         if (!string.IsNullOrWhiteSpace(req.Category)) leaveType.Category = req.Category;
@@ -89,8 +103,14 @@ public class LeaveTypesController : ControllerBase
         if (req.MaxConsecutiveDays.HasValue) leaveType.MaxConsecutiveDays = req.MaxConsecutiveDays.Value;
         if (!string.IsNullOrWhiteSpace(req.ColorCode)) leaveType.ColorCode = req.ColorCode;
         if (req.SortOrder.HasValue) leaveType.SortOrder = req.SortOrder.Value;
+        if (req.IsActive.HasValue) leaveType.IsActive = req.IsActive.Value;
 
         await _db.SaveChangesAsync(ct);
+
+        await _leaveService.LogAuditAsync(tenantId.Value, "LeaveType", leaveType.Id.ToString(),
+            "Updated", before, leaveType.NameEn, "Leave type updated",
+            User.Identity?.Name ?? "Admin", ct);
+
         return Ok(leaveType);
     }
 
@@ -218,6 +238,7 @@ public record UpdateLeaveTypeRequest(
     bool? RequiresReason,
     int? MaxConsecutiveDays,
     string? ColorCode,
-    int? SortOrder);
+    int? SortOrder,
+    bool? IsActive);
 
 public record ImportLeaveTypesRequest(string CsvContent);

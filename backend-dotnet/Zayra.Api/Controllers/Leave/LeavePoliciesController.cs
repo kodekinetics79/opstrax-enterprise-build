@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Leave;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -13,8 +14,13 @@ namespace Zayra.Api.Controllers.Leave;
 public class LeavePoliciesController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly ILeaveService _leaveService;
 
-    public LeavePoliciesController(ZayraDbContext db) => _db = db;
+    public LeavePoliciesController(ZayraDbContext db, ILeaveService leaveService)
+    {
+        _db = db;
+        _leaveService = leaveService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(
@@ -102,6 +108,11 @@ public class LeavePoliciesController : ControllerBase
 
         _db.LeavePolicies.Add(policy);
         await _db.SaveChangesAsync(ct);
+
+        await _leaveService.LogAuditAsync(tenantId.Value, "LeavePolicy", policy.Id.ToString(),
+            "Created", string.Empty, policy.Name, "Leave policy created",
+            User.Identity?.Name ?? "Admin", ct);
+
         return Created($"/api/leave/policies/{policy.Id}", policy);
     }
 
@@ -143,6 +154,11 @@ public class LeavePoliciesController : ControllerBase
         policy.UpdatedAtUtc = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+
+        await _leaveService.LogAuditAsync(tenantId.Value, "LeavePolicy", policy.Id.ToString(),
+            "Updated", string.Empty, policy.Name, "Leave policy updated",
+            User.Identity?.Name ?? "Admin", ct);
+
         return Ok(policy);
     }
 

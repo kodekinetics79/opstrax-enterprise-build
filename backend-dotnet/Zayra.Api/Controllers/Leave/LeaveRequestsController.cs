@@ -156,6 +156,17 @@ public class LeaveRequestsController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        // Load request now so we can scope-check before the service call.
+        var leaveRequest = await _db.LeaveRequests
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
+        if (leaveRequest is null) return NotFound();
+
+        // Managers are scoped to their team/direct-reports; Admin and HR roles are unrestricted.
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(leaveRequest.EmployeeId))
+            return Forbid();
+
         var approverId = this.GetUserId() ?? Guid.Empty;
         var approverName = User.Identity?.Name ?? approverId.ToString();
 
@@ -184,6 +195,16 @@ public class LeaveRequestsController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Reason))
             return BadRequest(new { message = "A rejection reason is required." });
 
+        // Same scope guard as Approve — managers can only reject requests for their own team.
+        var leaveRequest = await _db.LeaveRequests
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
+        if (leaveRequest is null) return NotFound();
+
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(leaveRequest.EmployeeId))
+            return Forbid();
+
         var approverId = this.GetUserId() ?? Guid.Empty;
         var approverName = User.Identity?.Name ?? approverId.ToString();
 
@@ -208,11 +229,30 @@ public class LeaveRequestsController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
 
+        // Load request first so we can check ownership before actioning.
+        var leaveRequest = await _db.LeaveRequests
+            .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
+        if (leaveRequest is null) return NotFound();
+
+        // Authorization: Admin and HR Manager can cancel any request in the tenant.
+        // All others must be cancelling their own request.
+        var isAdminOrHr = User.IsInRole("Admin") || User.IsInRole("HR Manager");
+        if (!isAdminOrHr)
+        {
+            var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+            if (scope.CallerEmployeeId != leaveRequest.EmployeeId)
+                return Forbid();
+        }
+
         var cancelledByName = User.Identity?.Name ?? this.GetUserId()?.ToString() ?? "Employee";
 
         try
         {
             var result = await _leaveService.CancelRequestAsync(tenantId.Value, id, cancelledByName, req.Reason ?? string.Empty, ct);
+            await _notifications.NotifyAsync(tenantId.Value, null,
+                "Leave Cancelled",
+                $"{result.EmployeeName}'s {result.LeaveTypeName} request has been cancelled.",
+                "LeaveRequest", result.Id.ToString(), ct);
             return Ok(result);
         }
         catch (InvalidOperationException ex)

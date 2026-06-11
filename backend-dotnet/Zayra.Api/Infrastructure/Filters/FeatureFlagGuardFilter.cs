@@ -66,6 +66,7 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         ("/api/shifts",         FeatureKeys.Shifts),
         ("/api/overtime",       FeatureKeys.Overtime),
         ("/api/mobile",         FeatureKeys.MobileApp),
+        ("/api/qiwa",           FeatureKeys.QiwaIntegration),
     };
 
     private readonly ZayraDbContext _db;
