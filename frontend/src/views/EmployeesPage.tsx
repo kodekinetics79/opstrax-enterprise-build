@@ -247,6 +247,19 @@ export function EmployeesPage() {
     }
   };
 
+  const deleteEmployee = async () => {
+    if (!selectedId || !detail) return;
+    if (!confirm(`Delete ${detail.employee.fullName}'s record? It will be hidden from all lists; history is kept for audit.`)) return;
+    try {
+      await employeesApi.remove(selectedId);
+      setSelectedId(null);
+      setDetail(null);
+      await load();
+    } catch {
+      setError('Could not delete the employee. Only Admins can delete records.');
+    }
+  };
+
   const changeStatus = async () => {
     if (!selectedId || !newStatus || !statusReason.trim()) return;
     const updated = await employeesApi.changeStatus(selectedId, {
@@ -524,6 +537,14 @@ export function EmployeesPage() {
                       Save status history
                     </button>
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-red-200 p-3 dark:border-red-500/30">
+                  <p className="mb-2 text-xs font-bold uppercase text-red-400">Danger zone</p>
+                  <button type="button" onClick={deleteEmployee} className="w-full justify-center rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10">
+                    Delete employee record
+                  </button>
+                  <p className="mt-1.5 text-[11px] text-slate-400">Hides the record from all lists and reports. History is kept for audit purposes — this is not a permanent erase.</p>
                 </div>
               </div>
             </div>

@@ -232,6 +232,8 @@ export const employeesApi = {
 
   update: (id: number, data: EmployeeCreateRequest) => client.put<EmployeeDetail>(`/api/employees/${id}`, data).then((r) => r.data),
 
+  remove: (id: number) => client.delete(`/api/employees/${id}`),
+
   changeStatus: (id: number, data: EmployeeStatusChangeRequest) =>
     client.patch<EmployeeDetail>(`/api/employees/${id}/status`, data).then((r) => r.data),
 

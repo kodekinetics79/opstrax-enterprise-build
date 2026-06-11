@@ -474,6 +474,25 @@ public class EmployeesController : ControllerBase
         return employee is null ? NotFound() : Ok(employee);
     }
 
+    /// <summary>Soft-deletes an employee record (audit trail preserved; hidden from all lists).</summary>
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
+    {
+        var tenantId = RequireTenant();
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id && !x.IsDeleted, cancellationToken);
+        if (employee is null) return NotFound();
+
+        var context = Context();
+        employee.IsDeleted = true;
+        employee.DeletedAtUtc = DateTime.UtcNow;
+        employee.DeletedBy = context.UserId;
+        employee.Status = "Inactive";
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.WriteAsync("employees.deleted", "Employee", id.ToString(), context, null, cancellationToken);
+        return NoContent();
+    }
+
     [HttpPost("changes/{changeId:guid}/approve")]
     [Authorize(Roles = "Admin,HR Manager")]
     public async Task<IActionResult> ApproveChange(Guid changeId, CancellationToken cancellationToken)
