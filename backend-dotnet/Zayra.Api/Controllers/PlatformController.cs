@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,6 +12,7 @@ using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Auth;
+using Zayra.Api.Infrastructure.Email;
 using Zayra.Api.Infrastructure.Subscriptions;
 using Zayra.Api.Models;
 
@@ -24,14 +26,30 @@ public class PlatformController : ControllerBase
     private readonly JwtOptions _jwt;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IAuthSeeder _authSeeder;
+    private readonly ITokenService _tokenService;
+    private readonly IEmailService _emailService;
+    private readonly ILogger<PlatformController> _log;
 
-    public PlatformController(ZayraDbContext db, IOptions<JwtOptions> jwt, IPasswordHasher passwordHasher, IAuthSeeder authSeeder)
+    public PlatformController(
+        ZayraDbContext db,
+        IOptions<JwtOptions> jwt,
+        IPasswordHasher passwordHasher,
+        IAuthSeeder authSeeder,
+        ITokenService tokenService,
+        IEmailService emailService,
+        ILogger<PlatformController> log)
     {
         _db = db;
         _jwt = jwt.Value;
         _passwordHasher = passwordHasher;
         _authSeeder = authSeeder;
+        _tokenService = tokenService;
+        _emailService = emailService;
+        _log = log;
     }
+
+    private string PlatformAdminEmail =>
+        Environment.GetEnvironmentVariable("PLATFORM_ADMIN_EMAIL") ?? string.Empty;
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
@@ -92,10 +110,18 @@ public class PlatformController : ControllerBase
             .Select(g => new { TenantId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.TenantId, x => x.Count, ct);
 
+        var employeeCounts = await _db.Employees
+            .AsNoTracking()
+            .Where(e => e.TenantId.HasValue && tenantIds.Contains(e.TenantId.Value) && !e.IsDeleted)
+            .GroupBy(e => e.TenantId!.Value)
+            .Select(g => new { TenantId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.TenantId, x => x.Count, ct);
+
         var result = tenants.Select(t =>
         {
             subscriptions.TryGetValue(t.Id, out var sub);
             userCounts.TryGetValue(t.Id, out var users);
+            employeeCounts.TryGetValue(t.Id, out var emps);
             return new
             {
                 t.Id,
@@ -108,9 +134,11 @@ public class PlatformController : ControllerBase
                     sub.Plan,
                     sub.Status,
                     sub.MaxEmployees,
+                    sub.MaxUsers,
                     sub.ExpiresAtUtc
                 },
-                activeUserCount = users
+                activeUserCount = users,
+                activeEmployeeCount = emps
             };
         });
 
@@ -163,6 +191,8 @@ public class PlatformController : ControllerBase
         if (tenant is null) return NotFound();
 
         var sub = await _db.TenantSubscriptions.FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        var oldSnap = sub is null ? null : new { sub.Plan, sub.Status, sub.MaxUsers, sub.MaxEmployees };
+
         if (sub is null)
         {
             sub = new TenantSubscription { TenantId = tenantId };
@@ -179,6 +209,25 @@ public class PlatformController : ControllerBase
         sub.CurrencyCode = req.CurrencyCode;
         sub.ExpiresAtUtc = req.ExpiresAtUtc;
         sub.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Subscription",
+            EntityId = tenantId.ToString(),
+            Action = "SubscriptionUpdated",
+            OldValuesJson = oldSnap is null ? null : System.Text.Json.JsonSerializer.Serialize(oldSnap),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                plan = req.Plan,
+                status = req.Status,
+                maxUsers = req.MaxUsers,
+                maxEmployees = req.MaxEmployees,
+                expiresAtUtc = req.ExpiresAtUtc
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
 
         await _db.SaveChangesAsync(ct);
         return Ok(sub);
@@ -202,9 +251,22 @@ public class PlatformController : ControllerBase
             _db.TenantFeatureFlags.Add(flag);
         }
 
+        var oldEnabled = flag.IsEnabled;
         flag.IsEnabled = req.IsEnabled;
         flag.ConfigJson = req.ConfigJson;
         flag.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "FeatureFlag",
+            EntityId = $"{tenantId}/{featureKey}",
+            Action = req.IsEnabled ? "FeatureEnabled" : "FeatureDisabled",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { featureKey, isEnabled = oldEnabled }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { featureKey, isEnabled = req.IsEnabled }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
 
         await _db.SaveChangesAsync(ct);
         return Ok(flag);
@@ -316,6 +378,36 @@ public class PlatformController : ControllerBase
             ExpiresAtUtc = req.ExpiresAtUtc
         });
 
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenant.Id,
+            EntityType = "Tenant",
+            EntityId = tenant.Id.ToString(),
+            Action = "TenantCreated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                name = tenant.Name,
+                slug = tenant.Slug,
+                plan,
+                adminEmail = admin.Email,
+                maxUsers = req.MaxUsers ?? SubscriptionTiers.GetDefaults(plan).MaxUsers,
+                maxEmployees = req.MaxEmployees ?? SubscriptionTiers.GetDefaults(plan).MaxEmployees
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenant.Id,
+            EntityType = "User",
+            EntityId = admin.Id.ToString(),
+            Action = "AdminCreated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { email = admin.Email, role = "Admin" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetTenant), new { tenantId = tenant.Id }, new
@@ -382,9 +474,485 @@ public class PlatformController : ControllerBase
         };
         user.UserRoles.Add(new UserRole { User = user, Role = adminRole });
         _db.Users.Add(user);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "User",
+            EntityId = user.Id.ToString(),
+            Action = "AdminCreated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { email = user.Email, fullName = user.FullName, role = "Admin" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
         await _db.SaveChangesAsync(ct);
 
         return Ok(new { user.Id, user.Email, user.FullName, tenantSlug = tenant.Slug });
+    }
+
+    // ── Tenant Suspend / Reactivate ───────────────────────────────────────────
+
+    [HttpPost("tenants/{tenantId:guid}/suspend")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> SuspendTenant(Guid tenantId, [FromBody] TenantActionRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound(new { message = "Tenant not found." });
+
+        var sub = await _db.TenantSubscriptions.FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        if (sub is null) return BadRequest(new { message = "Tenant has no subscription record." });
+
+        var oldStatus = sub.Status;
+        sub.Status = "Suspended";
+        sub.UpdatedAtUtc = DateTime.UtcNow;
+        tenant.IsActive = false;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Tenant",
+            EntityId = tenantId.ToString(),
+            Action = "Suspended",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = oldStatus }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = "Suspended", reason = req.Reason }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { tenantId, status = "Suspended" });
+    }
+
+    [HttpPost("tenants/{tenantId:guid}/reactivate")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ReactivateTenant(Guid tenantId, [FromBody] TenantActionRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound(new { message = "Tenant not found." });
+
+        var sub = await _db.TenantSubscriptions.FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        if (sub is null) return BadRequest(new { message = "Tenant has no subscription record." });
+
+        var oldStatus = sub.Status;
+        sub.Status = "Active";
+        sub.UpdatedAtUtc = DateTime.UtcNow;
+        tenant.IsActive = true;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Tenant",
+            EntityId = tenantId.ToString(),
+            Action = "Reactivated",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = oldStatus }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = "Active", reason = req.Reason }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { tenantId, status = "Active" });
+    }
+
+    // ── Tenant Profile Edit ───────────────────────────────────────────────────
+
+    [HttpPatch("tenants/{tenantId:guid}")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> UpdateTenant(Guid tenantId, [FromBody] UpdateTenantRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound(new { message = "Tenant not found." });
+
+        var oldName = tenant.Name;
+        if (!string.IsNullOrWhiteSpace(req.Name)) tenant.Name = req.Name.Trim();
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Tenant",
+            EntityId = tenantId.ToString(),
+            Action = "Updated",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { name = oldName }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { name = tenant.Name }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { tenant.Id, tenant.Name, tenant.Slug });
+    }
+
+    // ── Tenant Users ──────────────────────────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/users")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ListTenantUsers(Guid tenantId, [FromQuery] string? search, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+
+        var q = _db.Users.AsNoTracking()
+            .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .Where(u => u.TenantId == tenantId && !u.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.ToLower();
+            q = q.Where(u => u.Email.Contains(s) || u.FullName.ToLower().Contains(s));
+        }
+
+        var users = await q
+            .OrderBy(u => u.FullName)
+            .Select(u => new
+            {
+                u.Id,
+                u.Email,
+                u.FullName,
+                u.IsActive,
+                u.Status,
+                u.CreatedAtUtc,
+                Roles = u.UserRoles.Where(ur => ur.Role != null).Select(ur => ur.Role!.Name).ToList()
+            })
+            .ToListAsync(ct);
+
+        return Ok(users);
+    }
+
+    // ── Password Reset (platform-initiated) ───────────────────────────────────
+
+    /// <summary>
+    /// TODO: Implement email delivery.
+    /// Currently generates a reset token stored on the user. The actual email send
+    /// requires an IEmailService (SMTP/SendGrid) not yet wired to the platform portal.
+    /// When email service is available: call IAuthService.ForgotPasswordAsync with the user's email.
+    /// </summary>
+    [HttpPost("users/{userId:guid}/send-password-reset")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> SendPasswordReset(Guid userId, CancellationToken ct)
+    {
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+
+        // Safety: block reset attempts targeting the platform admin credential (env-var based, not in DB)
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        // Generate reset token, store it, and email the link
+        var resetToken = _tokenService.CreateSecureToken();
+        var expiresAt = DateTime.UtcNow.AddHours(1);
+        _db.PasswordResetTokens.Add(new PasswordResetToken
+        {
+            UserId = user.Id,
+            TokenHash = _tokenService.HashToken(resetToken),
+            ExpiresAtUtc = expiresAt,
+            CreatedByIp = HttpContext.Connection.RemoteIpAddress?.ToString()
+        });
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "PasswordResetRequested",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { userEmail = user.Email, initiatedBy = "platform_admin" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        // Build reset link and send email (falls back gracefully if SMTP not configured)
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        var appUrl = (Environment.GetEnvironmentVariable("APP_URL") ?? string.Empty).TrimEnd('/');
+        var encodedToken = Uri.EscapeDataString(resetToken);
+        var encodedEmail = Uri.EscapeDataString(user.Email);
+        var tenantPart = tenant is not null ? $"&tenant={Uri.EscapeDataString(tenant.Slug)}" : string.Empty;
+        var resetUrl = $"{appUrl}/reset-password?token={encodedToken}&email={encodedEmail}{tenantPart}";
+
+        var html = $"""
+            <p>Hi {System.Web.HttpUtility.HtmlEncode(user.FullName)},</p>
+            <p>A platform administrator has requested a password reset for your account. Click the link below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+            <p><a href="{resetUrl}" style="background:#2563EB;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block">Reset Password</a></p>
+            <p>If you did not expect this, contact your platform administrator immediately.</p>
+            <hr/>
+            <p style="font-size:12px;color:#666">This action was initiated by the platform super-admin · KynexOne Workforce</p>
+            """;
+
+        bool smtpConfigured = await _emailService.IsConfiguredAsync(ct);
+        bool emailSent = false;
+
+        if (smtpConfigured)
+        {
+            try
+            {
+                await _emailService.SendAsync(user.Email, user.FullName, "Your KynexOne password reset (admin-initiated)", html, cancellationToken: ct);
+                emailSent = true;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Platform password reset email failed for {Email}. Token saved.", user.Email);
+            }
+        }
+        else
+        {
+            _log.LogInformation("SMTP not configured — reset token saved for {Email}, no email sent.", user.Email);
+        }
+
+        return Ok(new
+        {
+            userId,
+            userEmail = user.Email,
+            emailSent,
+            smtpConfigured,
+            message = emailSent
+                ? $"Password reset email sent to {user.Email}. Link expires in 1 hour."
+                : smtpConfigured
+                    ? "SMTP is configured but email delivery failed — check server logs."
+                    : "Reset token saved and logged. SMTP is not configured — share the reset link directly or configure SMTP in Setup → Email Settings.",
+            emailDeliveryAvailable = smtpConfigured,
+            resetTokenExpiresAt = expiresAt
+        });
+    }
+
+    [HttpPost("users/{userId:guid}/force-password-reset")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ForcePasswordReset(Guid userId, [FromBody] ForcePasswordResetRequest req, CancellationToken ct)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(req.TempPassword) || req.TempPassword.Length < 10)
+            return BadRequest(new { message = "Temporary password must be at least 10 characters." });
+
+        user.PasswordHash = _passwordHasher.Hash(req.TempPassword);
+        user.MustChangePassword = true;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+
+        // Revoke all active refresh tokens so existing sessions are terminated
+        await _db.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), ct);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "ForcePasswordReset",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { userEmail = user.Email, initiatedBy = "platform_admin", mustChangePassword = true, sessionsRevoked = true }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { userId, userEmail = user.Email, mustChangePassword = true, sessionsRevoked = true });
+    }
+
+    // ── Platform Audit Logs ───────────────────────────────────────────────────
+
+    [HttpGet("audit-logs")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> GetAuditLogs([FromQuery] Guid? tenantId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
+    {
+        var q = _db.AdminAuditLogs.AsNoTracking().AsQueryable();
+
+        if (tenantId.HasValue) q = q.Where(l => l.TenantId == tenantId.Value);
+
+        // When no tenant filter, show only platform-level events (tenant lifecycle, support sessions, password resets)
+        if (!tenantId.HasValue)
+            q = q.Where(l =>
+                l.EntityType == "Tenant" ||
+                l.EntityType == "SupportSession" ||
+                (l.EntityType == "User" && (l.Action.Contains("Password") || l.Action.Contains("Suspend") || l.Action.Contains("Reactivat"))));
+
+        var total = await q.CountAsync(ct);
+        var logs = await q
+            .OrderByDescending(l => l.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return Ok(new { total, page, pageSize, logs });
+    }
+
+    // ── Plans Catalog ─────────────────────────────────────────────────────────
+
+    [HttpGet("plans")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public IActionResult GetPlans()
+    {
+        // Static plan definitions — these are the source of truth for the frontend plan picker.
+        // To customise limits for a specific tenant, use PATCH /tenants/{id}/subscription.
+        var plans = new[]
+        {
+            new { Name = "Trial",      MaxUsers = 3,   MaxEmployees = 10,  MonthlyPrice = 0m,   Description = "Free evaluation. No payment required. 10 employees, 3 users, core modules only." },
+            new { Name = "Starter",    MaxUsers = 10,  MaxEmployees = 50,  MonthlyPrice = 149m, Description = "Up to 50 employees. Core HR, attendance, leave, payroll." },
+            new { Name = "Growth",     MaxUsers = 50,  MaxEmployees = 250, MonthlyPrice = 499m, Description = "Up to 250 employees. All Starter modules plus recruitment, performance, loans, analytics." },
+            new { Name = "Enterprise", MaxUsers = 0,   MaxEmployees = 0,   MonthlyPrice = 0m,   Description = "Unlimited employees and users. All modules, custom branding, dedicated support. Custom pricing." },
+        };
+        return Ok(plans);
+    }
+
+    // ── Support Access (structured break-glass) ───────────────────────────────
+
+    [HttpPost("support-access/start")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> StartSupportAccess([FromBody] StartSupportAccessRequest req, CancellationToken ct)
+    {
+        if (!Guid.TryParse(req.TenantId, out var tenantId))
+            return BadRequest(new { message = "Invalid tenantId." });
+        if (!Guid.TryParse(req.UserId, out var userId))
+            return BadRequest(new { message = "Invalid userId." });
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(new { message = "Reason is required for support access." });
+
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound(new { message = "Tenant not found." });
+
+        var user = await _db.Users
+            .AsNoTracking()
+            .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.TenantId == tenantId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found in specified tenant." });
+
+        var roles = user.UserRoles.Where(ur => ur.Role is not null).Select(ur => ur.Role!.Name).ToList();
+        var expiresAt = DateTime.UtcNow.AddHours(1);
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new(JwtRegisteredClaimNames.Email, user.Email),
+            new(JwtRegisteredClaimNames.Name, user.FullName),
+            new("tenant_id", tenant.Id.ToString()),
+            new("tenant", tenant.Slug),
+            new("impersonated_by", "platform_admin"),
+            new("support_reason", req.Reason.Trim()),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+        claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var jwtToken = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        var tokenString = new JwtSecurityTokenHandler().WriteToken(jwtToken);
+
+        // Hash the token so we can identify this session when ending it
+        var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokenString)));
+
+        var session = new PlatformSupportSession
+        {
+            TenantId = tenantId,
+            TargetUserId = userId,
+            TargetUserEmail = user.Email,
+            Reason = req.Reason.Trim(),
+            StartedByEmail = PlatformAdminEmail,
+            StartedByIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            ExpiresAtUtc = expiresAt,
+            TokenHash = tokenHash
+        };
+        _db.PlatformSupportSessions.Add(session);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "SupportSession",
+            EntityId = session.Id.ToString(),
+            Action = "SupportAccessStarted",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                targetUserEmail = user.Email,
+                tenantSlug = tenant.Slug,
+                reason = req.Reason.Trim(),
+                expiresAt
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            sessionId = session.Id,
+            token = tokenString,
+            expiresAt,
+            targetUserEmail = user.Email,
+            tenantSlug = tenant.Slug,
+            reason = session.Reason
+        });
+    }
+
+    [HttpPost("support-access/end")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> EndSupportAccess([FromBody] EndSupportAccessRequest req, CancellationToken ct)
+    {
+        if (!Guid.TryParse(req.SessionId, out var sessionId))
+            return BadRequest(new { message = "Invalid sessionId." });
+
+        var session = await _db.PlatformSupportSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null) return NotFound(new { message = "Support session not found." });
+        if (session.EndedAtUtc is not null)
+            return BadRequest(new { message = "Session already ended." });
+
+        session.EndedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = session.TenantId,
+            EntityType = "SupportSession",
+            EntityId = session.Id.ToString(),
+            Action = "SupportAccessEnded",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                targetUserEmail = session.TargetUserEmail,
+                reason = session.Reason,
+                durationMinutes = (int)(DateTime.UtcNow - session.StartedAtUtc).TotalMinutes
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { sessionId, endedAt = session.EndedAtUtc });
+    }
+
+    [HttpGet("support-access")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ListSupportSessions([FromQuery] Guid? tenantId, [FromQuery] bool activeOnly = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
+    {
+        var q = _db.PlatformSupportSessions.AsNoTracking().AsQueryable();
+        if (tenantId.HasValue) q = q.Where(s => s.TenantId == tenantId.Value);
+        if (activeOnly) q = q.Where(s => s.EndedAtUtc == null && s.ExpiresAtUtc > DateTime.UtcNow);
+
+        var total = await q.CountAsync(ct);
+        var sessions = await q
+            .OrderByDescending(s => s.StartedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(s => new
+            {
+                s.Id,
+                s.TenantId,
+                s.TargetUserId,
+                s.TargetUserEmail,
+                s.Reason,
+                s.StartedByEmail,
+                s.StartedByIp,
+                s.StartedAtUtc,
+                s.ExpiresAtUtc,
+                s.EndedAtUtc,
+                IsActive = s.EndedAtUtc == null && s.ExpiresAtUtc > DateTime.UtcNow
+            })
+            .ToListAsync(ct);
+
+        return Ok(new { total, page, pageSize, sessions });
     }
 
     // ── Platform Stats ────────────────────────────────────────────────────────
@@ -441,3 +1009,8 @@ public record CreateTenantRequest(
     DateTime? ExpiresAtUtc);
 
 public record AddTenantAdminRequest(string Email, string? FullName, string Password);
+public record TenantActionRequest(string? Reason);
+public record UpdateTenantRequest(string? Name);
+public record ForcePasswordResetRequest(string TempPassword);
+public record StartSupportAccessRequest(string TenantId, string UserId, string Reason);
+public record EndSupportAccessRequest(string SessionId);

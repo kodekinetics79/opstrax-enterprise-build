@@ -60,6 +60,16 @@ export interface TenantAdminUser {
   createdAtUtc: string;
 }
 
+export interface TenantUser {
+  id: string;
+  email: string;
+  fullName: string;
+  isActive: boolean;
+  status: string;
+  createdAtUtc: string;
+  roles: string[];
+}
+
 export interface PlatformTenantSummary {
   id: string;
   name: string;
@@ -69,9 +79,11 @@ export interface PlatformTenantSummary {
     plan: string;
     status: string;
     maxEmployees: number;
+    maxUsers: number;
     expiresAtUtc: string | null;
   };
   activeUserCount: number;
+  activeEmployeeCount: number;
 }
 
 export interface PlatformTenantDetail {
@@ -83,6 +95,7 @@ export interface PlatformTenantDetail {
     plan: string;
     status: string;
     maxEmployees: number;
+    maxUsers: number;
     billingEmail: string;
     billingCycle: string;
     monthlyAmount: number;
@@ -95,6 +108,59 @@ export interface PlatformTenantDetail {
   branding: Record<string, unknown> | null;
   userCount: number;
   employeeCount: number;
+}
+
+export interface PlatformAuditLog {
+  id: string;
+  tenantId: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  oldValuesJson: string;
+  newValuesJson: string;
+  performedByName: string;
+  ipAddress: string;
+  createdAtUtc: string;
+}
+
+export interface PasswordResetResult {
+  userId: string;
+  userEmail: string;
+  message: string;
+  emailDeliveryAvailable: boolean;
+  emailSent: boolean;
+  resetTokenExpiresAt?: string;
+}
+
+export interface PlatformPlan {
+  name: string;
+  maxUsers: number;
+  maxEmployees: number;
+  monthlyPrice: number;
+  description: string;
+}
+
+export interface SupportSession {
+  id: string;
+  tenantId: string;
+  targetUserId: string;
+  targetUserEmail: string;
+  reason: string;
+  startedByEmail: string;
+  startedByIp: string;
+  startedAtUtc: string;
+  expiresAtUtc: string;
+  endedAtUtc: string | null;
+  isActive: boolean;
+}
+
+export interface StartSupportAccessResult {
+  sessionId: string;
+  token: string;
+  expiresAt: string;
+  targetUserEmail: string;
+  tenantSlug: string;
+  reason: string;
 }
 
 // ── Platform API ──────────────────────────────────────────────────────────────
@@ -112,6 +178,9 @@ export const platformApi = {
   getTenant: (tenantId: string) =>
     platform.get<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`).then(r => r.data),
 
+  updateTenant: (tenantId: string, name: string) =>
+    platform.patch<{ id: string; name: string; slug: string }>(`/api/platform/tenants/${tenantId}`, { name }).then(r => r.data),
+
   updateSubscription: (tenantId: string, body: {
     plan: string;
     status: string;
@@ -125,6 +194,12 @@ export const platformApi = {
     expiresAtUtc: string | null;
   }) =>
     platform.put(`/api/platform/tenants/${tenantId}/subscription`, body).then(r => r.data),
+
+  suspendTenant: (tenantId: string, reason: string) =>
+    platform.post(`/api/platform/tenants/${tenantId}/suspend`, { reason }).then(r => r.data),
+
+  reactivateTenant: (tenantId: string, reason: string) =>
+    platform.post(`/api/platform/tenants/${tenantId}/reactivate`, { reason }).then(r => r.data),
 
   setFeature: (tenantId: string, featureKey: string, isEnabled: boolean) =>
     platform.put(`/api/platform/tenants/${tenantId}/features/${featureKey}`, { isEnabled }).then(r => r.data),
@@ -140,4 +215,34 @@ export const platformApi = {
 
   addAdmin: (tenantId: string, body: { email: string; fullName?: string; password: string }) =>
     platform.post<TenantAdminUser>(`/api/platform/tenants/${tenantId}/admins`, body).then(r => r.data),
+
+  listTenantUsers: (tenantId: string, search?: string) =>
+    platform.get<TenantUser[]>(`/api/platform/tenants/${tenantId}/users`, { params: search ? { search } : {} }).then(r => r.data),
+
+  sendPasswordReset: (userId: string) =>
+    platform.post<PasswordResetResult>(`/api/platform/users/${userId}/send-password-reset`).then(r => r.data),
+
+  forcePasswordReset: (userId: string, tempPassword: string) =>
+    platform.post(`/api/platform/users/${userId}/force-password-reset`, { tempPassword }).then(r => r.data),
+
+  getAuditLogs: (tenantId?: string, page = 1, pageSize = 50) =>
+    platform.get<{ total: number; page: number; pageSize: number; logs: PlatformAuditLog[] }>(
+      '/api/platform/audit-logs',
+      { params: { ...(tenantId ? { tenantId } : {}), page, pageSize } }
+    ).then(r => r.data),
+
+  getPlans: () =>
+    platform.get<PlatformPlan[]>('/api/platform/plans').then(r => r.data),
+
+  startSupportAccess: (tenantId: string, userId: string, reason: string) =>
+    platform.post<StartSupportAccessResult>('/api/platform/support-access/start', { tenantId, userId, reason }).then(r => r.data),
+
+  endSupportAccess: (sessionId: string) =>
+    platform.post('/api/platform/support-access/end', { sessionId }).then(r => r.data),
+
+  listSupportSessions: (tenantId?: string, activeOnly = false, page = 1, pageSize = 50) =>
+    platform.get<{ total: number; page: number; pageSize: number; sessions: SupportSession[] }>(
+      '/api/platform/support-access',
+      { params: { ...(tenantId ? { tenantId } : {}), activeOnly, page, pageSize } }
+    ).then(r => r.data),
 };

@@ -4,8 +4,8 @@ import axios from 'axios';
 // On the server (SSR), we need the absolute URL since there's no proxy.
 function resolveBaseUrl(): string {
   if (typeof window !== 'undefined') return '';
-  const raw = process.env.NEXT_PUBLIC_API_URL;
-  if (!raw) return 'http://localhost:5000';
+  const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!raw) return 'http://localhost:5117';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `https://${raw}`;
 }

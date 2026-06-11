@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using System.Security.Claims;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
@@ -81,7 +82,7 @@ public class DashboardControllerTests
 
     private static DashboardController CreateController(ZayraDbContext db, Guid tenantId)
     {
-        var controller = new DashboardController(db);
+        var controller = new DashboardController(db, new MemoryCache(new MemoryCacheOptions()));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

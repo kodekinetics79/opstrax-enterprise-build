@@ -54,7 +54,15 @@ export interface DashboardOverview {
   newJoinersThisMonth: number;
 }
 
+export interface DashboardFull {
+  summary: DashboardSummary;
+  trends: DashboardTrend[];
+  overview: DashboardOverview;
+}
+
 export const dashboardApi = {
+  full: (months = 6) => client.get<DashboardFull>('/api/dashboard/full', { params: { months } }).then((r) => r.data),
+  // kept for any other consumers
   summary: () => client.get<DashboardSummary>('/api/dashboard/summary').then((r) => r.data),
   trends: (months = 6) => client.get<DashboardTrend[]>('/api/dashboard/trends', { params: { months } }).then((r) => r.data),
   overview: () => client.get<DashboardOverview>('/api/dashboard/overview').then((r) => r.data),

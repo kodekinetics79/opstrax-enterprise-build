@@ -110,6 +110,27 @@ public class EmployeesController : ControllerBase
     {
         var tenantId = RequireTenant();
         var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+
+        // Enforce employee limit before processing any rows.
+        var sub = await _db.TenantSubscriptions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+
+        if (sub is not null && sub.MaxEmployees > 0)
+        {
+            var current = await _db.Employees.CountAsync(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted, ct);
+            var available = sub.MaxEmployees - current;
+            if (rows.Count > available)
+                return UnprocessableEntity(new
+                {
+                    error = "employee_limit_reached",
+                    message = $"Import would exceed your employee limit ({current} active / {sub.MaxEmployees} max). You have {available} seat(s) remaining — remove {rows.Count - available} row(s) and retry.",
+                    current,
+                    limit = sub.MaxEmployees,
+                    available,
+                    rowsInFile = rows.Count
+                });
+        }
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
         var branch = await _db.Branches.FirstOrDefaultAsync(b => b.TenantId == tenantId, ct);
         int created = 0, skipped = 0;

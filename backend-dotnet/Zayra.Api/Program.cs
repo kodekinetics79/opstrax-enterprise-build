@@ -49,6 +49,7 @@ builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("S
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<SubscriptionGuardFilter>();
+    options.Filters.Add<FeatureFlagGuardFilter>();
 })
 .AddJsonOptions(options =>
 {
@@ -70,10 +71,12 @@ builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy
     .AllowAnyHeader()));
 
 var connectionString = builder.Configuration.GetConnectionString("Default") ?? "server=localhost;port=3306;database=zayra;user=root;password=password";
-builder.Services.AddDbContext<ZayraDbContext>(options => options
+builder.Services.AddDbContextPool<ZayraDbContext>(options => options
     .UseMySql(connectionString, ServerVersion.Create(new Version(8, 0, 0), Pomelo.EntityFrameworkCore.MySql.Infrastructure.ServerType.MySql),
         mySqlOptions => mySqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null))
     .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)));
+
+builder.Services.AddMemoryCache();
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey));

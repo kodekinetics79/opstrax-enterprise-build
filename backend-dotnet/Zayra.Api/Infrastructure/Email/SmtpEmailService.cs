@@ -72,5 +72,8 @@ public class SmtpEmailService : IEmailService
         );
     }
 
+    public async Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
+        => await LoadConfigAsync(cancellationToken) is not null;
+
     private record SmtpConfig(string Host, int Port, string Username, string Password, string FromAddress, string FromName, bool UseTls);
 }

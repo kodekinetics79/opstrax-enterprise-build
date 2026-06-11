@@ -5,11 +5,25 @@ import { useSearchParams } from 'next/navigation';
 import {
   BarChart2, BookOpen, Clock, Download, Play, Plus, RefreshCw, Save, Trash2, ToggleLeft, ToggleRight,
 } from 'lucide-react';
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts';
+import dynamic from 'next/dynamic';
 import { reportsApi, analyticsApi } from '../api/reports';
+
+const ReportsHeadcountTrendChart = dynamic(
+  () => import('../components/charts/reports/ReportsHeadcountTrendChart').then((m) => m.ReportsHeadcountTrendChart),
+  { ssr: false },
+);
+const ReportsPayrollTrendChart = dynamic(
+  () => import('../components/charts/reports/ReportsPayrollTrendChart').then((m) => m.ReportsPayrollTrendChart),
+  { ssr: false },
+);
+const ReportsAttendanceTrendChart = dynamic(
+  () => import('../components/charts/reports/ReportsAttendanceTrendChart').then((m) => m.ReportsAttendanceTrendChart),
+  { ssr: false },
+);
+const ReportsLeaveTrendChart = dynamic(
+  () => import('../components/charts/reports/ReportsLeaveTrendChart').then((m) => m.ReportsLeaveTrendChart),
+  { ssr: false },
+);
 import type {
   ReportCatalogItem, ReportFilters, ReportResult, SavedReport,
   ReportSchedule, ReportExecutionLog, AnalyticsKPIs,
@@ -143,62 +157,28 @@ function AnalyticsDashboard() {
         {headcountTrend.length > 0 && (
           <div className="surface p-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Headcount Trend</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={headcountTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Area type="monotone" dataKey="headcount" stroke="#2F6BFF" fill="#2F6BFF" fillOpacity={0.15} strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <ReportsHeadcountTrendChart data={headcountTrend} />
           </div>
         )}
 
         {payrollTrend.length > 0 && (
           <div className="surface p-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Payroll Trend (Net Salary)</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={[...payrollTrend].reverse()}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v) => fmt(v as number)} />
-                <Bar dataKey="TotalNetSalary" name="Net Salary" fill="#00C896" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ReportsPayrollTrendChart data={payrollTrend} />
           </div>
         )}
 
         {attendanceTrend.length > 0 && (
           <div className="surface p-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Attendance (Last 30 Days)</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={attendanceTrend.slice(-14)}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Line type="monotone" dataKey="present" stroke="#2F6BFF" strokeWidth={2} dot={false} name="Present" />
-                <Line type="monotone" dataKey="late" stroke="#F59E0B" strokeWidth={2} dot={false} name="Late" />
-                <Line type="monotone" dataKey="absent" stroke="#EF4444" strokeWidth={2} dot={false} name="Absent" />
-              </LineChart>
-            </ResponsiveContainer>
+            <ReportsAttendanceTrendChart data={attendanceTrend} />
           </div>
         )}
 
         {leaveTrend.length > 0 && (
           <div className="surface p-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Leave Taken (Days)</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={leaveTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="totalDays" name="Leave Days" fill="#5EEBFF" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ReportsLeaveTrendChart data={leaveTrend} />
           </div>
         )}
       </div>

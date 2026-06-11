@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
+using Zayra.Api.Infrastructure.Email;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Infrastructure.Auth;
@@ -13,15 +14,17 @@ public class AuthService : IAuthService
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
     private readonly IAuditService _auditService;
+    private readonly IEmailService _emailService;
     private readonly JwtOptions _jwtOptions;
     private readonly ILogger<AuthService> _log;
 
-    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IOptions<JwtOptions> jwtOptions, ILogger<AuthService> log)
+    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IEmailService emailService, IOptions<JwtOptions> jwtOptions, ILogger<AuthService> log)
     {
         _db = db;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _auditService = auditService;
+        _emailService = emailService;
         _jwtOptions = jwtOptions.Value;
         _log = log;
     }
@@ -90,11 +93,12 @@ public class AuthService : IAuthService
 
     public async Task<ForgotPasswordResponse> ForgotPasswordAsync(ForgotPasswordRequest request, RequestContext context, CancellationToken cancellationToken)
     {
+        // Always respond with the same message to prevent user enumeration
+        const string safeMessage = "If an account with that email exists, a password reset link has been sent.";
+
         var user = await LoadUserGraph(request.Email, request.TenantSlug, cancellationToken);
         if (user is null || !user.IsActive)
-        {
-            return new ForgotPasswordResponse("If the account exists, a password reset token has been created.", null, null);
-        }
+            return new ForgotPasswordResponse(safeMessage, null, null);
 
         var resetToken = _tokenService.CreateSecureToken();
         var expiresAt = DateTime.UtcNow.AddHours(1);
@@ -107,7 +111,34 @@ public class AuthService : IAuthService
         });
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("auth.password_reset_requested", "User", user.Id.ToString(), context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
-        return new ForgotPasswordResponse("Password reset token created. Connect this token to email delivery before production launch.", resetToken, expiresAt);
+
+        // Build reset URL — falls back to a relative path fragment if APP_URL is not set.
+        var appUrl = Environment.GetEnvironmentVariable("APP_URL")?.TrimEnd('/') ?? string.Empty;
+        var encodedToken = Uri.EscapeDataString(resetToken);
+        var encodedEmail = Uri.EscapeDataString(user.Email);
+        var tenantPart = string.IsNullOrWhiteSpace(request.TenantSlug) ? string.Empty : $"&tenant={Uri.EscapeDataString(request.TenantSlug)}";
+        var resetUrl = $"{appUrl}/reset-password?token={encodedToken}&email={encodedEmail}{tenantPart}";
+
+        var html = $"""
+            <p>Hi {System.Web.HttpUtility.HtmlEncode(user.FullName)},</p>
+            <p>A password reset was requested for your KynexOne account. Click the link below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+            <p><a href="{resetUrl}" style="background:#2563EB;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block">Reset Password</a></p>
+            <p>If you did not request this, you can safely ignore this email.</p>
+            <hr/>
+            <p style="font-size:12px;color:#666">KynexOne Workforce · {(string.IsNullOrWhiteSpace(appUrl) ? "your workspace" : appUrl)}</p>
+            """;
+
+        if (await _emailService.IsConfiguredAsync(cancellationToken))
+        {
+            try { await _emailService.SendAsync(user.Email, user.FullName, "Reset your KynexOne password", html, cancellationToken: cancellationToken); }
+            catch (Exception ex) { _log.LogWarning(ex, "Password reset email failed for {Email}. Token saved.", user.Email); }
+        }
+        else
+        {
+            _log.LogInformation("SMTP not configured — reset token saved for {Email}, no email sent.", user.Email);
+        }
+
+        return new ForgotPasswordResponse(safeMessage, null, null);
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, RequestContext context, CancellationToken cancellationToken)

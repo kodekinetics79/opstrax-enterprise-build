@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 
@@ -12,11 +13,34 @@ namespace Zayra.Api.Controllers;
 public class DashboardController : ControllerBase
 {
     private readonly ZayraDbContext _db;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
 
-    public DashboardController(ZayraDbContext db)
+    public DashboardController(ZayraDbContext db, IMemoryCache cache)
     {
         _db = db;
+        _cache = cache;
     }
+
+    // Single consolidated endpoint — replaces three separate calls (summary + trends + overview).
+    // Cached per-tenant for 60 s to absorb repeat loads without hammering MySQL.
+    [HttpGet("full")]
+    public async Task<IActionResult> Full([FromQuery] int months = 6, CancellationToken cancellationToken = default)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null)
+            return Ok(EmptyFull());
+
+        var cacheKey = $"dashboard:full:{tenantId}:{months}";
+        if (_cache.TryGetValue(cacheKey, out DashboardFullDto? cached))
+            return Ok(cached);
+
+        var result = await BuildFull(tenantId.Value, months, cancellationToken);
+        _cache.Set(cacheKey, result, CacheTtl);
+        return Ok(result);
+    }
+
+    // ── Kept for backwards-compat with any other consumers ───────────────────
 
     [HttpGet("summary")]
     public async Task<IActionResult> Summary(CancellationToken cancellationToken)
@@ -24,37 +48,13 @@ public class DashboardController : ControllerBase
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Ok(new DashboardSummaryDto(0, 0, 0, 0, 0, 0m, 0));
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
-        var monthStart = new DateOnly(today.Year, today.Month, 1);
+        var cacheKey = $"dashboard:summary:{tenantId}";
+        if (_cache.TryGetValue(cacheKey, out DashboardSummaryDto? cached))
+            return Ok(cached);
 
-        var employees = _db.Employees.Where(e => e.TenantId == tenantId);
-        var attendance = _db.AttendanceRecords.Where(a => a.TenantId == tenantId);
-
-        var totalEmployees = await employees.CountAsync(cancellationToken);
-        var activeEmployees = await employees.CountAsync(e => e.Status == "Active", cancellationToken);
-        var todayAttendance = attendance.Where(a => a.WorkDate == today);
-
-        var presentToday = await todayAttendance.CountAsync(a => a.Status == "Present", cancellationToken);
-        var onLeave = await todayAttendance.CountAsync(a => a.Status == "Leave" || a.Status == "On Leave", cancellationToken);
-        var absent = await todayAttendance.CountAsync(a => a.Status == "Absent", cancellationToken);
-        var overtimeHours = await attendance
-            .Where(a => a.WorkDate >= monthStart && a.WorkDate <= today)
-            .SumAsync(a => (decimal?)a.OvertimeHours, cancellationToken) ?? 0m;
-
-        var churnRisk = await attendance
-            .Where(a => a.WorkDate >= today.AddDays(-30) && (a.Status == "Absent" || a.OvertimeHours >= 4))
-            .Select(a => a.EmployeeId)
-            .Distinct()
-            .CountAsync(cancellationToken);
-
-        return Ok(new DashboardSummaryDto(
-            totalEmployees,
-            activeEmployees,
-            presentToday,
-            onLeave,
-            absent,
-            overtimeHours,
-            churnRisk));
+        var result = await BuildSummary(tenantId.Value, cancellationToken);
+        _cache.Set(cacheKey, result, CacheTtl);
+        return Ok(result);
     }
 
     [HttpGet("trends")]
@@ -62,70 +62,139 @@ public class DashboardController : ControllerBase
     {
         var tenantId = this.GetTenantId();
         months = Math.Clamp(months, 1, 12);
-
-        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
-        var currentMonth = new DateOnly(today.Year, today.Month, 1);
-        var firstMonth = currentMonth.AddMonths(-(months - 1));
-
         if (tenantId is null) return Ok(Array.Empty<DashboardTrendDto>());
 
-        var records = await _db.AttendanceRecords
-            .Where(a => a.TenantId == tenantId && a.WorkDate >= firstMonth && a.WorkDate <= today)
-            .Select(a => new
-            {
-                a.WorkDate,
-                a.Status,
-                a.OvertimeHours
-            })
-            .ToListAsync(cancellationToken);
+        var cacheKey = $"dashboard:trends:{tenantId}:{months}";
+        if (_cache.TryGetValue(cacheKey, out IReadOnlyList<DashboardTrendDto>? cached))
+            return Ok(cached);
 
-        var trends = Enumerable.Range(0, months)
-            .Select(offset =>
-            {
-                var month = firstMonth.AddMonths(offset);
-                var monthRecords = records
-                    .Where(a => a.WorkDate.Year == month.Year && a.WorkDate.Month == month.Month)
-                    .ToList();
-                var attendanceRate = monthRecords.Count == 0
-                    ? 0m
-                    : Math.Round(monthRecords.Count(a => a.Status == "Present") * 100m / monthRecords.Count, 1);
-
-                return new DashboardTrendDto(
-                    month.ToString("MMM"),
-                    attendanceRate,
-                    monthRecords.Sum(a => a.OvertimeHours));
-            })
-            .ToList();
-
-        return Ok(trends);
+        var result = await BuildTrends(tenantId.Value, months, cancellationToken);
+        _cache.Set(cacheKey, result, CacheTtl);
+        return Ok(result);
     }
 
-    /// <summary>
-    /// Consolidated, tenant-scoped operational data for the dashboard's
-    /// approval, payroll, workforce-mix, alerts and self-service panels.
-    /// Replaces the former static demo dataset on the frontend.
-    /// </summary>
     [HttpGet("overview")]
     public async Task<IActionResult> Overview(CancellationToken cancellationToken)
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null)
-        {
-            return Ok(new DashboardOverviewDto(
-                0, Array.Empty<ApprovalQueueItemDto>(), null,
+            return Ok(new DashboardOverviewDto(0, Array.Empty<ApprovalQueueItemDto>(), null,
                 Array.Empty<NamedValueDto>(), Array.Empty<NamedValueDto>(),
-                Array.Empty<NamedValueDto>(),
-                Array.Empty<DashboardAlertDto>(), 0, 0));
-        }
+                Array.Empty<NamedValueDto>(), Array.Empty<DashboardAlertDto>(), 0, 0));
 
+        var cacheKey = $"dashboard:overview:{tenantId}";
+        if (_cache.TryGetValue(cacheKey, out DashboardOverviewDto? cached))
+            return Ok(cached);
+
+        var result = await BuildOverview(tenantId.Value, cancellationToken);
+        _cache.Set(cacheKey, result, CacheTtl);
+        return Ok(result);
+    }
+
+    // ── Private builders ─────────────────────────────────────────────────────
+
+    private async Task<DashboardFullDto> BuildFull(Guid tenantId, int months, CancellationToken ct)
+    {
+        months = Math.Clamp(months, 1, 12);
+        var summaryTask  = BuildSummary(tenantId, ct);
+        var trendsTask   = BuildTrends(tenantId, months, ct);
+        var overviewTask = BuildOverview(tenantId, ct);
+        await Task.WhenAll(summaryTask, trendsTask, overviewTask);
+        return new DashboardFullDto(summaryTask.Result, trendsTask.Result, overviewTask.Result);
+    }
+
+    private async Task<DashboardSummaryDto> BuildSummary(Guid tenantId, CancellationToken ct)
+    {
         var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
         var monthStart = new DateOnly(today.Year, today.Month, 1);
 
-        // --- Approvals ---
-        var pendingApprovalsQuery = _db.ApprovalRequests
-            .Where(a => a.TenantId == tenantId && a.Status == "Pending");
-        var pendingApprovals = await pendingApprovalsQuery.CountAsync(cancellationToken);
-        var approvalQueue = await pendingApprovalsQuery
+        // Single query for employee counts instead of two separate CountAsync calls
+        var empCounts = await _db.Employees
+            .Where(e => e.TenantId == tenantId)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Active = g.Count(e => e.Status == "Active"),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        // Single query for today's attendance buckets instead of three CountAsync calls
+        var todayBuckets = await _db.AttendanceRecords
+            .Where(a => a.TenantId == tenantId && a.WorkDate == today)
+            .GroupBy(a => a.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        var present = todayBuckets.Where(b => b.Status == "Present").Sum(b => b.Count);
+        var onLeave = todayBuckets.Where(b => b.Status == "Leave" || b.Status == "On Leave").Sum(b => b.Count);
+        var absent = todayBuckets.Where(b => b.Status == "Absent").Sum(b => b.Count);
+
+        // Two remaining aggregation queries that can't be combined with the above
+        var overtimeHours = await _db.AttendanceRecords
+            .Where(a => a.TenantId == tenantId && a.WorkDate >= monthStart && a.WorkDate <= today)
+            .SumAsync(a => (decimal?)a.OvertimeHours, ct) ?? 0m;
+
+        var churnRisk = await _db.AttendanceRecords
+            .Where(a => a.TenantId == tenantId && a.WorkDate >= today.AddDays(-30)
+                && (a.Status == "Absent" || a.OvertimeHours >= 4))
+            .Select(a => a.EmployeeId)
+            .Distinct()
+            .CountAsync(ct);
+
+        return new DashboardSummaryDto(
+            empCounts?.Total ?? 0,
+            empCounts?.Active ?? 0,
+            present,
+            onLeave,
+            absent,
+            overtimeHours,
+            churnRisk);
+    }
+
+    private async Task<IReadOnlyList<DashboardTrendDto>> BuildTrends(Guid tenantId, int months, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var firstMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(-(months - 1));
+
+        // Push GROUP BY to MySQL instead of pulling every row into app memory
+        var grouped = await _db.AttendanceRecords
+            .Where(a => a.TenantId == tenantId && a.WorkDate >= firstMonth && a.WorkDate <= today)
+            .GroupBy(a => new { a.WorkDate.Year, a.WorkDate.Month })
+            .Select(g => new
+            {
+                g.Key.Year,
+                g.Key.Month,
+                Total = g.Count(),
+                PresentCount = g.Count(a => a.Status == "Present"),
+                OvertimeSum = g.Sum(a => (decimal?)a.OvertimeHours) ?? 0m,
+            })
+            .ToListAsync(ct);
+
+        return Enumerable.Range(0, months)
+            .Select(offset =>
+            {
+                var month = firstMonth.AddMonths(offset);
+                var row = grouped.FirstOrDefault(r => r.Year == month.Year && r.Month == month.Month);
+                var attendanceRate = row is { Total: > 0 }
+                    ? Math.Round(row.PresentCount * 100m / row.Total, 1)
+                    : 0m;
+                return new DashboardTrendDto(month.ToString("MMM"), attendanceRate, row?.OvertimeSum ?? 0m);
+            })
+            .ToList();
+    }
+
+    private async Task<DashboardOverviewDto> BuildOverview(Guid tenantId, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var monthStart = new DateOnly(today.Year, today.Month, 1);
+
+        // Run all independent overview queries concurrently
+        var pendingApprovalsTask = _db.ApprovalRequests
+            .CountAsync(a => a.TenantId == tenantId && a.Status == "Pending", ct);
+
+        var approvalQueueTask = _db.ApprovalRequests
+            .Where(a => a.TenantId == tenantId && a.Status == "Pending")
             .OrderByDescending(a => a.CreatedAtUtc)
             .Take(6)
             .Select(a => new ApprovalQueueItemDto(
@@ -133,21 +202,58 @@ public class DashboardController : ControllerBase
                 string.IsNullOrWhiteSpace(a.Title) ? a.EntityName : a.Title,
                 a.EntityName,
                 a.CreatedAtUtc))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(ct);
 
-        // --- Payroll (latest run) ---
-        var latestRun = await _db.PayrollRuns
+        var latestRunTask = _db.PayrollRuns
             .Where(p => p.TenantId == tenantId)
             .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(ct);
 
+        var workforceMixTask = _db.Employees
+            .Where(e => e.TenantId == tenantId && e.Status == "Active")
+            .GroupBy(e => e.EmploymentType)
+            .Select(g => new { Key = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
+            .ToListAsync(ct);
+
+        var headcountTask = _db.Employees
+            .Where(e => e.TenantId == tenantId && e.Status == "Active")
+            .GroupBy(e => e.Department)
+            .Select(g => new { Key = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
+            .Take(6)
+            .ToListAsync(ct);
+
+        var expiringTask = _db.EmployeeComplianceRecords
+            .Where(c => c.TenantId == tenantId && !c.IsDeleted
+                && c.ExpiryDate != null && c.ExpiryDate <= today.AddDays(60))
+            .OrderBy(c => c.ExpiryDate)
+            .Take(8)
+            .Select(c => new { c.FieldLabel, c.ExpiryDate })
+            .ToListAsync(ct);
+
+        var openLeaveTask = _db.LeaveRequests
+            .CountAsync(l => l.TenantId == tenantId
+                && l.Status != "Approved" && l.Status != "Rejected"
+                && l.Status != "Cancelled" && l.Status != "Withdrawn" && l.Status != "Draft", ct);
+
+        var newJoinersTask = _db.Employees
+            .CountAsync(e => e.TenantId == tenantId
+                && e.JoiningDate >= monthStart.ToDateTime(TimeOnly.MinValue), ct);
+
+        await Task.WhenAll(
+            pendingApprovalsTask, approvalQueueTask, latestRunTask,
+            workforceMixTask, headcountTask, expiringTask,
+            openLeaveTask, newJoinersTask);
+
+        // Payroll slip breakdown — depends on latestRun result
         PayrollSummaryDto? payrollSummary = null;
         IReadOnlyList<NamedValueDto> payrollByEntity = Array.Empty<NamedValueDto>();
+        var latestRun = await latestRunTask;
         if (latestRun is not null)
         {
-            var periodLabel = new DateOnly(latestRun.Year, latestRun.Month, 1).ToString("MMM yyyy");
             payrollSummary = new PayrollSummaryDto(
-                periodLabel,
+                new DateOnly(latestRun.Year, latestRun.Month, 1).ToString("MMM yyyy"),
                 latestRun.TotalGrossSalary,
                 latestRun.TotalNetSalary,
                 latestRun.TotalDeductions,
@@ -160,80 +266,56 @@ public class DashboardController : ControllerBase
                 .Select(g => new { Key = g.Key, Total = g.Sum(x => x.NetSalary) })
                 .OrderByDescending(x => x.Total)
                 .Take(8)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(ct);
+
             payrollByEntity = rawPayroll
                 .Select(x => new NamedValueDto(string.IsNullOrWhiteSpace(x.Key) ? "Unspecified" : x.Key, x.Total))
                 .ToList();
         }
 
-        // --- Workforce mix (active employees by employment type) ---
-        var rawMix = await _db.Employees
-            .Where(e => e.TenantId == tenantId && e.Status == "Active")
-            .GroupBy(e => e.EmploymentType)
-            .Select(g => new { Key = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .ToListAsync(cancellationToken);
-        var workforceMix = rawMix
+        var workforceMix = (await workforceMixTask)
             .Select(x => new NamedValueDto(string.IsNullOrWhiteSpace(x.Key) ? "Unspecified" : x.Key, x.Count))
             .ToList();
 
-        // --- Headcount by department (active employees) ---
-        var rawDept = await _db.Employees
-            .Where(e => e.TenantId == tenantId && e.Status == "Active")
-            .GroupBy(e => e.Department)
-            .Select(g => new { Key = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .Take(6)
-            .ToListAsync(cancellationToken);
-        var headcountByDepartment = rawDept
+        var headcount = (await headcountTask)
             .Select(x => new NamedValueDto(string.IsNullOrWhiteSpace(x.Key) ? "Unassigned" : x.Key, x.Count))
             .ToList();
 
-        // --- Alerts (compliance documents expiring within 60 days) ---
-        var horizon = today.AddDays(60);
-        var expiring = await _db.EmployeeComplianceRecords
-            .Where(c => c.TenantId == tenantId && !c.IsDeleted
-                && c.ExpiryDate != null && c.ExpiryDate <= horizon)
-            .OrderBy(c => c.ExpiryDate)
-            .Take(8)
-            .Select(c => new { c.FieldLabel, c.ExpiryDate })
-            .ToListAsync(cancellationToken);
-
-        var alerts = expiring.Select(c =>
+        var alerts = (await expiringTask).Select(c =>
         {
             var expiry = c.ExpiryDate!.Value;
             var severity = expiry < today ? "Critical" : expiry <= today.AddDays(30) ? "Warning" : "Info";
             var label = string.IsNullOrWhiteSpace(c.FieldLabel) ? "Document" : c.FieldLabel;
-            var title = expiry < today
-                ? $"{label} expired {expiry:dd MMM}"
-                : $"{label} expires {expiry:dd MMM}";
+            var title = expiry < today ? $"{label} expired {expiry:dd MMM}" : $"{label} expires {expiry:dd MMM}";
             return new DashboardAlertDto(title, severity);
         }).ToList();
 
-        // --- Self-service signals ---
-        var openLeaveRequests = await _db.LeaveRequests
-            .CountAsync(l => l.TenantId == tenantId
-                && l.Status != "Approved" && l.Status != "Rejected"
-                && l.Status != "Cancelled" && l.Status != "Withdrawn" && l.Status != "Draft",
-                cancellationToken);
-
-        var newJoinersThisMonth = await _db.Employees
-            .CountAsync(e => e.TenantId == tenantId
-                && e.JoiningDate >= monthStart.ToDateTime(TimeOnly.MinValue),
-                cancellationToken);
-
-        return Ok(new DashboardOverviewDto(
-            pendingApprovals,
-            approvalQueue,
+        return new DashboardOverviewDto(
+            await pendingApprovalsTask,
+            await approvalQueueTask,
             payrollSummary,
             payrollByEntity,
             workforceMix,
-            headcountByDepartment,
+            headcount,
             alerts,
-            openLeaveRequests,
-            newJoinersThisMonth));
+            await openLeaveTask,
+            await newJoinersTask);
     }
+
+    private static DashboardFullDto EmptyFull() => new(
+        new DashboardSummaryDto(0, 0, 0, 0, 0, 0m, 0),
+        Array.Empty<DashboardTrendDto>(),
+        new DashboardOverviewDto(0, Array.Empty<ApprovalQueueItemDto>(), null,
+            Array.Empty<NamedValueDto>(), Array.Empty<NamedValueDto>(),
+            Array.Empty<NamedValueDto>(), Array.Empty<DashboardAlertDto>(), 0, 0));
 }
+
+// ── DTOs ─────────────────────────────────────────────────────────────────────
+
+public record DashboardFullDto(
+    DashboardSummaryDto Summary,
+    IReadOnlyList<DashboardTrendDto> Trends,
+    DashboardOverviewDto Overview);
 
 public record DashboardSummaryDto(
     int TotalEmployees,

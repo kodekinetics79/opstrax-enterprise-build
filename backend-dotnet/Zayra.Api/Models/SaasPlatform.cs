@@ -1,5 +1,38 @@
 namespace Zayra.Api.Models;
 
+// ── Subscription status constants ─────────────────────────────────────────────
+
+public static class SubscriptionStatuses
+{
+    public const string Trial          = "Trial";
+    public const string Active         = "Active";
+    public const string PastDue        = "PastDue";
+    public const string Suspended      = "Suspended";
+    public const string Cancelled      = "Cancelled";
+    public const string ManualContract = "ManualContract";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>
+    {
+        Trial, Active, PastDue, Suspended, Cancelled, ManualContract
+    };
+}
+
+// ── Feature key constants ─────────────────────────────────────────────────────
+
+public static class FeatureKeys
+{
+    public const string Recruitment = "recruitment";
+    public const string Performance = "performance";
+    public const string Compliance  = "compliance";
+    public const string AiAssistant = "ai_assistant";
+    public const string Finance     = "finance";
+    public const string Payroll     = "payroll";
+    public const string Shifts      = "shifts";
+    public const string Overtime    = "overtime";
+    public const string MobileApp   = "mobile_app";
+    public const string WpsExport   = "wps_export";
+}
+
 // ── Tenant Subscription ───────────────────────────────────────────────────────
 
 public class TenantSubscription
@@ -7,7 +40,7 @@ public class TenantSubscription
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
     public string Plan { get; set; } = "Starter"; // Starter, Growth, Enterprise
-    public string Status { get; set; } = "Active"; // Active, Suspended, Cancelled, Trial
+    public string Status { get; set; } = "Active"; // see SubscriptionStatuses constants
     public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAtUtc { get; set; }
     public int MaxEmployees { get; set; } = 50;
@@ -80,6 +113,26 @@ public class TenantFieldHelpText
     public string Text { get; set; } = string.Empty;
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? UpdatedBy { get; set; }
+}
+
+// ── Platform Support Sessions (break-glass access) ───────────────────────────
+
+/// <summary>Audit-trail record for every platform-admin support access session.</summary>
+public class PlatformSupportSession
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid TargetUserId { get; set; }
+    public string TargetUserEmail { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public string StartedByEmail { get; set; } = string.Empty;
+    public string StartedByIp { get; set; } = string.Empty;
+    public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAtUtc { get; set; }
+    public DateTime? EndedAtUtc { get; set; }
+    /// <summary>SHA-256 hash of the impersonation JWT — lets us match the token to a session on End.</summary>
+    public string TokenHash { get; set; } = string.Empty;
+    public bool IsActive => EndedAtUtc is null && DateTime.UtcNow < ExpiresAtUtc;
 }
 
 // ── Country Payroll Rules (Configurable per country) ─────────────────────────

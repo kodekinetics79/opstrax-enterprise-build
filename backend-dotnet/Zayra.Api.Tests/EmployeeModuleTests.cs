@@ -2,12 +2,16 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Audit;
 using Zayra.Api.Infrastructure.Auth;
+using Zayra.Api.Infrastructure.Documents.Letters;
+using Zayra.Api.Infrastructure.Email;
+using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Tests;
@@ -69,7 +73,7 @@ public class EmployeeModuleTests
 
     private static EmployeesController CreateController(ZayraDbContext db, Guid tenantId)
     {
-        var controller = new EmployeesController(db, new Pbkdf2PasswordHasher(), new AuditService(db), new FakeDocumentStorage(), new Zayra.Api.Infrastructure.Notifications.NotificationService(db), new FakeHijriDateService(), new Zayra.Api.Infrastructure.Common.DataScopeService(db));
+        var controller = new EmployeesController(db, new Pbkdf2PasswordHasher(), new AuditService(db), new FakeDocumentStorage(), new NotificationService(db, new FakeEmailService(), NullLogger<NotificationService>.Instance), new FakeHijriDateService(), new Zayra.Api.Infrastructure.Common.DataScopeService(db), new FakeLetterService());
         var userId = Guid.NewGuid();
         var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
@@ -91,4 +95,29 @@ file sealed class FakeDocumentStorage : Zayra.Api.Infrastructure.Documents.IDocu
 file sealed class FakeHijriDateService : Zayra.Api.Infrastructure.Localization.IHijriDateService
 {
     public Zayra.Api.Infrastructure.Localization.DateConversionDto FromGregorian(DateOnly date) => new(date.ToString("yyyy-MM-dd"), "1447-01-01", 1447, 1, 1);
+}
+
+file sealed class FakeEmailService : IEmailService
+{
+    public Task SendAsync(string toAddress, string toName, string subject, string htmlBody,
+        IReadOnlyList<EmailAttachment>? attachments = null, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+}
+
+file sealed class FakeLetterService : ILetterService
+{
+    public Task<byte[]> GeneratePayslipPdfAsync(PayslipData data, CancellationToken cancellationToken = default)
+        => Task.FromResult(Array.Empty<byte>());
+
+    public Task<byte[]> GenerateAppointmentLetterAsync(LetterData data, CancellationToken cancellationToken = default)
+        => Task.FromResult(Array.Empty<byte>());
+
+    public Task<byte[]> GenerateExperienceLetterAsync(LetterData data, CancellationToken cancellationToken = default)
+        => Task.FromResult(Array.Empty<byte>());
+
+    public Task<byte[]> GenerateOfferLetterAsync(OfferLetterData data, CancellationToken cancellationToken = default)
+        => Task.FromResult(Array.Empty<byte>());
 }

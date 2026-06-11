@@ -225,6 +225,7 @@ public class ZayraDbContext : DbContext
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
     public DbSet<CountryPayrollRule> CountryPayrollRules => Set<CountryPayrollRule>();
     public DbSet<TenantFieldHelpText> TenantFieldHelpTexts => Set<TenantFieldHelpText>();
+    public DbSet<PlatformSupportSession> PlatformSupportSessions => Set<PlatformSupportSession>();
     // ── AI Intelligence ────────────────────────────────────────────────────────
     public DbSet<AIModelConfig> AIModelConfigs => Set<AIModelConfig>();
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
@@ -700,6 +701,7 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(30).IsRequired();
             entity.Property(x => x.OvertimeHours).HasPrecision(5, 2);
             entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.WorkDate }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.WorkDate, x.Status });
         });
 
         modelBuilder.Entity<AttendanceDevice>(entity =>
@@ -1439,6 +1441,20 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.FieldKey).HasMaxLength(120);
             entity.Property(x => x.Text).HasMaxLength(500);
             entity.HasIndex(x => new { x.TenantId, x.FieldKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<PlatformSupportSession>(entity =>
+        {
+            entity.ToTable("platform_support_sessions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Reason).HasMaxLength(500);
+            entity.Property(x => x.StartedByEmail).HasMaxLength(256);
+            entity.Property(x => x.StartedByIp).HasMaxLength(64);
+            entity.Property(x => x.TargetUserEmail).HasMaxLength(256);
+            entity.Property(x => x.TokenHash).HasMaxLength(256);
+            entity.Ignore(x => x.IsActive);
+            entity.HasIndex(x => new { x.TenantId, x.StartedAtUtc });
+            entity.HasIndex(x => x.TargetUserId);
         });
 
         // ── AI Intelligence ────────────────────────────────────────────────────

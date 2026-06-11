@@ -31,32 +31,15 @@ public class TenantAdminController : ControllerBase
     }
 
     [HttpPut("subscription")]
-    public async Task<IActionResult> UpsertSubscription([FromBody] UpsertSubscriptionRequest req, CancellationToken ct)
+    public IActionResult UpsertSubscription()
     {
-        var tenantId = this.GetTenantId();
-        if (tenantId is null) return Unauthorized();
-
-        var sub = await _db.TenantSubscriptions
-            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
-
-        if (sub is null)
+        // Subscription plan, status, and seat limits are controlled exclusively by the
+        // platform administrator. A company admin cannot self-upgrade or change limits.
+        return StatusCode(StatusCodes.Status403Forbidden, new
         {
-            sub = new TenantSubscription { TenantId = tenantId.Value };
-            _db.TenantSubscriptions.Add(sub);
-        }
-
-        sub.Plan = req.Plan;
-        sub.Status = req.Status;
-        sub.MaxEmployees = req.MaxEmployees;
-        sub.MaxUsers = req.MaxUsers;
-        sub.BillingEmail = req.BillingEmail;
-        sub.BillingCycle = req.BillingCycle;
-        sub.MonthlyAmount = req.MonthlyAmount;
-        sub.CurrencyCode = req.CurrencyCode;
-        sub.ExpiresAtUtc = req.ExpiresAtUtc;
-
-        await _db.SaveChangesAsync(ct);
-        return Ok(sub);
+            error = "not_permitted",
+            message = "Subscription changes are managed by KynexOne platform administrators. Please contact support."
+        });
     }
 
     // ── Feature Flags ───────────────────────────────────────────────────────
@@ -76,27 +59,15 @@ public class TenantAdminController : ControllerBase
     }
 
     [HttpPut("feature-flags/{featureKey}")]
-    public async Task<IActionResult> SetFeatureFlag(string featureKey, [FromBody] SetFeatureFlagRequest req, CancellationToken ct)
+    public IActionResult SetFeatureFlag(string featureKey)
     {
-        var tenantId = this.GetTenantId();
-        if (tenantId is null) return Unauthorized();
-
-        var flag = await _db.TenantFeatureFlags
-            .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.FeatureKey == featureKey, ct);
-
-        if (flag is null)
+        // Module/feature entitlements are provisioned by the platform administrator only.
+        // A company admin can read their flags but cannot enable or disable modules.
+        return StatusCode(StatusCodes.Status403Forbidden, new
         {
-            flag = new TenantFeatureFlag { TenantId = tenantId.Value, FeatureKey = featureKey };
-            _db.TenantFeatureFlags.Add(flag);
-        }
-
-        flag.IsEnabled = req.IsEnabled;
-        flag.ConfigJson = req.ConfigJson;
-        flag.UpdatedAtUtc = DateTime.UtcNow;
-        flag.UpdatedBy = this.GetUserId();
-
-        await _db.SaveChangesAsync(ct);
-        return Ok(flag);
+            error = "not_permitted",
+            message = "Feature flag changes are managed by KynexOne platform administrators. Please contact support."
+        });
     }
 
     // ── Localization ─────────────────────────────────────────────────────────

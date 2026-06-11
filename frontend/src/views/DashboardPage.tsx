@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import {
   AlertTriangle,
   ArrowRight,
@@ -22,24 +23,28 @@ import { dashboardApi } from '../api/dashboard';
 import type { DashboardSummary, DashboardTrend, DashboardOverview } from '../api/dashboard';
 import { aiAssistantApi } from '../api/intelligence';
 import type { AIInsight } from '../api/intelligence';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+
 import { DataPanel } from '../components/DataPanel';
 import { KpiCard } from '../components/KpiCard';
 import { StatusChip } from '../components/StatusChip';
 import type { AiInsight } from '../types/ui';
+
+const DashboardAttendanceTrendChart = dynamic(
+  () => import('../components/charts/dashboard/DashboardAttendanceTrendChart').then((m) => m.DashboardAttendanceTrendChart),
+  { ssr: false },
+);
+const DashboardAttendanceDonutChart = dynamic(
+  () => import('../components/charts/dashboard/DashboardAttendanceDonutChart').then((m) => m.DashboardAttendanceDonutChart),
+  { ssr: false },
+);
+const DashboardPayrollByEntityChart = dynamic(
+  () => import('../components/charts/dashboard/DashboardPayrollByEntityChart').then((m) => m.DashboardPayrollByEntityChart),
+  { ssr: false },
+);
+const DashboardWorkforceMixChart = dynamic(
+  () => import('../components/charts/dashboard/DashboardWorkforceMixChart').then((m) => m.DashboardWorkforceMixChart),
+  { ssr: false },
+);
 
 const mixColors = ['#2F6BFF', '#00C896', '#5EEBFF', '#94A3B8', '#A78BFA', '#F59E0B'];
 const mixDotClass = ['bg-sapphire', 'bg-emeraldZ', 'bg-cyanAccent', 'bg-slate-400', 'bg-violet-400', 'bg-amber-500'];
@@ -85,13 +90,6 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-const tooltipStyle = {
-  borderRadius: 8,
-  border: '1px solid rgba(148,163,184,0.25)',
-  fontSize: 12,
-  boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-};
-
 const sevToTone = { Critical: 'critical', Warning: 'warning', Info: 'info' } as const;
 
 function fmtMoney(n: number): string {
@@ -117,9 +115,11 @@ export function DashboardPage() {
   const [insights, setInsights] = useState<AIInsight[]>([]);
 
   useEffect(() => {
-    dashboardApi.summary().then(setSummary).catch(() => {});
-    dashboardApi.trends(6).then(setTrends).catch(() => {});
-    dashboardApi.overview().then(setOverview).catch(() => {});
+    dashboardApi.full(6).then((d) => {
+      setSummary(d.summary);
+      setTrends(d.trends);
+      setOverview(d.overview);
+    }).catch(() => {});
     aiAssistantApi.listInsights({ acknowledged: false }).then((r) => setInsights(r.items)).catch(() => {});
   }, []);
 
@@ -200,26 +200,7 @@ export function DashboardPage() {
         >
           <div className="h-[230px]">
             {hasTrend ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trends as unknown as Record<string, unknown>[]} margin={{ left: -20, right: 4, top: 6, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="grad-present" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2F6BFF" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#2F6BFF" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="grad-late" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#00C896" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#00C896" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
-                  <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                  <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Area type="monotone" dataKey="attendanceRate" name="Attendance %" stroke="#2F6BFF" strokeWidth={2} fill="url(#grad-present)" />
-                  <Area type="monotone" dataKey="overtimeHours" name="OT Hours" stroke="#00C896" strokeWidth={2} fill="url(#grad-late)" />
-                </AreaChart>
-              </ResponsiveContainer>
+              <DashboardAttendanceTrendChart data={trends} />
             ) : (
               <EmptyState message="No attendance history recorded yet." />
             )}
@@ -233,14 +214,7 @@ export function DashboardPage() {
           ) : (
             <div className="flex items-center gap-3">
               <div className="relative h-[150px] w-[150px] shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={attendanceDonut} dataKey="value" nameKey="name" innerRadius={46} outerRadius={66} paddingAngle={2}>
-                      {attendanceDonut.map((e) => <Cell key={e.name} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tooltipStyle} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <DashboardAttendanceDonutChart data={attendanceDonut} />
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-xl font-bold text-slate-950 dark:text-white">{attendanceRate}%</span>
                   <span className="text-[10px] font-medium text-slate-400">present</span>
@@ -290,15 +264,7 @@ export function DashboardPage() {
                 {payrollByEntity.length === 0 ? (
                   <EmptyState message="No payslip breakdown." />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={payrollByEntity} margin={{ left: -22, right: 4, top: 4, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-slate-100 dark:text-white/[0.06]" />
-                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 10 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v) => [fmtMoney(Number(v)), 'Net']} />
-                      <Bar dataKey="value" fill="#2F6BFF" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <DashboardPayrollByEntityChart data={payrollByEntity} />
                 )}
               </div>
             </>
@@ -341,16 +307,7 @@ export function DashboardPage() {
           ) : (
             <div className="flex items-center gap-3">
               <div className="h-[150px] w-[150px] shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={workforceMix} dataKey="value" nameKey="name" innerRadius={46} outerRadius={66} paddingAngle={2}>
-                      {workforceMix.map((entry, index) => (
-                        <Cell key={entry.name} fill={mixColors[index % mixColors.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v, n) => [`${v}`, n]} />
-                  </PieChart>
-                </ResponsiveContainer>
+                <DashboardWorkforceMixChart data={workforceMix} />
               </div>
               <div className="flex-1 space-y-1.5">
                 {workforceMix.slice(0, 5).map((item, index) => (

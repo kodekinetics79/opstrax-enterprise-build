@@ -284,6 +284,25 @@ public class AccessController : ControllerBase
         {
             var tenantId = GetTenantId();
             if (tenantId is null) return Unauthorized();
+
+            // Enforce seat limit — inviting an employee creates or reactivates a login user.
+            var sub = await _db.TenantSubscriptions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId, cancellationToken);
+
+            if (sub is not null && sub.MaxUsers > 0)
+            {
+                var count = await _db.Users.CountAsync(u => u.TenantId == tenantId && u.IsActive && !u.IsDeleted, cancellationToken);
+                if (count >= sub.MaxUsers)
+                    return UnprocessableEntity(new
+                    {
+                        error = "user_limit_reached",
+                        message = $"You have reached your user limit ({count}/{sub.MaxUsers}). Please contact your administrator to upgrade.",
+                        current = count,
+                        limit = sub.MaxUsers
+                    });
+            }
+
             var invite = await _accessManagement.InviteEmployeeLoginAsync(tenantId.Value, request, GetContext(), cancellationToken);
             return Created($"/api/access/users/{invite.UserId}", invite);
         }

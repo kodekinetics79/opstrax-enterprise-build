@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Audit;
 using Zayra.Api.Infrastructure.Auth;
+using Zayra.Api.Infrastructure.Email;
 
 namespace Zayra.Api.Tests;
 
@@ -35,7 +37,7 @@ public class AuthServiceTests
         });
         var tokenService = new JwtTokenService(jwt);
         var audit = new AuditService(db);
-        var auth = new AuthService(db, hasher, tokenService, audit, jwt);
+        var auth = new AuthService(db, hasher, tokenService, audit, new FakeEmailService(), jwt, NullLogger<AuthService>.Instance);
         await SeedAuthUser(db, hasher);
 
         var login = await auth.LoginAsync(new LoginRequest("admin@zayra.local", "ChangeMe123!", "zayra"), new RequestContext("127.0.0.1", "tests"), CancellationToken.None);
@@ -84,4 +86,14 @@ public class AuthServiceTests
         db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id });
         await db.SaveChangesAsync();
     }
+}
+
+file sealed class FakeEmailService : IEmailService
+{
+    public Task SendAsync(string toAddress, string toName, string subject, string htmlBody,
+        IReadOnlyList<EmailAttachment>? attachments = null, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
 }

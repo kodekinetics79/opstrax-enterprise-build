@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Data;
+using Zayra.Api.Models;
 
 namespace Zayra.Api.Infrastructure.Filters;
 
@@ -17,16 +18,12 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
 
     private readonly ZayraDbContext _db;
 
-    public SubscriptionGuardFilter(ZayraDbContext db)
-    {
-        _db = db;
-    }
+    public SubscriptionGuardFilter(ZayraDbContext db) => _db = db;
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var path = context.HttpContext.Request.Path.Value ?? string.Empty;
 
-        // Skip exempt routes
         foreach (var prefix in SkippedPrefixes)
         {
             if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -36,11 +33,9 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
             }
         }
 
-        // Extract tenant_id from JWT claims
         var tenantClaim = context.HttpContext.User.FindFirstValue("tenant_id");
         if (!Guid.TryParse(tenantClaim, out var tenantId))
         {
-            // No tenant claim — let the controller handle auth
             await next();
             return;
         }
@@ -49,39 +44,49 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.TenantId == tenantId);
 
-        // No subscription yet — allow through
         if (sub is null)
         {
             await next();
             return;
         }
 
-        // Suspended or Cancelled
-        if (sub.Status is "Suspended" or "Cancelled")
+        // Suspended or Cancelled — full block.
+        if (sub.Status is SubscriptionStatuses.Suspended or SubscriptionStatuses.Cancelled)
         {
             context.Result = new ObjectResult(new
             {
                 error = "subscription_inactive",
+                status = sub.Status,
                 message = "Your subscription is inactive. Please contact support."
             })
-            {
-                StatusCode = StatusCodes.Status402PaymentRequired
-            };
+            { StatusCode = StatusCodes.Status402PaymentRequired };
             return;
         }
 
-        // Expired
+        // ManualContract — enterprise/bespoke deal, no expiry enforcement; always allow.
+        if (sub.Status == SubscriptionStatuses.ManualContract)
+        {
+            await next();
+            return;
+        }
+
+        // Expired (applies to Trial, Active, PastDue).
         if (sub.ExpiresAtUtc.HasValue && sub.ExpiresAtUtc.Value < DateTime.UtcNow)
         {
             context.Result = new ObjectResult(new
             {
                 error = "subscription_expired",
+                status = sub.Status,
                 message = "Your subscription has expired. Please renew to continue."
             })
-            {
-                StatusCode = StatusCodes.Status402PaymentRequired
-            };
+            { StatusCode = StatusCodes.Status402PaymentRequired };
             return;
+        }
+
+        // PastDue — allow through but signal it in a response header so the frontend can show a banner.
+        if (sub.Status == SubscriptionStatuses.PastDue)
+        {
+            context.HttpContext.Response.Headers["X-Subscription-Status"] = "past_due";
         }
 
         await next();
