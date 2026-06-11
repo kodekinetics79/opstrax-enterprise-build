@@ -70,11 +70,26 @@ public record EmployeeStatusChangeRequest(
 
 public record EmployeeDocumentUploadMetadata(
     [Required, MaxLength(80)] string DocumentType,
+    [MaxLength(80)] string? DocumentCategory,
     DateOnly? IssueDate,
     DateOnly? ExpiryDate,
     DateOnly? RenewalReminderDate,
     bool IsRequired,
-    [MaxLength(40)] string? ApprovalStatus);
+    [MaxLength(40)] string? ApprovalStatus,
+    [MaxLength(1000)] string? Notes);
+
+public record UpdateDocumentMetadataRequest(
+    [MaxLength(80)] string? DocumentType,
+    [MaxLength(80)] string? DocumentCategory,
+    DateOnly? IssueDate,
+    DateOnly? ExpiryDate,
+    DateOnly? RenewalReminderDate,
+    bool? IsRequired,
+    [MaxLength(1000)] string? Notes);
+
+public record DocumentVerifyRequest([MaxLength(1000)] string? Notes);
+public record DocumentRejectRequest([Required, MaxLength(1000)] string Reason);
+public record DocumentExpiryCheckResult(int MarkedExpired, int RemindersSent);
 
 public record EmployeeTransferCreateRequest(
     string? NewBranch,

@@ -177,7 +177,7 @@ public class AttendanceRegularizationRequest
     public DateTime? RequestedInUtc { get; set; }
     public DateTime? RequestedOutUtc { get; set; }
     public string Reason { get; set; } = string.Empty;
-    public string Status { get; set; } = "PendingManager";
+    public string Status { get; set; } = "Submitted";
     public Guid? RequestedByUserId { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? DecidedAtUtc { get; set; }

@@ -7,6 +7,7 @@ public class EmployeeDocument
     public int? EmployeeId { get; set; }
     public Guid? DraftId { get; set; }
     public string DocumentType { get; set; } = string.Empty;
+    public string DocumentCategory { get; set; } = string.Empty;
     public string FileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
     public string StorageUrl { get; set; } = string.Empty;
@@ -22,6 +23,7 @@ public class EmployeeDocument
     public Guid? VerifiedBy { get; set; }
     public DateTime? LastDownloadedAtUtc { get; set; }
     public Guid? LastDownloadedBy { get; set; }
+    public string Notes { get; set; } = string.Empty;
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAtUtc { get; set; }
     public Guid? DeletedBy { get; set; }

@@ -5,6 +5,7 @@ using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Attendance;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Infrastructure.Attendance;
@@ -12,8 +13,13 @@ namespace Zayra.Api.Infrastructure.Attendance;
 public class AttendanceService : IAttendanceService
 {
     private readonly ZayraDbContext _db;
+    private readonly INotificationService _notifications;
 
-    public AttendanceService(ZayraDbContext db) => _db = db;
+    public AttendanceService(ZayraDbContext db, INotificationService notifications)
+    {
+        _db = db;
+        _notifications = notifications;
+    }
 
     public async Task<PagedResult<AttendanceDevice>> GetDevicesAsync(Guid tenantId, int page, int pageSize, CancellationToken ct)
     {
@@ -349,6 +355,12 @@ public class AttendanceService : IAttendanceService
 
     public async Task<AttendanceRegularizationRequest> CreateRegularizationAsync(Guid tenantId, RegularizationRequestDto request, RequestContext context, CancellationToken ct)
     {
+        var hasPending = await _db.AttendanceRegularizationRequests
+            .AnyAsync(x => x.TenantId == tenantId && x.EmployeeId == request.EmployeeId
+                && x.WorkDate == request.WorkDate && x.Status == "Submitted", ct);
+        if (hasPending)
+            throw new InvalidOperationException("A pending correction request already exists for this employee and date.");
+
         var reg = new AttendanceRegularizationRequest
         {
             TenantId = tenantId,
@@ -358,14 +370,19 @@ public class AttendanceService : IAttendanceService
             RequestedInUtc = request.RequestedInUtc,
             RequestedOutUtc = request.RequestedOutUtc,
             Reason = Clean(request.Reason),
+            Status = "Submitted",
             RequestedByUserId = context.UserId,
             PayrollLockChecked = await IsLocked(tenantId, request.WorkDate, ct)
         };
         _db.AttendanceRegularizationRequests.Add(reg);
         _db.AttendanceCorrectionApprovals.Add(new AttendanceCorrectionApproval { TenantId = tenantId, RegularizationRequestId = reg.Id, ApprovalLevel = "Manager" });
         _db.AttendanceCorrectionApprovals.Add(new AttendanceCorrectionApproval { TenantId = tenantId, RegularizationRequestId = reg.Id, ApprovalLevel = "HR" });
-        await Audit(tenantId, context, "attendance.regularization.created", "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
+        await Audit(tenantId, context, "attendance.regularization.submitted", "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
         await _db.SaveChangesAsync(ct);
+        await _notifications.NotifyAsync(tenantId, null,
+            "Correction Request Submitted",
+            $"Attendance correction request submitted for {reg.WorkDate:yyyy-MM-dd} (employee {reg.EmployeeId}).",
+            "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
         return reg;
     }
 
@@ -384,7 +401,13 @@ public class AttendanceService : IAttendanceService
     {
         var reg = await _db.AttendanceRegularizationRequests.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
         if (reg is null) return null;
-        if (reg.PayrollLockChecked) throw new InvalidOperationException("Attendance period is payroll locked.");
+        if (context.UserId.HasValue && reg.RequestedByUserId == context.UserId)
+            throw new InvalidOperationException("Cannot approve your own correction request.");
+        if (reg.Status != "Submitted")
+            throw new InvalidOperationException($"Request is in '{reg.Status}' status and cannot be approved.");
+        if (reg.PayrollLockChecked)
+            throw new InvalidOperationException("Attendance period is payroll locked.");
+        var beforeStatus = reg.Status;
         reg.Status = "Approved";
         reg.DecidedAtUtc = DateTime.UtcNow;
         var approval = await _db.AttendanceCorrectionApprovals.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.RegularizationRequestId == id && x.ApprovalLevel == "HR", ct);
@@ -396,8 +419,13 @@ public class AttendanceService : IAttendanceService
             approval.DecidedByUserId = context.UserId;
         }
         await ApplyRegularization(tenantId, reg, context, ct);
-        await Audit(tenantId, context, "attendance.regularization.approved", "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
+        await Audit(tenantId, context, "attendance.regularization.approved", "AttendanceRegularizationRequest", reg.Id.ToString(),
+            JsonSerializer.Serialize(new { before = beforeStatus, after = "Approved" }), ct);
         await _db.SaveChangesAsync(ct);
+        await _notifications.NotifyAsync(tenantId, reg.RequestedByUserId,
+            "Correction Request Approved",
+            $"Your attendance correction for {reg.WorkDate:yyyy-MM-dd} has been approved.",
+            "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
         return reg;
     }
 
@@ -405,10 +433,45 @@ public class AttendanceService : IAttendanceService
     {
         var reg = await _db.AttendanceRegularizationRequests.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
         if (reg is null) return null;
+        if (reg.Status != "Submitted")
+            throw new InvalidOperationException($"Request is in '{reg.Status}' status and cannot be rejected.");
+        var beforeStatus = reg.Status;
         reg.Status = "Rejected";
         reg.DecidedAtUtc = DateTime.UtcNow;
-        await Audit(tenantId, context, "attendance.regularization.rejected", "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
+        var approval = await _db.AttendanceCorrectionApprovals.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.RegularizationRequestId == id && x.ApprovalLevel == "Manager", ct);
+        if (approval is not null)
+        {
+            approval.Decision = "Rejected";
+            approval.Comments = Clean(request.Comments);
+            approval.DecidedAtUtc = DateTime.UtcNow;
+            approval.DecidedByUserId = context.UserId;
+        }
+        await Audit(tenantId, context, "attendance.regularization.rejected", "AttendanceRegularizationRequest", reg.Id.ToString(),
+            JsonSerializer.Serialize(new { before = beforeStatus, after = "Rejected", reason = Clean(request.Comments) }), ct);
         await _db.SaveChangesAsync(ct);
+        await _notifications.NotifyAsync(tenantId, reg.RequestedByUserId,
+            "Correction Request Rejected",
+            $"Your attendance correction for {reg.WorkDate:yyyy-MM-dd} has been rejected.",
+            "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
+        return reg;
+    }
+
+    public async Task<AttendanceRegularizationRequest?> CancelRegularizationAsync(Guid tenantId, Guid id, string reason, RequestContext context, CancellationToken ct)
+    {
+        var reg = await _db.AttendanceRegularizationRequests.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
+        if (reg is null) return null;
+        if (reg.Status != "Submitted")
+            throw new InvalidOperationException($"Request is in '{reg.Status}' status and cannot be cancelled.");
+        var beforeStatus = reg.Status;
+        reg.Status = "Cancelled";
+        reg.DecidedAtUtc = DateTime.UtcNow;
+        await Audit(tenantId, context, "attendance.regularization.cancelled", "AttendanceRegularizationRequest", reg.Id.ToString(),
+            JsonSerializer.Serialize(new { before = beforeStatus, after = "Cancelled", reason }), ct);
+        await _db.SaveChangesAsync(ct);
+        await _notifications.NotifyAsync(tenantId, reg.RequestedByUserId,
+            "Correction Request Cancelled",
+            $"Attendance correction request for {reg.WorkDate:yyyy-MM-dd} has been cancelled.",
+            "AttendanceRegularizationRequest", reg.Id.ToString(), ct);
         return reg;
     }
 
@@ -416,7 +479,7 @@ public class AttendanceService : IAttendanceService
     {
         var records = await _db.AttendanceDailyRecords.Where(x => x.TenantId == tenantId && x.WorkDate == date).ToListAsync(ct);
         var activeEmployees = await _db.Employees.CountAsync(x => x.TenantId == tenantId && x.Status == "Active" && !x.IsDeleted, ct);
-        return new AttendanceDashboardDto(date, activeEmployees, records.Count(x => x.Status is "Present" or "Late" or "Half day"), records.Count(x => x.Status == "Absent"), records.Count(x => x.LateMinutes > 0), records.Count(x => x.MissingPunch), records.Count(x => x.OvertimeMinutes > 0), await _db.AttendanceDevices.CountAsync(x => x.TenantId == tenantId && !x.IsDeleted && x.LastSyncStatus == "Failed", ct), await _db.AttendanceRegularizationRequests.CountAsync(x => x.TenantId == tenantId && x.Status.StartsWith("Pending"), ct));
+        return new AttendanceDashboardDto(date, activeEmployees, records.Count(x => x.Status is "Present" or "Late" or "Half day"), records.Count(x => x.Status == "Absent"), records.Count(x => x.LateMinutes > 0), records.Count(x => x.MissingPunch), records.Count(x => x.OvertimeMinutes > 0), await _db.AttendanceDevices.CountAsync(x => x.TenantId == tenantId && !x.IsDeleted && x.LastSyncStatus == "Failed", ct), await _db.AttendanceRegularizationRequests.CountAsync(x => x.TenantId == tenantId && x.Status == "Submitted", ct));
     }
 
     public async Task<IReadOnlyCollection<AttendanceDailyDto>> ReportDailyAsync(Guid tenantId, DateOnly from, DateOnly to, CancellationToken ct) =>
@@ -582,9 +645,12 @@ public class AttendanceService : IAttendanceService
         device.IsActive = request.IsActive;
     }
 
-    private async Task Audit(Guid tenantId, RequestContext context, string action, string entity, string entityId, CancellationToken ct)
+    private async Task Audit(Guid tenantId, RequestContext context, string action, string entity, string entityId, CancellationToken ct) =>
+        await Audit(tenantId, context, action, entity, entityId, null, ct);
+
+    private async Task Audit(Guid tenantId, RequestContext context, string action, string entity, string entityId, string? metadata, CancellationToken ct)
     {
-        _db.AttendanceAuditLogs.Add(new AttendanceAuditLog { TenantId = tenantId, UserId = context.UserId, Action = action, EntityName = entity, EntityId = entityId });
+        _db.AttendanceAuditLogs.Add(new AttendanceAuditLog { TenantId = tenantId, UserId = context.UserId, Action = action, EntityName = entity, EntityId = entityId, MetadataJson = metadata ?? "{}" });
         await Task.CompletedTask;
     }
 

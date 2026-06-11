@@ -1,9 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Attendance;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Data;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -15,11 +17,13 @@ public class AttendanceController : ControllerBase
 {
     private readonly IAttendanceService _attendance;
     private readonly IDataScopeService _scopeService;
+    private readonly ZayraDbContext _db;
 
-    public AttendanceController(IAttendanceService attendance, IDataScopeService scopeService)
+    public AttendanceController(IAttendanceService attendance, IDataScopeService scopeService, ZayraDbContext db)
     {
         _attendance = attendance;
         _scopeService = scopeService;
+        _db = db;
     }
 
     [HttpGet("dashboard")]
@@ -163,8 +167,24 @@ public class AttendanceController : ControllerBase
         _attendance.PunchAsync(RequireTenant(), request, "Tablet/kiosk punch", Context(), ct);
 
     [HttpPost("regularization")]
-    public Task<AttendanceRegularizationRequest> Regularization(RegularizationRequestDto request, CancellationToken ct) =>
-        _attendance.CreateRegularizationAsync(RequireTenant(), request, Context(), ct);
+    public async Task<IActionResult> Regularization(RegularizationRequestDto request, CancellationToken ct)
+    {
+        // Employees may only submit for themselves; managers and HR/Admin may submit for any in-scope employee.
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        if (!scope.IsUnrestricted && scope.CallerEmployeeId.HasValue && request.EmployeeId != scope.CallerEmployeeId.Value)
+        {
+            var hasWritePermission = User.Claims.Any(c => c.Type == "permission" &&
+                (c.Value == "employees.write" || c.Value == "approvals.decide"));
+            if (!hasWritePermission)
+                return Forbid();
+        }
+        try
+        {
+            var reg = await _attendance.CreateRegularizationAsync(RequireTenant(), request, Context(), ct);
+            return Created($"/api/attendance/regularization/{reg.Id}", reg);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
 
     [HttpGet("regularization/my")]
     public async Task<PagedResult<AttendanceRegularizationRequest>> MyRegularization([FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
@@ -175,16 +195,24 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpGet("regularization/pending-approval")]
+    [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
     public async Task<PagedResult<AttendanceRegularizationRequest>> PendingRegularization([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
         var (_, setFilter) = scope.Constrain(null);
-        return await _attendance.GetRegularizationAsync(RequireTenant(), null, "PendingManager", page, pageSize, ct, setFilter);
+        return await _attendance.GetRegularizationAsync(RequireTenant(), null, "Submitted", page, pageSize, ct, setFilter);
     }
 
     [HttpPost("regularization/{id:guid}/approve")]
+    [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> ApproveRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct)
     {
+        // Scope guard: managers can only approve corrections for employees in their scope.
+        var empId = await GetRegularizationEmployeeId(RequireTenant(), id, ct);
+        if (empId is null) return NotFound();
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(empId.Value))
+            return Forbid();
         try
         {
             var regularization = await _attendance.ApproveRegularizationAsync(RequireTenant(), id, request, Context(), ct);
@@ -194,8 +222,43 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpPost("regularization/{id:guid}/reject")]
-    public async Task<ActionResult<AttendanceRegularizationRequest>> RejectRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct) =>
-        await _attendance.RejectRegularizationAsync(RequireTenant(), id, request, Context(), ct) is { } regularization ? Ok(regularization) : NotFound();
+    [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
+    public async Task<ActionResult<AttendanceRegularizationRequest>> RejectRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct)
+    {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+        var empId = await GetRegularizationEmployeeId(RequireTenant(), id, ct);
+        if (empId is null) return NotFound();
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(empId.Value))
+            return Forbid();
+        try
+        {
+            var regularization = await _attendance.RejectRegularizationAsync(RequireTenant(), id, request, Context(), ct);
+            return regularization is null ? NotFound() : Ok(regularization);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [HttpPost("regularization/{id:guid}/cancel")]
+    public async Task<ActionResult<AttendanceRegularizationRequest>> CancelRegularization(Guid id, CancelRegularizationRequest request, CancellationToken ct)
+    {
+        var empId = await GetRegularizationEmployeeId(RequireTenant(), id, ct);
+        if (empId is null) return NotFound();
+
+        // Admin, HR Director, and HR Manager can cancel any; others can only cancel their own submission.
+        var isAdminOrHr = User.IsInRole("Admin") || User.IsInRole("HR Director") || User.IsInRole("HR Manager");
+        if (!isAdminOrHr)
+        {
+            var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
+            if (scope.CallerEmployeeId != empId.Value)
+                return Forbid();
+        }
+        try
+        {
+            var regularization = await _attendance.CancelRegularizationAsync(RequireTenant(), id, request.Reason ?? string.Empty, Context(), ct);
+            return regularization is null ? NotFound() : Ok(regularization);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
 
     [HttpGet("reports/daily")]
     public Task<IReadOnlyCollection<AttendanceDailyDto>> ReportDaily([FromQuery] DateOnly from, [FromQuery] DateOnly to, CancellationToken ct) =>
@@ -232,4 +295,12 @@ public class AttendanceController : ControllerBase
     private Guid RequireTenant() => Guid.Parse(User.FindFirstValue("tenant_id")!);
     private RequestContext Context() => new(HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), GetUserId(), RequireTenant());
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
+
+    private Task<int?> GetRegularizationEmployeeId(Guid tenantId, Guid id, CancellationToken ct) =>
+        _db.AttendanceRegularizationRequests
+            .Where(x => x.TenantId == tenantId && x.Id == id)
+            .Select(x => (int?)x.EmployeeId)
+            .FirstOrDefaultAsync(ct);
 }
+
+public record CancelRegularizationRequest(string? Reason);

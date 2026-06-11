@@ -299,10 +299,25 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> DownloadDocument(Guid documentId, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var document = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.Id == documentId && x.TenantId == tenantId, cancellationToken);
+        var document = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.Id == documentId && x.TenantId == tenantId && !x.IsDeleted, cancellationToken);
         if (document is null) return NotFound();
+
+        // Enforce access: unrestricted roles pass; otherwise caller must be in scope for this employee.
+        if (document.EmployeeId.HasValue)
+        {
+            var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
+            if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(document.EmployeeId.Value))
+                return Forbid();
+        }
+
         var path = _documents.ResolvePath(document.StorageUrl);
         if (!System.IO.File.Exists(path)) return NotFound(new { message = "Stored document file was not found." });
+
+        document.LastDownloadedAtUtc = DateTime.UtcNow;
+        document.LastDownloadedBy = GetUserId();
+        await _db.SaveChangesAsync(cancellationToken);
+        await Audit("employee.document_downloaded", "EmployeeDocument", documentId.ToString(), cancellationToken);
+
         return PhysicalFile(path, document.ContentType, document.FileName);
     }
 
@@ -470,7 +485,41 @@ public class EmployeesController : ControllerBase
     [HttpGet("{id:int}/documents")]
     public async Task<ActionResult<IReadOnlyCollection<EmployeeDocument>>> EmployeeDocuments(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
+        var scope = await _scopeService.ResolveAsync(User, RequireTenant(), cancellationToken);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(id))
+            return Forbid();
         return Ok(await employeeManagement.GetDocumentsAsync(RequireTenant(), id, cancellationToken));
+    }
+
+    [HttpPut("{id:int}/documents/{docId:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<ActionResult<EmployeeDocument>> UpdateEmployeeDocument(int id, Guid docId, [FromBody] UpdateDocumentMetadataRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    {
+        var doc = await employeeManagement.UpdateDocumentAsync(RequireTenant(), id, docId, request, Context(), cancellationToken);
+        return doc is null ? NotFound() : Ok(doc);
+    }
+
+    [HttpPost("{id:int}/documents/{docId:guid}/verify")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<ActionResult<EmployeeDocument>> VerifyEmployeeDocument(int id, Guid docId, [FromBody] DocumentVerifyRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    {
+        var doc = await employeeManagement.VerifyDocumentAsync(RequireTenant(), id, docId, request.Notes, Context(), cancellationToken);
+        return doc is null ? NotFound() : Ok(doc);
+    }
+
+    [HttpPost("{id:int}/documents/{docId:guid}/reject")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<ActionResult<EmployeeDocument>> RejectEmployeeDocument(int id, Guid docId, [FromBody] DocumentRejectRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    {
+        var doc = await employeeManagement.RejectDocumentAsync(RequireTenant(), id, docId, request.Reason, Context(), cancellationToken);
+        return doc is null ? NotFound() : Ok(doc);
+    }
+
+    [HttpDelete("{id:int}/documents/{docId:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> ArchiveEmployeeDocument(int id, Guid docId, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    {
+        return await employeeManagement.ArchiveDocumentAsync(RequireTenant(), id, docId, Context(), cancellationToken) ? NoContent() : NotFound();
     }
 
     [HttpGet("{id:int}/history")]
@@ -624,6 +673,13 @@ public class EmployeesController : ControllerBase
     public async Task<ActionResult<EmployeeStatusSummaryDto>> StatusSummary([FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         return Ok(await employeeManagement.StatusSummaryAsync(RequireTenant(), cancellationToken));
+    }
+
+    [HttpPost("reports/documents/check-expiry")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<ActionResult<DocumentExpiryCheckResult>> CheckDocumentExpiry([FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    {
+        return Ok(await employeeManagement.CheckDocumentExpiryAsync(RequireTenant(), cancellationToken));
     }
 
     [HttpGet("ai/insights")]

@@ -7,22 +7,32 @@ using Zayra.Api.Application.Employees;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.Documents;
+using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Infrastructure.Employees;
 
 public class EmployeeManagementService : IEmployeeManagementService
 {
-    private static readonly string[] RequiredDocumentTypes = ["Passport", "Visa", "Contract", "Bank letter"];
+    // Qiwa-ready required document types (SA labour + GCC compliance).
+    private static readonly string[] RequiredDocumentTypes =
+    [
+        "Passport", "Visa", "Contract", "Bank letter",
+        "Iqama", "Work Permit", "National ID", "Residence Permit",
+        "Offer Letter", "NDA"
+    ];
+
     private readonly ZayraDbContext _db;
     private readonly IAuditService _audit;
     private readonly IDocumentStorage _documents;
+    private readonly INotificationService _notifications;
 
-    public EmployeeManagementService(ZayraDbContext db, IAuditService audit, IDocumentStorage documents)
+    public EmployeeManagementService(ZayraDbContext db, IAuditService audit, IDocumentStorage documents, INotificationService notifications)
     {
         _db = db;
         _audit = audit;
         _documents = documents;
+        _notifications = notifications;
     }
 
     public async Task<PagedResult<EmployeeListItemDto>> SearchAsync(Guid tenantId, string? search, string? status, string? department, int page, int pageSize, CancellationToken cancellationToken)
@@ -145,6 +155,7 @@ public class EmployeeManagementService : IEmployeeManagementService
             TenantId = tenantId,
             EmployeeId = employeeId,
             DocumentType = request.DocumentType.Trim(),
+            DocumentCategory = Clean(request.DocumentCategory),
             FileName = stored.FileName,
             ContentType = stored.ContentType,
             StorageUrl = stored.StorageUrl,
@@ -153,6 +164,7 @@ public class EmployeeManagementService : IEmployeeManagementService
             ExpiryDate = request.ExpiryDate,
             RenewalReminderDate = request.RenewalReminderDate,
             ApprovalStatus = string.IsNullOrWhiteSpace(request.ApprovalStatus) ? "Pending" : request.ApprovalStatus.Trim(),
+            Notes = Clean(request.Notes),
             VersionNumber = existingVersions + 1,
             UploadedBy = context.UserId
         };
@@ -236,6 +248,132 @@ public class EmployeeManagementService : IEmployeeManagementService
             var existing = docs.Where(x => x.EmployeeId == employee.Id).Select(x => x.DocumentType).ToHashSet(StringComparer.OrdinalIgnoreCase);
             return new EmployeeMissingDocumentsReportDto(employee.Id, employee.EmployeeCode, employee.FullName, RequiredDocumentTypes.Where(x => !existing.Contains(x)).ToList());
         }).Where(x => x.MissingDocumentTypes.Count > 0).ToList();
+    }
+
+    public async Task<EmployeeDocument?> UpdateDocumentAsync(Guid tenantId, int employeeId, Guid documentId, UpdateDocumentMetadataRequest request, RequestContext context, CancellationToken cancellationToken)
+    {
+        var doc = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == documentId && x.EmployeeId == employeeId && !x.IsDeleted, cancellationToken);
+        if (doc is null) return null;
+
+        if (!string.IsNullOrWhiteSpace(request.DocumentType)) doc.DocumentType = request.DocumentType.Trim();
+        if (request.DocumentCategory is not null) doc.DocumentCategory = request.DocumentCategory.Trim();
+        if (request.IssueDate.HasValue) doc.IssueDate = request.IssueDate;
+        if (request.ExpiryDate.HasValue) doc.ExpiryDate = request.ExpiryDate;
+        if (request.RenewalReminderDate.HasValue) doc.RenewalReminderDate = request.RenewalReminderDate;
+        if (request.IsRequired.HasValue) doc.IsRequired = request.IsRequired.Value;
+        if (request.Notes is not null) doc.Notes = request.Notes.Trim();
+
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.WriteAsync("employee.document_updated", "EmployeeDocument", doc.Id.ToString(), context,
+            JsonSerializer.Serialize(new { documentType = doc.DocumentType, category = doc.DocumentCategory, expiryDate = doc.ExpiryDate }), cancellationToken);
+        return doc;
+    }
+
+    public async Task<EmployeeDocument?> VerifyDocumentAsync(Guid tenantId, int employeeId, Guid documentId, string? notes, RequestContext context, CancellationToken cancellationToken)
+    {
+        var doc = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == documentId && x.EmployeeId == employeeId && !x.IsDeleted, cancellationToken);
+        if (doc is null) return null;
+
+        var before = doc.ApprovalStatus;
+        doc.ApprovalStatus = "Verified";
+        doc.VerifiedAtUtc = DateTime.UtcNow;
+        doc.VerifiedBy = context.UserId;
+        if (notes is not null) doc.Notes = notes.Trim();
+
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.WriteAsync("employee.document_verified", "EmployeeDocument", doc.Id.ToString(), context,
+            JsonSerializer.Serialize(new { before, after = "Verified", documentType = doc.DocumentType }), cancellationToken);
+
+        var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == employeeId && !x.IsDeleted, cancellationToken);
+        if (employee?.UserAccountId is not null)
+            await _notifications.NotifyAsync(tenantId, employee.UserAccountId, "Document Verified",
+                $"Your {doc.DocumentType} document has been verified.", "EmployeeDocument", doc.Id.ToString(), cancellationToken);
+
+        return doc;
+    }
+
+    public async Task<EmployeeDocument?> RejectDocumentAsync(Guid tenantId, int employeeId, Guid documentId, string reason, RequestContext context, CancellationToken cancellationToken)
+    {
+        var doc = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == documentId && x.EmployeeId == employeeId && !x.IsDeleted, cancellationToken);
+        if (doc is null) return null;
+
+        var before = doc.ApprovalStatus;
+        doc.ApprovalStatus = "Rejected";
+        doc.Notes = string.IsNullOrWhiteSpace(doc.Notes) ? reason.Trim() : doc.Notes + " | Rejection: " + reason.Trim();
+
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.WriteAsync("employee.document_rejected", "EmployeeDocument", doc.Id.ToString(), context,
+            JsonSerializer.Serialize(new { before, after = "Rejected", reason, documentType = doc.DocumentType }), cancellationToken);
+
+        var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == employeeId && !x.IsDeleted, cancellationToken);
+        if (employee?.UserAccountId is not null)
+            await _notifications.NotifyAsync(tenantId, employee.UserAccountId, "Document Rejected",
+                $"Your {doc.DocumentType} document was rejected. Reason: {reason}", "EmployeeDocument", doc.Id.ToString(), cancellationToken);
+
+        return doc;
+    }
+
+    public async Task<bool> ArchiveDocumentAsync(Guid tenantId, int employeeId, Guid documentId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var doc = await _db.EmployeeDocuments.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == documentId && x.EmployeeId == employeeId && !x.IsDeleted, cancellationToken);
+        if (doc is null) return false;
+
+        doc.IsDeleted = true;
+        doc.DeletedAtUtc = DateTime.UtcNow;
+        doc.DeletedBy = context.UserId;
+
+        await _db.SaveChangesAsync(cancellationToken);
+        await _audit.WriteAsync("employee.document_archived", "EmployeeDocument", doc.Id.ToString(), context,
+            JsonSerializer.Serialize(new { documentType = doc.DocumentType, archivedBy = context.UserId }), cancellationToken);
+        return true;
+    }
+
+    public async Task<DocumentExpiryCheckResult> CheckDocumentExpiryAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var context = new RequestContext(null, "expiry-check", null, tenantId);
+
+        // Mark expired: ExpiryDate has passed and not already Expired or deleted.
+        var expired = await _db.EmployeeDocuments
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted && x.EmployeeId != null
+                && x.ExpiryDate != null && x.ExpiryDate < today
+                && x.ApprovalStatus != "Expired")
+            .ToListAsync(cancellationToken);
+
+        foreach (var doc in expired)
+        {
+            var before = doc.ApprovalStatus;
+            doc.ApprovalStatus = "Expired";
+            await _audit.WriteAsync("employee.document_expired", "EmployeeDocument", doc.Id.ToString(), context,
+                JsonSerializer.Serialize(new { before, after = "Expired", expiryDate = doc.ExpiryDate, documentType = doc.DocumentType }), cancellationToken);
+            var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == doc.EmployeeId && !x.IsDeleted, cancellationToken);
+            if (employee?.UserAccountId is not null)
+                await _notifications.NotifyAsync(tenantId, employee.UserAccountId, "Document Expired",
+                    $"Your {doc.DocumentType} document expired on {doc.ExpiryDate}. Please renew it.", "EmployeeDocument", doc.Id.ToString(), cancellationToken);
+        }
+
+        // Send renewal reminders: RenewalReminderDate has arrived, document not yet expired, not deleted.
+        var reminders = await _db.EmployeeDocuments
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted && x.EmployeeId != null
+                && x.RenewalReminderDate != null && x.RenewalReminderDate <= today
+                && x.ExpiryDate != null && x.ExpiryDate >= today
+                && x.ApprovalStatus != "Expired")
+            .ToListAsync(cancellationToken);
+
+        foreach (var doc in reminders)
+        {
+            await _audit.WriteAsync("employee.document_expiry_reminder", "EmployeeDocument", doc.Id.ToString(), context,
+                JsonSerializer.Serialize(new { expiryDate = doc.ExpiryDate, documentType = doc.DocumentType }), cancellationToken);
+            var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == doc.EmployeeId && !x.IsDeleted, cancellationToken);
+            if (employee?.UserAccountId is not null)
+                await _notifications.NotifyAsync(tenantId, employee.UserAccountId, "Document Expiring Soon",
+                    $"Your {doc.DocumentType} document expires on {doc.ExpiryDate}. Please renew before the expiry date.", "EmployeeDocument", doc.Id.ToString(), cancellationToken);
+        }
+
+        if (expired.Count > 0 || reminders.Count > 0)
+            await _db.SaveChangesAsync(cancellationToken);
+
+        return new DocumentExpiryCheckResult(expired.Count, reminders.Count);
     }
 
     public async Task<EmployeeStatusSummaryDto> StatusSummaryAsync(Guid tenantId, CancellationToken cancellationToken)
