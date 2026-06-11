@@ -236,7 +236,11 @@ export function EmployeesPage() {
       } else if (status === 422 && data?.error === 'employee_limit_reached') {
         setError(data.message ?? `Employee limit reached (${data.current}/${data.limit}). Please upgrade your subscription.`);
       } else {
-        setError('Employee could not be saved. Check validation errors and try again.');
+        // Surface the server's actual validation details instead of a generic banner.
+        const errors = (data as { errors?: Record<string, string[]> })?.errors;
+        const detail = data?.message
+          ?? (errors ? Object.entries(errors).map(([field, msgs]) => `${field}: ${msgs.join(' ')}`).join(' · ') : '');
+        setError(detail ? `Employee could not be saved — ${detail}` : 'Employee could not be saved. Check validation errors and try again.');
       }
     } finally {
       setSaving(false);
@@ -588,6 +592,8 @@ export function EmployeesPage() {
 }
 
 function cleanPayload(form: EmployeeCreateRequest): EmployeeCreateRequest {
+  // The API expects null/absent for empty Guid and date fields — an empty string
+  // fails JSON model binding with a 400 before validation even runs.
   const emptyToUndefined = (value?: string) => value?.trim() ? value.trim() : undefined;
   return {
     ...form,
@@ -598,7 +604,15 @@ function cleanPayload(form: EmployeeCreateRequest): EmployeeCreateRequest {
     designationId: emptyToUndefined(form.designationId),
     gradeId: emptyToUndefined(form.gradeId),
     costCenterId: emptyToUndefined(form.costCenterId),
-    complianceRecords: form.complianceRecords?.filter((item) => item.fieldValue?.trim() || item.isRequired),
+    personalEmail: emptyToUndefined(form.personalEmail),
+    workEmail: emptyToUndefined(form.workEmail),
+    joiningDate: emptyToUndefined(form.joiningDate),
+    confirmationDate: emptyToUndefined(form.confirmationDate),
+    probationStartDate: emptyToUndefined(form.probationStartDate),
+    probationEndDate: emptyToUndefined(form.probationEndDate),
+    complianceRecords: form.complianceRecords
+      ?.filter((item) => item.fieldValue?.trim() || item.isRequired)
+      .map((item) => ({ ...item, expiryDate: emptyToUndefined(item.expiryDate) })),
   };
 }
 

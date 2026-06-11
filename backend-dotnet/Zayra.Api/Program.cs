@@ -49,6 +49,14 @@ builder.Services.Configure<SeedAdminOptions>(builder.Configuration.GetSection("S
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<SubscriptionGuardFilter>();
+})
+.AddJsonOptions(options =>
+{
+    // Forms submit "" for untouched optional fields; treat as null instead of 400.
+    options.JsonSerializerOptions.Converters.Add(new Zayra.Api.Infrastructure.Json.EmptyStringNullableGuidConverter());
+    options.JsonSerializerOptions.Converters.Add(new Zayra.Api.Infrastructure.Json.EmptyStringNullableDateTimeConverter());
+    options.JsonSerializerOptions.Converters.Add(new Zayra.Api.Infrastructure.Json.EmptyStringNullableDateOnlyConverter());
+    options.JsonSerializerOptions.NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString;
 });
 // CORS: explicit allowlist from config + optional CORS_EXTRA_ORIGINS env var for production deployments
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
