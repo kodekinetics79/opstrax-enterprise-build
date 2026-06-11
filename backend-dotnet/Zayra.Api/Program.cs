@@ -198,7 +198,9 @@ using (var scope = app.Services.CreateScope())
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("AuthSeeder");
     try
     {
-        await scope.ServiceProvider.GetRequiredService<ZayraDbContext>().Database.EnsureCreatedAsync();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
+        await dbContext.Database.EnsureCreatedAsync();
+        await MissingTableCreator.EnsureAsync(dbContext, logger);
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         await scope.ServiceProvider.GetRequiredService<IAuthSeeder>().SeedAsync();
     }
