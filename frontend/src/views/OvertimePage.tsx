@@ -1,5 +1,6 @@
 'use client';
 
+import { InfoTip } from '../components/InfoTip';
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle, BarChart2, Calculator, CheckCircle2, Clock3, FileClock,
@@ -81,10 +82,10 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, info, infoKey }: { label: string; children: React.ReactNode; info?: string; infoKey?: string }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">{label}</label>
+      <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">{label}{info && <InfoTip text={info} fieldKey={infoKey} />}</label>
       {children}
     </div>
   );
@@ -242,9 +243,9 @@ function SubmitOTTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee & Date</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *"><input type="number" aria-label="Employee ID" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-          <Field label="Work Date *"><input type="date" aria-label="Work date" className={inp} value={form.workDate} onChange={e => set('workDate', e.target.value)} /></Field>
-          <Field label="Start Time *"><input type="time" aria-label="Start time" className={inp} value={form.startTime} onChange={e => set('startTime', e.target.value)} /></Field>
+          <Field label="Employee ID *" info="The numeric ID of the employee who worked the overtime (see their profile in the People module)." infoKey="overtime.employee_id"><input type="number" aria-label="Employee ID" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+          <Field label="Work Date *" info="The day the overtime was actually worked — not the date you submit the request." infoKey="overtime.work_date"><input type="date" aria-label="Work date" className={inp} value={form.workDate} onChange={e => set('workDate', e.target.value)} /></Field>
+          <Field label="Start Time *" info="When the overtime began, in 24-hour time (e.g. 18:00 = 6pm)." infoKey="overtime.start_time"><input type="time" aria-label="Start time" className={inp} value={form.startTime} onChange={e => set('startTime', e.target.value)} /></Field>
           <Field label="End Time *"><input type="time" aria-label="End time" className={inp} value={form.endTime} onChange={e => set('endTime', e.target.value)} /></Field>
         </div>
         {mins > 0 && (
@@ -257,7 +258,7 @@ function SubmitOTTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Policy & Type</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="OT Policy">
+          <Field label="OT Policy" info="The overtime policy that sets the pay multiplier (e.g. 1.25x weekday, 1.5x holiday). Configured in the Policies tab." infoKey="overtime.policy">
             <select aria-label="OT Policy" className={sel} value={form.policyId} onChange={e => set('policyId', e.target.value)}>
               <option value="">Auto-select default</option>
               {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -514,7 +515,7 @@ function CreatePolicyModal({ onClose, onSaved }: { onClose: () => void; onSaved:
           <Field label="Name *"><input aria-label="Policy name" className={inp} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Standard GCC Overtime" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Hourly Rate Basis">
+          <Field label="Hourly Rate Basis" info="How the base hourly rate is derived: from basic salary, gross salary, or a fixed amount you enter below." infoKey="overtime.rate_basis">
             <select aria-label="Hourly rate basis" className={sel} value={form.hourlyRateBasis} onChange={e => set('hourlyRateBasis', e.target.value)}>
               {['BasicSalary', 'GrossSalary', 'FixedHourlyRate'].map(b => <option key={b}>{b}</option>)}
             </select>

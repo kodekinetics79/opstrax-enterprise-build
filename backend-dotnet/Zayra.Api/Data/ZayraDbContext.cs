@@ -224,6 +224,7 @@ public class ZayraDbContext : DbContext
     public DbSet<TenantLocalizationSetting> TenantLocalizationSettings => Set<TenantLocalizationSetting>();
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
     public DbSet<CountryPayrollRule> CountryPayrollRules => Set<CountryPayrollRule>();
+    public DbSet<TenantFieldHelpText> TenantFieldHelpTexts => Set<TenantFieldHelpText>();
     // ── AI Intelligence ────────────────────────────────────────────────────────
     public DbSet<AIModelConfig> AIModelConfigs => Set<AIModelConfig>();
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
@@ -1429,6 +1430,15 @@ public class ZayraDbContext : DbContext
             entity.ToTable("country_payroll_rules");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.CountryCode, x.RuleKey, x.EffectiveFrom });
+        });
+
+        modelBuilder.Entity<TenantFieldHelpText>(entity =>
+        {
+            entity.ToTable("tenant_field_help_texts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FieldKey).HasMaxLength(120);
+            entity.Property(x => x.Text).HasMaxLength(500);
+            entity.HasIndex(x => new { x.TenantId, x.FieldKey }).IsUnique();
         });
 
         // ── AI Intelligence ────────────────────────────────────────────────────

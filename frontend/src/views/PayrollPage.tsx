@@ -15,6 +15,7 @@ import {
   type PayrollApproval, type PayrollSummary,
 } from '../api/payroll';
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
+import { InfoTip } from '../components/InfoTip';
 import client from '../api/client';
 
 // ── Payroll import/export helpers ───────────────────────────────────────────────
@@ -99,10 +100,10 @@ function Modal({ title, onClose, children, wide }: { title: string; onClose: () 
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, info, infoKey }: { label: string; children: React.ReactNode; info?: string; infoKey?: string }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">{label}</label>
+      <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">{label}{info && <InfoTip text={info} fieldKey={infoKey} />}</label>
       {children}
     </div>
   );
@@ -220,7 +221,7 @@ function CreateSalaryStructureModal({ onClose, onSaved }: { onClose: () => void;
     <Modal title="New Salary Structure" onClose={onClose}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Code *"><input aria-label="Structure code" className={inp} value={form.code} onChange={e => set('code', e.target.value)} placeholder="e.g. GCC-STD" /></Field>
+          <Field label="Code *" info="Short unique reference for this salary structure, e.g. GCC-STD. Used when assigning salaries to employees." infoKey="payroll.structure_code"><input aria-label="Structure code" className={inp} value={form.code} onChange={e => set('code', e.target.value)} placeholder="e.g. GCC-STD" /></Field>
           <Field label="Name *"><input aria-label="Structure name" className={inp} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. GCC Standard" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -327,7 +328,7 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Employee ID *"><input type="number" aria-label="Employee ID" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-          <Field label="Salary Structure *">
+          <Field label="Salary Structure *" info="The pay template (basic %, allowances, deductions) applied to this employee. Defined under the Structures tab." infoKey="payroll.salary_structure">
             <select aria-label="Salary structure" className={sel} value={form.salaryStructureId} onChange={e => set('salaryStructureId', e.target.value)}>
               <option value="">Select…</option>
               {structures.map(s => <option key={s.id} value={s.id}>{s.name} ({s.currency})</option>)}
@@ -352,7 +353,7 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Fixed Deduction"><input type="number" step="0.01" aria-label="Fixed deduction" className={inp} value={form.fixedDeduction} onChange={e => set('fixedDeduction', e.target.value)} /></Field>
+          <Field label="Fixed Deduction" info="A fixed amount removed every month (e.g. accommodation recovery), in the salary currency. Numbers only." infoKey="payroll.fixed_deduction"><input type="number" step="0.01" aria-label="Fixed deduction" className={inp} value={form.fixedDeduction} onChange={e => set('fixedDeduction', e.target.value)} /></Field>
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
@@ -587,10 +588,10 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
           <div className="space-y-4">
             {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">{error}</p>}
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Year">
+              <Field label="Year" info="The calendar year this payroll run covers, e.g. 2026." infoKey="payroll.run_year">
                 <input type="number" aria-label="Year" className={inp} value={createYear} onChange={e => setCreateYear(Number(e.target.value))} min={2020} max={2035} />
               </Field>
-              <Field label="Month">
+              <Field label="Month" info="The salary month to process. One run per month — duplicates are rejected." infoKey="payroll.run_month">
                 <select aria-label="Month" className={sel} value={createMonth} onChange={e => setCreateMonth(Number(e.target.value))}>
                   {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                 </select>

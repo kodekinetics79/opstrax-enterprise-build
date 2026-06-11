@@ -9,8 +9,9 @@ import {
   type TenantSubscription,
 } from '../api/intelligence';
 import client from '../api/client';
+import { HelpTextManager } from '../components/HelpTextManager';
 
-type Tab = 'subscription' | 'features' | 'localization' | 'branding' | 'security' | 'country-rules' | 'audit';
+type Tab = 'subscription' | 'features' | 'localization' | 'branding' | 'security' | 'country-rules' | 'help-text' | 'audit';
 
 const FEATURE_KEYS = [
   { key: 'ai_assistant', label: 'AI HR Assistant', description: 'Enable natural-language HR queries' },
@@ -299,6 +300,7 @@ export default function TenantAdminPage() {
     { id: 'branding', label: 'Branding' },
     { id: 'security', label: 'Security' },
     { id: 'country-rules', label: 'Country Rules' },
+    { id: 'help-text', label: 'Help Text' },
     { id: 'audit', label: 'Audit Log' },
   ];
 
@@ -863,6 +865,9 @@ export default function TenantAdminPage() {
           )}
         </div>
       )}
+
+      {/* Custom Field Help Text */}
+      {tab === 'help-text' && <HelpTextManager />}
 
       {/* Audit Log */}
       {tab === 'audit' && (

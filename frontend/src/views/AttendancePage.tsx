@@ -1,5 +1,6 @@
 'use client';
 
+import { InfoTip } from '../components/InfoTip';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -314,13 +315,13 @@ export function AttendancePage() {
             <SectionTitle icon={Fingerprint} title="Add Attendance Device" subtitle="Configure ZKTeco, Hikvision, Suprema, Anviz, eSSL, RFID, API, CSV, or SFTP sources." />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Field label="Device name"><input className="input w-full" value={deviceForm.deviceName} onChange={(e) => setDeviceForm({ ...deviceForm, deviceName: e.target.value })} required /></Field>
-              <Field label="Serial number"><input className="input w-full" value={deviceForm.serialNumber} onChange={(e) => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })} required /></Field>
+              <Field label="Serial number" info="The hardware serial printed on the biometric/attendance device. Must be unique — used to match incoming punches to this device." infoKey="attendance.device_serial"><input className="input w-full" value={deviceForm.serialNumber} onChange={(e) => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })} required /></Field>
               <Field label="Device type"><select className="select w-full" value={deviceForm.deviceType} onChange={(e) => setDeviceForm({ ...deviceForm, deviceType: e.target.value })}><DeviceTypeOptions /></select></Field>
               <Field label="Vendor"><select className="select w-full" value={deviceForm.vendor} onChange={(e) => setDeviceForm({ ...deviceForm, vendor: e.target.value })}><VendorOptions /></select></Field>
-              <Field label="IP / endpoint"><input className="input w-full" value={deviceForm.endpointUrl || deviceForm.ipAddress} onChange={(e) => setDeviceForm({ ...deviceForm, endpointUrl: e.target.value, ipAddress: e.target.value })} /></Field>
-              <Field label="Sync method"><select className="select w-full" value={deviceForm.syncMethod} onChange={(e) => setDeviceForm({ ...deviceForm, syncMethod: e.target.value })}><SyncMethodOptions /></select></Field>
+              <Field label="IP / endpoint" info="Network address the device is reachable on, e.g. 192.168.1.50 or https://device.local/api. Needed for Pull sync." infoKey="attendance.device_endpoint"><input className="input w-full" value={deviceForm.endpointUrl || deviceForm.ipAddress} onChange={(e) => setDeviceForm({ ...deviceForm, endpointUrl: e.target.value, ipAddress: e.target.value })} /></Field>
+              <Field label="Sync method" info="Pull = KynexOne polls the device on a schedule. Push = the device sends punches to KynexOne. Check your device manual." infoKey="attendance.sync_method"><select className="select w-full" value={deviceForm.syncMethod} onChange={(e) => setDeviceForm({ ...deviceForm, syncMethod: e.target.value })}><SyncMethodOptions /></select></Field>
               <Field label="Location"><input className="input w-full" value={deviceForm.locationName ?? ''} onChange={(e) => setDeviceForm({ ...deviceForm, locationName: e.target.value })} /></Field>
-              <Field label="Frequency"><input className="input w-full" value={deviceForm.syncFrequency ?? ''} onChange={(e) => setDeviceForm({ ...deviceForm, syncFrequency: e.target.value })} /></Field>
+              <Field label="Frequency" info="How often punches sync when using Pull, e.g. every 5 minutes. Lower = fresher data, more device load." infoKey="attendance.sync_frequency"><input className="input w-full" value={deviceForm.syncFrequency ?? ''} onChange={(e) => setDeviceForm({ ...deviceForm, syncFrequency: e.target.value })} /></Field>
             </div>
             <button type="submit" disabled={saving} className="btn-primary mt-4 w-full justify-center">Save Device</button>
           </form>
@@ -478,8 +479,8 @@ function SectionTitle({ icon: Icon, title, subtitle }: { icon: typeof Activity; 
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">{label}<div className="mt-1">{children}</div></label>;
+function Field({ label, children, info, infoKey }: { label: string; children: ReactNode; info?: string; infoKey?: string }) {
+  return <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400"><span className="flex items-center gap-1.5">{label}{info && <InfoTip text={info} fieldKey={infoKey} />}</span><div className="mt-1">{children}</div></label>;
 }
 
 function EmployeeSelect({ value, employees, onChange, includeAll }: { value: string; employees: EmployeeListItem[]; onChange: (value: string) => void; includeAll?: boolean }) {

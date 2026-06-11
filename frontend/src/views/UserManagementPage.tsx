@@ -1,5 +1,6 @@
 'use client';
 
+import { InfoTip } from '../components/InfoTip';
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -1562,9 +1563,9 @@ function SecurityTab() {
 
   if (loading) return <p className="text-sm text-slate-500">Loading…</p>;
 
-  const numField = (key: keyof SecuritySetting, label: string, min: number, max: number) => (
+  const numField = (key: keyof SecuritySetting, label: string, min: number, max: number, info?: string) => (
     <div key={key} className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-slate-600 dark:text-slate-400">{label}</label>
+      <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400">{label}{info && <InfoTip text={info} fieldKey={`security.${String(key)}`} />}</label>
       <input type="number" min={min} max={max} title={label} className={inp('w-full')}
         value={form[key] as number ?? settings?.[key] as number ?? 0}
         onChange={e => setForm(f => ({ ...f, [key]: +e.target.value }))} />
@@ -1584,9 +1585,9 @@ function SecurityTab() {
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-5 space-y-4">
         <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Password Policy</h4>
         <div className="grid grid-cols-2 gap-4">
-          {numField('passwordMinLength', 'Minimum Length', 6, 64)}
-          {numField('passwordExpiryDays', 'Expiry Days (0 = never)', 0, 365)}
-          {numField('passwordHistoryCount', 'Password History Count', 0, 24)}
+          {numField('passwordMinLength', 'Minimum Length', 6, 64, 'Fewest characters a password may have. 10-12+ recommended; applies to new passwords only.')}
+          {numField('passwordExpiryDays', 'Expiry Days (0 = never)', 0, 365, 'Days until staff must change their password. 0 disables forced rotation.')}
+          {numField('passwordHistoryCount', 'Password History Count', 0, 24, 'How many previous passwords are remembered and blocked from reuse. 0 allows reuse.')}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {boolField('passwordRequireUppercase', 'Require Uppercase')}
@@ -1599,16 +1600,16 @@ function SecurityTab() {
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-5 space-y-4">
         <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Lockout Policy</h4>
         <div className="grid grid-cols-2 gap-4">
-          {numField('maxFailedLoginAttempts', 'Max Failed Login Attempts', 1, 20)}
-          {numField('lockoutDurationMinutes', 'Lockout Duration (minutes)', 5, 1440)}
+          {numField('maxFailedLoginAttempts', 'Max Failed Login Attempts', 1, 20, 'Wrong-password tries allowed before the account is temporarily locked. 5 is a common default.')}
+          {numField('lockoutDurationMinutes', 'Lockout Duration (minutes)', 5, 1440, 'How long a locked account stays locked before it can try again. Admins can unlock earlier from the Users tab.')}
         </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-5 space-y-4">
         <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Session Policy</h4>
         <div className="grid grid-cols-2 gap-4">
-          {numField('sessionTimeoutMinutes', 'Session Timeout (minutes)', 15, 1440)}
-          {numField('refreshTokenExpiryDays', 'Refresh Token Expiry (days)', 1, 90)}
+          {numField('sessionTimeoutMinutes', 'Session Timeout (minutes)', 15, 1440, 'Idle time before a signed-in user is logged out automatically.')}
+          {numField('refreshTokenExpiryDays', 'Refresh Token Expiry (days)', 1, 90, 'Maximum days a login can stay remembered without re-entering the password. Lower = more secure, more frequent logins.')}
         </div>
         {boolField('allowMultipleSessions', 'Allow Multiple Concurrent Sessions')}
       </div>
