@@ -13,6 +13,8 @@ export interface NavItem {
   path?: string;
   /** At least one permission must be present for this item to show. Empty/absent = visible to all logged-in users. */
   requiredPermissions?: string[];
+  /** Tenant feature flag key that must be enabled for this item to show. Empty/absent = always visible. */
+  requiredFeatureKey?: string;
 }
 
 export interface NavGroup {

@@ -7,6 +7,7 @@ import { Avatar } from '../components/Avatar';
 import { Logo } from '../components/Logo';
 import { navigationGroups } from '../routes/navigation';
 import { useAuth } from '../contexts/AuthContext';
+import { useFeatureFlags } from '../contexts/FeatureFlagContext';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
   const router = useRouter();
   const pathname = usePathname();
   const { user, logout, hasPermission } = useAuth();
+  const { isFeatureEnabled } = useFeatureFlags();
 
   // All groups expanded by default
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
@@ -103,7 +105,11 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
         {/* Navigation */}
         <nav aria-label="Primary navigation" className="flex-1 overflow-y-auto overflow-x-hidden py-3">
           {navigationGroups.map((group, gi) => {
-            const visibleItems = group.items.filter((item) => canSee(item.requiredPermissions));
+            const visibleItems = group.items.filter(
+              (item) =>
+                canSee(item.requiredPermissions) &&
+                (!item.requiredFeatureKey || isFeatureEnabled(item.requiredFeatureKey)),
+            );
             if (visibleItems.length === 0) return null;
 
             const isExpanded = isCollapsed || expandedGroups.has(group.label);
