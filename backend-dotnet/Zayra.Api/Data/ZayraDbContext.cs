@@ -544,6 +544,8 @@ public class ZayraDbContext : DbContext
             entity.ToTable("employee_notifications");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsRead });
+            // Notification inbox pagination: ORDER BY created_at_utc DESC with tenant+employee filter
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.CreatedAtUtc });
         });
 
         modelBuilder.Entity<EmployeeNotificationPreference>(entity =>
@@ -1190,6 +1192,9 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.Metadata).HasColumnType("json");
             entity.HasIndex(x => new { x.TenantId, x.CreatedAtUtc });
             entity.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+            // Entity audit trail: "show all changes to Employee #123" — covers the common
+            // WHERE tenant_id = ? AND entity_name = ? AND entity_id = ? ORDER BY created_at_utc
+            entity.HasIndex(x => new { x.TenantId, x.EntityName, x.EntityId, x.CreatedAtUtc });
         });
 
         // ── Performance & Appraisals ───────────────────────────────────────────

@@ -78,6 +78,8 @@ namespace Zayra.Api.Migrations
 
                     b.HasIndex("UserId", "CreatedAtUtc");
 
+                    b.HasIndex("TenantId", "EntityName", "EntityId", "CreatedAtUtc");
+
                     b.ToTable("audit_logs", (string)null);
                 });
 
@@ -7874,6 +7876,8 @@ namespace Zayra.Api.Migrations
                         .HasColumnName("title");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "EmployeeId", "CreatedAtUtc");
 
                     b.HasIndex("TenantId", "EmployeeId", "IsRead");
 
@@ -16021,6 +16025,86 @@ namespace Zayra.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("tenant_field_help_texts", (string)null);
+                });
+
+            modelBuilder.Entity("Zayra.Api.Models.TenantInvoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(12, 2)
+                        .HasColumnType("decimal(12,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasColumnType("longtext")
+                        .HasColumnName("currency_code");
+
+                    b.Property<DateOnly>("DueDate")
+                        .HasColumnType("date")
+                        .HasColumnName("due_date");
+
+                    b.Property<DateOnly>("InvoiceDate")
+                        .HasColumnType("date")
+                        .HasColumnName("invoice_date");
+
+                    b.Property<string>("InvoiceNumber")
+                        .IsRequired()
+                        .HasColumnType("longtext")
+                        .HasColumnName("invoice_number");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("longtext")
+                        .HasColumnName("notes");
+
+                    b.Property<DateOnly?>("PaidDate")
+                        .HasColumnType("date")
+                        .HasColumnName("paid_date");
+
+                    b.Property<string>("PaymentMethod")
+                        .HasColumnType("longtext")
+                        .HasColumnName("payment_method");
+
+                    b.Property<string>("PaymentReference")
+                        .HasColumnType("longtext")
+                        .HasColumnName("payment_reference");
+
+                    b.Property<string>("PeriodDescription")
+                        .HasColumnType("longtext")
+                        .HasColumnName("period_description");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "InvoiceDate");
+
+                    b.HasIndex("TenantId", "Status");
+
+                    b.ToTable("tenant_invoices", (string)null);
                 });
 
             modelBuilder.Entity("Zayra.Api.Models.TenantLocalizationSetting", b =>

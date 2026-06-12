@@ -262,13 +262,13 @@ namespace Zayra.Api.Migrations
                     id = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
                     tenant_id = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
                     workflow_id = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
-                    entity_name = table.Column<string>(type: "varchar(255)", nullable: false)
+                    entity_name = table.Column<string>(type: "varchar(120)", maxLength: 120, nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
-                    entity_id = table.Column<string>(type: "varchar(255)", nullable: false)
+                    entity_id = table.Column<string>(type: "varchar(80)", maxLength: 80, nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
                     title = table.Column<string>(type: "longtext", nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
-                    status = table.Column<string>(type: "varchar(255)", nullable: false)
+                    status = table.Column<string>(type: "varchar(40)", maxLength: 40, nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
                     current_step_order = table.Column<int>(type: "int", nullable: false),
                     requested_by_user_id = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),

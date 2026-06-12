@@ -48,6 +48,7 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         "/api/master-data",
         "/api/setup",
         "/api/policy-documents",
+        "/api/features",       // read-only tenant feature visibility — must never gate itself
     };
 
     // Route-prefix → feature key.  Order matters: first match wins.
