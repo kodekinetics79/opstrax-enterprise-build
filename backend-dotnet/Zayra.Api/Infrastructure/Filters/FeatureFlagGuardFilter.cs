@@ -59,6 +59,7 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         ("/api/compliance",     FeatureKeys.Compliance),
         ("/api/contracts",      FeatureKeys.Compliance),
         ("/api/ai-assistant",   FeatureKeys.AiAssistant),
+        ("/api/ai",             FeatureKeys.AiAssistant),
         ("/api/loans",          FeatureKeys.Finance),
         ("/api/advances",       FeatureKeys.Finance),
         ("/api/bonuses",        FeatureKeys.Finance),

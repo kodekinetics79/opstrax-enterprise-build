@@ -232,6 +232,8 @@ public class ZayraDbContext : DbContext
     public DbSet<AIRecommendation> AIRecommendations => Set<AIRecommendation>();
     public DbSet<AIHRQueryLog> AIHRQueryLogs => Set<AIHRQueryLog>();
     public DbSet<AIHRQueryCache> AIHRQueryCaches => Set<AIHRQueryCache>();
+    public DbSet<TenantAiUsage> TenantAiUsages => Set<TenantAiUsage>();
+    public DbSet<TenantInvoice> TenantInvoices => Set<TenantInvoice>();
     public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
     public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
     public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
@@ -1516,6 +1518,21 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.CacheKey }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.ExpiresAtUtc });
             entity.HasIndex(x => new { x.TenantId, x.IntentClassified, x.Module });
+        });
+
+        modelBuilder.Entity<TenantAiUsage>(entity =>
+        {
+            entity.ToTable("tenant_ai_usage");
+            entity.HasKey(x => new { x.TenantId, x.YearMonth });
+        });
+
+        modelBuilder.Entity<TenantInvoice>(entity =>
+        {
+            entity.ToTable("tenant_invoices");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Amount).HasPrecision(12, 2);
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.InvoiceDate });
         });
 
         modelBuilder.Entity<ResumeParseResult>(entity =>

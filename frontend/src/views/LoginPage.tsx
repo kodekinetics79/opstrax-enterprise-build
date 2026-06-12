@@ -44,7 +44,7 @@ export function LoginPage() {
         <div className="surface p-8">
           <h1 className="mb-1 text-2xl font-extrabold text-slate-950 dark:text-white">Sign in</h1>
           <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-            Welcome back to KynexOne
+            Welcome back
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -106,7 +106,7 @@ export function LoginPage() {
                 required
               />
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                Your company's KynexOne workspace identifier
+                Your company's unique workspace identifier
               </p>
             </div>
 
@@ -134,7 +134,7 @@ export function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
-          KynexOne · One Platform for Every Workforce Operation
+          One Platform for Every Workforce Operation
         </p>
         <p className="mt-1 text-center text-[11px] text-slate-400 dark:text-slate-600">
           A <span className="font-semibold text-slate-500 dark:text-slate-400">Kode Kinetics</span> product

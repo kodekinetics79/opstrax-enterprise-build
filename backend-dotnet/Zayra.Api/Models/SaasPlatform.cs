@@ -153,3 +153,59 @@ public class CountryPayrollRule
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }
 }
+
+// ── Tenant AI Usage ───────────────────────────────────────────────────────────
+
+public class TenantAiUsage
+{
+    public Guid TenantId { get; set; }
+    public int YearMonth { get; set; } // YYYYMM
+    public long TokensUsed { get; set; }
+    public int RequestCount { get; set; }
+    public int BlockedCount { get; set; }
+    public DateTime LastUpdatedUtc { get; set; } = DateTime.UtcNow;
+}
+
+// ── Tenant Invoices ───────────────────────────────────────────────────────────
+
+public class TenantInvoice
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string InvoiceNumber { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string CurrencyCode { get; set; } = "USD";
+    /// <summary>Draft | Sent | Paid | Overdue | Cancelled</summary>
+    public string Status { get; set; } = "Draft";
+    public string? PaymentMethod { get; set; }   // BankTransfer, Cheque, Online, etc.
+    public string? PaymentReference { get; set; }
+    public string? PeriodDescription { get; set; } // e.g. "June 2026"
+    public DateOnly InvoiceDate { get; set; }
+    public DateOnly DueDate { get; set; }
+    public DateOnly? PaidDate { get; set; }
+    public string? Notes { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? CreatedBy { get; set; }
+}
+
+public static class InvoiceStatuses
+{
+    public const string Draft     = "Draft";
+    public const string Sent      = "Sent";
+    public const string Paid      = "Paid";
+    public const string Overdue   = "Overdue";
+    public const string Cancelled = "Cancelled";
+}
+
+public static class AiPlanLimits
+{
+    // Monthly token limits per plan. 0 = unlimited.
+    public static long GetMonthlyTokenLimit(string plan) => plan switch
+    {
+        "Starter"    => 50_000,
+        "Growth"     => 200_000,
+        "Enterprise" => 0,
+        _            => 50_000
+    };
+}

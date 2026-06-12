@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zayra.Api.Application.AI;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
@@ -22,7 +23,7 @@ public class AiAdvisoryServiceTests
     public async Task Query_RequiresAuthenticationTenantClaim()
     {
         await using var db = CreateDb();
-        var controller = new AIAssistantController(db, CreateService(db));
+        var controller = new AIAssistantController(db, CreateService(db), new StubUnrestrictedScopeService());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) }
@@ -400,6 +401,12 @@ public class AiAdvisoryServiceTests
             => ShouldThrow
                 ? throw new InvalidOperationException("Simulated audit save failure.")
                 : base.SaveChangesAsync(cancellationToken);
+    }
+
+    private sealed class StubUnrestrictedScopeService : IDataScopeService
+    {
+        public Task<DataScope> ResolveAsync(ClaimsPrincipal caller, Guid tenantId, CancellationToken ct)
+            => Task.FromResult(new DataScope { Level = DataScopeLevel.Organization, AllowedEmployeeIds = null });
     }
 
     private sealed class StubHttpMessageHandler : HttpMessageHandler

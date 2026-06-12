@@ -955,6 +955,166 @@ public class PlatformController : ControllerBase
         return Ok(new { total, page, pageSize, sessions });
     }
 
+    // ── Tenant Invoices ───────────────────────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/invoices")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> ListTenantInvoices(Guid tenantId, CancellationToken ct)
+    {
+        if (!await _db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct)) return NotFound();
+        var invoices = await _db.TenantInvoices
+            .AsNoTracking()
+            .Where(i => i.TenantId == tenantId)
+            .OrderByDescending(i => i.InvoiceDate)
+            .ToListAsync(ct);
+        return Ok(invoices);
+    }
+
+    [HttpPost("tenants/{tenantId:guid}/invoices")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> CreateInvoice(Guid tenantId, [FromBody] CreateInvoiceRequest req, CancellationToken ct)
+    {
+        if (!await _db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct)) return NotFound();
+        if (string.IsNullOrWhiteSpace(req.InvoiceNumber))
+            return BadRequest(new { message = "Invoice number is required." });
+        if (req.Amount < 0)
+            return BadRequest(new { message = "Amount must be non-negative." });
+
+        var invoice = new TenantInvoice
+        {
+            TenantId = tenantId,
+            InvoiceNumber = req.InvoiceNumber.Trim(),
+            Amount = req.Amount,
+            CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? "USD" : req.CurrencyCode.Trim().ToUpperInvariant(),
+            Status = string.IsNullOrWhiteSpace(req.Status) ? InvoiceStatuses.Draft : req.Status,
+            PaymentMethod = req.PaymentMethod?.Trim(),
+            PaymentReference = req.PaymentReference?.Trim(),
+            PeriodDescription = req.PeriodDescription?.Trim(),
+            InvoiceDate = req.InvoiceDate,
+            DueDate = req.DueDate,
+            PaidDate = req.PaidDate,
+            Notes = req.Notes?.Trim()
+        };
+        _db.TenantInvoices.Add(invoice);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Invoice",
+            EntityId = invoice.Id.ToString(),
+            Action = "InvoiceCreated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                invoiceNumber = invoice.InvoiceNumber,
+                amount = invoice.Amount,
+                currency = invoice.CurrencyCode,
+                status = invoice.Status,
+                dueDate = invoice.DueDate
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return CreatedAtAction(nameof(ListTenantInvoices), new { tenantId }, invoice);
+    }
+
+    [HttpPut("tenants/{tenantId:guid}/invoices/{invoiceId:guid}")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> UpdateInvoice(Guid tenantId, Guid invoiceId, [FromBody] UpdateInvoiceRequest req, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+
+        var oldStatus = invoice.Status;
+        if (req.Status is not null) invoice.Status = req.Status;
+        if (req.PaymentMethod is not null) invoice.PaymentMethod = req.PaymentMethod.Trim();
+        if (req.PaymentReference is not null) invoice.PaymentReference = req.PaymentReference.Trim();
+        if (req.PaidDate.HasValue) invoice.PaidDate = req.PaidDate;
+        if (req.Notes is not null) invoice.Notes = req.Notes.Trim();
+        invoice.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Invoice",
+            EntityId = invoiceId.ToString(),
+            Action = "InvoiceUpdated",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = oldStatus }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                status = invoice.Status,
+                paymentMethod = invoice.PaymentMethod,
+                paymentReference = invoice.PaymentReference,
+                paidDate = invoice.PaidDate
+            }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(invoice);
+    }
+
+    [HttpDelete("tenants/{tenantId:guid}/invoices/{invoiceId:guid}")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> DeleteInvoice(Guid tenantId, Guid invoiceId, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        if (invoice.Status == InvoiceStatuses.Paid)
+            return BadRequest(new { message = "Paid invoices cannot be deleted. Set status to Cancelled instead." });
+
+        var snap = new { invoiceNumber = invoice.InvoiceNumber, amount = invoice.Amount, status = invoice.Status };
+        _db.TenantInvoices.Remove(invoice);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Invoice",
+            EntityId = invoiceId.ToString(),
+            Action = "InvoiceDeleted",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(snap),
+            NewValuesJson = "{}",
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    // ── Tenant AI Usage (platform view) ──────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/ai-usage")]
+    [Authorize(Policy = "PlatformAdmin")]
+    public async Task<IActionResult> GetTenantAiUsage(Guid tenantId, [FromQuery] int? yearMonth, CancellationToken ct)
+    {
+        if (!await _db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct)) return NotFound();
+
+        var sub = await _db.TenantSubscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        var plan = sub?.Plan ?? "Starter";
+        var limit = AiPlanLimits.GetMonthlyTokenLimit(plan);
+        var ym = yearMonth ?? int.Parse(DateTime.UtcNow.ToString("yyyyMM"));
+
+        var usage = await _db.TenantAiUsages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.TenantId == tenantId && u.YearMonth == ym, ct);
+
+        return Ok(new
+        {
+            tenantId,
+            plan,
+            yearMonth = ym,
+            tokensUsed = usage?.TokensUsed ?? 0,
+            requestCount = usage?.RequestCount ?? 0,
+            blockedCount = usage?.BlockedCount ?? 0,
+            monthlyTokenLimit = limit,
+            isUnlimited = limit == 0,
+            usagePct = limit > 0 ? Math.Min(100.0, (double)(usage?.TokensUsed ?? 0) / limit * 100) : 0.0
+        });
+    }
+
     // ── Platform Stats ────────────────────────────────────────────────────────
 
     [HttpGet("stats")]
@@ -1014,3 +1174,23 @@ public record UpdateTenantRequest(string? Name);
 public record ForcePasswordResetRequest(string TempPassword);
 public record StartSupportAccessRequest(string TenantId, string UserId, string Reason);
 public record EndSupportAccessRequest(string SessionId);
+
+public record CreateInvoiceRequest(
+    string InvoiceNumber,
+    decimal Amount,
+    string? CurrencyCode,
+    string? Status,
+    string? PaymentMethod,
+    string? PaymentReference,
+    string? PeriodDescription,
+    DateOnly InvoiceDate,
+    DateOnly DueDate,
+    DateOnly? PaidDate,
+    string? Notes);
+
+public record UpdateInvoiceRequest(
+    string? Status,
+    string? PaymentMethod,
+    string? PaymentReference,
+    DateOnly? PaidDate,
+    string? Notes);

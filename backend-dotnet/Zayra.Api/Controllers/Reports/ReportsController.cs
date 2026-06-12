@@ -53,6 +53,9 @@ public class ReportsController : ControllerBase
             new { key = "finance.loan-balance", name = "Loan Balance", category = "Finance", description = "Outstanding loan balances by employee" },
             new { key = "finance.advance-report", name = "Salary Advance Report", category = "Finance", description = "Active salary advances and repayments" },
             new { key = "finance.bonus-payout", name = "Bonus Payout", category = "Finance", description = "Bonus batches and payout amounts" },
+            new { key = "attendance.corrections", name = "Attendance Corrections", category = "Attendance", description = "Submitted, approved, and rejected attendance correction requests" },
+            new { key = "compliance.document-compliance", name = "Document Compliance", category = "Compliance", description = "Employee document status: verified, pending, rejected, expired, and missing required docs" },
+            new { key = "qiwa.readiness", name = "Qiwa Readiness", category = "Compliance", description = "Employees missing Iqama, Work Permit, National ID, or Passport required for Qiwa" },
         };
         return Ok(catalog);
     }
@@ -75,6 +78,7 @@ public class ReportsController : ControllerBase
             "hr.status" => await RunEmployeeStatus(tid, req, ct),
             "hr.nationality-mix" => await RunNationalityMix(tid, ct),
             "attendance.daily" => await RunDailyAttendance(tid, req, ct),
+            "attendance.monthly" => await RunMonthlyAttendance(tid, req, ct),
             "attendance.late-arrivals" => await RunLateArrivals(tid, req, ct),
             "attendance.absences" => await RunAbsences(tid, req, ct),
             "leave.balance" => await RunLeaveBalance(tid, req, ct),
@@ -91,6 +95,9 @@ public class ReportsController : ControllerBase
             "finance.loan-balance" => await RunLoanBalance(tid, ct),
             "finance.advance-report" => await RunAdvanceReport(tid, ct),
             "finance.bonus-payout" => await RunBonusPayout(tid, req, ct),
+            "attendance.corrections" => await RunAttendanceCorrections(tid, req, ct),
+            "compliance.document-compliance" => await RunDocumentCompliance(tid, req, ct),
+            "qiwa.readiness" => await RunQiwaReadiness(tid, req, ct),
             _ => null,
         };
 
@@ -186,6 +193,50 @@ public class ReportsController : ControllerBase
             .OrderBy(x => x.EmployeeName).ToListAsync(ct);
     }
 
+    private async Task<object> RunMonthlyAttendance(Guid tid, RunReportRequest req, CancellationToken ct)
+    {
+        // Resolve date range: honour DateFrom/DateTo if supplied; default to current calendar month.
+        DateOnly from, to;
+        if (req.Filters?.DateFrom is not null && req.Filters?.DateTo is not null)
+        {
+            from = DateOnly.FromDateTime(req.Filters.DateFrom.Value);
+            to   = DateOnly.FromDateTime(req.Filters.DateTo.Value);
+        }
+        else if (!string.IsNullOrEmpty(req.Filters?.Period)
+            && DateOnly.TryParseExact(req.Filters.Period + "-01", "yyyy-MM-dd", null,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+        {
+            from = parsed;
+            to   = parsed.AddMonths(1).AddDays(-1);
+        }
+        else
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            from = new DateOnly(today.Year, today.Month, 1);
+            to   = today;
+        }
+
+        var q = _db.AttendanceDailyRecords.Where(x => x.TenantId == tid && x.WorkDate >= from && x.WorkDate <= to);
+        if (!string.IsNullOrEmpty(req.Filters?.Department)) q = q.Where(x => x.Department == req.Filters.Department);
+
+        return await q
+            .GroupBy(x => new { x.EmployeeId, x.EmployeeName, x.Department })
+            .Select(g => new
+            {
+                g.Key.EmployeeId,
+                g.Key.EmployeeName,
+                g.Key.Department,
+                WorkDays     = g.Count(),
+                PresentDays  = g.Count(x => x.Status == "Present"),
+                AbsentDays   = g.Count(x => x.Status == "Absent"),
+                LateDays     = g.Count(x => x.LateMinutes > 0),
+                TotalLateMinutes     = g.Sum(x => x.LateMinutes),
+                TotalOvertimeMinutes = g.Sum(x => x.OvertimeMinutes),
+            })
+            .OrderBy(x => x.Department).ThenBy(x => x.EmployeeName)
+            .ToListAsync(ct);
+    }
+
     private async Task<object> RunLateArrivals(Guid tid, RunReportRequest req, CancellationToken ct)
     {
         var from = DateOnly.FromDateTime(req.Filters?.DateFrom ?? DateTime.UtcNow.AddDays(-30));
@@ -234,8 +285,8 @@ public class ReportsController : ControllerBase
 
     private async Task<object> RunPendingLeave(Guid tid, CancellationToken ct)
     {
-        return await _db.LeaveRequests.Where(x => x.TenantId == tid && x.Status == "Pending")
-            .Select(x => new { x.EmployeeId, x.EmployeeName, x.LeaveTypeName, x.StartDate, x.EndDate, x.TotalDays, x.CreatedAtUtc })
+        return await _db.LeaveRequests.Where(x => x.TenantId == tid && (x.Status == "Submitted" || x.Status == "Pending"))
+            .Select(x => new { x.EmployeeId, x.EmployeeName, x.LeaveTypeName, x.StartDate, x.EndDate, x.TotalDays, x.Status, x.CreatedAtUtc })
             .OrderBy(x => x.CreatedAtUtc).ToListAsync(ct);
     }
 
@@ -361,6 +412,153 @@ public class ReportsController : ControllerBase
             .OrderByDescending(x => x.PaymentPeriod).ToListAsync(ct);
     }
 
+    // ── Attendance Corrections / Exceptions Report ────────────────────────────
+
+    private async Task<object> RunAttendanceCorrections(Guid tid, RunReportRequest req, CancellationToken ct)
+    {
+        var from = DateOnly.FromDateTime(req.Filters?.DateFrom ?? DateTime.UtcNow.AddMonths(-1));
+        var to = DateOnly.FromDateTime(req.Filters?.DateTo ?? DateTime.UtcNow);
+        var q = _db.AttendanceRegularizationRequests.Where(x => x.TenantId == tid
+            && x.WorkDate >= from && x.WorkDate <= to);
+        if (!string.IsNullOrEmpty(req.Filters?.Status)) q = q.Where(x => x.Status == req.Filters.Status);
+
+        var rows = await q.OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new { x.EmployeeId, x.WorkDate, x.RequestType, x.Status, x.Reason, SubmittedAt = x.CreatedAtUtc })
+            .ToListAsync(ct);
+
+        var empIds = rows.Select(r => r.EmployeeId).Distinct().ToList();
+        var empMap = await _db.Employees
+            .Where(e => e.TenantId == tid && empIds.Contains(e.Id))
+            .Select(e => new { e.Id, e.FullName, e.EmployeeCode, e.Department })
+            .ToDictionaryAsync(e => e.Id, ct);
+
+        return rows
+            .Where(r => !string.IsNullOrEmpty(req.Filters?.Department)
+                ? empMap.TryGetValue(r.EmployeeId, out var emp) && emp.Department == req.Filters.Department
+                : true)
+            .Select(r =>
+            {
+                empMap.TryGetValue(r.EmployeeId, out var emp);
+                return new
+                {
+                    EmployeeCode = emp?.EmployeeCode ?? r.EmployeeId.ToString(),
+                    EmployeeName = emp?.FullName ?? "Unknown",
+                    Department = emp?.Department ?? "",
+                    r.WorkDate,
+                    r.RequestType,
+                    r.Status,
+                    r.Reason,
+                    r.SubmittedAt,
+                };
+            }).ToList();
+    }
+
+    // ── Document Compliance Report ────────────────────────────────────────────
+
+    private static readonly string[] _qiwaRequiredDocs = ["Iqama", "Work Permit", "National ID", "Passport"];
+
+    private async Task<object> RunDocumentCompliance(Guid tid, RunReportRequest req, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var q = _db.EmployeeDocuments.Where(x => x.TenantId == tid && !x.IsDeleted);
+        if (!string.IsNullOrEmpty(req.Filters?.Status)) q = q.Where(x => x.ApprovalStatus == req.Filters.Status);
+
+        // Join employee for department/location filtering
+        var docs = await q.Select(x => new
+        {
+            x.EmployeeId,
+            x.DocumentType,
+            x.DocumentCategory,
+            x.ApprovalStatus,
+            x.ExpiryDate,
+            x.IsRequired,
+            x.UploadedAtUtc,
+        }).ToListAsync(ct);
+
+        // Enrich with employee info
+        var empIds = docs.Select(d => d.EmployeeId).Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
+        var emps = await _db.Employees.Where(e => e.TenantId == tid && empIds.Contains(e.Id) && !e.IsDeleted)
+            .Select(e => new { e.Id, e.FullName, e.EmployeeCode, e.Department, e.Branch })
+            .ToListAsync(ct);
+        var empMap = emps.ToDictionary(e => e.Id);
+
+        var result = docs
+            .Where(d => d.EmployeeId != null && empMap.ContainsKey(d.EmployeeId!.Value))
+            .Select(d =>
+            {
+                var emp = empMap[d.EmployeeId!.Value];
+                if (!string.IsNullOrEmpty(req.Filters?.Department) && emp.Department != req.Filters.Department) return null;
+                if (!string.IsNullOrEmpty(req.Filters?.Location) && emp.Branch != req.Filters.Location) return null;
+                var daysToExpiry = d.ExpiryDate.HasValue ? (d.ExpiryDate.Value.DayNumber - today.DayNumber) : (int?)null;
+                return new
+                {
+                    emp.EmployeeCode,
+                    EmployeeName = emp.FullName,
+                    emp.Department,
+                    Location = emp.Branch,
+                    d.DocumentType,
+                    d.DocumentCategory,
+                    d.ApprovalStatus,
+                    ExpiryDate = d.ExpiryDate?.ToString("yyyy-MM-dd"),
+                    DaysToExpiry = daysToExpiry,
+                    d.IsRequired,
+                    UploadedAt = d.UploadedAtUtc.ToString("yyyy-MM-dd"),
+                };
+            })
+            .Where(x => x != null)
+            .OrderBy(x => x!.EmployeeName).ThenBy(x => x!.DocumentType)
+            .ToList();
+        return result;
+    }
+
+    // ── Qiwa Readiness Report ─────────────────────────────────────────────────
+
+    private async Task<object> RunQiwaReadiness(Guid tid, RunReportRequest req, CancellationToken ct)
+    {
+        var empQ = _db.Employees.Where(x => x.TenantId == tid && !x.IsDeleted && x.Status == "Active");
+        if (!string.IsNullOrEmpty(req.Filters?.Department)) empQ = empQ.Where(x => x.Department == req.Filters.Department);
+        if (!string.IsNullOrEmpty(req.Filters?.Location)) empQ = empQ.Where(x => x.Branch == req.Filters.Location);
+
+        var employees = await empQ
+            .Select(x => new { x.Id, x.EmployeeCode, x.FullName, x.Department, x.Branch, x.Nationality })
+            .ToListAsync(ct);
+
+        var empIds = employees.Select(e => e.Id).ToList();
+        var uploadedDocs = await _db.EmployeeDocuments
+            .Where(x => x.TenantId == tid && !x.IsDeleted && x.EmployeeId != null && empIds.Contains(x.EmployeeId!.Value))
+            .Select(x => new { x.EmployeeId, x.DocumentType, x.ApprovalStatus, x.ExpiryDate })
+            .ToListAsync(ct);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var byEmployee = uploadedDocs.ToLookup(d => d.EmployeeId!.Value);
+
+        return employees.Select(emp =>
+        {
+            var docs = byEmployee[emp.Id].ToList();
+            var missingTypes = _qiwaRequiredDocs
+                .Where(req => !docs.Any(d => string.Equals(d.DocumentType, req, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            var expiredTypes = docs
+                .Where(d => d.ExpiryDate.HasValue && d.ExpiryDate.Value < today)
+                .Select(d => d.DocumentType)
+                .Distinct()
+                .ToList();
+            return new
+            {
+                emp.EmployeeCode,
+                EmployeeName = emp.FullName,
+                emp.Department,
+                Location = emp.Branch,
+                emp.Nationality,
+                QiwaReady = missingTypes.Count == 0 && expiredTypes.Count == 0,
+                MissingDocuments = string.Join(", ", missingTypes),
+                ExpiredDocuments = string.Join(", ", expiredTypes),
+            };
+        })
+        .OrderBy(x => x.QiwaReady).ThenBy(x => x.EmployeeName)
+        .ToList();
+    }
+
     // ── Saved Reports ─────────────────────────────────────────────────────────
 
     [HttpGet("saved")]
@@ -477,6 +675,7 @@ public class ReportFilters
     public DateTime? DateFrom { get; set; }
     public DateTime? DateTo { get; set; }
     public string? Department { get; set; }
+    public string? Location { get; set; }
     public string? Status { get; set; }
     public string? Period { get; set; }
     public int? DaysAhead { get; set; }

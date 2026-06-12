@@ -14,6 +14,7 @@ import {
   type PlatformPlan,
   type SupportSession,
   type StartSupportAccessResult,
+  type TenantInvoice,
 } from '@/src/api/platform';
 import { InfoTip } from '@/src/components/InfoTip';
 
@@ -280,7 +281,7 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
 // ── Tenant Panel ──────────────────────────────────────────────────────────────
 
-type PanelTab = 'subscription' | 'features' | 'admins' | 'users' | 'support';
+type PanelTab = 'subscription' | 'features' | 'admins' | 'users' | 'support' | 'invoices';
 
 function TenantPanel({
   tenant,
@@ -324,6 +325,18 @@ function TenantPanel({
   const [userSearch, setUserSearch] = useState('');
   const [resetUserId, setResetUserId] = useState<string | null>(null);
   const [resetResult, setResetResult] = useState<string | null>(null);
+
+  // Invoices
+  const [invoices, setInvoices] = useState<TenantInvoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [showCreateInvoice, setShowCreateInvoice] = useState(false);
+  const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: '', amount: '', currencyCode: 'USD', status: 'Draft', paymentMethod: '', periodDescription: '', invoiceDate: '', dueDate: '', notes: '' });
+  const [invoiceSaving, setInvoiceSaving] = useState(false);
+  const [invoiceErr, setInvoiceErr] = useState('');
+  const [editingInvoice, setEditingInvoice] = useState<TenantInvoice | null>(null);
+  const [editInvoiceForm, setEditInvoiceForm] = useState({ status: '', paymentMethod: '', paymentReference: '', paidDate: '', notes: '' });
+  const [editInvoiceSaving, setEditInvoiceSaving] = useState(false);
+  const [deletingInvoice, setDeletingInvoice] = useState<string | null>(null);
 
   // Support access (structured break-glass)
   const [supportUserId, setSupportUserId] = useState('');
@@ -458,6 +471,67 @@ function TenantPanel({
     if (tab === 'support') loadSupportSessions();
   }, [tab, loadSupportSessions]);
 
+  const loadInvoices = useCallback(async () => {
+    setInvoicesLoading(true);
+    try { setInvoices(await platformApi.listInvoices(tenant.id)); }
+    catch { /**/ } finally { setInvoicesLoading(false); }
+  }, [tenant.id]);
+
+  useEffect(() => {
+    if (tab === 'invoices') loadInvoices();
+  }, [tab, loadInvoices]);
+
+  async function createInvoice() {
+    setInvoiceErr('');
+    if (!invoiceForm.invoiceNumber.trim()) { setInvoiceErr('Invoice number is required.'); return; }
+    if (!invoiceForm.invoiceDate || !invoiceForm.dueDate) { setInvoiceErr('Invoice date and due date are required.'); return; }
+    setInvoiceSaving(true);
+    try {
+      await platformApi.createInvoice(tenant.id, {
+        invoiceNumber: invoiceForm.invoiceNumber.trim(),
+        amount: parseFloat(invoiceForm.amount) || 0,
+        currencyCode: invoiceForm.currencyCode || 'USD',
+        status: invoiceForm.status || 'Draft',
+        paymentMethod: invoiceForm.paymentMethod || undefined,
+        periodDescription: invoiceForm.periodDescription || undefined,
+        invoiceDate: invoiceForm.invoiceDate,
+        dueDate: invoiceForm.dueDate,
+        notes: invoiceForm.notes || undefined,
+      });
+      setShowCreateInvoice(false);
+      setInvoiceForm({ invoiceNumber: '', amount: '', currencyCode: 'USD', status: 'Draft', paymentMethod: '', periodDescription: '', invoiceDate: '', dueDate: '', notes: '' });
+      loadInvoices();
+    } catch (e: unknown) {
+      setInvoiceErr((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to create invoice.');
+    } finally { setInvoiceSaving(false); }
+  }
+
+  async function saveEditInvoice() {
+    if (!editingInvoice) return;
+    setEditInvoiceSaving(true);
+    try {
+      await platformApi.updateInvoice(tenant.id, editingInvoice.id, {
+        status: editInvoiceForm.status || undefined,
+        paymentMethod: editInvoiceForm.paymentMethod || undefined,
+        paymentReference: editInvoiceForm.paymentReference || undefined,
+        paidDate: editInvoiceForm.paidDate || undefined,
+        notes: editInvoiceForm.notes || undefined,
+      });
+      setEditingInvoice(null);
+      loadInvoices();
+    } catch { /**/ } finally { setEditInvoiceSaving(false); }
+  }
+
+  async function deleteInvoice(invoiceId: string) {
+    setDeletingInvoice(invoiceId);
+    try {
+      await platformApi.deleteInvoice(tenant.id, invoiceId);
+      loadInvoices();
+    } catch (e: unknown) {
+      alert((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Could not delete invoice.');
+    } finally { setDeletingInvoice(null); }
+  }
+
   async function handleSupportAccess() {
     if (!supportUserId.trim() || !supportReason.trim()) return;
     setSupportBusy(true);
@@ -494,6 +568,7 @@ function TenantPanel({
     { id: 'features', label: 'Features' },
     { id: 'admins', label: 'Admins' },
     { id: 'users', label: 'Users' },
+    { id: 'invoices', label: 'Invoices' },
     { id: 'support', label: 'Support Access' },
   ];
 
@@ -641,8 +716,10 @@ function TenantPanel({
                         <select value={subForm.status} onChange={e => setSubForm(p => ({ ...p, status: e.target.value }))} className={subInputCls}>
                           <option value="Active">Active</option>
                           <option value="Trial">Trial</option>
+                          <option value="PastDue">PastDue</option>
                           <option value="Suspended">Suspended</option>
                           <option value="Cancelled">Cancelled</option>
+                          <option value="ManualContract">ManualContract</option>
                         </select>
                       </div>
                       <div>
@@ -817,6 +894,176 @@ function TenantPanel({
                     </div>
                   ))}
                 </div>
+              </section>
+            )}
+
+            {/* ── Invoices Tab ──────────────────────────────────── */}
+            {tab === 'invoices' && (
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Invoices</h3>
+                  <button
+                    type="button"
+                    onClick={() => { setShowCreateInvoice(true); setInvoiceErr(''); }}
+                    className="px-3 py-1.5 bg-sapphire hover:bg-sapphire/80 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    + New Invoice
+                  </button>
+                </div>
+
+                {showCreateInvoice && (
+                  <div className="bg-darkSlate/60 border border-white/10 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-medium text-white">Create Invoice</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Invoice #</label>
+                        <input type="text" aria-label="Invoice number" placeholder="INV-2026-001" value={invoiceForm.invoiceNumber} onChange={e => setInvoiceForm(p => ({ ...p, invoiceNumber: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Amount</label>
+                        <input type="number" step="0.01" aria-label="Amount" placeholder="0.00" value={invoiceForm.amount} onChange={e => setInvoiceForm(p => ({ ...p, amount: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Currency</label>
+                        <select aria-label="Currency" value={invoiceForm.currencyCode} onChange={e => setInvoiceForm(p => ({ ...p, currencyCode: e.target.value }))} className="w-full bg-darkSlate border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire">
+                          {['USD', 'SAR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR'].map(c => <option key={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Status</label>
+                        <select aria-label="Status" value={invoiceForm.status} onChange={e => setInvoiceForm(p => ({ ...p, status: e.target.value }))} className="w-full bg-darkSlate border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire">
+                          {['Draft', 'Sent', 'Paid', 'Overdue', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Invoice Date</label>
+                        <input type="date" aria-label="Invoice date" value={invoiceForm.invoiceDate} onChange={e => setInvoiceForm(p => ({ ...p, invoiceDate: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Due Date</label>
+                        <input type="date" aria-label="Due date" value={invoiceForm.dueDate} onChange={e => setInvoiceForm(p => ({ ...p, dueDate: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Period</label>
+                        <input type="text" aria-label="Billing period" placeholder="e.g. June 2026" value={invoiceForm.periodDescription} onChange={e => setInvoiceForm(p => ({ ...p, periodDescription: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Payment Method</label>
+                        <select aria-label="Payment method" value={invoiceForm.paymentMethod} onChange={e => setInvoiceForm(p => ({ ...p, paymentMethod: e.target.value }))} className="w-full bg-darkSlate border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire">
+                          <option value="">— none —</option>
+                          {['BankTransfer', 'Cheque', 'Online', 'Cash'].map(m => <option key={m}>{m}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Notes</label>
+                      <textarea rows={2} aria-label="Notes" placeholder="Optional notes" value={invoiceForm.notes} onChange={e => setInvoiceForm(p => ({ ...p, notes: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-sapphire" />
+                    </div>
+                    {invoiceErr && <p className="text-xs text-rose-400">{invoiceErr}</p>}
+                    <div className="flex gap-2 justify-end">
+                      <button type="button" onClick={() => setShowCreateInvoice(false)} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white">Cancel</button>
+                      <button type="button" onClick={createInvoice} disabled={invoiceSaving} className="px-4 py-1.5 bg-sapphire hover:bg-sapphire/80 text-white text-xs font-medium rounded-lg disabled:opacity-50">
+                        {invoiceSaving ? 'Saving…' : 'Create Invoice'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {editingInvoice && (
+                  <div className="bg-darkSlate/60 border border-amber-500/30 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-medium text-white">Edit Invoice #{editingInvoice.invoiceNumber}</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Status</label>
+                        <select aria-label="Status" value={editInvoiceForm.status} onChange={e => setEditInvoiceForm(p => ({ ...p, status: e.target.value }))} className="w-full bg-darkSlate border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire">
+                          {['Draft', 'Sent', 'Paid', 'Overdue', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Payment Method</label>
+                        <select aria-label="Payment method" value={editInvoiceForm.paymentMethod} onChange={e => setEditInvoiceForm(p => ({ ...p, paymentMethod: e.target.value }))} className="w-full bg-darkSlate border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire">
+                          <option value="">— none —</option>
+                          {['BankTransfer', 'Cheque', 'Online', 'Cash'].map(m => <option key={m}>{m}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Payment Reference</label>
+                        <input type="text" aria-label="Payment reference" placeholder="e.g. TXN-12345" value={editInvoiceForm.paymentReference} onChange={e => setEditInvoiceForm(p => ({ ...p, paymentReference: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Paid Date</label>
+                        <input type="date" aria-label="Paid date" value={editInvoiceForm.paidDate} onChange={e => setEditInvoiceForm(p => ({ ...p, paidDate: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Notes</label>
+                      <textarea rows={2} aria-label="Notes" placeholder="Optional notes" value={editInvoiceForm.notes} onChange={e => setEditInvoiceForm(p => ({ ...p, notes: e.target.value }))} className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none focus:outline-none focus:border-sapphire" />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button type="button" onClick={() => setEditingInvoice(null)} className="px-3 py-1.5 text-xs text-slate-400 hover:text-white">Cancel</button>
+                      <button type="button" onClick={saveEditInvoice} disabled={editInvoiceSaving} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded-lg disabled:opacity-50">
+                        {editInvoiceSaving ? 'Saving…' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {invoicesLoading ? (
+                  <p className="text-xs text-slate-500 py-4 text-center">Loading invoices…</p>
+                ) : invoices.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-6 text-center">No invoices yet. Create one with the button above.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-white/10">
+                          <th className="py-2 text-left font-medium">Invoice #</th>
+                          <th className="py-2 text-left font-medium">Period</th>
+                          <th className="py-2 text-right font-medium">Amount</th>
+                          <th className="py-2 text-left font-medium">Status</th>
+                          <th className="py-2 text-left font-medium">Due</th>
+                          <th className="py-2 text-right font-medium">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoices.map(inv => (
+                          <tr key={inv.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td className="py-2 text-white font-mono">{inv.invoiceNumber}</td>
+                            <td className="py-2 text-slate-400">{inv.periodDescription ?? '—'}</td>
+                            <td className="py-2 text-right text-white font-medium">
+                              {inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} {inv.currencyCode}
+                            </td>
+                            <td className="py-2">
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                inv.status === 'Paid' ? 'bg-green-500/20 text-green-300' :
+                                inv.status === 'Overdue' ? 'bg-rose-500/20 text-rose-300' :
+                                inv.status === 'Sent' ? 'bg-blue-500/20 text-blue-300' :
+                                inv.status === 'Cancelled' ? 'bg-slate-500/20 text-slate-400' :
+                                'bg-amber-500/20 text-amber-300'
+                              }`}>{inv.status}</span>
+                            </td>
+                            <td className="py-2 text-slate-400">{inv.dueDate}</td>
+                            <td className="py-2 text-right flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => { setEditingInvoice(inv); setEditInvoiceForm({ status: inv.status, paymentMethod: inv.paymentMethod ?? '', paymentReference: '', paidDate: inv.paidDate ?? '', notes: '' }); setShowCreateInvoice(false); }}
+                                className="text-slate-400 hover:text-white text-xs underline"
+                              >Edit</button>
+                              {inv.status !== 'Paid' && (
+                                <button
+                                  type="button"
+                                  onClick={() => deleteInvoice(inv.id)}
+                                  disabled={deletingInvoice === inv.id}
+                                  className="text-rose-500 hover:text-rose-300 text-xs underline disabled:opacity-50"
+                                >Delete</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
             )}
 

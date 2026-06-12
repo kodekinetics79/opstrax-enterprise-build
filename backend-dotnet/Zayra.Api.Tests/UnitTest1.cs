@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using System.Security.Claims;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
@@ -82,7 +83,7 @@ public class DashboardControllerTests
 
     private static DashboardController CreateController(ZayraDbContext db, Guid tenantId)
     {
-        var controller = new DashboardController(db, new MemoryCache(new MemoryCacheOptions()));
+        var controller = new DashboardController(db, new MemoryCache(new MemoryCacheOptions()), new UnrestrictedDataScopeService());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -101,4 +102,11 @@ public class DashboardControllerTests
         var ok = Assert.IsType<OkObjectResult>(result);
         return Assert.IsType<T>(ok.Value);
     }
+}
+
+// Test stub: always returns an unrestricted (org-wide) scope.
+file sealed class UnrestrictedDataScopeService : IDataScopeService
+{
+    public Task<DataScope> ResolveAsync(System.Security.Claims.ClaimsPrincipal caller, Guid tenantId, CancellationToken ct)
+        => Task.FromResult(new DataScope { Level = DataScopeLevel.Organization, AllowedEmployeeIds = null });
 }

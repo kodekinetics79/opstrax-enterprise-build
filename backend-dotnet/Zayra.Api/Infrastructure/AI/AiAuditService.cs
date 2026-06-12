@@ -1,7 +1,8 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Zayra.Api.Application.AI;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
-using Microsoft.Extensions.Logging;
 
 namespace Zayra.Api.Infrastructure.AI;
 
@@ -52,6 +53,8 @@ public sealed class AiAuditService : IAiAuditService
 
             _db.AIHRQueryLogs.Add(response);
             await _db.SaveChangesAsync(cancellationToken);
+
+            await UpdateUsageAsync(entry, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -61,6 +64,33 @@ public sealed class AiAuditService : IAiAuditService
                 entry.TenantId,
                 entry.UserId,
                 entry.IntentClassified);
+        }
+    }
+
+    private async Task UpdateUsageAsync(AiAuditEntry entry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var yearMonth = int.Parse(DateTime.UtcNow.ToString("yyyyMM"));
+            var usage = await _db.TenantAiUsages
+                .FirstOrDefaultAsync(u => u.TenantId == entry.TenantId && u.YearMonth == yearMonth, cancellationToken);
+
+            if (usage is null)
+            {
+                usage = new TenantAiUsage { TenantId = entry.TenantId, YearMonth = yearMonth };
+                _db.TenantAiUsages.Add(usage);
+            }
+
+            usage.TokensUsed += entry.TokensUsed;
+            usage.LastUpdatedUtc = DateTime.UtcNow;
+            if (entry.WasBlocked) usage.BlockedCount++;
+            else usage.RequestCount++;
+
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to update AI usage counters for tenant {TenantId}.", entry.TenantId);
         }
     }
 }

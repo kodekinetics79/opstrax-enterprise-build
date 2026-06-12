@@ -308,6 +308,9 @@ function ReportLibrary() {
             <FormField label="Department">
               <input type="text" value={filters.department ?? ''} onChange={(e) => setFilters(x => ({ ...x, department: e.target.value || undefined }))} className="input w-full" placeholder="Optional" />
             </FormField>
+            <FormField label="Location / Branch">
+              <input type="text" value={filters.location ?? ''} onChange={(e) => setFilters(x => ({ ...x, location: e.target.value || undefined }))} className="input w-full" placeholder="Optional" />
+            </FormField>
             <FormField label="Period">
               <input type="text" value={filters.period ?? ''} onChange={(e) => setFilters(x => ({ ...x, period: e.target.value || undefined }))} className="input w-full" placeholder="e.g. 2025-01" />
             </FormField>

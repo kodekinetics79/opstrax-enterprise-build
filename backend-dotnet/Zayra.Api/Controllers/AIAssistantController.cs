@@ -17,11 +17,13 @@ public class AIAssistantController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly IAiAdvisoryService _aiAdvisoryService;
+    private readonly IDataScopeService _scopeService;
 
-    public AIAssistantController(ZayraDbContext db, IAiAdvisoryService aiAdvisoryService)
+    public AIAssistantController(ZayraDbContext db, IAiAdvisoryService aiAdvisoryService, IDataScopeService scopeService)
     {
         _db = db;
         _aiAdvisoryService = aiAdvisoryService;
+        _scopeService = scopeService;
     }
 
     // ── AI HR Query (live DB context, advisory only) ─────────────────────────
@@ -41,13 +43,67 @@ public class AIAssistantController : ControllerBase
             .Where(c => c.Type == "permission")
             .Select(c => c.Value)
             .ToList();
+        var callerEmployeeId = GetEmployeeId();
 
-        var response = await _aiAdvisoryService.QueryAsync(
-            new AiUserContext(tenantId.Value, userId, roles, permissions, GetEmployeeId()),
-            req,
-            ct);
+        // Resolve data scope — enforces tenant isolation and manager team scope.
+        var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
+
+        // Employee role: can only query their own data.
+        var isEmployee = roles.Count == 1 && roles.Contains("Employee");
+        if (isEmployee)
+        {
+            if (callerEmployeeId is null) return Forbid();
+            // Override any requested employeeId to caller's own.
+            req = req with { EmployeeId = callerEmployeeId.Value };
+        }
+        else if (!scope.IsUnrestricted && scope.AllowedEmployeeIds is not null)
+        {
+            // Manager/Supervisor: validate requested employeeId is within team.
+            if (req.EmployeeId.HasValue && !scope.AllowedEmployeeIds.Contains(req.EmployeeId.Value))
+                return Forbid();
+        }
+
+        // Per-tenant monthly usage limit check.
+        var limitCheck = await CheckUsageLimitAsync(tenantId.Value, ct);
+        if (limitCheck is not null) return limitCheck;
+
+        var userContext = new AiUserContext(tenantId.Value, userId, roles, permissions, isEmployee ? callerEmployeeId : req.EmployeeId)
+        {
+            ScopeEmployeeIds = scope.IsUnrestricted ? null : scope.AllowedEmployeeIds?.ToList()
+        };
+
+        var response = await _aiAdvisoryService.QueryAsync(userContext, req, ct);
 
         return Ok(response);
+    }
+
+    private async Task<IActionResult?> CheckUsageLimitAsync(Guid tenantId, CancellationToken ct)
+    {
+        var sub = await _db.TenantSubscriptions
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.Status == "Active")
+            .OrderByDescending(s => s.StartedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        var plan = sub?.Plan ?? "Starter";
+        var limit = AiPlanLimits.GetMonthlyTokenLimit(plan);
+        if (limit == 0) return null; // Enterprise = unlimited
+
+        var yearMonth = int.Parse(DateTime.UtcNow.ToString("yyyyMM"));
+        var usage = await _db.TenantAiUsages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.TenantId == tenantId && u.YearMonth == yearMonth, ct);
+
+        if (usage is not null && usage.TokensUsed >= limit)
+        {
+            return StatusCode(429, new
+            {
+                error = "ai_usage_limit_exceeded",
+                message = $"Your {plan} plan has reached its monthly AI token limit ({limit:N0} tokens). Upgrade your plan to continue.",
+                tokensUsed = usage.TokensUsed,
+                monthlyLimit = limit
+            });
+        }
+        return null;
     }
 
     // ── AI Insights ──────────────────────────────────────────────────────────

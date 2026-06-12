@@ -33,7 +33,7 @@ public class AnalyticsController : ControllerBase
             && x.ContractEndDate.HasValue && x.ContractEndDate.Value >= thisMonth, ct);
 
         // Leave
-        var pendingLeave = await _db.LeaveRequests.CountAsync(x => x.TenantId == tid && x.Status == "Pending", ct);
+        var pendingLeave = await _db.LeaveRequests.CountAsync(x => x.TenantId == tid && (x.Status == "Submitted" || x.Status == "Pending"), ct);
         var onLeaveToday = await _db.LeaveRequests.CountAsync(x => x.TenantId == tid && x.Status == "Approved"
             && x.StartDate <= today && x.EndDate >= today, ct);
 

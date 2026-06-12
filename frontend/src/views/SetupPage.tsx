@@ -1600,7 +1600,7 @@ function EmailConfigTab() {
   type SmtpKey = typeof KEYS[number];
   const [cfg, setCfg] = useState<Record<SmtpKey, string>>({
     'Smtp.Host': '', 'Smtp.Port': '587', 'Smtp.Username': '', 'Smtp.Password': '',
-    'Smtp.FromAddress': '', 'Smtp.FromName': 'KynexOne HR', 'Smtp.UseTls': 'true',
+    'Smtp.FromAddress': '', 'Smtp.FromName': '', 'Smtp.UseTls': 'true',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1677,7 +1677,7 @@ function EmailConfigTab() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">From Name</label>
-            <input className="input w-full" placeholder="KynexOne HR" value={cfg['Smtp.FromName']} onChange={e => setCfg(c => ({ ...c, 'Smtp.FromName': e.target.value }))} />
+            <input className="input w-full" placeholder="HR Team" value={cfg['Smtp.FromName']} onChange={e => setCfg(c => ({ ...c, 'Smtp.FromName': e.target.value }))} />
           </div>
         </div>
         <div className="flex items-center gap-2">

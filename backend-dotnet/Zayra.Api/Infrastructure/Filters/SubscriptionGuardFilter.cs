@@ -86,7 +86,7 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
         // PastDue — allow through but signal it in a response header so the frontend can show a banner.
         if (sub.Status == SubscriptionStatuses.PastDue)
         {
-            context.HttpContext.Response.Headers["X-Subscription-Status"] = "past_due";
+            context.HttpContext.Response.Headers["X-Subscription-Status"] = SubscriptionStatuses.PastDue;
         }
 
         await next();

@@ -52,7 +52,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
       }));
 
     const extras = [
-      { label: 'Ask KynexOne AI', path: '/ai-assistant', description: 'Open the advisory AI assistant' },
+      { label: 'Ask AI Assistant', path: '/ai-assistant', description: 'Open the advisory AI assistant' },
       { label: 'Search Employees', path: '/people', description: 'Jump to employee search and records' },
       { label: 'Review Approvals', path: '/approvals', description: 'Open approval center' },
       { label: 'View Reports', path: '/reports', description: 'Open reports and analytics' },
@@ -336,7 +336,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
                 autoFocus
                 value={commandQuery}
                 onChange={(event) => setCommandQuery(event.target.value)}
-                placeholder="Search modules, employees, reports, or ask KynexOne..."
+                placeholder="Search modules, employees, reports, or ask AI..."
                 className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white dark:placeholder:text-slate-500"
               />
               <button

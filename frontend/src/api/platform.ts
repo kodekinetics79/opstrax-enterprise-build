@@ -140,6 +140,35 @@ export interface PlatformPlan {
   description: string;
 }
 
+export interface TenantInvoice {
+  id: string;
+  tenantId: string;
+  invoiceNumber: string;
+  amount: number;
+  currencyCode: string;
+  status: 'Draft' | 'Sent' | 'Paid' | 'Overdue' | 'Cancelled';
+  paymentMethod: string | null;
+  paymentReference: string | null;
+  periodDescription: string | null;
+  invoiceDate: string;
+  dueDate: string;
+  paidDate: string | null;
+  notes: string | null;
+  createdAtUtc: string;
+}
+
+export interface TenantAiUsage {
+  tenantId: string;
+  plan: string;
+  yearMonth: number;
+  tokensUsed: number;
+  requestCount: number;
+  blockedCount: number;
+  monthlyTokenLimit: number;
+  isUnlimited: boolean;
+  usagePct: number;
+}
+
 export interface SupportSession {
   id: string;
   tenantId: string;
@@ -245,4 +274,37 @@ export const platformApi = {
       '/api/platform/support-access',
       { params: { ...(tenantId ? { tenantId } : {}), activeOnly, page, pageSize } }
     ).then(r => r.data),
+
+  listInvoices: (tenantId: string) =>
+    platform.get<TenantInvoice[]>(`/api/platform/tenants/${tenantId}/invoices`).then(r => r.data),
+
+  createInvoice: (tenantId: string, body: {
+    invoiceNumber: string;
+    amount: number;
+    currencyCode?: string;
+    status?: string;
+    paymentMethod?: string;
+    paymentReference?: string;
+    periodDescription?: string;
+    invoiceDate: string;
+    dueDate: string;
+    paidDate?: string | null;
+    notes?: string;
+  }) =>
+    platform.post<TenantInvoice>(`/api/platform/tenants/${tenantId}/invoices`, body).then(r => r.data),
+
+  updateInvoice: (tenantId: string, invoiceId: string, body: {
+    status?: string;
+    paymentMethod?: string;
+    paymentReference?: string;
+    paidDate?: string | null;
+    notes?: string;
+  }) =>
+    platform.put<TenantInvoice>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}`, body).then(r => r.data),
+
+  deleteInvoice: (tenantId: string, invoiceId: string) =>
+    platform.delete(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}`).then(r => r.data),
+
+  getTenantAiUsage: (tenantId: string, yearMonth?: number) =>
+    platform.get<TenantAiUsage>(`/api/platform/tenants/${tenantId}/ai-usage`, { params: yearMonth ? { yearMonth } : {} }).then(r => r.data),
 };

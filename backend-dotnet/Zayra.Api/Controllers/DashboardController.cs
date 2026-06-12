@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,12 +15,16 @@ public class DashboardController : ControllerBase
 {
     private readonly ZayraDbContext _db;
     private readonly IMemoryCache _cache;
+    private readonly IDataScopeService _scopeService;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
 
-    public DashboardController(ZayraDbContext db, IMemoryCache cache)
+    private static readonly string[] QiwaRequiredDocs = ["Iqama", "Work Permit", "National ID", "Passport"];
+
+    public DashboardController(ZayraDbContext db, IMemoryCache cache, IDataScopeService scopeService)
     {
         _db = db;
         _cache = cache;
+        _scopeService = scopeService;
     }
 
     // Single consolidated endpoint — replaces three separate calls (summary + trends + overview).
@@ -89,6 +94,88 @@ public class DashboardController : ControllerBase
         var result = await BuildOverview(tenantId.Value, cancellationToken);
         _cache.Set(cacheKey, result, CacheTtl);
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Role-scoped operational KPIs. Admin/HR see tenant-wide data;
+    /// Manager/Supervisor see only their team; Employee sees only themselves.
+    /// Not cached because it must reflect the caller's scope, not a shared tenant key.
+    /// </summary>
+    [HttpGet("kpis")]
+    public async Task<IActionResult> Kpis(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Ok(EmptyKpis(false));
+
+        var tid = tenantId.Value;
+        var scope = await _scopeService.ResolveAsync(User, tid, ct);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+
+        // Depending on scope, all counts are filtered to the allowed employee set.
+        // unrestricted = Admin/HR: full tenant; restricted = Manager/Supervisor: team; Employee: own.
+        IReadOnlyCollection<int>? scopeIds = scope.IsUnrestricted ? null : scope.AllowedEmployeeIds;
+
+        // Pending leave requests in scope
+        var leaveQ = _db.LeaveRequests.Where(x => x.TenantId == tid && (x.Status == "Submitted" || x.Status == "Pending"));
+        if (scopeIds is not null) leaveQ = leaveQ.Where(x => scopeIds.Contains(x.EmployeeId));
+        var pendingLeave = await leaveQ.CountAsync(ct);
+
+        // Pending attendance corrections in scope
+        var corrQ = _db.AttendanceRegularizationRequests.Where(x => x.TenantId == tid && x.Status == "Submitted");
+        if (scopeIds is not null) corrQ = corrQ.Where(x => scopeIds.Contains(x.EmployeeId));
+        var pendingCorrections = await corrQ.CountAsync(ct);
+
+        // Attendance exceptions today (Late or Absent) in scope
+        var exceptQ = _db.AttendanceDailyRecords.Where(x => x.TenantId == tid && x.WorkDate == today
+            && (x.Status == "Late" || x.Status == "Absent" || x.LateMinutes > 0));
+        if (scopeIds is not null) exceptQ = exceptQ.Where(x => scopeIds.Contains(x.EmployeeId));
+        var attendanceExceptions = await exceptQ.CountAsync(ct);
+
+        // Expiring documents (next 60 days) in scope — from EmployeeDocuments
+        var expiringSoon = today.AddDays(60);
+        var expiringQ = _db.EmployeeDocuments.Where(x => x.TenantId == tid && !x.IsDeleted
+            && x.ExpiryDate != null && x.ExpiryDate > today && x.ExpiryDate <= expiringSoon);
+        if (scopeIds is not null) expiringQ = expiringQ.Where(x => x.EmployeeId != null && scopeIds.Contains(x.EmployeeId.Value));
+        var expiringDocuments = await expiringQ.CountAsync(ct);
+
+        // Expired documents in scope
+        var expiredQ = _db.EmployeeDocuments.Where(x => x.TenantId == tid && !x.IsDeleted
+            && x.ExpiryDate != null && x.ExpiryDate < today);
+        if (scopeIds is not null) expiredQ = expiredQ.Where(x => x.EmployeeId != null && scopeIds.Contains(x.EmployeeId.Value));
+        var expiredDocuments = await expiredQ.CountAsync(ct);
+
+        // Missing required documents: count employees who are missing at least one required doc type
+        // Required types per Qiwa readiness: Iqama, Work Permit, National ID, Passport
+        var empQ = _db.Employees.Where(x => x.TenantId == tid && !x.IsDeleted && x.Status == "Active");
+        if (scopeIds is not null) empQ = empQ.Where(x => scopeIds.Contains(x.Id));
+        var activeEmployeeIds = await empQ.Select(x => x.Id).ToListAsync(ct);
+
+        int missingDocuments = 0;
+        if (activeEmployeeIds.Count > 0)
+        {
+            // Fetch uploaded non-deleted doc types per employee in one query
+            var uploadedDocs = await _db.EmployeeDocuments
+                .Where(x => x.TenantId == tid && !x.IsDeleted && x.EmployeeId != null && activeEmployeeIds.Contains(x.EmployeeId!.Value))
+                .Select(x => new { x.EmployeeId, x.DocumentType })
+                .ToListAsync(ct);
+            var byEmployee = uploadedDocs.GroupBy(x => x.EmployeeId!.Value)
+                .ToDictionary(g => g.Key, g => g.Select(d => d.DocumentType).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            missingDocuments = activeEmployeeIds.Count(id =>
+                !byEmployee.TryGetValue(id, out var docs) ||
+                QiwaRequiredDocs.Any(req => !docs.Contains(req)));
+        }
+
+        // Qiwa feature flag
+        var qiwaEnabled = await _db.TenantFeatureFlags.AnyAsync(x => x.TenantId == tid && x.FeatureKey == Zayra.Api.Models.FeatureKeys.QiwaIntegration && x.IsEnabled, ct);
+
+        return Ok(new DashboardKpisDto(
+            pendingLeave,
+            pendingCorrections,
+            attendanceExceptions,
+            expiringDocuments,
+            expiredDocuments,
+            missingDocuments,
+            qiwaEnabled));
     }
 
     // ── Private builders ─────────────────────────────────────────────────────
@@ -308,6 +395,9 @@ public class DashboardController : ControllerBase
         new DashboardOverviewDto(0, Array.Empty<ApprovalQueueItemDto>(), null,
             Array.Empty<NamedValueDto>(), Array.Empty<NamedValueDto>(),
             Array.Empty<NamedValueDto>(), Array.Empty<DashboardAlertDto>(), 0, 0));
+
+    private static DashboardKpisDto EmptyKpis(bool qiwaEnabled) =>
+        new(0, 0, 0, 0, 0, 0, qiwaEnabled);
 }
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
@@ -355,3 +445,12 @@ public record PayrollSummaryDto(
 public record NamedValueDto(string Name, decimal Value);
 
 public record DashboardAlertDto(string Title, string Severity);
+
+public record DashboardKpisDto(
+    int PendingLeaveRequests,
+    int PendingAttendanceCorrections,
+    int AttendanceExceptions,
+    int ExpiringDocuments,
+    int ExpiredDocuments,
+    int MissingDocuments,
+    bool QiwaEnabled);

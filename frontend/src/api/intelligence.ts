@@ -146,12 +146,38 @@ export interface TenantSubscription {
   plan: string;
   status: string;
   maxEmployees: number;
+  maxUsers: number;
   billingEmail: string;
   billingCycle: string;
   monthlyAmount: number;
   currencyCode: string;
   startedAtUtc: string;
   expiresAtUtc?: string;
+}
+
+export interface TenantInvoiceSummary {
+  id: string;
+  invoiceNumber: string;
+  amount: number;
+  currencyCode: string;
+  status: 'Draft' | 'Sent' | 'Paid' | 'Overdue' | 'Cancelled';
+  paymentMethod: string | null;
+  periodDescription: string | null;
+  invoiceDate: string;
+  dueDate: string;
+  paidDate: string | null;
+  createdAtUtc: string;
+}
+
+export interface TenantAiUsageSummary {
+  plan: string;
+  yearMonth: number;
+  tokensUsed: number;
+  requestCount: number;
+  blockedCount: number;
+  monthlyTokenLimit: number;
+  isUnlimited: boolean;
+  usagePct: number;
 }
 
 // ── AI Assistant API ──────────────────────────────────────────────────────────
@@ -249,4 +275,10 @@ export const tenantAdminApi = {
 
   upsertBranding: (body: Partial<TenantBranding>) =>
     client.put<TenantBranding>('/api/tenant-admin/branding', body).then(r => r.data),
+
+  listInvoices: () =>
+    client.get<TenantInvoiceSummary[]>('/api/tenant-admin/invoices').then(r => r.data),
+
+  getAiUsage: (yearMonth?: number) =>
+    client.get<TenantAiUsageSummary>('/api/tenant-admin/ai-usage', { params: yearMonth ? { yearMonth } : {} }).then(r => r.data),
 };

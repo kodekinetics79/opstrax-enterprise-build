@@ -154,7 +154,7 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
             return cacheHitResponse;
         }
 
-        var context = await BuildContextAsync(caller.TenantId, governance.Intent, request.EmployeeId, cancellationToken);
+        var context = await BuildContextAsync(caller, governance.Intent, request.EmployeeId, cancellationToken);
         var contextJson = JsonSerializer.Serialize(context, JsonOptions);
         var prompt = _promptBuilder.Build(new AiPromptContext(
             caller.TenantId,
@@ -285,25 +285,35 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
         }));
     }
 
-    private async Task<Dictionary<string, object>> BuildContextAsync(Guid tenantId, string intent, int? employeeId, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, object>> BuildContextAsync(AiUserContext caller, string intent, int? employeeId, CancellationToken cancellationToken)
     {
+        var tenantId = caller.TenantId;
+        var scopeIds = caller.ScopeEmployeeIds;
         var context = new Dictionary<string, object>();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var isAdminOrHr = caller.Roles.Any(r => r is "Admin" or "HR Manager" or "HR Officer");
 
         switch (intent)
         {
             case "headcount":
-                context["totalActive"] = await _db.Employees.CountAsync(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active", cancellationToken);
-                context["byDepartment"] = await _db.Employees
-                    .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active")
+            {
+                var q = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active");
+                if (scopeIds != null) q = q.Where(e => scopeIds.Contains(e.Id));
+                context["totalActive"] = await q.CountAsync(cancellationToken);
+                context["byDepartment"] = await q
                     .GroupBy(e => e.Department)
                     .Select(g => new { Department = g.Key, Count = g.Count() })
                     .ToListAsync(cancellationToken);
                 break;
+            }
 
             case "leave_status":
-                context["onLeaveToday"] = await _db.LeaveRequests.CountAsync(r => r.TenantId == tenantId && r.Status == "Approved" && r.StartDate <= today && r.EndDate >= today, cancellationToken);
+            {
+                var q = _db.LeaveRequests.Where(r => r.TenantId == tenantId && r.Status == "Approved" && r.StartDate <= today && r.EndDate >= today);
+                if (scopeIds != null) q = q.Where(r => scopeIds.Contains(r.EmployeeId));
+                context["onLeaveToday"] = await q.CountAsync(cancellationToken);
                 break;
+            }
 
             case "leave_balance" when employeeId.HasValue:
                 context["balances"] = await _db.EmployeeLeaveBalances
@@ -313,10 +323,19 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
                 break;
 
             case "pending_approvals":
+            {
                 var statuses = new[] { "Submitted", "PendingManagerApproval", "PendingHRApproval" };
-                context["pendingLeaveCount"] = await _db.LeaveRequests.CountAsync(r => r.TenantId == tenantId && statuses.Contains(r.Status), cancellationToken);
-                context["pendingOvertimeCount"] = await _db.OvertimeRequests.CountAsync(r => r.TenantId == tenantId && r.Status == "PendingApproval", cancellationToken);
+                var leaveQ = _db.LeaveRequests.Where(r => r.TenantId == tenantId && statuses.Contains(r.Status));
+                var otQ = _db.OvertimeRequests.Where(r => r.TenantId == tenantId && r.Status == "PendingApproval");
+                if (scopeIds != null)
+                {
+                    leaveQ = leaveQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                    otQ = otQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                }
+                context["pendingLeaveCount"] = await leaveQ.CountAsync(cancellationToken);
+                context["pendingOvertimeCount"] = await otQ.CountAsync(cancellationToken);
                 break;
+            }
 
             case "department_info":
                 context["departments"] = await _db.Departments
@@ -335,11 +354,97 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
                 break;
 
             case "overtime_summary":
-                var approvedMinutes = await _db.OvertimeRequests
-                    .Where(o => o.TenantId == tenantId && o.Status == "Approved" && o.WorkDate >= today.AddDays(-30))
-                    .SumAsync(o => (decimal?)o.ApprovedMinutes, cancellationToken);
+            {
+                var otQ = _db.OvertimeRequests.Where(o => o.TenantId == tenantId && o.Status == "Approved" && o.WorkDate >= today.AddDays(-30));
+                if (scopeIds != null) otQ = otQ.Where(o => scopeIds.Contains(o.EmployeeId));
+                var approvedMinutes = await otQ.SumAsync(o => (decimal?)o.ApprovedMinutes, cancellationToken);
                 context["approvedOvertimeHours"] = Math.Round((approvedMinutes ?? 0m) / 60m, 2);
                 break;
+            }
+
+            case "employee_profile_summary" when employeeId.HasValue:
+            {
+                var emp = await _db.Employees
+                    .Where(e => e.TenantId == tenantId && e.Id == employeeId.Value && !e.IsDeleted)
+                    .Select(e => new
+                    {
+                        e.FullName, e.EmployeeCode, e.Department, e.Designation, e.JoiningDate,
+                        e.EmploymentType, e.Status, e.WorkLocation, e.Grade,
+                        // Iqama/ID numbers only exposed to Admin/HR
+                        IqamaNumber = isAdminOrHr ? e.IqamaNumber : null,
+                        PassportNumber = isAdminOrHr ? e.PassportNumber : null
+                    })
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (emp is not null) context["employee"] = emp;
+                break;
+            }
+
+            case "pending_hr_actions":
+            {
+                var approvalStatuses = new[] { "Submitted", "Pending", "PendingManagerApproval", "PendingHRApproval" };
+                var leaveQ = _db.LeaveRequests.Where(r => r.TenantId == tenantId && approvalStatuses.Contains(r.Status));
+                var correctionQ = _db.AttendanceRegularizationRequests.Where(r => r.TenantId == tenantId && r.Status == "Submitted");
+                var docQ = _db.EmployeeDocuments.Where(d => d.TenantId == tenantId && !d.IsDeleted && d.ApprovalStatus == "Pending");
+                if (scopeIds != null)
+                {
+                    leaveQ = leaveQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                    correctionQ = correctionQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                    docQ = docQ.Where(d => d.EmployeeId != null && scopeIds.Contains(d.EmployeeId.Value));
+                }
+                context["pendingLeave"] = await leaveQ.CountAsync(cancellationToken);
+                context["pendingAttendanceCorrections"] = await correctionQ.CountAsync(cancellationToken);
+                context["pendingDocumentApprovals"] = await docQ.CountAsync(cancellationToken);
+                break;
+            }
+
+            case "document_compliance_risk":
+            {
+                var in60 = today.AddDays(60);
+                var docQ = _db.EmployeeDocuments.Where(d => d.TenantId == tenantId && !d.IsDeleted);
+                if (scopeIds != null) docQ = docQ.Where(d => d.EmployeeId != null && scopeIds.Contains(d.EmployeeId.Value));
+                if (employeeId.HasValue) docQ = docQ.Where(d => d.EmployeeId == employeeId.Value);
+                context["expiredDocuments"] = await docQ.CountAsync(d => d.ExpiryDate < today, cancellationToken);
+                context["expiringIn60Days"] = await docQ.CountAsync(d => d.ExpiryDate >= today && d.ExpiryDate <= in60, cancellationToken);
+                context["pendingVerification"] = await docQ.CountAsync(d => d.ApprovalStatus == "Pending", cancellationToken);
+                break;
+            }
+
+            case "attendance_leave_pattern":
+            {
+                var from90 = today.AddDays(-90);
+                var attQ = _db.AttendanceDailyRecords.Where(r => r.TenantId == tenantId && r.WorkDate >= from90);
+                var leaveQ = _db.LeaveRequests.Where(r => r.TenantId == tenantId && r.Status == "Approved" && r.StartDate >= from90);
+                if (scopeIds != null)
+                {
+                    attQ = attQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                    leaveQ = leaveQ.Where(r => scopeIds.Contains(r.EmployeeId));
+                }
+                if (employeeId.HasValue)
+                {
+                    attQ = attQ.Where(r => r.EmployeeId == employeeId.Value);
+                    leaveQ = leaveQ.Where(r => r.EmployeeId == employeeId.Value);
+                }
+                context["totalDays"] = await attQ.CountAsync(cancellationToken);
+                context["presentDays"] = await attQ.CountAsync(r => r.Status == "Present", cancellationToken);
+                context["absentDays"] = await attQ.CountAsync(r => r.Status == "Absent", cancellationToken);
+                context["lateDays"] = await attQ.CountAsync(r => r.LateMinutes > 0, cancellationToken);
+                var lateMinutesSum = await attQ.SumAsync(r => (int?)r.LateMinutes, cancellationToken);
+                context["totalLateMinutes"] = lateMinutesSum ?? 0;
+                context["approvedLeaveDaysCount"] = await leaveQ.SumAsync(r => (decimal?)r.TotalDays, cancellationToken) ?? 0m;
+                break;
+            }
+
+            case "manager_feedback_draft" when employeeId.HasValue:
+            {
+                var review = await _db.PerformanceCycleEmployees
+                    .Where(r => r.TenantId == tenantId && r.EmployeeId == employeeId.Value)
+                    .OrderByDescending(r => r.EnrolledAtUtc)
+                    .Select(r => new { r.EmployeeName, r.DepartmentName, r.DesignationTitle, r.Status, r.EnrolledAtUtc })
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (review is not null) context["latestPerformanceCycle"] = review;
+                else context["note"] = "No active performance cycle found for this employee. Feedback draft not possible without a cycle.";
+                break;
+            }
         }
 
         return context;
@@ -376,7 +481,22 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
             "disciplinary" => "Disciplinary matters require HR review and are not automated by AI.",
             "termination" => "Termination decisions require human review and are not automated by AI.",
             "compensation" => "Compensation changes require human review and are not automated by AI.",
-            _ => "I'm your HR assistant. I can help with headcount, leave status, pending approvals, balances, department information, and related advisory queries. Please rephrase your question."
+            "employee_profile_summary" => context.TryGetValue("employee", out var emp)
+                ? $"Employee profile: {JsonSerializer.Serialize(emp)}"
+                : "No employee profile found for the requested ID.",
+            "pending_hr_actions" => context.TryGetValue("pendingLeave", out var pl)
+                ? $"There are {pl} pending leave requests, {(context.TryGetValue("pendingAttendanceCorrections", out var pac) ? pac : 0)} attendance corrections, and {(context.TryGetValue("pendingDocumentApprovals", out var pda) ? pda : 0)} document approvals awaiting review."
+                : "I couldn't retrieve pending HR actions data.",
+            "document_compliance_risk" => context.TryGetValue("expiredDocuments", out var expired)
+                ? $"Document compliance summary: {expired} expired, {(context.TryGetValue("expiringIn60Days", out var exp60) ? exp60 : 0)} expiring in 60 days, {(context.TryGetValue("pendingVerification", out var pv) ? pv : 0)} pending verification."
+                : "I couldn't retrieve document compliance data.",
+            "attendance_leave_pattern" => context.TryGetValue("presentDays", out var present)
+                ? $"Attendance pattern (last 90 days): {present} present, {(context.TryGetValue("absentDays", out var absent) ? absent : 0)} absent, {(context.TryGetValue("lateDays", out var late) ? late : 0)} late days."
+                : "I couldn't retrieve attendance pattern data.",
+            "manager_feedback_draft" => context.TryGetValue("latestPerformanceCycle", out var cycle)
+                ? $"Performance cycle data available for feedback draft: {JsonSerializer.Serialize(cycle)}"
+                : context.TryGetValue("note", out var note) ? note.ToString()! : "Performance data not found for this employee.",
+            _ => "I'm your HR assistant. I can help with headcount, leave status, pending approvals, employee profiles, document compliance, attendance patterns, and related advisory queries. Please rephrase your question."
         };
     }
 
@@ -396,6 +516,11 @@ public sealed class AiAdvisoryService : IAiAdvisoryService
             "disciplinary" => ["Contact HR leadership", "Review case notes"],
             "termination" => ["Contact HR leadership", "Review legal checklist"],
             "compensation" => ["Contact HR leadership", "Review compensation policy"],
+            "employee_profile_summary" => ["Show attendance pattern", "Show pending HR actions"],
+            "pending_hr_actions" => ["Show pending leave requests", "Show document compliance"],
+            "document_compliance_risk" => ["Show expiring documents", "Show missing documents"],
+            "attendance_leave_pattern" => ["Show leave balance", "Show pending approvals"],
+            "manager_feedback_draft" => ["Review performance cycle", "Show attendance pattern"],
             _ => ["Ask about headcount", "Ask about leave status"]
         };
 }

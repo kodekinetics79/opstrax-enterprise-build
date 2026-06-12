@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const login = useCallback(async (email: string, password: string, tenantSlug = 'zayra') => {
+  const login = useCallback(async (email: string, password: string, tenantSlug = '') => {
     const res = await authApi.login(email, password, tenantSlug);
     localStorage.setItem('zayra_access_token', res.accessToken);
     localStorage.setItem('zayra_refresh_token', res.refreshToken);

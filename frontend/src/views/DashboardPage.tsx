@@ -20,7 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { dashboardApi } from '../api/dashboard';
-import type { DashboardSummary, DashboardTrend, DashboardOverview } from '../api/dashboard';
+import type { DashboardSummary, DashboardTrend, DashboardOverview, DashboardKpis } from '../api/dashboard';
 import { aiAssistantApi } from '../api/intelligence';
 import type { AIInsight } from '../api/intelligence';
 
@@ -112,6 +112,7 @@ export function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [trends, setTrends] = useState<DashboardTrend[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
+  const [opsKpis, setOpsKpis] = useState<DashboardKpis | null>(null);
   const [insights, setInsights] = useState<AIInsight[]>([]);
 
   useEffect(() => {
@@ -120,6 +121,7 @@ export function DashboardPage() {
       setTrends(d.trends);
       setOverview(d.overview);
     }).catch(() => {});
+    dashboardApi.kpis().then(setOpsKpis).catch(() => {});
     aiAssistantApi.listInsights({ acknowledged: false }).then((r) => setInsights(r.items)).catch(() => {});
   }, []);
 
@@ -189,6 +191,34 @@ export function DashboardPage() {
           <KpiCard key={metric.label} metric={metric} />
         ))}
       </section>
+
+      {/* Operations KPI strip — role-scoped live counts */}
+      {opsKpis && (
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" aria-label="Operations KPIs">
+          {[
+            { label: 'Pending Leave', value: opsKpis.pendingLeaveRequests, tone: 'amber' as const, to: '/leave' },
+            { label: 'Attendance Corrections', value: opsKpis.pendingAttendanceCorrections, tone: 'amber' as const, to: '/attendance' },
+            { label: 'Attendance Exceptions', value: opsKpis.attendanceExceptions, tone: 'rose' as const, to: '/attendance' },
+            { label: 'Expiring Documents', value: opsKpis.expiringDocuments, tone: 'amber' as const, to: '/compliance' },
+            { label: 'Expired Documents', value: opsKpis.expiredDocuments, tone: 'rose' as const, to: '/compliance' },
+            { label: 'Missing Documents', value: opsKpis.missingDocuments, tone: opsKpis.missingDocuments > 0 ? 'rose' as const : 'emerald' as const, to: '/compliance' },
+          ].map(({ label, value, tone, to }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => router.push(to)}
+              className="flex flex-col gap-1 rounded-xl border border-slate-100 bg-white p-3 text-left transition hover:border-sapphire/30 dark:border-white/[0.07] dark:bg-white/[0.03]"
+            >
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">{label}</span>
+              <span className={`text-2xl font-extrabold ${
+                tone === 'rose' && value > 0 ? 'text-rose-500' :
+                tone === 'amber' && value > 0 ? 'text-amber-500' :
+                'text-slate-900 dark:text-white'
+              }`}>{value.toLocaleString()}</span>
+            </button>
+          ))}
+        </section>
+      )}
 
       {/* Bento grid */}
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
@@ -373,7 +403,7 @@ export function DashboardPage() {
           action={
             <span className="flex items-center gap-1 rounded-full bg-sapphire/10 px-2 py-0.5 text-[10px] font-bold text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
               <Sparkles className="h-3 w-3" />
-              KynexOne AI
+              AI Insights
             </span>
           }
         >
@@ -391,7 +421,7 @@ export function DashboardPage() {
           </div>
           <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => router.push('/ai-assistant')}>
             <Bot className="h-3.5 w-3.5" />
-            Open KynexOne AI
+            Open AI Assistant
           </button>
         </DataPanel>
 

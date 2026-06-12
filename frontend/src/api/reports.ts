@@ -13,6 +13,7 @@ export interface ReportFilters {
   dateFrom?: string;
   dateTo?: string;
   department?: string;
+  location?: string;
   status?: string;
   period?: string;
   daysAhead?: number;

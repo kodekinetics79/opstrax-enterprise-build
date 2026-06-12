@@ -60,8 +60,19 @@ export interface DashboardFull {
   overview: DashboardOverview;
 }
 
+export interface DashboardKpis {
+  pendingLeaveRequests: number;
+  pendingAttendanceCorrections: number;
+  attendanceExceptions: number;
+  expiringDocuments: number;
+  expiredDocuments: number;
+  missingDocuments: number;
+  qiwaEnabled: boolean;
+}
+
 export const dashboardApi = {
   full: (months = 6) => client.get<DashboardFull>('/api/dashboard/full', { params: { months } }).then((r) => r.data),
+  kpis: () => client.get<DashboardKpis>('/api/dashboard/kpis').then((r) => r.data),
   // kept for any other consumers
   summary: () => client.get<DashboardSummary>('/api/dashboard/summary').then((r) => r.data),
   trends: (months = 6) => client.get<DashboardTrend[]>('/api/dashboard/trends', { params: { months } }).then((r) => r.data),

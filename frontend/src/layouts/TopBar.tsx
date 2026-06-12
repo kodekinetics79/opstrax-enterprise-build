@@ -225,12 +225,12 @@ export function TopBar({ theme, onToggleTheme, onOpenSidebar, onOpenSearch, onAs
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          aria-label="Ask KynexOne AI"
+          aria-label="Ask AI Assistant"
           onClick={onAskKynexOne}
           className="hidden h-8 items-center gap-1.5 rounded-lg border border-sapphire/25 bg-sapphire/[0.07] px-3 text-xs font-semibold text-sapphire transition hover:bg-sapphire/[0.12] sm:flex dark:border-cyanAccent/20 dark:bg-cyanAccent/[0.07] dark:text-cyanAccent dark:hover:bg-cyanAccent/[0.12]"
         >
           <Bot className="h-3.5 w-3.5" />
-          Ask KynexOne
+          Ask AI
         </button>
 
         <button

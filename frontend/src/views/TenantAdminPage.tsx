@@ -7,11 +7,13 @@ import {
   type TenantLocalizationSetting,
   type TenantBranding,
   type TenantSubscription,
+  type TenantInvoiceSummary,
+  type TenantAiUsageSummary,
 } from '../api/intelligence';
 import client from '../api/client';
 import { HelpTextManager } from '../components/HelpTextManager';
 
-type Tab = 'subscription' | 'features' | 'localization' | 'branding' | 'security' | 'country-rules' | 'help-text' | 'audit';
+type Tab = 'subscription' | 'features' | 'invoices' | 'localization' | 'branding' | 'security' | 'country-rules' | 'help-text';
 
 const FEATURE_KEYS = [
   { key: 'ai_assistant', label: 'AI HR Assistant', description: 'Enable natural-language HR queries' },
@@ -143,6 +145,13 @@ export default function TenantAdminPage() {
   // Usage
   const [usage, setUsage] = useState<UsageData | null>(null);
 
+  // Invoices
+  const [invoices, setInvoices] = useState<TenantInvoiceSummary[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+
+  // AI Usage
+  const [aiUsage, setAiUsage] = useState<TenantAiUsageSummary | null>(null);
+
   // Security
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [securitySaving, setSecuritySaving] = useState(false);
@@ -157,8 +166,9 @@ export default function TenantAdminPage() {
   const [showAddRule, setShowAddRule] = useState(false);
 
   useEffect(() => {
-    if (tab === 'subscription') { loadSubscription(); loadUsage(); }
+    if (tab === 'subscription') { loadSubscription(); loadUsage(); loadAiUsage(); }
     if (tab === 'features') loadFlags();
+    if (tab === 'invoices') loadInvoices();
     if (tab === 'localization') loadLocalization();
     if (tab === 'branding') loadBranding();
     if (tab === 'security') loadSecurity();
@@ -175,6 +185,15 @@ export default function TenantAdminPage() {
       const data = await client.get<UsageData>('/api/tenant-admin/usage').then(r => r.data);
       setUsage(data);
     } catch {}
+  }
+
+  async function loadInvoices() {
+    setInvoicesLoading(true);
+    try { setInvoices(await tenantAdminApi.listInvoices()); } catch {} finally { setInvoicesLoading(false); }
+  }
+
+  async function loadAiUsage() {
+    try { setAiUsage(await tenantAdminApi.getAiUsage()); } catch {}
   }
 
   async function loadFlags() {
@@ -296,12 +315,12 @@ export default function TenantAdminPage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'subscription', label: 'Subscription' },
     { id: 'features', label: 'Feature Flags' },
+    { id: 'invoices', label: 'Invoices' },
     { id: 'localization', label: 'Localization' },
     { id: 'branding', label: 'Branding' },
     { id: 'security', label: 'Security' },
     { id: 'country-rules', label: 'Country Rules' },
     { id: 'help-text', label: 'Help Text' },
-    { id: 'audit', label: 'Audit Log' },
   ];
 
   return (
@@ -310,6 +329,21 @@ export default function TenantAdminPage() {
         <h1 className="text-2xl font-bold text-gray-900">Tenant Administration</h1>
         <p className="text-sm text-gray-500">Manage subscription, feature flags, localization, and branding</p>
       </div>
+
+      {/* PastDue warning banner */}
+      {subscription?.status === 'PastDue' && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Payment overdue — please settle your account</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Your subscription has an outstanding balance. All features remain active for now, but continued non-payment may result in suspension. Contact your account manager or check the Invoices tab.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-1 border-b border-gray-200 flex-wrap">
         {tabs.map(t => (
@@ -332,7 +366,7 @@ export default function TenantAdminPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Current Subscription</h2>
             {!subscription ? (
-              <p className="text-sm text-gray-500">No subscription found. Contact your KynexOne account manager.</p>
+              <p className="text-sm text-gray-500">No subscription found. Contact your account manager or support team.</p>
             ) : (
               <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
                 {[
@@ -415,6 +449,52 @@ export default function TenantAdminPage() {
               </div>
             </div>
           )}
+
+          {/* AI Usage section */}
+          {aiUsage && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">AI Assistant Usage</h2>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-medium text-gray-700">Monthly Tokens Used</span>
+                    <span className="text-sm text-gray-500">
+                      {aiUsage.isUnlimited
+                        ? `${aiUsage.tokensUsed.toLocaleString()} / Unlimited`
+                        : `${aiUsage.tokensUsed.toLocaleString()} / ${aiUsage.monthlyTokenLimit.toLocaleString()}`}
+                    </span>
+                  </div>
+                  {!aiUsage.isUnlimited && (
+                    <UsageProgressBar label="AI token usage" pct={aiUsage.usagePct} />
+                  )}
+                  {!aiUsage.isUnlimited && aiUsage.usagePct > 80 && (
+                    <p className={`text-xs mt-1 ${aiUsage.usagePct > 95 ? 'text-red-500' : 'text-orange-500'}`}>
+                      {aiUsage.usagePct > 95 ? 'Critical: AI token limit nearly reached' : 'Warning: AI token usage is high'}
+                    </p>
+                  )}
+                </div>
+                <dl className="grid grid-cols-3 gap-4 bg-gray-50 rounded-lg px-4 py-3">
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Requests</dt>
+                    <dd className="text-lg font-bold text-gray-900">{aiUsage.requestCount.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Blocked</dt>
+                    <dd className="text-lg font-bold text-gray-900">{aiUsage.blockedCount.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Plan</dt>
+                    <dd className="text-lg font-bold text-gray-900">{aiUsage.plan}</dd>
+                  </div>
+                </dl>
+                {!aiUsage.isUnlimited && aiUsage.usagePct > 90 && (
+                  <div className="pt-1">
+                    <UpgradeButton />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -437,6 +517,58 @@ export default function TenantAdminPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Invoices (read-only) */}
+      {tab === 'invoices' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Invoices</h2>
+            <p className="text-xs text-gray-500 mb-4">Invoice records are managed by your account team. Contact support to request changes.</p>
+            {invoicesLoading ? (
+              <p className="text-sm text-gray-400 py-6 text-center">Loading invoices…</p>
+            ) : invoices.length === 0 ? (
+              <p className="text-sm text-gray-400 py-6 text-center">No invoice records found. Contact your account manager if you believe this is an error.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-xs text-gray-500">
+                      <th className="py-2 text-left font-medium">Invoice #</th>
+                      <th className="py-2 text-left font-medium">Period</th>
+                      <th className="py-2 text-right font-medium">Amount</th>
+                      <th className="py-2 text-left font-medium">Status</th>
+                      <th className="py-2 text-left font-medium">Due</th>
+                      <th className="py-2 text-left font-medium">Paid</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {invoices.map(inv => (
+                      <tr key={inv.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-2.5 font-mono text-xs text-gray-700">{inv.invoiceNumber}</td>
+                        <td className="py-2.5 text-gray-600">{inv.periodDescription ?? '—'}</td>
+                        <td className="py-2.5 text-right font-medium text-gray-900">
+                          {inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} {inv.currencyCode}
+                        </td>
+                        <td className="py-2.5">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            inv.status === 'Paid' ? 'bg-green-100 text-green-700' :
+                            inv.status === 'Overdue' ? 'bg-red-100 text-red-700' :
+                            inv.status === 'Sent' ? 'bg-blue-100 text-blue-700' :
+                            inv.status === 'Cancelled' ? 'bg-gray-100 text-gray-500' :
+                            'bg-amber-100 text-amber-700'
+                          }`}>{inv.status}</span>
+                        </td>
+                        <td className="py-2.5 text-xs text-gray-500">{inv.dueDate}</td>
+                        <td className="py-2.5 text-xs text-gray-500">{inv.paidDate ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -611,7 +743,7 @@ export default function TenantAdminPage() {
           )}
           {!branding && (
             <div className="text-center py-8 text-sm text-gray-400">
-              <p>No branding configured. Default KynexOne branding is active.</p>
+              <p>No branding configured. System defaults are active.</p>
               <button
                 type="button"
                 onClick={() => setBranding({ logoUrl: '', primaryColor: '#2563EB', accentColor: '#7C3AED', companyNameEn: '', companyNameAr: '', portalTitle: 'HR Portal', faviconUrl: '' })}
@@ -868,19 +1000,6 @@ export default function TenantAdminPage() {
 
       {/* Custom Field Help Text */}
       {tab === 'help-text' && <HelpTextManager />}
-
-      {/* Audit Log */}
-      {tab === 'audit' && (
-        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-xl mb-4">
-            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Audit Log</h3>
-          <p className="text-sm text-gray-400">Audit log coming soon. This will display all administrative actions performed within this tenant.</p>
-        </div>
-      )}
     </div>
   );
 }

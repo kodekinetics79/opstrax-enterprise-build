@@ -21,7 +21,12 @@ public sealed record AiUserContext(
     Guid? UserId,
     IReadOnlyCollection<string> Roles,
     IReadOnlyCollection<string> Permissions,
-    int? EmployeeId);
+    int? EmployeeId)
+{
+    // Non-null when the caller is Manager/Supervisor scoped to a team.
+    // BuildContextAsync uses this to restrict employee-specific queries.
+    public IReadOnlyList<int>? ScopeEmployeeIds { get; init; }
+}
 
 public sealed record AiGovernanceDecision(
     string Intent,

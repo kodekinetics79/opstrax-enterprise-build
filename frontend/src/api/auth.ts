@@ -21,7 +21,7 @@ export interface AuthResponse {
 }
 
 export const authApi = {
-  login: (email: string, password: string, tenantSlug = 'zayra') =>
+  login: (email: string, password: string, tenantSlug = '') =>
     client.post<AuthResponse>('/api/auth/login', { email, password, tenantSlug }).then((r) => r.data),
 
   logout: (refreshToken: string) =>

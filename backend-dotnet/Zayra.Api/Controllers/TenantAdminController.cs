@@ -263,6 +263,69 @@ public class TenantAdminController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return Ok(new { deleted = rules.Count, countryCode = code });
     }
+
+    // ── Invoices (read-only) ──────────────────────────────────────────────────
+
+    [HttpGet("invoices")]
+    public async Task<IActionResult> ListInvoices(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var invoices = await _db.TenantInvoices
+            .AsNoTracking()
+            .Where(i => i.TenantId == tenantId)
+            .OrderByDescending(i => i.InvoiceDate)
+            .Select(i => new
+            {
+                i.Id,
+                i.InvoiceNumber,
+                i.Amount,
+                i.CurrencyCode,
+                i.Status,
+                i.PaymentMethod,
+                i.PeriodDescription,
+                i.InvoiceDate,
+                i.DueDate,
+                i.PaidDate,
+                i.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(invoices);
+    }
+
+    // ── AI Usage (read-only) ──────────────────────────────────────────────────
+
+    [HttpGet("ai-usage")]
+    public async Task<IActionResult> GetAiUsage([FromQuery] int? yearMonth, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var sub = await _db.TenantSubscriptions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        var plan = sub?.Plan ?? "Starter";
+        var limit = AiPlanLimits.GetMonthlyTokenLimit(plan);
+        var ym = yearMonth ?? int.Parse(DateTime.UtcNow.ToString("yyyyMM"));
+
+        var usage = await _db.TenantAiUsages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.TenantId == tenantId && u.YearMonth == ym, ct);
+
+        return Ok(new
+        {
+            plan,
+            yearMonth = ym,
+            tokensUsed = usage?.TokensUsed ?? 0,
+            requestCount = usage?.RequestCount ?? 0,
+            blockedCount = usage?.BlockedCount ?? 0,
+            monthlyTokenLimit = limit,
+            isUnlimited = limit == 0,
+            usagePct = limit > 0 ? Math.Min(100.0, (double)(usage?.TokensUsed ?? 0) / limit * 100) : 0.0
+        });
+    }
 }
 
 public record UpsertSubscriptionRequest(
