@@ -2,40 +2,45 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { tenantAdminApi } from '../api/intelligence';
+import { featuresApi } from '../api/intelligence';
+
+type FlagState =
+  | { status: 'loading' }
+  | { status: 'ready'; disabledKeys: Set<string> }
+  | { status: 'error' };
 
 interface FeatureFlagContextValue {
   /**
-   * Returns true when the feature is enabled for the current tenant.
-   * Also returns true when flags have not loaded yet, or when the
-   * current user cannot call the flags endpoint (fail-open so that
-   * permission-gating in the sidebar still handles visibility).
+   * Returns whether a feature is enabled for the current tenant.
+   *
+   * - While flags are loading: returns false (fail-closed — hide keyed nav items until known).
+   * - On fetch error: returns false (fail-closed — backend API guards remain the real gate).
+   * - Once loaded: absent key = enabled by default; key in disabled set = false.
+   * - No requiredFeatureKey: caller should short-circuit before calling this.
    */
   isFeatureEnabled: (featureKey: string) => boolean;
+  isLoading: boolean;
 }
 
 const FeatureFlagContext = createContext<FeatureFlagContextValue>({
-  isFeatureEnabled: () => true,
+  isFeatureEnabled: () => false,
+  isLoading: true,
 });
 
 export function FeatureFlagProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  // null  → not yet loaded, or non-admin user (fail-open)
-  // Record → loaded successfully
-  const [flags, setFlags] = useState<Record<string, boolean> | null>(null);
+  const [state, setState] = useState<FlagState>({ status: 'loading' });
 
   const refresh = useCallback(async () => {
     if (!user) {
-      setFlags(null);
+      setState({ status: 'loading' });
       return;
     }
     try {
-      const list = await tenantAdminApi.listFeatureFlags();
-      setFlags(Object.fromEntries(list.map((f) => [f.featureKey, f.isEnabled])));
+      const keys = await featuresApi.getDisabledKeys();
+      setState({ status: 'ready', disabledKeys: new Set(keys) });
     } catch {
-      // 403 for non-admin roles, or network error → fail-open.
-      // Backend feature-flag enforcement on each API route is the real gate.
-      setFlags(null);
+      setState({ status: 'error' });
     }
   }, [user]);
 
@@ -45,15 +50,14 @@ export function FeatureFlagProvider({ children }: { children: React.ReactNode })
 
   const isFeatureEnabled = useCallback(
     (featureKey: string): boolean => {
-      if (flags === null) return true; // not loaded or non-admin → show all
-      // A key that has never been toggled (undefined) is treated as enabled.
-      return flags[featureKey] !== false;
+      if (state.status !== 'ready') return false; // fail-closed during load or error
+      return !state.disabledKeys.has(featureKey);  // absent = enabled by default
     },
-    [flags],
+    [state],
   );
 
   return (
-    <FeatureFlagContext.Provider value={{ isFeatureEnabled }}>
+    <FeatureFlagContext.Provider value={{ isFeatureEnabled, isLoading: state.status === 'loading' }}>
       {children}
     </FeatureFlagContext.Provider>
   );

@@ -282,3 +282,14 @@ export const tenantAdminApi = {
   getAiUsage: (yearMonth?: number) =>
     client.get<TenantAiUsageSummary>('/api/tenant-admin/ai-usage', { params: yearMonth ? { yearMonth } : {} }).then(r => r.data),
 };
+
+// ── Features API (accessible to all authenticated tenant users) ───────────────
+
+export const featuresApi = {
+  /**
+   * Returns the set of feature keys that are explicitly disabled for the tenant.
+   * An absent key means the feature is enabled (default for fresh tenants with no flags).
+   */
+  getDisabledKeys: () =>
+    client.get<string[]>('/api/features/disabled-keys').then(r => r.data),
+};
