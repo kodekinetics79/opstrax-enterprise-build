@@ -193,8 +193,8 @@ function CreateModal({ tenantId, onClose, onCreated }: {
             </Field>
 
             <div className="col-span-2">
-              <Field label="Recipient Email *">
-                <FInput value={form.recipientEmail} onChange={set('recipientEmail')} type="email" required placeholder="billing@client.com" />
+              <Field label="Recipient Email">
+                <FInput value={form.recipientEmail} onChange={set('recipientEmail')} type="email" placeholder="billing@client.com" />
               </Field>
             </div>
 
