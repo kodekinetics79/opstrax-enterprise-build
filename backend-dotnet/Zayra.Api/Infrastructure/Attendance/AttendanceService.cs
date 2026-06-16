@@ -96,16 +96,18 @@ public class AttendanceService : IAttendanceService
         else if (device.SyncMethod?.Contains("Pull", StringComparison.OrdinalIgnoreCase) == true
                  && !string.IsNullOrWhiteSpace(device.EndpointUrl))
         {
-            // Pull API: attempt an HTTP GET to the device's REST endpoint
+            // Pull API: attempt an authenticated HTTP GET to the device's REST endpoint
             try
             {
                 using var http = _httpClientFactory.CreateClient();
                 http.Timeout = TimeSpan.FromSeconds(10);
-                var response = await http.GetAsync(device.EndpointUrl, ct);
+                var url = BuildPollUrl(device);
+                var req = BuildDeviceRequest(device, url);
+                var response = await http.SendAsync(req, ct);
                 status = response.IsSuccessStatusCode ? "Success" : $"HTTP {(int)response.StatusCode}";
                 errorMessage = response.IsSuccessStatusCode
-                    ? $"Device responded with HTTP {(int)response.StatusCode}. Connection OK."
-                    : $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Check device endpoint and credentials.";
+                    ? $"Device responded with HTTP {(int)response.StatusCode}. Connection OK. Auth: {device.AuthType ?? "None"}."
+                    : $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Check endpoint URL and credentials.";
             }
             catch (TaskCanceledException)
             {
@@ -187,37 +189,40 @@ public class AttendanceService : IAttendanceService
         else if (device.SyncMethod?.Contains("Pull", StringComparison.OrdinalIgnoreCase) == true
                  && !string.IsNullOrWhiteSpace(device.EndpointUrl))
         {
-            // Pull API: attempt HTTP GET to device endpoint and capture response
+            // Pull API: authenticated HTTP GET using device config (auth type, custom headers, device params)
             try
             {
+                var devParams = TryParseJson(device.DeviceParametersJson);
+                var timeoutSec = devParams.TryGetValue("timeout_seconds", out var ts) && int.TryParse(ts, out var t) ? t : 30;
                 using var http = _httpClientFactory.CreateClient();
-                http.Timeout = TimeSpan.FromSeconds(30);
-                var response = await http.GetAsync(device.EndpointUrl, ct);
+                http.Timeout = TimeSpan.FromSeconds(timeoutSec);
+                var url = BuildPollUrl(device);
+                var req = BuildDeviceRequest(device, url);
+                var response = await http.SendAsync(req, ct);
                 var body = await response.Content.ReadAsStringAsync(ct);
                 if (response.IsSuccessStatusCode)
                 {
                     status = "Completed";
-                    // Count entries if body looks like a JSON array
                     rawEventsReceived = body.TrimStart().StartsWith('[') ? body.Split('{').Length - 1 : 0;
                     errorMessage = rawEventsReceived > 0
-                        ? $"Device responded with {rawEventsReceived} potential records. Parse and import via webhook or CSV for processing."
-                        : "Device endpoint responded successfully. No parseable records in this response — check device configuration.";
+                        ? $"Device responded: {rawEventsReceived} potential records found. Configure field mappings to auto-process on next pull."
+                        : $"Device endpoint responded HTTP 200. Configure 'poll_path' and field mappings in Device Parameters to capture records.";
                 }
                 else
                 {
                     status = "Failed";
-                    errorMessage = $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Response: {body[..Math.Min(500, body.Length)]}";
+                    errorMessage = $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Body: {body[..Math.Min(500, body.Length)]}";
                 }
             }
             catch (TaskCanceledException)
             {
                 status = "Failed";
-                errorMessage = $"Sync timed out after 30 seconds. Check device endpoint: {device.EndpointUrl}";
+                errorMessage = $"Sync timed out. Increase timeout_seconds in Device Parameters or check endpoint: {device.EndpointUrl}";
             }
             catch (Exception ex)
             {
                 status = "Failed";
-                errorMessage = $"Sync failed: {ex.Message}";
+                errorMessage = $"Sync error: {ex.Message}";
             }
         }
         else if (device.SyncMethod?.Contains("CSV", StringComparison.OrdinalIgnoreCase) == true
@@ -781,7 +786,62 @@ public class AttendanceService : IAttendanceService
         device.ApiKeyReference = Clean(request.ApiKeyReference);
         device.SyncMethod = Clean(request.SyncMethod, "Manual upload");
         device.SyncFrequency = Clean(request.SyncFrequency, "Manual");
+        device.AuthType = Clean(request.AuthType, "None");
+        device.AuthCredentialsJson = CleanJson(request.AuthCredentialsJson) ?? "{}";
+        device.CustomHeadersJson = CleanJson(request.CustomHeadersJson) ?? "{}";
+        device.DeviceParametersJson = CleanJson(request.DeviceParametersJson) ?? "{}";
+        device.FieldMappingsJson = CleanJson(request.FieldMappingsJson) ?? "{}";
+        device.Notes = Clean(request.Notes);
         device.IsActive = request.IsActive;
+    }
+
+    // Build an HttpRequestMessage with all auth and custom headers from the device config applied.
+    private static HttpRequestMessage BuildDeviceRequest(AttendanceDevice device, string url)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var creds = TryParseJson(device.AuthCredentialsJson);
+
+        switch (device.AuthType?.ToLowerInvariant())
+        {
+            case "basicauth":
+                if (creds.TryGetValue("username", out var u) && creds.TryGetValue("password", out var p))
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                        "Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{u}:{p}")));
+                break;
+            case "bearer":
+                if (creds.TryGetValue("token", out var tok))
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tok);
+                break;
+            case "customheader":
+                if (creds.TryGetValue("headerName", out var hn) && creds.TryGetValue("headerValue", out var hv))
+                    req.Headers.TryAddWithoutValidation(hn, hv);
+                break;
+            case "apikeyquery":
+                // handled by caller — append to URL query string
+                break;
+        }
+
+        foreach (var (k, v) in TryParseJson(device.CustomHeadersJson))
+            req.Headers.TryAddWithoutValidation(k, v);
+
+        return req;
+    }
+
+    private static Dictionary<string, string> TryParseJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}") return new();
+        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
+    // Resolve the effective poll URL: EndpointUrl + optional poll_path from DeviceParameters
+    private static string BuildPollUrl(AttendanceDevice device)
+    {
+        var baseUrl = (device.EndpointUrl ?? "").TrimEnd('/');
+        var devParams = TryParseJson(device.DeviceParametersJson);
+        if (devParams.TryGetValue("poll_path", out var path) && !string.IsNullOrWhiteSpace(path))
+            return baseUrl + "/" + path.TrimStart('/');
+        return baseUrl;
     }
 
     private async Task Audit(Guid tenantId, RequestContext context, string action, string entity, string entityId, CancellationToken ct) =>

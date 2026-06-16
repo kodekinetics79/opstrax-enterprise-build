@@ -16,6 +16,13 @@ public record AttendanceDeviceRequest(
     string? ApiKeyReference,
     string? SyncMethod,
     string? SyncFrequency,
+    // Flexible configuration — all stored as JSON; MissingTableCreator adds columns on first deploy
+    string? AuthType,
+    string? AuthCredentialsJson,
+    string? CustomHeadersJson,
+    string? DeviceParametersJson,
+    string? FieldMappingsJson,
+    string? Notes,
     bool IsActive = true);
 
 public record AttendanceRawEventRequest(

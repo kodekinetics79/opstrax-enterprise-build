@@ -15,6 +15,13 @@ export interface AttendanceDevice {
   apiKeyReference: string;
   syncMethod: string;
   syncFrequency: string;
+  // Flexible config fields (added via MissingTableCreator — may be absent on older records)
+  authType?: string;
+  authCredentialsJson?: string;
+  customHeadersJson?: string;
+  deviceParametersJson?: string;
+  fieldMappingsJson?: string;
+  notes?: string;
   lastSyncStatus: string;
   lastSyncAtUtc?: string;
   errorLog: string;
@@ -34,6 +41,12 @@ export interface AttendanceDeviceRequest {
   apiKeyReference?: string;
   syncMethod?: string;
   syncFrequency?: string;
+  authType?: string;
+  authCredentialsJson?: string;
+  customHeadersJson?: string;
+  deviceParametersJson?: string;
+  fieldMappingsJson?: string;
+  notes?: string;
   isActive: boolean;
 }
 

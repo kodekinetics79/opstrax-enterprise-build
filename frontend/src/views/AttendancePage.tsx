@@ -46,6 +46,76 @@ import type { EmployeeListItem } from '../api/employees';
 import { StatusChip } from '../components/StatusChip';
 
 type TabKey = 'dashboard' | 'devices' | 'raw' | 'processing' | 'regularization' | 'reports' | 'ai';
+type KvPair = { key: string; value: string };
+
+interface DeviceFormState {
+  deviceName: string; serialNumber: string; locationName: string; notes: string; isActive: boolean;
+  deviceType: string; vendor: string;
+  syncMethod: string; endpointUrl: string; ipAddress: string; port: string; syncFrequency: string;
+  authType: string; authUsername: string; authPassword: string; authToken: string;
+  authHeaderName: string; authHeaderValue: string; authParamName: string; authParamValue: string;
+  customHeaders: KvPair[]; deviceParams: KvPair[]; fieldMappings: KvPair[];
+}
+
+const emptyKv = (): KvPair[] => [{ key: '', value: '' }];
+
+const emptyDeviceForm: DeviceFormState = {
+  deviceName: '', serialNumber: '', locationName: '', notes: '', isActive: true,
+  deviceType: '', vendor: '',
+  syncMethod: 'Push API', endpointUrl: '', ipAddress: '', port: '', syncFrequency: '',
+  authType: 'None', authUsername: '', authPassword: '', authToken: '',
+  authHeaderName: '', authHeaderValue: '', authParamName: 'api_key', authParamValue: '',
+  customHeaders: emptyKv(), deviceParams: emptyKv(), fieldMappings: emptyKv(),
+};
+
+function kvJson(pairs: KvPair[]): string {
+  return JSON.stringify(Object.fromEntries(pairs.filter(p => p.key.trim()).map(p => [p.key.trim(), p.value])));
+}
+
+function jsonToKv(json?: string): KvPair[] {
+  if (!json || json === '{}') return emptyKv();
+  try { return Object.entries(JSON.parse(json)).map(([key, value]) => ({ key, value: String(value) })); }
+  catch { return emptyKv(); }
+}
+
+function toDeviceRequest(f: DeviceFormState): AttendanceDeviceRequest {
+  const authCreds =
+    f.authType === 'BasicAuth' ? { username: f.authUsername, password: f.authPassword } :
+    f.authType === 'Bearer' ? { token: f.authToken } :
+    f.authType === 'CustomHeader' ? { headerName: f.authHeaderName, headerValue: f.authHeaderValue } :
+    f.authType === 'ApiKeyQuery' ? { paramName: f.authParamName, paramValue: f.authParamValue } : {};
+  return {
+    deviceName: f.deviceName, deviceType: f.deviceType || 'Other', vendor: f.vendor || 'Generic',
+    serialNumber: f.serialNumber, locationName: f.locationName,
+    ipAddress: f.ipAddress, endpointUrl: f.endpointUrl,
+    port: f.port ? parseInt(f.port, 10) : undefined,
+    syncMethod: f.syncMethod, syncFrequency: f.syncFrequency || 'Manual',
+    authType: f.authType, authCredentialsJson: JSON.stringify(authCreds),
+    customHeadersJson: kvJson(f.customHeaders),
+    deviceParametersJson: kvJson(f.deviceParams),
+    fieldMappingsJson: kvJson(f.fieldMappings),
+    notes: f.notes, isActive: f.isActive,
+  };
+}
+
+function deviceToForm(d: AttendanceDevice): DeviceFormState {
+  const creds = (() => { try { return JSON.parse(d.authCredentialsJson || '{}'); } catch { return {}; } })();
+  return {
+    deviceName: d.deviceName, serialNumber: d.serialNumber, locationName: d.locationName,
+    notes: d.notes || '', isActive: d.isActive,
+    deviceType: d.deviceType, vendor: d.vendor,
+    syncMethod: d.syncMethod || 'Push API', endpointUrl: d.endpointUrl, ipAddress: d.ipAddress,
+    port: d.port?.toString() || '', syncFrequency: d.syncFrequency || '',
+    authType: d.authType || 'None',
+    authUsername: creds.username || '', authPassword: creds.password || '',
+    authToken: creds.token || '',
+    authHeaderName: creds.headerName || '', authHeaderValue: creds.headerValue || '',
+    authParamName: creds.paramName || 'api_key', authParamValue: creds.paramValue || '',
+    customHeaders: jsonToKv(d.customHeadersJson),
+    deviceParams: jsonToKv(d.deviceParametersJson),
+    fieldMappings: jsonToKv(d.fieldMappingsJson),
+  };
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -72,18 +142,6 @@ const statusTone = (status: string): 'emerald' | 'rose' | 'amber' | 'blue' | 'sl
   return 'slate';
 };
 
-const emptyDevice: AttendanceDeviceRequest = {
-  deviceName: '',
-  deviceType: 'Biometric machine',
-  vendor: 'Generic biometric',
-  serialNumber: '',
-  locationName: '',
-  ipAddress: '',
-  endpointUrl: '',
-  syncMethod: 'Manual upload',
-  syncFrequency: 'Manual',
-  isActive: true,
-};
 
 export function AttendancePage() {
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
@@ -107,9 +165,10 @@ export function AttendancePage() {
   const [punchEmployeeId, setPunchEmployeeId] = useState('');
   const [punchDirection, setPunchDirection] = useState('In');
   const [punchSource, setPunchSource] = useState<'web' | 'mobile' | 'kiosk'>('web');
-  const [deviceForm, setDeviceForm] = useState<AttendanceDeviceRequest>(emptyDevice);
+  const [showAddDevice, setShowAddDevice] = useState(false);
+  const [deviceForm, setDeviceForm] = useState<DeviceFormState>(emptyDeviceForm);
   const [editingDevice, setEditingDevice] = useState<AttendanceDevice | null>(null);
-  const [editDeviceForm, setEditDeviceForm] = useState<AttendanceDeviceRequest>(emptyDevice);
+  const [editDeviceForm, setEditDeviceForm] = useState<DeviceFormState>(emptyDeviceForm);
   const [deleteConfirmDevice, setDeleteConfirmDevice] = useState<AttendanceDevice | null>(null);
   const [deviceKeyResult, setDeviceKeyResult] = useState<DeviceKeyResult | null>(null);
   const [syncLogsDevice, setSyncLogsDevice] = useState<AttendanceDevice | null>(null);
@@ -184,8 +243,9 @@ export function AttendancePage() {
 
   const submitDevice = (event: FormEvent) => {
     event.preventDefault();
-    runAction(() => attendanceApi.devices.create(deviceForm), 'Attendance device saved to MySQL.');
-    setDeviceForm(emptyDevice);
+    runAction(() => attendanceApi.devices.create(toDeviceRequest(deviceForm)), 'Attendance device saved.');
+    setDeviceForm(emptyDeviceForm);
+    setShowAddDevice(false);
   };
 
   const submitRawEvent = (event: FormEvent) => {
@@ -230,24 +290,13 @@ export function AttendancePage() {
 
   const openEdit = (device: AttendanceDevice) => {
     setEditingDevice(device);
-    setEditDeviceForm({
-      deviceName: device.deviceName,
-      deviceType: device.deviceType,
-      vendor: device.vendor,
-      serialNumber: device.serialNumber,
-      locationName: device.locationName,
-      ipAddress: device.ipAddress,
-      endpointUrl: device.endpointUrl,
-      syncMethod: device.syncMethod,
-      syncFrequency: device.syncFrequency,
-      isActive: device.isActive,
-    });
+    setEditDeviceForm(deviceToForm(device));
   };
 
   const submitEditDevice = async (event: FormEvent) => {
     event.preventDefault();
     if (!editingDevice) return;
-    runAction(() => attendanceApi.devices.update(editingDevice.id, editDeviceForm), 'Device updated successfully.');
+    runAction(() => attendanceApi.devices.update(editingDevice.id, toDeviceRequest(editDeviceForm)), 'Device updated.');
     setEditingDevice(null);
   };
 
@@ -383,22 +432,16 @@ export function AttendancePage() {
       )}
 
       {activeTab === 'devices' && (
-        <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
-          <form onSubmit={submitDevice} className="surface p-4">
-            <SectionTitle icon={Fingerprint} title="Add Attendance Device" subtitle="Configure ZKTeco, Hikvision, Suprema, Anviz, eSSL, RFID, API, CSV, or SFTP sources." />
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Field label="Device name"><input className="input w-full" value={deviceForm.deviceName} onChange={(e) => setDeviceForm({ ...deviceForm, deviceName: e.target.value })} required /></Field>
-              <Field label="Serial number" info="The hardware serial printed on the biometric/attendance device. Must be unique — used to match incoming punches to this device." infoKey="attendance.device_serial"><input className="input w-full" value={deviceForm.serialNumber} onChange={(e) => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })} required /></Field>
-              <Field label="Device type"><select className="select w-full" value={deviceForm.deviceType} onChange={(e) => setDeviceForm({ ...deviceForm, deviceType: e.target.value })}><DeviceTypeOptions /></select></Field>
-              <Field label="Vendor"><select className="select w-full" value={deviceForm.vendor} onChange={(e) => setDeviceForm({ ...deviceForm, vendor: e.target.value })}><VendorOptions /></select></Field>
-              <Field label="IP / endpoint" info="Network address the device is reachable on, e.g. 192.168.1.50 or https://device.local/api. Needed for Pull sync." infoKey="attendance.device_endpoint"><input className="input w-full" value={deviceForm.endpointUrl || deviceForm.ipAddress} onChange={(e) => setDeviceForm({ ...deviceForm, endpointUrl: e.target.value, ipAddress: e.target.value })} /></Field>
-              <Field label="Sync method" info="Pull = the system polls the device on a schedule. Push = the device sends punches to the system. Check your device manual." infoKey="attendance.sync_method"><select className="select w-full" value={deviceForm.syncMethod} onChange={(e) => setDeviceForm({ ...deviceForm, syncMethod: e.target.value })}><SyncMethodOptions /></select></Field>
-              <Field label="Location"><input className="input w-full" value={deviceForm.locationName ?? ''} onChange={(e) => setDeviceForm({ ...deviceForm, locationName: e.target.value })} /></Field>
-              <Field label="Frequency" info="How often punches sync when using Pull, e.g. every 5 minutes. Lower = fresher data, more device load." infoKey="attendance.sync_frequency"><input className="input w-full" value={deviceForm.syncFrequency ?? ''} onChange={(e) => setDeviceForm({ ...deviceForm, syncFrequency: e.target.value })} /></Field>
-            </div>
-            <button type="submit" disabled={saving} className="btn-primary mt-4 w-full justify-center">Save Device</button>
-          </form>
-          <Panel title="Configured Devices" action={`${devices.length} records`}>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Connect any attendance source — biometric, RFID, face recognition, REST API, SFTP, or manual CSV.
+            </p>
+            <button type="button" onClick={() => { setDeviceForm(emptyDeviceForm); setShowAddDevice(true); }} className="btn-primary shrink-0">
+              <Fingerprint className="h-4 w-4" />Add Device
+            </button>
+          </div>
+          <Panel title="Configured Devices" action={`${devices.length} sources`}>
             <DeviceTable
               devices={devices}
               onTest={(id) => runAction(() => attendanceApi.devices.test(id), 'Connection test completed.')}
@@ -426,8 +469,8 @@ export function AttendancePage() {
                 </select>
                 <input type="datetime-local" className="input" value={rawForm.punchAt} onChange={(e) => setRawForm({ ...rawForm, punchAt: e.target.value })} aria-label="Punch timestamp" />
                 <div className="grid grid-cols-2 gap-3">
-                  <select className="select" value={rawForm.direction} onChange={(e) => setRawForm({ ...rawForm, direction: e.target.value })}><option>In</option><option>Out</option><option>BreakIn</option><option>BreakOut</option><option>Unknown</option></select>
-                  <select className="select" value={rawForm.verificationMethod} onChange={(e) => setRawForm({ ...rawForm, verificationMethod: e.target.value })}><option>Fingerprint</option><option>Face</option><option>RFID</option><option>PIN</option><option>Mobile</option><option>Web</option><option>Manual</option></select>
+                  <select aria-label="Punch direction" className="select" value={rawForm.direction} onChange={(e) => setRawForm({ ...rawForm, direction: e.target.value })}><option>In</option><option>Out</option><option>BreakIn</option><option>BreakOut</option><option>Unknown</option></select>
+                  <select aria-label="Verification method" className="select" value={rawForm.verificationMethod} onChange={(e) => setRawForm({ ...rawForm, verificationMethod: e.target.value })}><option>Fingerprint</option><option>Face</option><option>RFID</option><option>PIN</option><option>Mobile</option><option>Web</option><option>Manual</option></select>
                 </div>
                 <button type="submit" disabled={saving || (!rawForm.employeeId && !rawForm.employeeCode)} className="btn-primary justify-center">Save Raw Event</button>
               </div>
@@ -470,7 +513,7 @@ export function AttendancePage() {
             <div className="mt-4 space-y-3">
               <EmployeeSelect value={regularizationForm.employeeId} employees={employees} onChange={(value) => setRegularizationForm({ ...regularizationForm, employeeId: value })} />
               <input type="date" className="input w-full" value={regularizationForm.workDate} onChange={(e) => setRegularizationForm({ ...regularizationForm, workDate: e.target.value })} aria-label="Work date" />
-              <select className="select w-full" value={regularizationForm.requestType} onChange={(e) => setRegularizationForm({ ...regularizationForm, requestType: e.target.value })}>
+              <select aria-label="Request type" className="select w-full" value={regularizationForm.requestType} onChange={(e) => setRegularizationForm({ ...regularizationForm, requestType: e.target.value })}>
                 <option>Missed punch</option><option>Wrong punch</option><option>Work from home</option><option>Site visit</option><option>Manual attendance correction</option>
               </select>
               <div className="grid grid-cols-2 gap-3">
@@ -514,24 +557,16 @@ export function AttendancePage() {
         </div>
       )}
 
-      {/* ── Edit Device Modal ───────────────────────────────────────────────── */}
-      {editingDevice && (
-        <Modal title={`Edit — ${editingDevice.deviceName}`} onClose={() => setEditingDevice(null)}>
-          <form onSubmit={submitEditDevice} className="grid gap-3 sm:grid-cols-2">
-            <Field label="Device name"><input aria-label="Device name" className="input w-full" value={editDeviceForm.deviceName} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, deviceName: e.target.value })} required /></Field>
-            <Field label="Serial number"><input aria-label="Serial number" className="input w-full" value={editDeviceForm.serialNumber} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, serialNumber: e.target.value })} required /></Field>
-            <Field label="Device type"><select aria-label="Device type" className="select w-full" value={editDeviceForm.deviceType} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, deviceType: e.target.value })}><DeviceTypeOptions /></select></Field>
-            <Field label="Vendor"><select aria-label="Vendor" className="select w-full" value={editDeviceForm.vendor} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, vendor: e.target.value })}><VendorOptions /></select></Field>
-            <Field label="IP / endpoint"><input aria-label="IP / endpoint" className="input w-full" value={editDeviceForm.endpointUrl || editDeviceForm.ipAddress} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, endpointUrl: e.target.value, ipAddress: e.target.value })} /></Field>
-            <Field label="Sync method"><select aria-label="Sync method" className="select w-full" value={editDeviceForm.syncMethod} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, syncMethod: e.target.value })}><SyncMethodOptions /></select></Field>
-            <Field label="Location"><input aria-label="Location" className="input w-full" value={editDeviceForm.locationName ?? ''} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, locationName: e.target.value })} /></Field>
-            <Field label="Frequency"><input aria-label="Sync frequency" className="input w-full" value={editDeviceForm.syncFrequency ?? ''} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, syncFrequency: e.target.value })} /></Field>
-            <div className="col-span-2 flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => setEditingDevice(null)} className="btn-secondary">Cancel</button>
-              <button type="submit" disabled={saving} className="btn-primary">Save Changes</button>
-            </div>
-          </form>
-        </Modal>
+      {/* ── Add / Edit Device Modal ─────────────────────────────────────────── */}
+      {(showAddDevice || editingDevice) && (
+        <DeviceFormModal
+          title={editingDevice ? `Edit — ${editingDevice.deviceName}` : 'Add Attendance Device'}
+          form={editingDevice ? editDeviceForm : deviceForm}
+          setForm={editingDevice ? setEditDeviceForm : setDeviceForm}
+          onSubmit={editingDevice ? submitEditDevice : submitDevice}
+          onClose={() => { setShowAddDevice(false); setEditingDevice(null); }}
+          saving={saving}
+        />
       )}
 
       {/* ── Delete Confirm Modal ────────────────────────────────────────────── */}
@@ -666,17 +701,6 @@ function EmployeeSelect({ value, employees, onChange, includeAll }: { value: str
   );
 }
 
-function DeviceTypeOptions() {
-  return <><option>Biometric machine</option><option>Face recognition device</option><option>RFID/card reader</option><option>REST API device</option><option>CSV import source</option><option>SFTP import source</option><option>Kiosk/tablet</option></>;
-}
-
-function VendorOptions() {
-  return <><option>Generic biometric</option><option>ZKTeco</option><option>Hikvision</option><option>Suprema</option><option>Anviz</option><option>eSSL</option><option>Generic face recognition</option><option>Generic RFID</option><option>REST API</option><option>CSV/SFTP</option></>;
-}
-
-function SyncMethodOptions() {
-  return <><option>Push API</option><option>Pull API</option><option>SDK</option><option>CSV import</option><option>SFTP import</option><option>Manual upload</option></>;
-}
 
 function Empty({ text }: { text: string }) {
   return <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400 dark:border-white/10 dark:text-slate-500">{text}</div>;
@@ -836,10 +860,213 @@ function Guardrail({ text }: { text: string }) {
   return <div className="flex gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sapphire" /><p>{text}</p></div>;
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+function KvEditor({ label, hint, pairs, onChange, keyPlaceholder, valuePlaceholder }: {
+  label: string; hint?: string; pairs: KvPair[];
+  onChange: (pairs: KvPair[]) => void;
+  keyPlaceholder?: string; valuePlaceholder?: string;
+}) {
+  const set = (i: number, field: 'key' | 'value', val: string) => {
+    const next = pairs.map((p, idx) => idx === i ? { ...p, [field]: val } : p);
+    onChange(next);
+  };
+  const add = () => onChange([...pairs, { key: '', value: '' }]);
+  const remove = (i: number) => onChange(pairs.length === 1 ? [{ key: '', value: '' }] : pairs.filter((_, idx) => idx !== i));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0e1729]">
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <button type="button" onClick={add} className="text-xs font-semibold text-sapphire hover:underline">+ Add row</button>
+      </div>
+      {hint && <p className="mb-2 text-[11px] text-slate-400">{hint}</p>}
+      <div className="space-y-1.5">
+        {pairs.map((p, i) => (
+          <div key={i} className="flex gap-1.5">
+            <input aria-label={`${label} key ${i + 1}`} className="input flex-1 font-mono text-xs" placeholder={keyPlaceholder ?? 'Key'} value={p.key} onChange={(e) => set(i, 'key', e.target.value)} />
+            <input aria-label={`${label} value ${i + 1}`} className="input flex-1 font-mono text-xs" placeholder={valuePlaceholder ?? 'Value'} value={p.value} onChange={(e) => set(i, 'value', e.target.value)} />
+            <button type="button" onClick={() => remove(i)} aria-label="Remove row" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DeviceFormModal({ title, form, setForm, onSubmit, onClose, saving }: {
+  title: string;
+  form: DeviceFormState;
+  setForm: (f: DeviceFormState) => void;
+  onSubmit: (e: FormEvent) => void;
+  onClose: () => void;
+  saving: boolean;
+}) {
+  const f = form;
+  const set = (patch: Partial<DeviceFormState>) => setForm({ ...f, ...patch });
+  const isPush = f.syncMethod?.toLowerCase().includes('push');
+
+  return (
+    <Modal title={title} onClose={onClose} size="xl">
+      <form onSubmit={onSubmit} className="space-y-6">
+
+        {/* ── Basic Details ─────────────────────────────────────── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Basic Details</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Device name *">
+              <input aria-label="Device name" className="input w-full" value={f.deviceName} onChange={(e) => set({ deviceName: e.target.value })} placeholder="Main Gate Biometric" required />
+            </Field>
+            <Field label="Serial number *" info="Printed on device hardware. Must be unique across this workspace." infoKey="attendance.device_serial">
+              <input aria-label="Serial number" className="input w-full" value={f.serialNumber} onChange={(e) => set({ serialNumber: e.target.value })} placeholder="ZK-8880012345" required />
+            </Field>
+            <Field label="Location / branch">
+              <input aria-label="Location" className="input w-full" value={f.locationName} onChange={(e) => set({ locationName: e.target.value })} placeholder="Main entrance, Floor 3…" />
+            </Field>
+            <Field label="Status">
+              <select aria-label="Status" className="select w-full" value={f.isActive ? 'active' : 'inactive'} onChange={(e) => set({ isActive: e.target.value === 'active' })}>
+                <option value="active">Active — accepting punches</option>
+                <option value="inactive">Inactive — paused</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="Notes / model info">
+            <input aria-label="Notes" className="input w-full mt-1" value={f.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="ZKTeco K20, firmware 2.3, installed 2026-01, IT contact: John…" />
+          </Field>
+        </section>
+
+        {/* ── Device Identity ───────────────────────────────────── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Device Identity</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Vendor" info="Free text — enter any vendor name. Examples: ZKTeco, Hikvision, Suprema, Anviz, eSSL, Dahua, Generic." infoKey="attendance.vendor">
+              <input aria-label="Vendor" list="vendor-suggestions" className="input w-full" value={f.vendor} onChange={(e) => set({ vendor: e.target.value })} placeholder="ZKTeco" />
+              <datalist id="vendor-suggestions">
+                {['ZKTeco','Hikvision','Suprema','Anviz','eSSL','Dahua','Identix','Realand','Generic biometric','Generic RFID','Custom REST API'].map(v => <option key={v} value={v} />)}
+              </datalist>
+            </Field>
+            <Field label="Device type">
+              <input aria-label="Device type" list="type-suggestions" className="input w-full" value={f.deviceType} onChange={(e) => set({ deviceType: e.target.value })} placeholder="Biometric fingerprint + face" />
+              <datalist id="type-suggestions">
+                {['Biometric fingerprint','Face recognition','RFID/card reader','Fingerprint + face','Fingerprint + RFID','All-in-one (face + finger + RFID)','Mobile app','Kiosk/tablet','REST API','SFTP/CSV feed'].map(v => <option key={v} value={v} />)}
+              </datalist>
+            </Field>
+          </div>
+        </section>
+
+        {/* ── Connection ────────────────────────────────────────── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Connection</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Sync method" info="Push = device calls our webhook. Pull = we call the device on schedule. SDK = vendor library. Check device manual." infoKey="attendance.sync_method">
+              <select aria-label="Sync method" className="select w-full" value={f.syncMethod} onChange={(e) => set({ syncMethod: e.target.value })}>
+                <option>Push API</option><option>Pull API</option><option>SDK</option>
+                <option>SFTP import</option><option>CSV import</option><option>Manual upload</option>
+              </select>
+            </Field>
+            <Field label="Sync frequency">
+              <input aria-label="Sync frequency" list="freq-suggestions" className="input w-full" value={f.syncFrequency} onChange={(e) => set({ syncFrequency: e.target.value })} placeholder="Every 5 minutes" />
+              <datalist id="freq-suggestions">
+                {['Real-time (Push)','Every 1 minute','Every 5 minutes','Every 15 minutes','Every 30 minutes','Hourly','Manual'].map(v => <option key={v} value={v} />)}
+              </datalist>
+            </Field>
+            <Field label="Device IP / hostname">
+              <input aria-label="Device IP address" className="input w-full font-mono" value={f.ipAddress} onChange={(e) => set({ ipAddress: e.target.value })} placeholder="192.168.1.50" />
+            </Field>
+            <Field label="Port">
+              <input aria-label="Port" className="input w-full font-mono" value={f.port} onChange={(e) => set({ port: e.target.value })} placeholder="4370 (ZKTeco default)" />
+            </Field>
+            <Field label="API endpoint URL (Pull / REST devices)" info="Full URL the system will call to fetch attendance records. E.g. http://192.168.1.50/api/att/logs" infoKey="attendance.device_endpoint">
+              <input aria-label="Endpoint URL" className="input w-full font-mono" value={f.endpointUrl} onChange={(e) => set({ endpointUrl: e.target.value })} placeholder="http://192.168.1.50/api/att/logs" />
+            </Field>
+          </div>
+          {isPush && (
+            <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
+              <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1 flex items-center gap-1.5"><Webhook className="h-3.5 w-3.5" />Push API — configure this device to POST to:</p>
+              <code className="block text-xs font-mono text-blue-800 dark:text-blue-200">{process.env.NEXT_PUBLIC_API_BASE_URL || '[API Base URL]'}/api/attendance/ingest</code>
+              <p className="mt-1 text-xs text-blue-600 dark:text-blue-300">Required header: <span className="font-mono">X-Device-Key: [generate after saving]</span></p>
+            </div>
+          )}
+        </section>
+
+        {/* ── Authentication ────────────────────────────────────── */}
+        <section>
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Authentication (for Pull API requests)</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Auth type">
+              <select aria-label="Auth type" className="select w-full" value={f.authType} onChange={(e) => set({ authType: e.target.value })}>
+                <option value="None">None (open endpoint)</option>
+                <option value="BasicAuth">Basic Auth (username + password)</option>
+                <option value="Bearer">Bearer Token</option>
+                <option value="CustomHeader">Custom Header (e.g. X-API-Key)</option>
+                <option value="ApiKeyQuery">Query Param (e.g. ?api_key=xxx)</option>
+              </select>
+            </Field>
+            {f.authType === 'BasicAuth' && <>
+              <Field label="Username"><input aria-label="Auth username" className="input w-full" value={f.authUsername} onChange={(e) => set({ authUsername: e.target.value })} placeholder="admin" /></Field>
+              <Field label="Password"><input aria-label="Auth password" type="password" className="input w-full" value={f.authPassword} onChange={(e) => set({ authPassword: e.target.value })} placeholder="••••••••" /></Field>
+            </>}
+            {f.authType === 'Bearer' && (
+              <Field label="Bearer token"><input aria-label="Bearer token" className="input w-full font-mono" value={f.authToken} onChange={(e) => set({ authToken: e.target.value })} placeholder="eyJ..." /></Field>
+            )}
+            {f.authType === 'CustomHeader' && <>
+              <Field label="Header name"><input aria-label="Header name" className="input w-full font-mono" value={f.authHeaderName} onChange={(e) => set({ authHeaderName: e.target.value })} placeholder="X-API-Key" /></Field>
+              <Field label="Header value"><input aria-label="Header value" className="input w-full font-mono" value={f.authHeaderValue} onChange={(e) => set({ authHeaderValue: e.target.value })} placeholder="your-secret-key" /></Field>
+            </>}
+            {f.authType === 'ApiKeyQuery' && <>
+              <Field label="Param name"><input aria-label="Query param name" className="input w-full font-mono" value={f.authParamName} onChange={(e) => set({ authParamName: e.target.value })} placeholder="api_key" /></Field>
+              <Field label="Param value"><input aria-label="Query param value" className="input w-full font-mono" value={f.authParamValue} onChange={(e) => set({ authParamValue: e.target.value })} placeholder="your-key-value" /></Field>
+            </>}
+          </div>
+        </section>
+
+        {/* ── Custom HTTP Headers ───────────────────────────────── */}
+        <section>
+          <KvEditor
+            label="Custom HTTP Headers"
+            hint="Extra headers included on every Pull API request. E.g. Accept: application/json, X-ISAPI-Version: 2.0 (Hikvision), X-Tenant: acme"
+            pairs={f.customHeaders}
+            onChange={(pairs) => set({ customHeaders: pairs })}
+            keyPlaceholder="Header-Name"
+            valuePlaceholder="header-value"
+          />
+        </section>
+
+        {/* ── Device Parameters ─────────────────────────────────── */}
+        <section>
+          <KvEditor
+            label="Device Parameters"
+            hint="Vendor-specific config. Common: poll_path=/iclock/cdata, employee_field=uid, timestamp_field=punch_time, direction_field=punch_state, batch_size=100, timeout_seconds=30, date_format=2006-01-02T15:04:05Z"
+            pairs={f.deviceParams}
+            onChange={(pairs) => set({ deviceParams: pairs })}
+            keyPlaceholder="param_name"
+            valuePlaceholder="value"
+          />
+        </section>
+
+        {/* ── Field Mappings ────────────────────────────────────── */}
+        <section>
+          <KvEditor
+            label="Field Mappings (Device field → System field)"
+            hint="Map the device's JSON/XML field names to system fields. System fields: employeeCode, punchTimestampUtc, punchDirection, verificationMethod, latitude, longitude. E.g. uid→employeeCode, check_type→punchDirection"
+            pairs={f.fieldMappings}
+            onChange={(pairs) => set({ fieldMappings: pairs })}
+            keyPlaceholder="device_field_name"
+            valuePlaceholder="systemFieldName"
+          />
+        </section>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-white/[0.07]">
+          <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+          <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Saving…' : 'Save Device'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function Modal({ title, onClose, children, size = 'md' }: { title: string; onClose: () => void; children: ReactNode; size?: 'md' | 'lg' | 'xl' }) {
+  const maxW = size === 'xl' ? 'max-w-4xl' : size === 'lg' ? 'max-w-3xl' : 'max-w-2xl';
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={`my-8 w-full ${maxW} rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0e1729]`}>
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/[0.07]">
           <h2 className="text-base font-bold text-slate-900 dark:text-white">{title}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>

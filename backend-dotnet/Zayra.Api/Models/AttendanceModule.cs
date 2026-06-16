@@ -16,6 +16,17 @@ public class AttendanceDevice
     public string ApiKeyReference { get; set; } = string.Empty;
     public string SyncMethod { get; set; } = "Manual upload";
     public string SyncFrequency { get; set; } = "Manual";
+    // Flexible auth: None | BasicAuth | Bearer | CustomHeader | ApiKeyParam
+    public string AuthType { get; set; } = "None";
+    // JSON: {"username":"x","password":"y"} | {"token":"x"} | {"headerName":"X-Auth","headerValue":"y"} | {"paramName":"api_key","paramValue":"x"}
+    public string AuthCredentialsJson { get; set; } = "{}";
+    // JSON dict of additional HTTP headers to include on every request to this device
+    public string CustomHeadersJson { get; set; } = "{}";
+    // Vendor-specific parameters: poll_path, employee_field, timestamp_field, direction_field, batch_size, timeout_seconds, etc.
+    public string DeviceParametersJson { get; set; } = "{}";
+    // Field name mappings: device's field name → system field name (e.g. {"uid":"employeeCode","check_type":"punchDirection"})
+    public string FieldMappingsJson { get; set; } = "{}";
+    public string Notes { get; set; } = string.Empty;
     public string LastSyncStatus { get; set; } = "Never";
     public DateTime? LastSyncAtUtc { get; set; }
     public string ErrorLog { get; set; } = string.Empty;
