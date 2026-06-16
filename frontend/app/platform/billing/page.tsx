@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { RefreshCw, TrendingUp, CreditCard, AlertTriangle } from 'lucide-react';
-import { platformApi, type BillingSummary, type TenantInvoice } from '@/src/api/platform';
+import { RefreshCw, TrendingUp, CreditCard, AlertTriangle, Plus } from 'lucide-react';
+import { platformApi, type BillingSummary, type TenantInvoice, type PlatformTenantSummary } from '@/src/api/platform';
 
 type AllInvoice = TenantInvoice & { tenantName: string; tenantSlug: string };
 
@@ -48,6 +48,8 @@ export default function PlatformBillingPage() {
   const [statusFilter, setStatus] = useState('');
   const [loading, setLoading]   = useState(true);
   const [summaryErr, setSummaryErr] = useState('');
+  const [tenants, setTenants]   = useState<PlatformTenantSummary[]>([]);
+  const [pickTenant, setPickTenant] = useState(false);
   const PAGE_SIZE = 30;
 
   useEffect(() => {
@@ -59,13 +61,15 @@ export default function PlatformBillingPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [sum, inv] = await Promise.allSettled([
+    const [sum, inv, ten] = await Promise.allSettled([
       platformApi.getBillingSummary(),
       platformApi.listAllInvoices({ status: statusFilter || undefined, page, pageSize: PAGE_SIZE }),
+      platformApi.listTenants(),
     ]);
     if (sum.status === 'fulfilled') setSummary(sum.value);
     else setSummaryErr('Billing summary endpoint not yet implemented.');
     if (inv.status === 'fulfilled') { setInvoices(inv.value.invoices); setTotal(inv.value.total); }
+    if (ten.status === 'fulfilled') setTenants(ten.value);
     setLoading(false);
   }, [page, statusFilter]);
 
@@ -73,15 +77,54 @@ export default function PlatformBillingPage() {
 
   return (
     <div className="space-y-5">
+      {/* Tenant picker overlay */}
+      {pickTenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setPickTenant(false)} />
+          <div className="relative w-full max-w-sm bg-[#0d1117] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.07]">
+              <h2 className="text-sm font-semibold text-white">Select Tenant</h2>
+              <button type="button" onClick={() => setPickTenant(false)} className="text-slate-500 hover:text-white transition-colors text-xl leading-none">&times;</button>
+            </div>
+            <div className="max-h-80 overflow-y-auto py-2">
+              {tenants.length === 0 ? (
+                <p className="px-5 py-4 text-xs text-slate-500">No tenants found.</p>
+              ) : tenants.map(t => (
+                <Link
+                  key={t.id}
+                  href={`/platform/tenants/${t.id}/billing`}
+                  onClick={() => setPickTenant(false)}
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.04] transition-colors"
+                >
+                  <div className="h-8 w-8 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center shrink-0">
+                    <span className="text-[10px] font-bold text-slate-400">{t.name.slice(0, 2).toUpperCase()}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium truncate">{t.name}</p>
+                    <p className="text-[11px] text-slate-600 font-mono">/{t.slug} · {t.subscription?.plan ?? 'No plan'}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-white">Billing & Revenue</h1>
           <p className="text-xs text-slate-500 mt-0.5">Aggregate billing across all tenants</p>
         </div>
-        <button type="button" onClick={load} disabled={loading} aria-label="Refresh"
-          className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors disabled:opacity-40">
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setPickTenant(true)}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors">
+            <Plus className="h-3.5 w-3.5" /> New Invoice
+          </button>
+          <button type="button" onClick={load} disabled={loading} aria-label="Refresh"
+            className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors disabled:opacity-40">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}

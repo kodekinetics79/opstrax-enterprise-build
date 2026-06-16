@@ -354,9 +354,21 @@ function UsersTab({ tenantId }: { tenantId: string }) {
 
 function BillingTab({ tenantId }: { tenantId: string }) {
   return (
-    <div className="text-center py-10 text-sm text-slate-500">
-      Full billing management →{' '}
-      <Link href={`/platform/tenants/${tenantId}/billing`} className="text-sapphire hover:text-blue-300">Open Billing Page</Link>
+    <div className="flex flex-col items-center justify-center py-14 gap-4">
+      <div className="h-12 w-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+        <CreditCard className="h-5 w-5 text-blue-400" />
+      </div>
+      <div className="text-center">
+        <p className="text-sm font-semibold text-white mb-1">Billing & Invoices</p>
+        <p className="text-xs text-slate-500">Create invoices, track payments, download PDFs and send to the tenant.</p>
+      </div>
+      <Link
+        href={`/platform/tenants/${tenantId}/billing`}
+        className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+      >
+        <CreditCard className="h-3.5 w-3.5" />
+        Open Billing Manager
+      </Link>
     </div>
   );
 }
