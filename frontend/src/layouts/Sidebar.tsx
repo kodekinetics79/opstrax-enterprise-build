@@ -51,10 +51,22 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
     router.replace('/login');
   };
 
+  const allNavPaths = navigationGroups
+    .flatMap((g) => g.items.map((i) => i.path))
+    .filter((p): p is string => Boolean(p));
+
   const isActive = (path?: string) => {
     if (!path) return false;
     if (path === '/dashboard') return pathname === '/dashboard' || pathname === '/';
-    return pathname?.startsWith(path) ?? false;
+    if (pathname === path) return true;
+    // Match as a prefix only when no more-specific sibling nav path also matches
+    if (pathname?.startsWith(path + '/')) {
+      const hasMoreSpecificMatch = allNavPaths.some(
+        (p) => p !== path && p.startsWith(path + '/') && pathname.startsWith(p),
+      );
+      return !hasMoreSpecificMatch;
+    }
+    return false;
   };
 
   return (

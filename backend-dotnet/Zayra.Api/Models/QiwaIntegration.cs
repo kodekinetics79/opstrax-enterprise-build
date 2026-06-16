@@ -110,4 +110,56 @@ public class QiwaSyncLog
     public Guid? TriggeredBy { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAtUtc { get; set; }
+
+    // ── Retry / dead-letter tracking (Track A) ────────────────────────────────
+
+    /// <summary>Number of push attempts made so far by the background worker.</summary>
+    public int RetryCount { get; set; } = 0;
+
+    /// <summary>Maximum attempts before the record is moved to DeadLetter.</summary>
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>Timestamp of the most recent retry attempt.</summary>
+    public DateTime? LastRetriedAtUtc { get; set; }
+
+    /// <summary>Reason the record was dead-lettered after exhausting retries.</summary>
+    public string? DeadLetterReason { get; set; }
+}
+
+// ── Qiwa sync log lifecycle states (worker) ───────────────────────────────────
+
+public static class QiwaSyncLogStatuses
+{
+    public const string Pending    = "Pending";
+    public const string Success    = "Success";
+    public const string Failed     = "Failed";
+    public const string Skipped    = "Skipped";
+    public const string DeadLetter = "DeadLetter";
+}
+
+// ── Qiwa API credentials (encrypted at rest) ──────────────────────────────────
+
+/// <summary>
+/// Per-tenant Qiwa OAuth2 client credentials.  The client secret is stored
+/// encrypted via <see cref="Microsoft.AspNetCore.DataProtection.IDataProtector"/>
+/// and is never returned to clients in plaintext.
+/// </summary>
+public class QiwaApiCredential
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string ClientId { get; set; } = string.Empty;
+
+    /// <summary>AES-protected client secret. Never expose in API responses.</summary>
+    public string EncryptedClientSecret { get; set; } = string.Empty;
+
+    public string Environment { get; set; } = "sandbox"; // sandbox | production
+    public DateTime? TokenExpiresAtUtc { get; set; }
+
+    /// <summary>Short-lived access token cache (acceptable to persist).</summary>
+    public string CachedAccessToken { get; set; } = string.Empty;
+
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? UpdatedBy { get; set; }
 }

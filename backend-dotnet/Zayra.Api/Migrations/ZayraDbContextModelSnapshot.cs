@@ -13494,6 +13494,11 @@ namespace Zayra.Api.Migrations
                         .HasColumnType("decimal(14,2)")
                         .HasColumnName("total_amount");
 
+                    b.Property<string>("WpsStatus")
+                        .IsRequired()
+                        .HasColumnType("longtext")
+                        .HasColumnName("wps_status");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "PayrollRunId");
@@ -14800,6 +14805,65 @@ namespace Zayra.Api.Migrations
                     b.ToTable("public_holiday_calendars", (string)null);
                 });
 
+            modelBuilder.Entity("Zayra.Api.Models.QiwaApiCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CachedAccessToken")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("varchar(4000)")
+                        .HasColumnName("cached_access_token");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EncryptedClientSecret")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("varchar(2000)")
+                        .HasColumnName("encrypted_client_secret");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("environment");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("TokenExpiresAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("token_expires_at_utc");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("qiwa_api_credentials", (string)null);
+                });
+
             modelBuilder.Entity("Zayra.Api.Models.QiwaSyncLog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -14814,6 +14878,11 @@ namespace Zayra.Api.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime(6)")
                         .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DeadLetterReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("dead_letter_reason");
 
                     b.Property<string>("Direction")
                         .IsRequired()
@@ -14832,6 +14901,14 @@ namespace Zayra.Api.Migrations
                         .HasColumnType("int")
                         .HasColumnName("http_status_code");
 
+                    b.Property<DateTime?>("LastRetriedAtUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("last_retried_at_utc");
+
+                    b.Property<int>("MaxRetries")
+                        .HasColumnType("int")
+                        .HasColumnName("max_retries");
+
                     b.Property<string>("RequestPayloadJson")
                         .HasColumnType("longtext")
                         .HasColumnName("request_payload_json");
@@ -14839,6 +14916,10 @@ namespace Zayra.Api.Migrations
                     b.Property<string>("ResponsePayloadJson")
                         .HasColumnType("longtext")
                         .HasColumnName("response_payload_json");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("int")
+                        .HasColumnName("retry_count");
 
                     b.Property<string>("Status")
                         .IsRequired()

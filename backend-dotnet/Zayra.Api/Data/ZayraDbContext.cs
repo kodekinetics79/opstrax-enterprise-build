@@ -226,6 +226,9 @@ public class ZayraDbContext : DbContext
     public DbSet<CountryPayrollRule> CountryPayrollRules => Set<CountryPayrollRule>();
     public DbSet<TenantFieldHelpText> TenantFieldHelpTexts => Set<TenantFieldHelpText>();
     public DbSet<PlatformSupportSession> PlatformSupportSessions => Set<PlatformSupportSession>();
+    public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
+    public DbSet<PlatformAnnouncement> PlatformAnnouncements => Set<PlatformAnnouncement>();
+    public DbSet<PlatformLead> PlatformLeads => Set<PlatformLead>();
     // ── AI Intelligence ────────────────────────────────────────────────────────
     public DbSet<AIModelConfig> AIModelConfigs => Set<AIModelConfig>();
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
@@ -300,6 +303,7 @@ public class ZayraDbContext : DbContext
     // ── Qiwa Integration ───────────────────────────────────────────────────────
     public DbSet<QiwaTenantConnection> QiwaTenantConnections => Set<QiwaTenantConnection>();
     public DbSet<QiwaSyncLog> QiwaSyncLogs => Set<QiwaSyncLog>();
+    public DbSet<QiwaApiCredential> QiwaApiCredentials => Set<QiwaApiCredential>();
     // ── Loans, Advances & Bonuses ──────────────────────────────────────────────
     public DbSet<LoanType> LoanTypes => Set<LoanType>();
     public DbSet<LoanPolicy> LoanPolicies => Set<LoanPolicy>();
@@ -345,6 +349,22 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.Status });
             entity.HasIndex(x => new { x.TenantId, x.Department });
             entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+        });
+
+        modelBuilder.Entity<QiwaApiCredential>(entity =>
+        {
+            entity.ToTable("qiwa_api_credentials");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ClientId).HasMaxLength(200);
+            entity.Property(x => x.EncryptedClientSecret).HasMaxLength(2000);
+            entity.Property(x => x.Environment).HasMaxLength(20);
+            entity.Property(x => x.CachedAccessToken).HasMaxLength(4000);
+            entity.HasIndex(x => x.TenantId).IsUnique();
+        });
+
+        modelBuilder.Entity<QiwaSyncLog>(entity =>
+        {
+            entity.Property(x => x.DeadLetterReason).HasMaxLength(500);
         });
 
 
@@ -1451,6 +1471,42 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.FieldKey).HasMaxLength(120);
             entity.Property(x => x.Text).HasMaxLength(500);
             entity.HasIndex(x => new { x.TenantId, x.FieldKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<PlatformUser>(entity =>
+        {
+            entity.ToTable("platform_users");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Email).HasMaxLength(256);
+            entity.Property(x => x.FullName).HasMaxLength(180);
+            entity.Property(x => x.PasswordHash).HasMaxLength(512);
+            entity.Property(x => x.Role).HasMaxLength(40);
+            entity.Property(x => x.LastLoginIp).HasMaxLength(64);
+            entity.HasIndex(x => x.Email).IsUnique();
+            entity.Property(x => x.IsActive).HasDefaultValue(true);
+        });
+
+        modelBuilder.Entity<PlatformAnnouncement>(entity =>
+        {
+            entity.ToTable("platform_announcements");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Title).HasMaxLength(200);
+            entity.Property(x => x.TargetPlan).HasMaxLength(40);
+            entity.Property(x => x.Status).HasMaxLength(20);
+            entity.Property(x => x.CreatedByEmail).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<PlatformLead>(entity =>
+        {
+            entity.ToTable("platform_leads");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CompanyName).HasMaxLength(200);
+            entity.Property(x => x.ContactName).HasMaxLength(180);
+            entity.Property(x => x.ContactEmail).HasMaxLength(256);
+            entity.Property(x => x.Phone).HasMaxLength(40);
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Source).HasMaxLength(30);
+            entity.Property(x => x.AssignedTo).HasMaxLength(256);
         });
 
         modelBuilder.Entity<PlatformSupportSession>(entity =>

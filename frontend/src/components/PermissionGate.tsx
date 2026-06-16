@@ -15,7 +15,7 @@ export function PermissionGate({ permissions, children }: PermissionGateProps) {
   const hasAccess = permissions.length === 0 || permissions.some(p => hasPermission(p));
 
   useEffect(() => {
-    if (user && !hasAccess) router.replace('/dashboard');
+    if (user && !hasAccess) router.replace('/access-denied');
   }, [user, hasAccess, router]);
 
   if (!hasAccess) return null;

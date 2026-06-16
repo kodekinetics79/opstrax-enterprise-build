@@ -352,7 +352,8 @@ public class PayrollController : ControllerBase
             return Conflict(new { message = "A payment batch already exists for this payroll run." });
         var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
         var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
-        var batch = new PayrollPaymentBatch { TenantId = tenantId, PayrollRunId = id, BatchNumber = $"PAY-{run.Year}{run.Month:00}-{DateTime.UtcNow:HHmmss}", PaymentMethod = req.PaymentMethod ?? "WPS", TotalAmount = slips.Sum(x => x.NetSalary), Currency = req.Currency ?? "AED" };
+        var currency = req.Currency ?? await ResolveCurrencyAsync(tenantId, cancellationToken);
+        var batch = new PayrollPaymentBatch { TenantId = tenantId, PayrollRunId = id, BatchNumber = $"PAY-{run.Year}{run.Month:00}-{DateTime.UtcNow:HHmmss}", PaymentMethod = req.PaymentMethod ?? "WPS", TotalAmount = slips.Sum(x => x.NetSalary), Currency = currency, WpsStatus = WpsStatuses.Draft };
         _db.PayrollPaymentBatches.Add(batch);
         foreach (var slip in slips)
         {
@@ -366,17 +367,65 @@ public class PayrollController : ControllerBase
         return Created($"/api/payroll/payment-batches/{batch.Id}", batch);
     }
 
+    /// <summary>
+    /// Pre-export WPS validation: returns the list of blocking issues (missing/invalid
+    /// IBANs, unapproved run) that must be cleared before a SIF file can be exported.
+    /// The same checks are enforced inside <see cref="GenerateWps"/> — the frontend is never trusted.
+    /// </summary>
+    [HttpPost("runs/{id:guid}/wps-validation")]
+    public async Task<IActionResult> WpsValidation(Guid id, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
+        if (run is null) return NotFound();
+
+        var issues = new List<object>();
+        if (run.Status != "Locked" && run.Status != "Paid")
+            issues.Add(new { code = "RUN_NOT_LOCKED", message = "Payroll run must be approved and locked before WPS export." });
+
+        var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
+        var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
+
+        foreach (var slip in slips)
+        {
+            var iban = profiles.FirstOrDefault(p => p.EmployeeId == slip.EmployeeId)?.Iban;
+            if (!Infrastructure.Payroll.IbanValidator.IsValid(iban))
+                issues.Add(new { code = "INVALID_IBAN", employeeId = slip.EmployeeId, employeeCode = slip.EmployeeCode, message = "Missing or invalid IBAN for WPS payment." });
+        }
+
+        return Ok(new { runId = id, canExport = issues.Count == 0, issueCount = issues.Count, issues });
+    }
+
     [HttpPost("payment-batches/{id:guid}/wps-file")]
     public async Task<IActionResult> GenerateWps(Guid id, CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
         var batch = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (batch is null) return NotFound();
+
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batch.PayrollRunId, cancellationToken);
+        if (run is not null && run.Status != "Locked" && run.Status != "Paid")
+            return BadRequest(new { error = "run_not_locked", message = "Payroll run must be approved and locked before WPS export." });
+
         var records = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
+
+        // Backend-enforced IBAN validation — never trust the frontend pre-check.
         var employeeCodes = await _db.Employees.AsNoTracking()
             .Where(e => e.TenantId == tenantId && records.Select(r => r.EmployeeId).Contains(e.Id))
             .Select(e => new { e.Id, e.EmployeeCode })
             .ToListAsync(cancellationToken);
+
+        var invalid = records
+            .Where(r => !Infrastructure.Payroll.IbanValidator.IsValid(r.Iban))
+            .Select(r => new
+            {
+                employeeId = r.EmployeeId,
+                employeeCode = employeeCodes.FirstOrDefault(e => e.Id == r.EmployeeId)?.EmployeeCode ?? r.EmployeeId.ToString()
+            })
+            .ToList();
+
+        if (invalid.Count > 0)
+            return BadRequest(new { error = "invalid_ibans", message = "WPS export blocked: some payment records have missing or invalid IBANs.", employees = invalid });
 
         // Persist WPS records
         var wps = new WPSFileBatch { TenantId = tenantId, PaymentBatchId = id, SifFileName = $"SIF-{batch.BatchNumber}.txt" };
@@ -387,9 +436,28 @@ public class PayrollController : ControllerBase
             _db.SIFFileRecords.Add(new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, EmployeeCode = code, Iban = record.Iban, NetPay = record.Amount });
         }
         batch.Status = "FileGenerated";
+        batch.WpsStatus = WpsStatuses.Generated;
         await PayrollAudit("payroll.wps.generated", "WPSFileBatch", wps.Id.ToString(), null, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(wps);
+    }
+
+    /// <summary>Updates the WPS submission status of a payment batch (Submitted/Accepted/Rejected/Reconciled).</summary>
+    [HttpPost("payment-batches/{batchId:guid}/wps-status")]
+    public async Task<IActionResult> UpdateWpsStatus(Guid batchId, [FromBody] WpsStatusRequest req, CancellationToken cancellationToken)
+    {
+        if (!WpsStatuses.All.Contains(req.Status))
+            return BadRequest(new { error = "invalid_status", message = $"Status must be one of: {string.Join(", ", WpsStatuses.All)}." });
+
+        var tenantId = GetTenantId();
+        var batch = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
+        if (batch is null) return NotFound();
+
+        var old = batch.WpsStatus;
+        batch.WpsStatus = req.Status;
+        await PayrollAudit("payroll.wps.status_changed", "PayrollPaymentBatch", batchId.ToString(), new { from = old, to = req.Status, notes = req.Notes }, cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        return Ok(new { batchId, wpsStatus = batch.WpsStatus });
     }
 
     /// <summary>Download the actual SIF text file for a WPS batch — per UAE CBUAE SIF v2 format.</summary>
@@ -411,18 +479,31 @@ public class PayrollController : ControllerBase
             ? new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month))
             : DateTime.UtcNow;
 
-        // UAE CBUAE SIF v2 format
+        // Currency: batch currency, falling back to the tenant company default (SAR for Saudi).
+        var currency = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "AED"
+            ? batch.Currency
+            : await ResolveCurrencyAsync(tenantId, cancellationToken);
+
+        // CBUAE SIF v2 format (adapted for Saudi context — currency is tenant-driven, defaulting to SAR)
         // Header record: EDI_DC40 segment
         var sb = new StringBuilder();
-        sb.AppendLine($"EDI_DC40+{agentId}+{molCode}+{paymentDate:yyyyMMdd}+{sifRecords.Count:D6}+{batch.TotalAmount:F2}+AED'");
+        sb.AppendLine($"EDI_DC40+{agentId}+{molCode}+{paymentDate:yyyyMMdd}+{sifRecords.Count:D6}+{batch.TotalAmount:F2}+{currency}'");
         foreach (var rec in sifRecords)
         {
             var iban = rec.Iban.Replace(" ", string.Empty).PadRight(34).Substring(0, 34);
             // E1EDL20: employee salary record
-            sb.AppendLine($"E1EDL20+{rec.EmployeeCode.PadRight(10).Substring(0, 10)}+{iban}+{rec.NetPay:F2}+AED+{paymentDate:yyyyMMdd}+01'");
+            sb.AppendLine($"E1EDL20+{rec.EmployeeCode.PadRight(10).Substring(0, 10)}+{iban}+{rec.NetPay:F2}+{currency}+{paymentDate:yyyyMMdd}+01'");
         }
         // Trailer
         sb.AppendLine($"EOF+{sifRecords.Count:D6}+{sifRecords.Sum(r => r.NetPay):F2}'");
+
+        // Mark the batch as downloaded (lifecycle tracking).
+        var tracked = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
+        if (tracked is not null && tracked.WpsStatus is "Draft" or "Generated")
+        {
+            tracked.WpsStatus = WpsStatuses.Downloaded;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         Response.Headers["Content-Disposition"] = $"attachment; filename={wpsFile.SifFileName}";
@@ -726,8 +807,85 @@ public class PayrollController : ControllerBase
         return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
     }
 
+    /// <summary>
+    /// Per-employee reconciliation between contract salary and the processed payroll
+    /// slip, plus WPS/GOSI/QIWA readiness flags.  Variance &gt; 5% is flagged as a warning.
+    /// </summary>
+    [HttpGet("runs/{id:guid}/mismatch-report")]
+    public async Task<IActionResult> MismatchReport(Guid id, CancellationToken cancellationToken)
+    {
+        if (!HasPermission("payroll.review")) return Forbid();
+
+        var tenantId = GetTenantId();
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
+        if (run is null) return NotFound();
+
+        var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
+        var salaries = await _db.EmployeeSalaryStructures.AsNoTracking().Where(x => x.TenantId == tenantId).ToListAsync(cancellationToken);
+        var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
+        var empIds = slips.Select(s => s.EmployeeId).ToList();
+        var employees = await _db.Employees.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && empIds.Contains(e.Id))
+            .ToListAsync(cancellationToken);
+
+        var rows = new List<object>();
+        foreach (var slip in slips)
+        {
+            var contractBasic = salaries
+                .Where(s => s.EmployeeId == slip.EmployeeId)
+                .OrderByDescending(s => s.EffectiveDate)
+                .Select(s => s.BasicSalary)
+                .FirstOrDefault();
+            var variance = slip.BasicSalary - contractBasic;
+            var variancePercent = contractBasic == 0 ? 0 : Math.Round((double)(variance / contractBasic) * 100, 2);
+
+            var iban = profiles.FirstOrDefault(p => p.EmployeeId == slip.EmployeeId)?.Iban;
+            var hasValidIban = Infrastructure.Payroll.IbanValidator.IsValid(iban);
+            var emp = employees.FirstOrDefault(e => e.Id == slip.EmployeeId);
+            var missingGosiRef = emp is null || string.IsNullOrWhiteSpace(emp.GosiReference);
+            var missingQiwa = emp is null ? new List<string>() : Infrastructure.Qiwa.QiwaIntegrationService.MissingQiwaFields(emp);
+
+            var issues = new List<string>();
+            if (Math.Abs(variancePercent) > 5) issues.Add($"Payroll basic differs from contract salary by {variancePercent}%.");
+            if (!hasValidIban) issues.Add("Missing or invalid IBAN.");
+            if (missingGosiRef) issues.Add("Missing GOSI reference.");
+            if (missingQiwa.Count > 0) issues.Add($"Missing QIWA fields: {string.Join(", ", missingQiwa)}.");
+
+            rows.Add(new
+            {
+                employeeId = slip.EmployeeId,
+                employeeCode = slip.EmployeeCode,
+                employeeName = slip.EmployeeName,
+                contractSalary = contractBasic,
+                payrollBasic = slip.BasicSalary,
+                variance,
+                variancePercent,
+                hasValidIban,
+                missingGosiRef,
+                missingQiwaFields = missingQiwa,
+                isWarning = Math.Abs(variancePercent) > 5,
+                issues
+            });
+        }
+
+        return Ok(new { runId = id, period = $"{run.Year}-{run.Month:D2}", employeeCount = rows.Count, employees = rows });
+    }
+
+    /// <summary>Resolves the tenant's default payroll currency from its primary company (SAR fallback for Saudi context).</summary>
+    private async Task<string> ResolveCurrencyAsync(Guid tenantId, CancellationToken ct)
+    {
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.TenantId == tenantId)
+            .OrderByDescending(c => c.IsActive)
+            .FirstOrDefaultAsync(ct);
+        var cur = company?.DefaultCurrency;
+        return string.IsNullOrWhiteSpace(cur) ? "SAR" : cur;
+    }
+
     private Guid GetTenantId() => Guid.Parse(User.FindFirstValue("tenant_id")!);
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
+    private bool HasPermission(string permission) =>
+        User.Claims.Any(c => c.Type == "permission" && string.Equals(c.Value, permission, StringComparison.OrdinalIgnoreCase));
 }
 
 public record CreatePayrollRunRequest(int Year, int Month);
@@ -736,6 +894,7 @@ public record SalaryComponentRequest(string Code, string Name, string ComponentT
 public record EmployeeSalaryStructureRequest(int EmployeeId, Guid SalaryStructureId, decimal BasicSalary, decimal HousingAllowance, decimal TransportAllowance, decimal FoodAllowance, decimal MobileAllowance, decimal OtherAllowance, decimal FixedDeduction, DateOnly EffectiveDate, string? Currency);
 public record PayrollDecisionRequest(string? Notes);
 public record PayrollPaymentBatchRequest(string? PaymentMethod, string? Currency);
+public record WpsStatusRequest(string Status, string? Notes);
 public record PayrollGroupRequest(string Code, string Name, string? Currency);
 public record ImportSalaryStructuresRequest(string CsvContent);
 public record EosbCalculationRequest(int EmployeeId, DateTime? AsOfDate);

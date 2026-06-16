@@ -49,11 +49,12 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label htmlFor="login-email" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Email address
                 <InfoTip text="The work email your company admin registered you with, e.g. you@company.com." />
               </label>
               <input
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -65,12 +66,13 @@ export function LoginPage() {
             </div>
 
             <div>
-              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label htmlFor="login-password" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Password
                 <InfoTip text="Your account password (case-sensitive). Use 'Forgot password' or contact your HR admin if you can't sign in." />
               </label>
               <div className="relative">
                 <input
+                  id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -92,11 +94,12 @@ export function LoginPage() {
             </div>
 
             <div>
-              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <label htmlFor="login-workspace" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                 Workspace
                 <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries). It was shared with your admin when the workspace was created." />
               </label>
               <input
+                id="login-workspace"
                 type="text"
                 value={tenantSlug}
                 onChange={(e) => setTenantSlug(e.target.value)}

@@ -1,5 +1,38 @@
 namespace Zayra.Api.Models;
 
+// ── Platform role constants ────────────────────────────────────────────────────
+
+public static class PlatformRoles
+{
+    public const string Owner     = "Owner";
+    public const string Admin     = "Admin";
+    public const string Finance   = "Finance";
+    public const string Support   = "Support";
+    public const string Marketing = "Marketing";
+    public const string Auditor   = "Auditor";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>
+    {
+        Owner, Admin, Finance, Support, Marketing, Auditor
+    };
+}
+
+// ── Platform User (separate from tenant users) ────────────────────────────────
+
+public class PlatformUser
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Email { get; set; } = null!;
+    public string FullName { get; set; } = null!;
+    public string PasswordHash { get; set; } = null!;
+    public string Role { get; set; } = PlatformRoles.Admin; // Owner, Admin, Finance, Support, Marketing, Auditor
+    public bool IsActive { get; set; } = true;
+    public DateTime? LastLoginAtUtc { get; set; }
+    public string? LastLoginIp { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+}
+
 // ── Subscription status constants ─────────────────────────────────────────────
 
 public static class SubscriptionStatuses
@@ -208,4 +241,44 @@ public static class AiPlanLimits
         "Enterprise" => 0,
         _            => 50_000
     };
+}
+
+// ── Platform Announcements ────────────────────────────────────────────────────
+
+public class PlatformAnnouncement
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Title { get; set; } = null!;
+    public string Body { get; set; } = null!;
+    /// <summary>"All", "Trial", "Starter", "Growth", "Enterprise"</summary>
+    public string TargetPlan { get; set; } = "All";
+    /// <summary>Draft | Published | Archived</summary>
+    public string Status { get; set; } = "Draft";
+    public DateTime? PublishedAtUtc { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    public string CreatedByEmail { get; set; } = null!;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+}
+
+// ── Platform Leads ────────────────────────────────────────────────────────────
+
+public class PlatformLead
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string CompanyName { get; set; } = null!;
+    public string ContactName { get; set; } = null!;
+    public string ContactEmail { get; set; } = null!;
+    public string? Phone { get; set; }
+    public string? Message { get; set; }
+    /// <summary>New | Contacted | DemoScheduled | Converted | Lost</summary>
+    public string Status { get; set; } = "New";
+    public string? Notes { get; set; }
+    /// <summary>Platform user email assigned to this lead.</summary>
+    public string? AssignedTo { get; set; }
+    /// <summary>Manual | WebForm | Import</summary>
+    public string Source { get; set; } = "Manual";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? ConvertedToTenantId { get; set; }
 }

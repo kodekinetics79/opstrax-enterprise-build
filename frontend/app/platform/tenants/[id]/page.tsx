@@ -1,0 +1,466 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import {
+  ArrowLeft, RefreshCw, Edit3, Check, X, AlertTriangle,
+  Zap, Users, CreditCard, FileText, Shield, ExternalLink,
+  UserCog, PlayCircle, StopCircle,
+} from 'lucide-react';
+import {
+  platformApi,
+  type PlatformTenantDetail,
+  type TenantAdminUser,
+} from '@/src/api/platform';
+
+const FEATURE_FLAGS = [
+  { key: 'recruitment',       label: 'Recruitment' },
+  { key: 'performance',       label: 'Performance & Appraisals' },
+  { key: 'compliance',        label: 'Compliance' },
+  { key: 'ai_assistant',      label: 'AI Assistant' },
+  { key: 'finance',           label: 'Finance' },
+  { key: 'payroll',           label: 'Payroll' },
+  { key: 'shifts',            label: 'Shifts & Scheduling' },
+  { key: 'overtime',          label: 'Overtime Management' },
+  { key: 'mobile_app',        label: 'Mobile App' },
+  { key: 'wps_export',        label: 'WPS Export' },
+  { key: 'qiwa_integration',  label: 'Qiwa Integration' },
+];
+
+const PLAN_BADGE: Record<string, string> = {
+  trial:      'bg-slate-700 text-slate-300 border-slate-600',
+  starter:    'bg-blue-900/50 text-blue-300 border-blue-700/40',
+  growth:     'bg-purple-900/50 text-purple-300 border-purple-700/40',
+  enterprise: 'bg-amber-900/50 text-amber-300 border-amber-700/40',
+};
+
+const STATUS_CLS: Record<string, string> = {
+  active:    'text-emerald-400',
+  trial:     'text-cyan-400',
+  pastdue:   'text-amber-400',
+  suspended: 'text-rose-400',
+  cancelled: 'text-slate-500',
+};
+
+type Tab = 'overview' | 'features' | 'users' | 'billing' | 'audit' | 'security';
+const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: 'overview',  label: 'Overview',  icon: Edit3 },
+  { id: 'features',  label: 'Features',  icon: Zap },
+  { id: 'users',     label: 'Users',     icon: Users },
+  { id: 'billing',   label: 'Billing',   icon: CreditCard },
+  { id: 'audit',     label: 'Audit',     icon: FileText },
+  { id: 'security',  label: 'Security',  icon: Shield },
+];
+
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+
+function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(tenant.name);
+  const [saving, setSaving] = useState(false);
+  const [suspendOpen, setSuspendOpen] = useState(false);
+  const [suspendReason, setSuspendReason] = useState('');
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const status = (tenant.subscription?.status ?? '').toLowerCase();
+  const plan   = (tenant.subscription?.plan ?? 'trial').toLowerCase();
+
+  async function saveName() {
+    setSaving(true);
+    try {
+      await platformApi.updateTenant(tenant.id, name);
+      setMsg({ text: 'Name updated.', ok: true });
+      setEditing(false);
+      onRefresh();
+    } catch { setMsg({ text: 'Save failed.', ok: false }); }
+    finally { setSaving(false); }
+  }
+
+  async function doSuspend() {
+    try {
+      await platformApi.suspendTenant(tenant.id, suspendReason);
+      setMsg({ text: 'Tenant suspended.', ok: true });
+      setSuspendOpen(false);
+      onRefresh();
+    } catch { setMsg({ text: 'Failed.', ok: false }); }
+  }
+
+  async function doReactivate() {
+    try {
+      await platformApi.reactivateTenant(tenant.id, 'Reactivated via platform admin');
+      setMsg({ text: 'Tenant reactivated.', ok: true });
+      onRefresh();
+    } catch { setMsg({ text: 'Failed.', ok: false }); }
+  }
+
+  return (
+    <div className="space-y-5">
+      {msg && (
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {msg.text}
+          <button type="button" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+
+      {/* Info card */}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl divide-y divide-white/[0.04]">
+        <div className="px-5 py-3.5 flex items-center justify-between gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Name</span>
+          {editing ? (
+            <div className="flex items-center gap-2 flex-1">
+              <input value={name} onChange={e => setName(e.target.value)} autoFocus
+                className="flex-1 bg-white/[0.05] border border-white/[0.12] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sapphire/60" />
+              <button type="button" onClick={saveName} disabled={saving} className="text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40">
+                <Check className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={() => { setEditing(false); setName(tenant.name); }} className="text-slate-500 hover:text-white transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-1">
+              <span className="text-sm text-white flex-1">{tenant.name}</span>
+              <button type="button" onClick={() => setEditing(true)} className="text-slate-600 hover:text-white transition-colors">
+                <Edit3 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Slug</span>
+          <span className="text-sm text-slate-300 font-mono">/{tenant.slug}</span>
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Plan</span>
+          <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${PLAN_BADGE[plan] ?? PLAN_BADGE.trial}`}>
+            {tenant.subscription?.plan ?? 'Trial'}
+          </span>
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Status</span>
+          <span className={`text-sm font-medium capitalize ${STATUS_CLS[status] ?? 'text-slate-400'}`}>
+            {tenant.subscription?.status ?? 'Unknown'}
+          </span>
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Monthly</span>
+          <span className="text-sm text-slate-300">
+            {tenant.subscription?.monthlyAmount
+              ? `${tenant.subscription.currencyCode} ${tenant.subscription.monthlyAmount.toLocaleString()}`
+              : <span className="text-slate-600">—</span>}
+          </span>
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Users / Employees</span>
+          <span className="text-sm text-slate-300">
+            {tenant.userCount} users · {tenant.employeeCount} employees
+          </span>
+        </div>
+        <div className="px-5 py-3.5 flex items-center gap-4">
+          <span className="text-xs text-slate-500 w-32 shrink-0">Billing Email</span>
+          <span className="text-sm text-slate-300 font-mono">{tenant.subscription?.billingEmail || <span className="text-slate-600">—</span>}</span>
+        </div>
+        {tenant.subscription?.expiresAtUtc && (
+          <div className="px-5 py-3.5 flex items-center gap-4">
+            <span className="text-xs text-slate-500 w-32 shrink-0">Expires</span>
+            <span className="text-sm text-slate-300">
+              {new Date(tenant.subscription.expiresAtUtc).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-wrap gap-3">
+        {status === 'suspended' ? (
+          <button type="button" onClick={doReactivate}
+            className="flex items-center gap-1.5 text-sm text-emerald-400 border border-emerald-500/30 hover:border-emerald-500/60 px-4 py-2 rounded-lg transition-colors">
+            <PlayCircle className="h-3.5 w-3.5" />
+            Reactivate Tenant
+          </button>
+        ) : (
+          <button type="button" onClick={() => setSuspendOpen(true)}
+            className="flex items-center gap-1.5 text-sm text-rose-400 border border-rose-500/30 hover:border-rose-500/60 px-4 py-2 rounded-lg transition-colors">
+            <StopCircle className="h-3.5 w-3.5" />
+            Suspend Tenant
+          </button>
+        )}
+        <a href={`${typeof window !== 'undefined' ? window.location.origin.replace('localhost:3000', 'localhost:3000') : ''}`}
+          target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-sm text-slate-400 border border-white/10 hover:border-white/20 px-4 py-2 rounded-lg transition-colors">
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open Tenant App
+        </a>
+      </div>
+
+      {/* Suspend modal */}
+      {suspendOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSuspendOpen(false)} />
+          <div className="relative w-full max-w-sm bg-[#0d1117] border border-white/10 rounded-2xl shadow-2xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-white">Suspend {tenant.name}?</h3>
+            <p className="text-sm text-slate-400">This will immediately disable all tenant users. Provide a reason.</p>
+            <textarea value={suspendReason} onChange={e => setSuspendReason(e.target.value)} rows={2}
+              placeholder="Reason (required)"
+              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-sapphire/60 resize-none" />
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setSuspendOpen(false)}
+                className="flex-1 border border-white/10 text-slate-400 rounded-lg py-2 text-sm transition-colors">Cancel</button>
+              <button type="button" onClick={doSuspend} disabled={!suspendReason.trim()}
+                className="flex-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-40">
+                Suspend
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Features Tab ──────────────────────────────────────────────────────────────
+
+function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const flagMap = Object.fromEntries(tenant.featureFlags.map(f => [f.featureKey, f.isEnabled]));
+
+  async function toggle(key: string, current: boolean) {
+    setToggling(key);
+    try {
+      await platformApi.setFeature(tenant.id, key, !current);
+      setMsg(`${key} ${!current ? 'enabled' : 'disabled'}.`);
+      onRefresh();
+    } catch { setMsg(`Failed to update ${key}.`); }
+    finally { setToggling(null); }
+  }
+
+  return (
+    <div className="space-y-4">
+      {msg && (
+        <div className="text-xs text-slate-300 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 flex items-center justify-between">
+          {msg}
+          <button type="button" onClick={() => setMsg(null)}><X className="h-3 w-3" /></button>
+        </div>
+      )}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden divide-y divide-white/[0.04]">
+        {FEATURE_FLAGS.map(f => {
+          const enabled = flagMap[f.key] ?? false;
+          return (
+            <div key={f.key} className="flex items-center gap-4 px-5 py-3.5">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white">{f.label}</p>
+                <p className="text-[11px] text-slate-600 font-mono">{f.key}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => toggle(f.key, enabled)}
+                disabled={toggling === f.key}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40
+                  ${enabled ? 'bg-sapphire' : 'bg-slate-700'}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform
+                  ${enabled ? 'translate-x-4' : 'translate-x-1'}`} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Users Tab ─────────────────────────────────────────────────────────────────
+
+function UsersTab({ tenantId }: { tenantId: string }) {
+  const [admins, setAdmins] = useState<TenantAdminUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [impersonating, setImpersonating] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  useEffect(() => { load(); }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    setLoading(true);
+    try { setAdmins(await platformApi.listAdmins(tenantId)); }
+    finally { setLoading(false); }
+  }
+
+  async function impersonate(userId: string, email: string) {
+    setImpersonating(userId);
+    try {
+      const { token } = await platformApi.impersonate(tenantId, userId);
+      // Open tenant app with impersonation token in a new tab
+      const url = new URL(window.location.href);
+      window.open(`${url.protocol}//${url.hostname}:3000/login?impersonate=${token}`, '_blank');
+      setMsg({ text: `Impersonating ${email} — new tab opened.`, ok: true });
+    } catch {
+      setMsg({ text: 'Impersonation failed. Ensure the user exists.', ok: false });
+    } finally { setImpersonating(null); }
+  }
+
+  return (
+    <div className="space-y-4">
+      {msg && (
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {msg.text}
+          <button type="button" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-white/[0.06]">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Admin Users</p>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
+          </div>
+        ) : admins.length === 0 ? (
+          <p className="text-sm text-slate-600 text-center py-10">No admin users found.</p>
+        ) : (
+          admins.map(u => (
+            <div key={u.id} className="flex items-center gap-4 px-5 py-3 border-b border-white/[0.04] last:border-0">
+              <div className="h-7 w-7 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center shrink-0">
+                <span className="text-[10px] font-bold text-slate-400">{u.fullName?.slice(0, 2).toUpperCase() ?? '??'}</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white font-medium">{u.fullName}</p>
+                <p className="text-[11px] text-slate-600">{u.email}</p>
+              </div>
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border ${u.isActive ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5' : 'text-slate-500 border-white/10 bg-white/5'}`}>
+                {u.status}
+              </span>
+              <button type="button"
+                onClick={() => impersonate(u.id, u.email)}
+                disabled={impersonating === u.id}
+                className="flex items-center gap-1 text-[11px] text-blue-400 border border-blue-500/20 hover:border-blue-500/40 px-2 py-1 rounded transition-colors disabled:opacity-40">
+                <UserCog className="h-3 w-3" />
+                {impersonating === u.id ? 'Opening…' : 'Impersonate'}
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+      <p className="text-xs text-slate-600">
+        For full user list, password resets, and role management, see{' '}
+        <Link href={`/platform/tenants/${tenantId}/users`} className="text-sapphire hover:text-blue-300">Users page →</Link>
+      </p>
+    </div>
+  );
+}
+
+// ── Billing Tab ───────────────────────────────────────────────────────────────
+
+function BillingTab({ tenantId }: { tenantId: string }) {
+  return (
+    <div className="text-center py-10 text-sm text-slate-500">
+      Full billing management →{' '}
+      <Link href={`/platform/tenants/${tenantId}/billing`} className="text-sapphire hover:text-blue-300">Open Billing Page</Link>
+    </div>
+  );
+}
+
+// ── Audit Tab ─────────────────────────────────────────────────────────────────
+
+function AuditTab({ tenantId }: { tenantId: string }) {
+  return (
+    <div className="text-center py-10 text-sm text-slate-500">
+      Tenant-scoped audit log →{' '}
+      <Link href={`/platform/tenants/${tenantId}/audit`} className="text-sapphire hover:text-blue-300">Open Audit Page</Link>
+    </div>
+  );
+}
+
+// ── Security Tab ──────────────────────────────────────────────────────────────
+
+function SecurityTabContent({ tenantId }: { tenantId: string }) {
+  return (
+    <div className="text-center py-10 text-sm text-slate-500">
+      Tenant security details →{' '}
+      <Link href={`/platform/tenants/${tenantId}/security`} className="text-sapphire hover:text-blue-300">Open Security Page</Link>
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+export default function TenantDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const router  = useRouter();
+  const [tenant, setTenant] = useState<PlatformTenantDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>('overview');
+
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
+    if (!token) { router.replace('/platform/login'); return; }
+    load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setTenant(await platformApi.getTenant(id)); }
+    catch { router.replace('/platform/tenants'); }
+    finally { setLoading(false); }
+  }, [id, router]);
+
+  if (loading || !tenant) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <Link href="/platform/tenants" className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors shrink-0 mt-0.5">
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-lg font-bold text-white">{tenant.name}</h1>
+            <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border bg-slate-700 text-slate-300 border-slate-600">
+              {tenant.slug}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {tenant.userCount} users · {tenant.employeeCount} employees
+          </p>
+        </div>
+        <button type="button" onClick={load} className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors shrink-0">
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-white/[0.06] overflow-x-auto">
+        {TABS.map(t => {
+          const Icon = t.icon;
+          return (
+            <button type="button" key={t.id} onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors
+                ${tab === t.id
+                  ? 'border-sapphire text-white'
+                  : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'overview'  && <OverviewTab tenant={tenant} onRefresh={load} />}
+      {tab === 'features'  && <FeaturesTab tenant={tenant} onRefresh={load} />}
+      {tab === 'users'     && <UsersTab tenantId={tenant.id} />}
+      {tab === 'billing'   && <BillingTab tenantId={tenant.id} />}
+      {tab === 'audit'     && <AuditTab tenantId={tenant.id} />}
+      {tab === 'security'  && <SecurityTabContent tenantId={tenant.id} />}
+    </div>
+  );
+}

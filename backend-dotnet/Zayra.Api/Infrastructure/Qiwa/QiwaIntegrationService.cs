@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Zayra.Api.Data;
@@ -17,6 +18,10 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
 {
     private readonly ZayraDbContext _db;
     private readonly ILogger<QiwaIntegrationService> _log;
+    private readonly IDataProtector _protector;
+
+    /// <summary>Shared DataProtection purpose used to encrypt Qiwa client secrets.</summary>
+    public const string SecretPurpose = "Zayra.Qiwa.ClientSecret.v1";
 
     private static readonly string[] RequiredFields =
     [
@@ -30,10 +35,11 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
         nameof(Employee.ContractReference),
     ];
 
-    public QiwaIntegrationService(ZayraDbContext db, ILogger<QiwaIntegrationService> log)
+    public QiwaIntegrationService(ZayraDbContext db, ILogger<QiwaIntegrationService> log, IDataProtectionProvider protectionProvider)
     {
         _db  = db;
         _log = log;
+        _protector = protectionProvider.CreateProtector(SecretPurpose);
     }
 
     // ── Connection management ─────────────────────────────────────────────────
@@ -162,8 +168,20 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
             .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == employeeId && !e.IsDeleted, cancellationToken)
             ?? throw new InvalidOperationException($"Employee {employeeId} not found in this tenant.");
 
-        var missing = new List<string>();
+        var missing = MissingQiwaFields(emp);
 
+        return new QiwaReadinessReport(
+            emp.Id,
+            emp.EmployeeCode,
+            emp.FullName,
+            missing.Count == 0,
+            missing);
+    }
+
+    /// <summary>Returns the snake_case names of all Qiwa-required fields that are empty on an employee.</summary>
+    public static List<string> MissingQiwaFields(Employee emp)
+    {
+        var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(emp.SaudiOrNonSaudi))    missing.Add("saudi_or_non_saudi");
         if (string.IsNullOrWhiteSpace(emp.IdType))             missing.Add("id_type");
         if (string.IsNullOrWhiteSpace(emp.IdNumber))           missing.Add("id_number");
@@ -172,12 +190,126 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
         if (string.IsNullOrWhiteSpace(emp.EstablishmentId))    missing.Add("establishment_id");
         if (string.IsNullOrWhiteSpace(emp.WorkLocationId))     missing.Add("work_location_id");
         if (string.IsNullOrWhiteSpace(emp.ContractReference))  missing.Add("contract_reference");
+        return missing;
+    }
 
-        return new QiwaReadinessReport(
-            emp.Id,
-            emp.EmployeeCode,
-            emp.FullName,
-            missing.Count == 0,
-            missing);
+    // ── Credentials (encrypted) ───────────────────────────────────────────────
+
+    public async Task SaveApiCredentialAsync(
+        Guid tenantId, string clientId, string plainTextSecret, string environment,
+        Guid performedBy, string ip, CancellationToken ct = default)
+    {
+        var encrypted = _protector.Protect(plainTextSecret);
+
+        var cred = await _db.QiwaApiCredentials.FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
+        var isNew = cred is null;
+        if (cred is null)
+        {
+            cred = new QiwaApiCredential { TenantId = tenantId };
+            _db.QiwaApiCredentials.Add(cred);
+        }
+
+        cred.ClientId              = clientId;
+        cred.EncryptedClientSecret = encrypted;
+        cred.Environment           = environment;
+        cred.CachedAccessToken     = string.Empty;
+        cred.TokenExpiresAtUtc     = null;
+        cred.UpdatedAtUtc          = DateTime.UtcNow;
+        cred.UpdatedBy             = performedBy;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = tenantId,
+            EntityType      = "QiwaApiCredential",
+            EntityId        = cred.Id.ToString(),
+            Action          = isNew ? "Created" : "Updated",
+            // Never log the secret — only metadata.
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { clientId, environment, secretSet = true }),
+            PerformedBy     = performedBy,
+            PerformedByName = string.Empty,
+            IpAddress       = ip
+        });
+
+        await _db.SaveChangesAsync(ct);
+        _log.LogInformation("Qiwa credentials saved for tenant {TenantId} (env={Env})", tenantId, environment);
+    }
+
+    // ── Readiness summary ─────────────────────────────────────────────────────
+
+    public async Task<QiwaReadinessSummary> GetReadinessSummaryAsync(Guid tenantId, CancellationToken ct = default)
+    {
+        var employees = await _db.Employees.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active")
+            .ToListAsync(ct);
+
+        var blocked = new List<QiwaReadinessReport>();
+        foreach (var e in employees)
+        {
+            var missing = MissingQiwaFields(e);
+            if (missing.Count > 0)
+                blocked.Add(new QiwaReadinessReport(e.Id, e.EmployeeCode, e.FullName, false, missing));
+        }
+
+        var total = employees.Count;
+        var ready = total - blocked.Count;
+        var percent = total == 0 ? 0 : Math.Round(ready * 100.0 / total, 1);
+
+        return new QiwaReadinessSummary(total, ready, blocked.Count, percent, blocked);
+    }
+
+    // ── Dead-letter retry ─────────────────────────────────────────────────────
+
+    public async Task RetryDeadLetterAsync(Guid tenantId, Guid syncLogId, Guid triggeredBy, CancellationToken ct = default)
+    {
+        var log = await _db.QiwaSyncLogs.FirstOrDefaultAsync(l => l.TenantId == tenantId && l.Id == syncLogId, ct)
+            ?? throw new InvalidOperationException($"Sync log {syncLogId} not found in this tenant.");
+
+        log.Status           = QiwaSyncLogStatuses.Pending;
+        log.RetryCount       = 0;
+        log.DeadLetterReason = null;
+        log.ErrorMessage     = null;
+        log.LastRetriedAtUtc = null;
+        log.CompletedAtUtc   = null;
+
+        _db.AuditLogs.Add(new Domain.Entities.AuditLog
+        {
+            TenantId   = tenantId,
+            UserId     = triggeredBy,
+            Action     = "qiwa.sync_retry_requested",
+            EntityName = "QiwaSyncLog",
+            EntityId   = syncLogId.ToString(),
+            Metadata   = System.Text.Json.JsonSerializer.Serialize(new { employeeId = log.EmployeeId }),
+        });
+
+        await _db.SaveChangesAsync(ct);
+        _log.LogInformation("Qiwa sync log {SyncLogId} reset for retry (tenant {TenantId})", syncLogId, tenantId);
+    }
+
+    // ── Compliance summary ────────────────────────────────────────────────────
+
+    public async Task<QiwaComplianceSummary> GetComplianceSummaryAsync(Guid tenantId, CancellationToken ct = default)
+    {
+        var connection = await _db.QiwaTenantConnections.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
+
+        var readiness = await GetReadinessSummaryAsync(tenantId, ct);
+
+        var failedCount = await _db.QiwaSyncLogs
+            .CountAsync(l => l.TenantId == tenantId &&
+                             (l.Status == QiwaSyncLogStatuses.Failed || l.Status == QiwaSyncLogStatuses.DeadLetter), ct);
+
+        var lastSuccess = await _db.QiwaSyncLogs
+            .Where(l => l.TenantId == tenantId && l.Status == QiwaSyncLogStatuses.Success)
+            .OrderByDescending(l => l.CompletedAtUtc)
+            .Select(l => l.CompletedAtUtc)
+            .FirstOrDefaultAsync(ct);
+
+        return new QiwaComplianceSummary(
+            connection?.Status ?? "NotConfigured",
+            connection?.LastConnectedAtUtc,
+            readiness.ReadinessPercent,
+            readiness.BlockedFromSync,
+            failedCount,
+            lastSuccess);
     }
 }

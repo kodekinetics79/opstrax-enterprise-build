@@ -56,43 +56,59 @@ public class ReviewsController : ControllerBase
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
     {
         var tenantId = this.GetTenantId()!.Value;
-        var review = await _db.AppraisalReviews
+
+        var review = await _db.AppraisalReviews.AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
         if (review is null) return NotFound();
 
-        var template = await _db.PerformanceScorecardTemplates
+        // GAP 5: enforce data scope on single-record access — employee sees own, manager sees team
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(review.EmployeeId))
+            return Forbid();
+
+        var template = await _db.PerformanceScorecardTemplates.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == review.ScorecardTemplateId && t.TenantId == tenantId, ct);
 
-        var breakdown = await _db.AppraisalScoreBreakdowns
+        var breakdown = await _db.AppraisalScoreBreakdowns.AsNoTracking()
             .Where(b => b.TenantId == tenantId && b.ReviewId == id)
             .ToListAsync(ct);
 
-        var competencies = await _db.AppraisalCompetencyRatings
+        var competencies = await _db.AppraisalCompetencyRatings.AsNoTracking()
             .Where(c => c.TenantId == tenantId && c.ReviewId == id)
             .ToListAsync(ct);
 
-        var goals = await _db.EmployeeGoals
+        var goals = await _db.EmployeeGoals.AsNoTracking()
             .Where(g => g.TenantId == tenantId && g.EmployeeId == review.EmployeeId && g.CycleId == review.CycleId)
             .ToListAsync(ct);
 
-        var feedback360 = await _db.Feedback360
+        var feedback360 = await _db.Feedback360.AsNoTracking()
             .Where(f => f.TenantId == tenantId && f.ReviewId == id)
             .ToListAsync(ct);
 
-        var auditLog = await _db.PerformanceAuditLogs
+        var auditLog = await _db.PerformanceAuditLogs.AsNoTracking()
             .Where(a => a.TenantId == tenantId && a.EntityType == "AppraisalReview" && a.EntityId == id.ToString())
             .OrderByDescending(a => a.CreatedAtUtc)
             .Take(50)
             .ToListAsync(ct);
 
-        var calibration = await _db.AppraisalCalibrations
+        var calibration = await _db.AppraisalCalibrations.AsNoTracking()
             .Where(c => c.TenantId == tenantId && c.ReviewId == id)
             .OrderByDescending(c => c.CalibratedAtUtc)
             .FirstOrDefaultAsync(ct);
 
-        var appeal = await _db.AppraisalAppeals
+        var appeal = await _db.AppraisalAppeals.AsNoTracking()
             .Where(a => a.TenantId == tenantId && a.ReviewId == id)
             .FirstOrDefaultAsync(ct);
+
+        // GAP 7: redact sensitive notes for callers without sensitive_data.view
+        var canViewSensitive = HasPermission("sensitive_data.view");
+        if (!canViewSensitive)
+        {
+            review.ManagerNotes = string.Empty;
+            review.HrNotes = string.Empty;
+            // Only show non-anonymous feedback entries to callers without sensitive access
+            feedback360 = feedback360.Where(f => !f.IsAnonymous).ToList();
+        }
 
         return Ok(new { review, template, breakdown, competencies, goals, feedback360, auditLog, calibration, appeal });
     }
@@ -110,6 +126,20 @@ public class ReviewsController : ControllerBase
         if (review is null) return NotFound();
         if (review.Status != "SelfAssessmentDue")
             return BadRequest(new { message = "Review is not in Self-Assessment stage." });
+
+        // GAP 5: employee can only submit their own self-assessment
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
+        if (!scope.IsUnrestricted)
+        {
+            if (scope.CallerEmployeeId is null || scope.CallerEmployeeId != review.EmployeeId)
+                return Forbid();
+        }
+
+        // GAP 6: cycle must be open for self-assessment
+        var cycle = await _db.PerformanceCycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == review.CycleId && c.TenantId == tenantId, ct);
+        if (cycle is not null && cycle.Status is not ("Active" or "InReview"))
+            return BadRequest(new { message = $"Performance cycle is in '{cycle.Status}' status. Self-assessment requires an Active or InReview cycle." });
 
         var old = review.SelfAssessmentNotes;
         review.SelfAssessmentNotes         = req.Notes;
@@ -155,15 +185,33 @@ public class ReviewsController : ControllerBase
     // ── Manager review ─────────────────────────────────────────────────────────
 
     [HttpPost("{id:guid}/manager-review")]
-    [Authorize(Roles = "Admin,HR Manager,Manager")]
     public async Task<IActionResult> SubmitManagerReview(
         Guid id, [FromBody] ManagerReviewRequest req, CancellationToken ct)
     {
+        if (!HasPermission("appraisal.manager_review") && !HasPermission("appraisal.view_all") &&
+            !HasPermission("performance.write"))
+            return Forbid();
+
         var tenantId = this.GetTenantId()!.Value;
         var userId   = this.GetUserId();
         var review = await _db.AppraisalReviews
             .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
         if (review is null) return NotFound();
+
+        // GAP 5: verify the caller's data scope includes this employee
+        // (managers can only review their own direct reports, not any employee)
+        var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
+        if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(review.EmployeeId))
+            return Forbid();
+
+        // GAP 6: review must be in a reviewable state and cycle must be open for manager review
+        if (review.Status is not ("SelfAssessmentSubmitted" or "ManagerReview" or "SelfAssessmentDue"))
+            return BadRequest(new { message = $"Review is in '{review.Status}' status. Manager review requires SelfAssessmentSubmitted status." });
+
+        var cycle = await _db.PerformanceCycles.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == review.CycleId && c.TenantId == tenantId, ct);
+        if (cycle is not null && cycle.Status is not ("InReview" or "Active" or "Calibration"))
+            return BadRequest(new { message = $"Performance cycle is in '{cycle.Status}' status. Manager review requires the cycle to be InReview or Active." });
 
         var oldScore = review.FinalScore.ToString("F2");
 
@@ -217,10 +265,13 @@ public class ReviewsController : ControllerBase
     // ── Score override (HR/Admin) ──────────────────────────────────────────────
 
     [HttpPost("{id:guid}/override-score")]
-    [Authorize(Roles = "Admin,HR Manager")]
+    [Authorize(Roles = "Admin,HR Manager,HR Director")]
     public async Task<IActionResult> OverrideScore(
         Guid id, [FromBody] ScoreOverrideRequest req, CancellationToken ct)
     {
+        if (!HasPermission("appraisal.hr_calibration") && !HasPermission("appraisal.finalize") &&
+            !HasPermission("performance.approve"))
+            return Forbid();
         var tenantId = this.GetTenantId()!.Value;
         var userId   = this.GetUserId();
         var review = await _db.AppraisalReviews
@@ -252,9 +303,11 @@ public class ReviewsController : ControllerBase
     // ── Publish ────────────────────────────────────────────────────────────────
 
     [HttpPost("{id:guid}/publish")]
-    [Authorize(Roles = "Admin,HR Manager")]
+    [Authorize(Roles = "Admin,HR Manager,HR Director")]
     public async Task<IActionResult> Publish(Guid id, CancellationToken ct)
     {
+        if (!HasPermission("appraisal.publish") && !HasPermission("performance.approve"))
+            return Forbid();
         var tenantId = this.GetTenantId()!.Value;
         var userId   = this.GetUserId();
         var review = await _db.AppraisalReviews
@@ -364,6 +417,9 @@ public class ReviewsController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return Ok(new { attendanceScore = score });
     }
+
+    private bool HasPermission(string permission) =>
+        User.Claims.Any(c => c.Type == "permission" && string.Equals(c.Value, permission, StringComparison.OrdinalIgnoreCase));
 }
 
 // ── DTOs ───────────────────────────────────────────────────────────────────────

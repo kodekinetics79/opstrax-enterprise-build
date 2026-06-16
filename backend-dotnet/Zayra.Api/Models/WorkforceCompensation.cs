@@ -422,7 +422,26 @@ public class PayrollPaymentBatch
     public decimal TotalAmount { get; set; }
     public string Currency { get; set; } = "AED";
     public string Status { get; set; } = "Draft";
+
+    /// <summary>WPS submission lifecycle. See <see cref="WpsStatuses"/>.</summary>
+    public string WpsStatus { get; set; } = "Draft";
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>WPS/SIF submission lifecycle states for a payment batch.</summary>
+public static class WpsStatuses
+{
+    public const string Draft      = "Draft";
+    public const string Generated  = "Generated";
+    public const string Downloaded = "Downloaded";
+    public const string Submitted  = "Submitted";
+    public const string Accepted   = "Accepted";
+    public const string Rejected   = "Rejected";
+    public const string Reconciled = "Reconciled";
+
+    public static readonly string[] All =
+        { Draft, Generated, Downloaded, Submitted, Accepted, Rejected, Reconciled };
 }
 
 public class PayrollPaymentRecord

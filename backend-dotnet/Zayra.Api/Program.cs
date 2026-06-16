@@ -131,6 +131,20 @@ builder.Services.AddScoped<IAiResponseCacheService, AiResponseCacheService>();
 builder.Services.AddScoped<IAiAdvisoryService, AiAdvisoryService>();
 builder.Services.AddScoped<IPolicyDocumentService, PolicyDocumentService>();
 builder.Services.AddScoped<IQiwaIntegrationService, QiwaIntegrationService>();
+builder.Services.AddScoped<Zayra.Api.Infrastructure.Compliance.SaudiComplianceDashboardService>();
+
+// Data protection — encrypts Qiwa client secrets at rest.
+builder.Services.AddDataProtection();
+
+// Qiwa API adapter: live HTTP client when QIWA_USE_LIVE_ADAPTER=true, sandbox mock otherwise.
+builder.Services.AddSingleton<QiwaOAuthTokenCache>();
+builder.Services.AddHttpClient("qiwa", c => c.BaseAddress = new Uri("https://api.qiwa.tech"));
+if (string.Equals(Environment.GetEnvironmentVariable("QIWA_USE_LIVE_ADAPTER"), "true", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddSingleton<IQiwaApiAdapter, LiveQiwaApiAdapter>();
+else
+    builder.Services.AddSingleton<IQiwaApiAdapter, SandboxQiwaApiAdapter>();
+builder.Services.AddHostedService<QiwaSyncWorker>();
+
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 

@@ -101,8 +101,9 @@ public class EmployeeSelfServiceController : ControllerBase
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
         if (!essOk) return BadRequest(new { message = ctxError });
+        // Only return payslips from locked/finalised runs — employees must not see draft or in-progress payroll
         var slips = await _db.PayrollSlips.AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId)
+            .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Status == "Final")
             .OrderByDescending(x => x.RunId)
             .ToListAsync(cancellationToken);
         await EssAudit(tenantId, employeeId, "ess.payslips.viewed", "PayrollSlip", employeeId.ToString(), cancellationToken);
@@ -114,7 +115,8 @@ public class EmployeeSelfServiceController : ControllerBase
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
         if (!essOk) return BadRequest(new { message = ctxError });
-        var slip = await _db.PayrollSlips.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id, cancellationToken);
+        // Only allow download of finalised payslips — guard against accessing in-progress runs
+        var slip = await _db.PayrollSlips.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Id == id && x.Status == "Final", cancellationToken);
         if (slip is null) return NotFound();
 
         // Load itemised earnings and deductions for the payslip

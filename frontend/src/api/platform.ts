@@ -8,6 +8,20 @@ platform.interceptors.request.use(cfg => {
   return cfg;
 });
 
+// 401 → token expired → clear + redirect to login
+platform.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('platform_access_token');
+      if (!window.location.pathname.startsWith('/platform/login')) {
+        window.location.replace('/platform/login');
+      }
+    }
+    return Promise.reject(err);
+  }
+);
+
 export default platform;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -17,6 +31,10 @@ export interface PlatformStats {
   activeTenants: number;
   totalUsers: number;
   totalEmployees: number;
+  estimatedMrr: number;
+  expiringCount: number;
+  suspendedCount: number;
+  overdueCount: number;
   tenantsByPlan: {
     trial: number;
     starter: number;
@@ -75,13 +93,18 @@ export interface PlatformTenantSummary {
   name: string;
   slug: string;
   isActive: boolean;
+  createdAtUtc: string;
   subscription: {
     plan: string;
     status: string;
     maxEmployees: number;
     maxUsers: number;
     expiresAtUtc: string | null;
-  };
+    monthlyAmount: number;
+    currencyCode: string;
+    billingEmail: string;
+    billingCycle: string;
+  } | null;
   activeUserCount: number;
   activeEmployeeCount: number;
 }
@@ -113,6 +136,7 @@ export interface PlatformTenantDetail {
 export interface PlatformAuditLog {
   id: string;
   tenantId: string;
+  tenantName?: string;
   entityType: string;
   entityId: string;
   action: string;
@@ -194,6 +218,115 @@ export interface StartSupportAccessResult {
 
 // ── Platform API ──────────────────────────────────────────────────────────────
 
+export interface PlatformAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  targetPlan: string;
+  status: 'Draft' | 'Published' | 'Archived';
+  publishedAtUtc: string | null;
+  expiresAtUtc: string | null;
+  createdByEmail: string;
+  createdAtUtc: string;
+}
+
+export interface PlatformLead {
+  id: string;
+  companyName: string;
+  contactName: string;
+  contactEmail: string;
+  phone: string | null;
+  message: string | null;
+  status: 'New' | 'Contacted' | 'DemoScheduled' | 'Converted' | 'Lost';
+  notes: string | null;
+  assignedTo: string | null;
+  source: string;
+  createdAtUtc: string;
+  updatedAtUtc: string | null;
+  convertedToTenantId: string | null;
+}
+
+export interface PlatformSettings {
+  smtp: {
+    host: string;
+    port: number;
+    username: string;
+    fromEmail: string;
+    fromName: string;
+    useSsl: boolean;
+    isConfigured: boolean;
+  };
+  trial: { durationDays: number };
+  branding: { platformName: string; supportEmail: string };
+}
+
+export interface BillingSummary {
+  totalMrr: number;
+  totalArr: number;
+  overdueTotalAmount: number;
+  overdueCount: number;
+  totalInvoices: number;
+  paidThisMonth: number;
+  sentThisMonth: number;
+}
+
+export interface TenantSecurityPosture {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  hasMfaEnabled: boolean;
+  hasSecurityPolicy: boolean;
+  riskLevel: 'Low' | 'Medium' | 'High';
+  lastSecurityEvent: string | null;
+}
+
+export interface PlatformTeamMember {
+  id: string;
+  email: string;
+  fullName: string;
+  role: string;
+  isActive: boolean;
+  lastLoginAtUtc: string | null;
+  lastLoginIp: string | null;
+  createdAtUtc: string;
+  updatedAtUtc: string | null;
+}
+
+export interface PlatformHealthStatus {
+  status: 'healthy' | 'degraded' | 'error';
+  components: {
+    database: { status: 'ok' | 'error' | 'unknown' };
+    smtp:     { status: 'configured' | 'not_configured' | 'unknown' };
+    redis:    { status: 'ok' | 'error' | 'unknown' | 'not_configured' | 'disconnected' };
+    jobs:     { status: 'ok' | 'error' | 'unknown' };
+  };
+  version: string;
+  environment: string;
+  checkedAtUtc: string;
+}
+
+export interface TenantSecurityPolicy {
+  tenantId: string;
+  tenantName: string;
+  passwordMinLength: number;
+  passwordRequireUppercase: boolean;
+  passwordRequireLowercase: boolean;
+  passwordRequireDigit: boolean;
+  passwordRequireSpecial: boolean;
+  passwordExpiryDays: number;
+  passwordHistoryCount: number;
+  maxFailedLoginAttempts: number;
+  lockoutDurationMinutes: number;
+  sessionTimeoutMinutes: number;
+  refreshTokenExpiryDays: number;
+  allowMultipleSessions: boolean;
+  isCustomPolicy: boolean;
+  updatedAtUtc?: string;
+}
+
+export const PLATFORM_ROLES = ['Owner', 'Admin', 'Finance', 'Support', 'Marketing', 'Auditor'] as const;
+export type PlatformRole = typeof PLATFORM_ROLES[number];
+
 export const platformApi = {
   login: (email: string, password: string) =>
     platform.post<{ token: string }>('/api/platform/auth/login', { email, password }).then(r => r.data),
@@ -263,6 +396,24 @@ export const platformApi = {
   getPlans: () =>
     platform.get<PlatformPlan[]>('/api/platform/plans').then(r => r.data),
 
+  updatePlanPrice: (planName: string, monthlyPrice: number) =>
+    platform.put<{ planName: string; monthlyPrice: number }>(`/api/platform/plans/${planName}/price`, { monthlyPrice }).then(r => r.data),
+
+  downloadInvoicePdf: (tenantId: string, invoiceId: string, invoiceNumber: string) => {
+    return platform.get(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/pdf`, { responseType: 'blob' })
+      .then(r => {
+        const url = window.URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Invoice_${invoiceNumber}.pdf`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      });
+  },
+
+  sendInvoiceEmail: (tenantId: string, invoiceId: string) =>
+    platform.post<{ sent: boolean; billingEmail: string; invoiceNumber: string; pdfAttached?: boolean; smtpRequired?: boolean; message?: string }>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/send`).then(r => r.data),
+
   startSupportAccess: (tenantId: string, userId: string, reason: string) =>
     platform.post<StartSupportAccessResult>('/api/platform/support-access/start', { tenantId, userId, reason }).then(r => r.data),
 
@@ -274,6 +425,84 @@ export const platformApi = {
       '/api/platform/support-access',
       { params: { ...(tenantId ? { tenantId } : {}), activeOnly, page, pageSize } }
     ).then(r => r.data),
+
+  // ── Marketing ────────────────────────────────────────────────────────────────
+
+  listAnnouncements: (status?: string) =>
+    platform.get<PlatformAnnouncement[]>('/api/platform/marketing/announcements', { params: status ? { status } : {} }).then(r => r.data),
+
+  createAnnouncement: (body: { title: string; body: string; targetPlan?: string; expiresAtUtc?: string | null }) =>
+    platform.post<PlatformAnnouncement>('/api/platform/marketing/announcements', body).then(r => r.data),
+
+  updateAnnouncement: (id: string, body: { title?: string; body?: string; status?: string; expiresAtUtc?: string | null }) =>
+    platform.patch<PlatformAnnouncement>(`/api/platform/marketing/announcements/${id}`, body).then(r => r.data),
+
+  deleteAnnouncement: (id: string) =>
+    platform.delete(`/api/platform/marketing/announcements/${id}`).then(r => r.data),
+
+  // ── Leads ─────────────────────────────────────────────────────────────────
+
+  listLeads: (status?: string) =>
+    platform.get<PlatformLead[]>('/api/platform/leads', { params: status ? { status } : {} }).then(r => r.data),
+
+  createLead: (body: { companyName: string; contactName: string; contactEmail: string; phone?: string; message?: string; source?: string }) =>
+    platform.post<PlatformLead>('/api/platform/leads', body).then(r => r.data),
+
+  updateLead: (id: string, body: { status?: string; notes?: string; assignedTo?: string }) =>
+    platform.patch<PlatformLead>(`/api/platform/leads/${id}`, body).then(r => r.data),
+
+  convertLead: (id: string, tenantBody: { adminEmail: string; adminPassword: string; plan?: string }) =>
+    platform.post<{ tenantId: string; tenantName: string }>(`/api/platform/leads/${id}/convert`, tenantBody).then(r => r.data),
+
+  // ── Settings ──────────────────────────────────────────────────────────────
+
+  getSettings: () =>
+    platform.get<PlatformSettings>('/api/platform/settings').then(r => r.data),
+
+  updateSmtpSettings: (body: { host: string; port: number; username: string; password?: string; fromEmail: string; fromName?: string; useSsl: boolean }) =>
+    platform.put('/api/platform/settings/smtp', body).then(r => r.data),
+
+  testSmtp: () =>
+    platform.post<{ sent: boolean; message: string }>('/api/platform/settings/smtp/test').then(r => r.data),
+
+  getVersion: () =>
+    platform.get<{ version: string; environment: string; deployedAt?: string; migrations?: number }>('/api/platform/settings/version').then(r => r.data),
+
+  // ── Billing Summary ───────────────────────────────────────────────────────
+
+  getBillingSummary: () =>
+    platform.get<BillingSummary>('/api/platform/billing/summary').then(r => r.data),
+
+  listAllInvoices: (params?: { status?: string; page?: number; pageSize?: number }) =>
+    platform.get<{ total: number; page: number; invoices: (TenantInvoice & { tenantName: string; tenantSlug: string })[] }>(
+      '/api/platform/billing/invoices', { params }
+    ).then(r => r.data),
+
+  // ── Security Center ───────────────────────────────────────────────────────
+
+  getSecuritySummary: () =>
+    platform.get<TenantSecurityPosture[]>('/api/platform/security/summary').then(r => r.data),
+
+  getTenantSecurityPolicy: (tenantId: string) =>
+    platform.get<TenantSecurityPolicy>(`/api/platform/tenants/${tenantId}/security-policy`).then(r => r.data),
+
+  updateTenantSecurityPolicy: (tenantId: string, body: Partial<TenantSecurityPolicy>) =>
+    platform.put(`/api/platform/tenants/${tenantId}/security-policy`, body),
+
+  getHealth: () =>
+    platform.get<PlatformHealthStatus>('/api/platform/health').then(r => r.data),
+
+  listTeam: () =>
+    platform.get<PlatformTeamMember[]>('/api/platform/team').then(r => r.data),
+
+  createTeamMember: (body: { email: string; fullName?: string; password: string; role?: string }) =>
+    platform.post<PlatformTeamMember>('/api/platform/team', body).then(r => r.data),
+
+  updateTeamMember: (id: string, body: { role?: string; isActive?: boolean; fullName?: string }) =>
+    platform.patch<PlatformTeamMember>(`/api/platform/team/${id}`, body).then(r => r.data),
+
+  deactivateTeamMember: (id: string) =>
+    platform.patch(`/api/platform/team/${id}`, { isActive: false }).then(r => r.data),
 
   listInvoices: (tenantId: string) =>
     platform.get<TenantInvoice[]>(`/api/platform/tenants/${tenantId}/invoices`).then(r => r.data),

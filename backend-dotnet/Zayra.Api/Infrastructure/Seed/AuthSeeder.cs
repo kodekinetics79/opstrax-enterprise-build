@@ -77,6 +77,47 @@ public class AuthSeeder : IAuthSeeder
         {
             await EnsureFoundationSeedData(tenant.Id, cancellationToken);
         }
+
+        // Propagate any newly-added permissions to all other existing tenants' Admin roles.
+        // Uses raw SQL so it doesn't trigger global tenant query filters on the DbContext.
+        // This ensures new permissions are always available for demo/test tenants after restart.
+        var permissions2 = await _db.Permissions.AsNoTracking().ToListAsync(cancellationToken);
+        var otherTenantIds = await _db.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id != tenant.Id)
+            .Select(t => t.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var otherTenantId in otherTenantIds)
+        {
+            try
+            {
+                var allRoles = await _db.Roles
+                    .AsNoTracking()
+                    .Where(r => r.TenantId == otherTenantId)
+                    .Select(r => new { r.Id, r.Name })
+                    .ToListAsync(cancellationToken);
+
+                foreach (var role in allRoles)
+                {
+                    var existingPermIds = await _db.Database
+                        .SqlQuery<Guid>($"SELECT permission_id as Value FROM role_permissions WHERE role_id = {role.Id}")
+                        .ToListAsync(cancellationToken);
+
+                    var existingSet = existingPermIds.ToHashSet();
+                    var adminAll = role.Name == "Admin";
+
+                    foreach (var perm in permissions2)
+                    {
+                        if (existingSet.Contains(perm.Id)) continue;
+                        if (!adminAll) continue; // only patch Admin role here; other roles stay as seeded
+                        await _db.Database.ExecuteSqlRawAsync(
+                            "INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES ({0}, {1})",
+                            role.Id, perm.Id);
+                    }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"[Seed] Permission sync skipped for tenant {otherTenantId}: {ex.Message}"); }
+        }
     }
 
     public async Task<Role> EnsureTenantRolesAsync(Guid tenantId, CancellationToken cancellationToken = default)
@@ -94,7 +135,8 @@ public class AuthSeeder : IAuthSeeder
             x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
             x.Key.StartsWith("performance.") || x.Key.StartsWith("compliance.") || x.Key.StartsWith("reports.") ||
             x.Key.StartsWith("recruitment.") || x.Key is "payroll.read" or "loans.read" or "audit.read" or
-            "roles.manage" or "users.manage" or "manager.read" or "manager.approve"
+            "roles.manage" or "users.manage" or "manager.read" or "manager.approve" or
+            "qiwa.read" or "qiwa.sync"
         ).ToList(), 2, true, cancellationToken);
 
         // Level 3 — HR Manager: operational HR management
@@ -102,7 +144,7 @@ public class AuthSeeder : IAuthSeeder
             x.Key.StartsWith("employees.") || x.Key.StartsWith("attendance.") || x.Key.StartsWith("leave.") ||
             x.Key.StartsWith("overtime.") || x.Key.StartsWith("dashboard.") || x.Key.StartsWith("organization.") ||
             x.Key.StartsWith("approvals.") || x.Key.StartsWith("notifications.") || x.Key.StartsWith("localization.") ||
-            x.Key is "audit.read" or "manager.read" or "manager.approve" or "reports.read"
+            x.Key is "audit.read" or "manager.read" or "manager.approve" or "reports.read" or "qiwa.read"
         ).ToList(), 3, true, cancellationToken);
 
         // Level 4 — Payroll Manager: payroll + finance + employees
@@ -165,7 +207,8 @@ public class AuthSeeder : IAuthSeeder
         // Level 13 — Auditor: read-only audit
         await EnsureRole(tenantId, "Auditor", "Read-only audit and compliance reviewer", Ps(new[] {
             "dashboard.read", "employees.read", "organization.read", "approvals.read",
-            "audit.read", "payroll.read", "attendance.read", "leave.read", "compliance.read", "reports.read"
+            "audit.read", "payroll.read", "attendance.read", "leave.read", "compliance.read", "reports.read",
+            "qiwa.read"
         }), 13, true, cancellationToken);
 
         // Level 14 — Kiosk Operator: attendance kiosk only
@@ -337,6 +380,10 @@ public class AuthSeeder : IAuthSeeder
             ("shifts.read", "Shifts", "Read shift schedules and rosters"),
             ("shifts.write", "Shifts", "Create and update shift schedules"),
             ("shifts.manage", "Shifts", "Manage shift definitions and policies"),
+            // QIWA (Saudi workforce platform)
+            ("qiwa.configure", "QIWA", "Configure QIWA establishment credentials and connection"),
+            ("qiwa.sync", "QIWA", "Trigger and manage QIWA employee sync operations"),
+            ("qiwa.read", "QIWA", "View QIWA connection status and sync logs"),
         };
 
         foreach (var definition in definitions)

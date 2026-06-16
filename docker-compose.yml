@@ -65,6 +65,7 @@ services:
       # Server-side: Next.js rewrites proxy /api/* to the backend over the Docker network.
       # Browser-side: the app uses relative URLs, so no public API URL is needed.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:5117}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://backend:5117}
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
 

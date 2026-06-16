@@ -1462,8 +1462,8 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
   { id: 'feedback', label: 'Feedback', icon: FileText },
 ];
 
-export function PerformancePage() {
-  const [tab, setTab] = useState<Tab>('overview');
+export function PerformancePage({ initialTab }: { initialTab?: Tab } = {}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'overview');
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
