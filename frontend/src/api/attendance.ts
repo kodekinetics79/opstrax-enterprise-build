@@ -49,6 +49,12 @@ export interface AttendanceDeviceSyncLog {
   errorMessage: string;
 }
 
+export interface DeviceKeyResult {
+  id: string;
+  deviceName: string;
+  key: string;
+}
+
 export interface AttendanceRawEvent {
   id: string;
   employeeId?: number;
@@ -221,6 +227,8 @@ export const attendanceApi = {
       client.post<AttendanceDeviceSyncLog>(`/api/attendance/devices/${id}/sync`).then((r) => r.data),
     logs: (id: string) =>
       client.get<AttendanceDeviceSyncLog[]>(`/api/attendance/devices/${id}/sync-logs`).then((r) => r.data),
+    generateKey: (id: string) =>
+      client.post<DeviceKeyResult>(`/api/attendance/devices/${id}/generate-key`).then((r) => r.data),
   },
 
   events: {

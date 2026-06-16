@@ -14,11 +14,13 @@ public class AttendanceService : IAttendanceService
 {
     private readonly ZayraDbContext _db;
     private readonly INotificationService _notifications;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public AttendanceService(ZayraDbContext db, INotificationService notifications)
+    public AttendanceService(ZayraDbContext db, INotificationService notifications, IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _notifications = notifications;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<PagedResult<AttendanceDevice>> GetDevicesAsync(Guid tenantId, int page, int pageSize, CancellationToken ct)
@@ -73,7 +75,77 @@ public class AttendanceService : IAttendanceService
     {
         var device = await GetDeviceAsync(tenantId, id, ct);
         if (device is null) return null;
-        var status = device.IsActive ? "Success" : "Failed";
+
+        string status;
+        string errorMessage;
+
+        if (!device.IsActive)
+        {
+            status = "Failed";
+            errorMessage = "Device is marked inactive. Enable the device before testing.";
+        }
+        else if (device.SyncMethod?.Contains("Push", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Push devices call us; test validates the API key is configured
+            var hasKey = !string.IsNullOrWhiteSpace(device.ApiKeyReference);
+            status = hasKey ? "Success" : "Warning";
+            errorMessage = hasKey
+                ? "Push API device is configured. Key is set; the device will push punches to the webhook URL."
+                : "No API key generated yet. Use Generate Key to create one and configure it on the biometric device.";
+        }
+        else if (device.SyncMethod?.Contains("Pull", StringComparison.OrdinalIgnoreCase) == true
+                 && !string.IsNullOrWhiteSpace(device.EndpointUrl))
+        {
+            // Pull API: attempt an HTTP GET to the device's REST endpoint
+            try
+            {
+                using var http = _httpClientFactory.CreateClient();
+                http.Timeout = TimeSpan.FromSeconds(10);
+                var response = await http.GetAsync(device.EndpointUrl, ct);
+                status = response.IsSuccessStatusCode ? "Success" : $"HTTP {(int)response.StatusCode}";
+                errorMessage = response.IsSuccessStatusCode
+                    ? $"Device responded with HTTP {(int)response.StatusCode}. Connection OK."
+                    : $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Check device endpoint and credentials.";
+            }
+            catch (TaskCanceledException)
+            {
+                status = "Failed";
+                errorMessage = $"Connection timed out after 10 seconds. Check device IP/endpoint: {device.EndpointUrl}";
+            }
+            catch (Exception ex)
+            {
+                status = "Failed";
+                errorMessage = $"Connection error: {ex.Message}";
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(device.IpAddress))
+        {
+            // SDK / biometric device: TCP ping on standard biometric port (ZKTeco default: 4370)
+            try
+            {
+                using var tcp = new System.Net.Sockets.TcpClient();
+                var portStr = device.EndpointUrl?.Contains(':') == true
+                    ? device.EndpointUrl.Split(':').Last().Trim('/')
+                    : null;
+                var port = int.TryParse(portStr, out var p) ? p : 4370;
+                using var tcpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                tcpCts.CancelAfter(TimeSpan.FromSeconds(8));
+                await tcp.ConnectAsync(device.IpAddress, port, tcpCts.Token);
+                status = "Success";
+                errorMessage = $"TCP connection to {device.IpAddress}:{port} succeeded.";
+            }
+            catch (Exception ex)
+            {
+                status = "Failed";
+                errorMessage = $"TCP connection to {device.IpAddress} failed: {ex.Message}";
+            }
+        }
+        else
+        {
+            status = "Warning";
+            errorMessage = "No endpoint URL or IP address configured. Set an endpoint to enable real connectivity tests.";
+        }
+
         var log = new AttendanceDeviceSyncLog
         {
             TenantId = tenantId,
@@ -81,11 +153,11 @@ public class AttendanceService : IAttendanceService
             SyncMethod = "Test connection",
             Status = status,
             CompletedAtUtc = DateTime.UtcNow,
-            ErrorMessage = device.IsActive ? "" : "Device inactive."
+            ErrorMessage = errorMessage,
         };
         device.LastSyncStatus = status;
         device.LastSyncAtUtc = DateTime.UtcNow;
-        device.ErrorLog = log.ErrorMessage;
+        device.ErrorLog = status == "Success" ? "" : errorMessage;
         _db.AttendanceDeviceSyncLogs.Add(log);
         await Audit(tenantId, context, "attendance.device.test_connection", "AttendanceDevice", id.ToString(), ct);
         await _db.SaveChangesAsync(ct);
@@ -96,17 +168,84 @@ public class AttendanceService : IAttendanceService
     {
         var device = await GetDeviceAsync(tenantId, id, ct);
         if (device is null) return null;
+
+        string status;
+        string errorMessage;
+        int rawEventsReceived = 0;
+
+        if (!device.IsActive)
+        {
+            status = "Failed";
+            errorMessage = "Device is inactive. Cannot sync.";
+        }
+        else if (device.SyncMethod?.Contains("Push", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Push devices call us; manual sync is not applicable
+            status = "Completed";
+            errorMessage = "Push API device: sync is device-initiated. Configure the biometric device to POST punches to the webhook URL with the X-Device-Key header. No manual pull required.";
+        }
+        else if (device.SyncMethod?.Contains("Pull", StringComparison.OrdinalIgnoreCase) == true
+                 && !string.IsNullOrWhiteSpace(device.EndpointUrl))
+        {
+            // Pull API: attempt HTTP GET to device endpoint and capture response
+            try
+            {
+                using var http = _httpClientFactory.CreateClient();
+                http.Timeout = TimeSpan.FromSeconds(30);
+                var response = await http.GetAsync(device.EndpointUrl, ct);
+                var body = await response.Content.ReadAsStringAsync(ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    status = "Completed";
+                    // Count entries if body looks like a JSON array
+                    rawEventsReceived = body.TrimStart().StartsWith('[') ? body.Split('{').Length - 1 : 0;
+                    errorMessage = rawEventsReceived > 0
+                        ? $"Device responded with {rawEventsReceived} potential records. Parse and import via webhook or CSV for processing."
+                        : "Device endpoint responded successfully. No parseable records in this response — check device configuration.";
+                }
+                else
+                {
+                    status = "Failed";
+                    errorMessage = $"Device returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Response: {body[..Math.Min(500, body.Length)]}";
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                status = "Failed";
+                errorMessage = $"Sync timed out after 30 seconds. Check device endpoint: {device.EndpointUrl}";
+            }
+            catch (Exception ex)
+            {
+                status = "Failed";
+                errorMessage = $"Sync failed: {ex.Message}";
+            }
+        }
+        else if (device.SyncMethod?.Contains("CSV", StringComparison.OrdinalIgnoreCase) == true
+                 || device.SyncMethod?.Contains("SFTP", StringComparison.OrdinalIgnoreCase) == true
+                 || device.SyncMethod?.Contains("Manual", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            status = "Completed";
+            errorMessage = "Manual sync method: upload attendance data via the CSV Import tab or SFTP pipeline.";
+        }
+        else
+        {
+            status = "Warning";
+            errorMessage = "No endpoint URL configured for this sync method. Set an endpoint URL to enable pull sync.";
+        }
+
         var log = new AttendanceDeviceSyncLog
         {
             TenantId = tenantId,
             DeviceId = id,
-            SyncMethod = device.SyncMethod,
-            Status = "Completed",
-            CompletedAtUtc = DateTime.UtcNow
+            SyncMethod = device.SyncMethod ?? "Unknown",
+            Status = status,
+            CompletedAtUtc = DateTime.UtcNow,
+            RawEventsReceived = rawEventsReceived,
+            ErrorMessage = errorMessage,
         };
-        device.LastSyncStatus = "Completed";
+        device.LastSyncStatus = status;
         device.LastSyncAtUtc = DateTime.UtcNow;
-        device.ErrorLog = "";
+        device.ErrorLog = status == "Completed" ? "" : errorMessage;
         _db.AttendanceDeviceSyncLogs.Add(log);
         await Audit(tenantId, context, "attendance.device.sync_requested", "AttendanceDevice", id.ToString(), ct);
         await _db.SaveChangesAsync(ct);

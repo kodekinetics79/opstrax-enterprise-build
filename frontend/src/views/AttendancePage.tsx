@@ -10,15 +10,22 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock,
+  Copy,
   Database,
   FileSpreadsheet,
   Fingerprint,
+  History,
+  Key,
   MapPin,
+  Pencil,
   RefreshCw,
   ShieldCheck,
   Timer,
+  Trash2,
   Upload,
   Users,
+  X,
+  Webhook,
 } from 'lucide-react';
 import { attendanceApi } from '../api/attendance';
 import type {
@@ -27,10 +34,12 @@ import type {
   AttendanceDashboardSummary,
   AttendanceDevice,
   AttendanceDeviceRequest,
+  AttendanceDeviceSyncLog,
   AttendanceDeviceSyncSummary,
   AttendancePayrollSummary,
   AttendanceRawEvent,
   AttendanceRegularizationRequest,
+  DeviceKeyResult,
 } from '../api/attendance';
 import { employeesApi } from '../api/employees';
 import type { EmployeeListItem } from '../api/employees';
@@ -99,6 +108,13 @@ export function AttendancePage() {
   const [punchDirection, setPunchDirection] = useState('In');
   const [punchSource, setPunchSource] = useState<'web' | 'mobile' | 'kiosk'>('web');
   const [deviceForm, setDeviceForm] = useState<AttendanceDeviceRequest>(emptyDevice);
+  const [editingDevice, setEditingDevice] = useState<AttendanceDevice | null>(null);
+  const [editDeviceForm, setEditDeviceForm] = useState<AttendanceDeviceRequest>(emptyDevice);
+  const [deleteConfirmDevice, setDeleteConfirmDevice] = useState<AttendanceDevice | null>(null);
+  const [deviceKeyResult, setDeviceKeyResult] = useState<DeviceKeyResult | null>(null);
+  const [syncLogsDevice, setSyncLogsDevice] = useState<AttendanceDevice | null>(null);
+  const [syncLogs, setSyncLogs] = useState<AttendanceDeviceSyncLog[]>([]);
+  const [syncLogsLoading, setSyncLogsLoading] = useState(false);
   const [rawForm, setRawForm] = useState({ employeeCode: '', employeeId: '', deviceId: '', punchAt: nowLocal(), direction: 'In', source: 'API push', verificationMethod: 'RFID' });
   const [csvContent, setCsvContent] = useState('');
   const [processForm, setProcessForm] = useState({ fromDate: today(), toDate: today(), employeeId: '' });
@@ -210,6 +226,63 @@ export function AttendancePage() {
       requestedOutUtc: toUtc(regularizationForm.requestedOut),
       reason: regularizationForm.reason,
     }), 'Regularization request saved for approval.');
+  };
+
+  const openEdit = (device: AttendanceDevice) => {
+    setEditingDevice(device);
+    setEditDeviceForm({
+      deviceName: device.deviceName,
+      deviceType: device.deviceType,
+      vendor: device.vendor,
+      serialNumber: device.serialNumber,
+      locationName: device.locationName,
+      ipAddress: device.ipAddress,
+      endpointUrl: device.endpointUrl,
+      syncMethod: device.syncMethod,
+      syncFrequency: device.syncFrequency,
+      isActive: device.isActive,
+    });
+  };
+
+  const submitEditDevice = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingDevice) return;
+    runAction(() => attendanceApi.devices.update(editingDevice.id, editDeviceForm), 'Device updated successfully.');
+    setEditingDevice(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmDevice) return;
+    runAction(() => attendanceApi.devices.remove(deleteConfirmDevice.id), `Device "${deleteConfirmDevice.deviceName}" deleted.`);
+    setDeleteConfirmDevice(null);
+  };
+
+  const generateKey = async (device: AttendanceDevice) => {
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await attendanceApi.devices.generateKey(device.id);
+      setDeviceKeyResult(result);
+      await load();
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? err.message ?? 'Key generation failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openSyncLogs = async (device: AttendanceDevice) => {
+    setSyncLogsDevice(device);
+    setSyncLogsLoading(true);
+    try {
+      const logs = await attendanceApi.devices.logs(device.id);
+      setSyncLogs(logs);
+    } catch {
+      setSyncLogs([]);
+    } finally {
+      setSyncLogsLoading(false);
+    }
   };
 
   const totalWorked = daily.reduce((sum, item) => sum + item.totalWorkedMinutes, 0);
@@ -326,7 +399,15 @@ export function AttendancePage() {
             <button type="submit" disabled={saving} className="btn-primary mt-4 w-full justify-center">Save Device</button>
           </form>
           <Panel title="Configured Devices" action={`${devices.length} records`}>
-            <DeviceTable devices={devices} onSync={(id) => runAction(() => attendanceApi.devices.sync(id), 'Device sync job logged.')} onTest={(id) => runAction(() => attendanceApi.devices.test(id), 'Device connection test logged.')} />
+            <DeviceTable
+              devices={devices}
+              onTest={(id) => runAction(() => attendanceApi.devices.test(id), 'Connection test completed.')}
+              onSync={(id) => runAction(() => attendanceApi.devices.sync(id), 'Sync attempt completed.')}
+              onEdit={openEdit}
+              onDelete={setDeleteConfirmDevice}
+              onGenerateKey={generateKey}
+              onViewLogs={openSyncLogs}
+            />
           </Panel>
         </div>
       )}
@@ -432,6 +513,99 @@ export function AttendancePage() {
           </Panel>
         </div>
       )}
+
+      {/* ── Edit Device Modal ───────────────────────────────────────────────── */}
+      {editingDevice && (
+        <Modal title={`Edit — ${editingDevice.deviceName}`} onClose={() => setEditingDevice(null)}>
+          <form onSubmit={submitEditDevice} className="grid gap-3 sm:grid-cols-2">
+            <Field label="Device name"><input aria-label="Device name" className="input w-full" value={editDeviceForm.deviceName} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, deviceName: e.target.value })} required /></Field>
+            <Field label="Serial number"><input aria-label="Serial number" className="input w-full" value={editDeviceForm.serialNumber} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, serialNumber: e.target.value })} required /></Field>
+            <Field label="Device type"><select aria-label="Device type" className="select w-full" value={editDeviceForm.deviceType} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, deviceType: e.target.value })}><DeviceTypeOptions /></select></Field>
+            <Field label="Vendor"><select aria-label="Vendor" className="select w-full" value={editDeviceForm.vendor} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, vendor: e.target.value })}><VendorOptions /></select></Field>
+            <Field label="IP / endpoint"><input aria-label="IP / endpoint" className="input w-full" value={editDeviceForm.endpointUrl || editDeviceForm.ipAddress} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, endpointUrl: e.target.value, ipAddress: e.target.value })} /></Field>
+            <Field label="Sync method"><select aria-label="Sync method" className="select w-full" value={editDeviceForm.syncMethod} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, syncMethod: e.target.value })}><SyncMethodOptions /></select></Field>
+            <Field label="Location"><input aria-label="Location" className="input w-full" value={editDeviceForm.locationName ?? ''} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, locationName: e.target.value })} /></Field>
+            <Field label="Frequency"><input aria-label="Sync frequency" className="input w-full" value={editDeviceForm.syncFrequency ?? ''} onChange={(e) => setEditDeviceForm({ ...editDeviceForm, syncFrequency: e.target.value })} /></Field>
+            <div className="col-span-2 flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setEditingDevice(null)} className="btn-secondary">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary">Save Changes</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Delete Confirm Modal ────────────────────────────────────────────── */}
+      {deleteConfirmDevice && (
+        <Modal title="Delete Device" onClose={() => setDeleteConfirmDevice(null)}>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Are you sure you want to delete <span className="font-semibold text-slate-900 dark:text-white">{deleteConfirmDevice.deviceName}</span>?
+            All sync logs for this device will be retained for audit, but the device will stop receiving punches.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" onClick={() => setDeleteConfirmDevice(null)} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={confirmDelete} disabled={saving} className="btn-primary bg-rose-600 hover:bg-rose-700 border-rose-600 hover:border-rose-700">Delete Device</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── API Key Modal ───────────────────────────────────────────────────── */}
+      {deviceKeyResult && (
+        <Modal title="API Key Generated" onClose={() => setDeviceKeyResult(null)}>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+              This key will only be shown once. Copy and configure it on your biometric device now.
+            </div>
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Device API Key — {deviceKeyResult.deviceName}</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-lg border bg-slate-50 px-3 py-2 font-mono text-sm dark:bg-white/[0.04] dark:border-white/10">{deviceKeyResult.key}</code>
+                <button type="button" onClick={() => navigator.clipboard.writeText(deviceKeyResult.key)} className="btn-secondary h-9 px-3" title="Copy key"><Copy className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-1.5"><Webhook className="h-3.5 w-3.5" />Biometric Device Configuration</p>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">Configure your device to POST attendance punches to:</p>
+              <code className="block rounded border bg-white px-3 py-2 font-mono text-xs dark:bg-black/20 dark:border-white/10">{process.env.NEXT_PUBLIC_API_BASE_URL || '[API Base URL]'}/api/attendance/ingest</code>
+              <p className="mt-3 text-xs text-slate-500 mb-1">Required HTTP header:</p>
+              <code className="block rounded border bg-white px-3 py-2 font-mono text-xs dark:bg-black/20 dark:border-white/10">X-Device-Key: {deviceKeyResult.key}</code>
+              <p className="mt-3 text-xs text-slate-500 mb-1">Example JSON body:</p>
+              <code className="block rounded border bg-white px-3 py-2 font-mono text-xs whitespace-pre dark:bg-black/20 dark:border-white/10">{`{"punches":[{"employeeCode":"EMP-001","punchTimestampUtc":"2026-06-16T09:00:00Z","punchDirection":"In"}]}`}</code>
+            </div>
+            <div className="flex justify-end">
+              <button type="button" onClick={() => setDeviceKeyResult(null)} className="btn-primary">Done</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Sync Logs Modal ─────────────────────────────────────────────────── */}
+      {syncLogsDevice && (
+        <Modal title={`Sync Logs — ${syncLogsDevice.deviceName}`} onClose={() => setSyncLogsDevice(null)}>
+          {syncLogsLoading && <p className="py-6 text-center text-sm text-slate-400">Loading logs…</p>}
+          {!syncLogsLoading && syncLogs.length === 0 && <Empty text="No sync logs found for this device." />}
+          {!syncLogsLoading && syncLogs.length > 0 && (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {syncLogs.map((log) => (
+                <div key={log.id} className="rounded-lg border border-slate-100 p-3 dark:border-white/10">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">{log.syncMethod}</p>
+                      <p className="text-xs text-slate-400">{dateTime(log.completedAtUtc ?? log.startedAtUtc)} · {log.rawEventsReceived} events received · {log.rawEventsProcessed} processed</p>
+                    </div>
+                    <StatusChip label={log.status} tone={statusTone(log.status)} dot />
+                  </div>
+                  {log.errorMessage && (
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-white/10 pt-2">{log.errorMessage}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-4 flex justify-end">
+            <button type="button" onClick={() => setSyncLogsDevice(null)} className="btn-secondary">Close</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -536,24 +710,72 @@ function DailyTable({ records, loading, compact }: { records: AttendanceDailyRec
   );
 }
 
-function DeviceTable({ devices, onSync, onTest }: { devices: AttendanceDevice[]; onSync: (id: string) => void; onTest: (id: string) => void }) {
+function DeviceTable({
+  devices,
+  onSync,
+  onTest,
+  onEdit,
+  onDelete,
+  onGenerateKey,
+  onViewLogs,
+}: {
+  devices: AttendanceDevice[];
+  onSync: (id: string) => void;
+  onTest: (id: string) => void;
+  onEdit: (device: AttendanceDevice) => void;
+  onDelete: (device: AttendanceDevice) => void;
+  onGenerateKey: (device: AttendanceDevice) => void;
+  onViewLogs: (device: AttendanceDevice) => void;
+}) {
   if (devices.length === 0) return <Empty text="No devices found. Add a connector-backed attendance source." />;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[780px] text-sm">
-        <thead><tr className="border-b border-slate-100 dark:border-white/[0.07]">{['Device', 'Vendor', 'Sync', 'Last status', 'Actions'].map((h) => <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>)}</tr></thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-white/[0.06]">
-          {devices.map((d) => (
-            <tr key={d.id}>
-              <td className="px-4 py-3"><p className="font-semibold text-slate-900 dark:text-white">{d.deviceName}</p><p className="text-xs text-slate-400">{d.serialNumber} · {d.locationName || '-'}</p></td>
-              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.vendor}<p className="text-xs text-slate-400">{d.deviceType}</p></td>
-              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.syncMethod}<p className="text-xs text-slate-400">{d.syncFrequency}</p></td>
-              <td className="px-4 py-3"><StatusChip label={d.lastSyncStatus || 'Never'} tone={statusTone(d.lastSyncStatus || 'Never')} dot /></td>
-              <td className="px-4 py-3"><div className="flex gap-2"><button type="button" onClick={() => onTest(d.id)} className="btn-secondary h-8 px-2 text-xs">Test</button><button type="button" onClick={() => onSync(d.id)} className="btn-secondary h-8 px-2 text-xs">Sync</button></div></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {devices.map((d) => {
+        const isPush = d.syncMethod?.toLowerCase().includes('push');
+        const hasKey = !!d.apiKeyReference;
+        const hasError = !!d.errorLog;
+        return (
+          <div key={d.id} className="rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-start gap-3 p-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-semibold text-slate-900 dark:text-white">{d.deviceName}</p>
+                  <StatusChip label={d.lastSyncStatus || 'Never synced'} tone={statusTone(d.lastSyncStatus || 'Never')} dot />
+                  {!d.isActive && <StatusChip label="Inactive" tone="rose" />}
+                  {isPush && <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300"><Webhook className="h-3 w-3" />Push</span>}
+                </div>
+                <p className="mt-1 text-xs text-slate-400">{d.vendor} · {d.deviceType} · SN: {d.serialNumber || '—'}</p>
+                <p className="text-xs text-slate-400">{d.locationName || 'No location'} · {d.syncMethod} · {d.syncFrequency || 'Manual'}</p>
+                {isPush && (
+                  <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Webhook endpoint</p>
+                    <code className="text-xs font-mono text-slate-700 dark:text-slate-300 break-all">
+                      POST {process.env.NEXT_PUBLIC_API_BASE_URL || '[API Base URL]'}/api/attendance/ingest
+                    </code>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Header: <span className="font-mono">X-Device-Key: {hasKey ? '••••••••••' : '[generate a key below]'}</span>
+                    </p>
+                  </div>
+                )}
+                {hasError && (
+                  <div className="mt-2 flex items-start gap-1.5 text-xs text-rose-600 dark:text-rose-400">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{d.errorLog}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5 shrink-0">
+                <button type="button" onClick={() => onTest(d.id)} className="btn-secondary h-8 px-2.5 text-xs" title="Test connection">Test</button>
+                <button type="button" onClick={() => onSync(d.id)} className="btn-secondary h-8 px-2.5 text-xs" title="Trigger sync">Sync</button>
+                <button type="button" onClick={() => onViewLogs(d)} className="btn-secondary h-8 px-2.5 text-xs" title="View sync logs"><History className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => onGenerateKey(d)} className="btn-secondary h-8 px-2.5 text-xs" title={hasKey ? 'Rotate API key' : 'Generate API key'}><Key className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => onEdit(d)} className="btn-secondary h-8 px-2.5 text-xs" title="Edit device"><Pencil className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => onDelete(d)} className="btn-secondary h-8 px-2.5 text-xs text-rose-600 dark:text-rose-400 hover:border-rose-300" title="Delete device"><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -612,4 +834,18 @@ function InsightList({ insights }: { insights: AttendanceAIInsight[] }) {
 
 function Guardrail({ text }: { text: string }) {
   return <div className="flex gap-2"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sapphire" /><p>{text}</p></div>;
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#0e1729]">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-white/[0.07]">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-6">{children}</div>
+      </div>
+    </div>
+  );
 }
