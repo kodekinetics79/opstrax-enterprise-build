@@ -185,6 +185,29 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Needs attention strip */}
+      {(criticalAlerts > 0 || (overview && overview.pendingApprovals >= 5)) && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-200/60 bg-rose-50/60 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/[0.06]">
+          <ShieldAlert className="h-4 w-4 shrink-0 text-rose-500" />
+          <p className="flex-1 text-sm font-medium text-rose-700 dark:text-rose-300">
+            {criticalAlerts > 0 && <span>{criticalAlerts} critical compliance alert{criticalAlerts !== 1 ? 's' : ''} require attention. </span>}
+            {overview && overview.pendingApprovals >= 5 && <span>{overview.pendingApprovals} approvals are waiting.</span>}
+          </p>
+          <div className="flex items-center gap-2">
+            {criticalAlerts > 0 && (
+              <button type="button" onClick={() => router.push('/compliance')} className="rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-600">
+                View Compliance
+              </button>
+            )}
+            {overview && overview.pendingApprovals >= 5 && (
+              <button type="button" onClick={() => router.push('/approvals')} className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 dark:border-rose-500/30 dark:bg-transparent dark:text-rose-400">
+                Review Approvals
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* KPI strip — 6 at a glance */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" aria-label="Workforce KPIs">
         {kpis.map((metric) => (
@@ -254,6 +277,7 @@ export function DashboardPage() {
                 {attendanceDonut.map((e) => (
                   <div key={e.name} className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {/* eslint-disable-next-line react/forbid-dom-props */}
                       <span className="h-2 w-2 rounded-full" style={{ background: e.color }} />
                       {e.name}
                     </span>
@@ -319,6 +343,7 @@ export function DashboardPage() {
                     <span className="font-bold text-slate-950 dark:text-white">{d.value}</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.06]">
+                    {/* eslint-disable-next-line react/forbid-dom-props */}
                     <div
                       className="h-full rounded-full"
                       style={{ width: `${(d.value / deptMax) * 100}%`, background: mixColors[i % mixColors.length] }}
@@ -457,24 +482,29 @@ export function DashboardPage() {
 
         {/* Quick actions */}
         <DataPanel title="Quick Actions" description="Frequent workflows." className="xl:col-span-4">
-          <div className="space-y-1.5">
-            {quickActions.map((action) => {
+          <div className="grid grid-cols-2 gap-2">
+            {quickActions.map((action, i) => {
               const Icon = action.icon;
+              const accents = [
+                'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+                'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+                'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
+                'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+              ];
               return (
                 <button
                   key={action.label}
                   type="button"
                   onClick={() => router.push(action.to)}
-                  className="flex w-full items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-sapphire/20 hover:bg-sapphire/[0.04] dark:border-white/[0.07] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+                  className="group flex flex-col gap-2.5 rounded-xl border border-slate-100 bg-white p-3.5 text-left transition hover:-translate-y-0.5 hover:shadow-md dark:border-white/[0.07] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
                 >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sapphire/10 text-sapphire dark:bg-cyanAccent/10 dark:text-cyanAccent">
-                    <Icon className="h-3.5 w-3.5" />
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-lg border ${accents[i % accents.length]}`}>
+                    <Icon className="h-4 w-4" />
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">{action.label}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-slate-900 group-hover:text-sapphire dark:text-white dark:group-hover:text-cyanAccent transition-colors">{action.label}</span>
                     <span className="block truncate text-[11px] text-slate-500 dark:text-slate-400">{action.description}</span>
                   </span>
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300 dark:text-slate-600" />
                 </button>
               );
             })}
