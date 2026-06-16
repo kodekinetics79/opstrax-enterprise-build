@@ -1246,7 +1246,8 @@ public class PlatformController : ControllerBase
             InvoiceDate = req.InvoiceDate,
             DueDate = req.DueDate,
             PaidDate = req.PaidDate,
-            Notes = req.Notes?.Trim()
+            Notes = req.Notes?.Trim(),
+            RecipientEmail = string.IsNullOrWhiteSpace(req.RecipientEmail) ? null : req.RecipientEmail.Trim().ToLowerInvariant()
         };
         _db.TenantInvoices.Add(invoice);
 
@@ -1285,6 +1286,7 @@ public class PlatformController : ControllerBase
         if (req.PaymentReference is not null) invoice.PaymentReference = req.PaymentReference.Trim();
         if (req.PaidDate.HasValue) invoice.PaidDate = req.PaidDate;
         if (req.Notes is not null) invoice.Notes = req.Notes.Trim();
+        if (req.RecipientEmail is not null) invoice.RecipientEmail = string.IsNullOrWhiteSpace(req.RecipientEmail) ? null : req.RecipientEmail.Trim().ToLowerInvariant();
         invoice.UpdatedAtUtc = DateTime.UtcNow;
 
         _db.AdminAuditLogs.Add(new AdminAuditLog
@@ -1362,9 +1364,9 @@ public class PlatformController : ControllerBase
 
         var sub    = await _db.TenantSubscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
         var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
-        var toEmail = sub?.BillingEmail ?? string.Empty;
+        var toEmail = (!string.IsNullOrWhiteSpace(invoice.RecipientEmail) ? invoice.RecipientEmail : sub?.BillingEmail) ?? string.Empty;
         if (string.IsNullOrWhiteSpace(toEmail))
-            return BadRequest(new { message = "No billing email on record for this tenant. Update the subscription billing email first." });
+            return BadRequest(new { message = "No recipient email on this invoice and no billing email on the tenant subscription. Set an email on the invoice or update the tenant's billing email." });
 
         var isConfigured = await _emailService.IsConfiguredAsync(ct);
         if (!isConfigured)
@@ -2109,14 +2111,16 @@ public record CreateInvoiceRequest(
     DateOnly InvoiceDate,
     DateOnly DueDate,
     DateOnly? PaidDate,
-    string? Notes);
+    string? Notes,
+    string? RecipientEmail);
 
 public record UpdateInvoiceRequest(
     string? Status,
     string? PaymentMethod,
     string? PaymentReference,
     DateOnly? PaidDate,
-    string? Notes);
+    string? Notes,
+    string? RecipientEmail);
 
 public record UpdatePlanPriceRequest(decimal MonthlyPrice);
 public record CreatePlatformUserRequest(string Email, string? FullName, string Password, string? Role);

@@ -96,6 +96,7 @@ interface CreateForm {
   periodDescription: string;
   invoiceDate: string;
   dueDate: string;
+  recipientEmail: string;
   notes: string;
 }
 
@@ -110,6 +111,7 @@ function CreateModal({ tenantId, onClose, onCreated }: {
     periodDescription: '',
     invoiceDate: TODAY(),
     dueDate: DUE30(),
+    recipientEmail: '',
     notes: '',
   });
   const [saving, setSaving] = useState(false);
@@ -131,6 +133,7 @@ function CreateModal({ tenantId, onClose, onCreated }: {
         periodDescription: form.periodDescription.trim() || undefined,
         invoiceDate: form.invoiceDate,
         dueDate: form.dueDate,
+        recipientEmail: form.recipientEmail.trim() || undefined,
         notes: form.notes.trim() || undefined,
       });
       onCreated(); onClose();
@@ -148,7 +151,7 @@ function CreateModal({ tenantId, onClose, onCreated }: {
             <h2 className="text-sm font-semibold text-white">New Invoice</h2>
             <p className="text-[11px] text-slate-500 mt-0.5">Fill in the details below to create an invoice</p>
           </div>
-          <button type="button" onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="text-slate-500 hover:text-white transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -166,7 +169,15 @@ function CreateModal({ tenantId, onClose, onCreated }: {
             </div>
 
             <Field label="Amount *">
-              <FInput value={form.amount} onChange={set('amount')} type="number" required placeholder="0.00" min="0.01" />
+              <input
+                type="text"
+                inputMode="decimal"
+                value={form.amount}
+                onChange={e => set('amount')(e.target.value)}
+                required
+                placeholder="0.00"
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/60 transition-colors"
+              />
             </Field>
 
             <Field label="Currency">
@@ -180,6 +191,12 @@ function CreateModal({ tenantId, onClose, onCreated }: {
             <Field label="Due Date *">
               <FInput value={form.dueDate} onChange={set('dueDate')} type="date" required />
             </Field>
+
+            <div className="col-span-2">
+              <Field label="Recipient Email *">
+                <FInput value={form.recipientEmail} onChange={set('recipientEmail')} type="email" required placeholder="billing@client.com" />
+              </Field>
+            </div>
 
             <div className="col-span-2">
               <Field label="Period / Description">
@@ -196,7 +213,7 @@ function CreateModal({ tenantId, onClose, onCreated }: {
             <div className="col-span-2">
               <Field label="Internal Notes">
                 <textarea
-                  value={form.notes} onChange={e => set('notes')(e.target.value)} rows={3}
+                  value={form.notes} onChange={e => set('notes')(e.target.value)} rows={2}
                   placeholder="Internal notes visible to platform admins only…"
                   className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/60 transition-colors resize-none"
                 />
@@ -227,6 +244,7 @@ interface EditForm {
   paymentMethod: string;
   paymentReference: string;
   paidDate: string;
+  recipientEmail: string;
   notes: string;
 }
 
@@ -238,6 +256,7 @@ function EditModal({ tenantId, invoice, onClose, onSaved }: {
     paymentMethod: invoice.paymentMethod ?? '',
     paymentReference: invoice.paymentReference ?? '',
     paidDate: invoice.paidDate ? invoice.paidDate.slice(0, 10) : '',
+    recipientEmail: invoice.recipientEmail ?? '',
     notes: invoice.notes ?? '',
   });
   const [saving, setSaving] = useState(false);
@@ -255,6 +274,7 @@ function EditModal({ tenantId, invoice, onClose, onSaved }: {
         paymentMethod: form.paymentMethod.trim() || undefined,
         paymentReference: form.paymentReference.trim() || undefined,
         paidDate: form.paidDate || undefined,
+        recipientEmail: form.recipientEmail.trim() || undefined,
         notes: form.notes.trim() || undefined,
       });
       onSaved(); onClose();
@@ -272,7 +292,7 @@ function EditModal({ tenantId, invoice, onClose, onSaved }: {
             <h2 className="text-sm font-semibold text-white">Edit Invoice</h2>
             <p className="text-[11px] text-slate-500 mt-0.5 font-mono">{invoice.invoiceNumber}</p>
           </div>
-          <button type="button" onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="text-slate-500 hover:text-white transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -328,6 +348,12 @@ function EditModal({ tenantId, invoice, onClose, onSaved }: {
                 </div>
               </>
             )}
+
+            <div className="col-span-2">
+              <Field label="Recipient Email">
+                <FInput value={form.recipientEmail} onChange={set('recipientEmail')} type="email" placeholder="billing@client.com" />
+              </Field>
+            </div>
 
             <div className="col-span-2">
               <Field label="Internal Notes">
@@ -498,7 +524,7 @@ export default function TenantBillingPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={load} disabled={loading}
+          <button type="button" onClick={load} disabled={loading} aria-label="Refresh" title="Refresh"
             className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors disabled:opacity-40">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>

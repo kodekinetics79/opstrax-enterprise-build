@@ -217,6 +217,7 @@ public class TenantInvoice
     public DateOnly DueDate { get; set; }
     public DateOnly? PaidDate { get; set; }
     public string? Notes { get; set; }
+    public string? RecipientEmail { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAtUtc { get; set; }
     public Guid? CreatedBy { get; set; }

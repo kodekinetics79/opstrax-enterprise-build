@@ -178,6 +178,7 @@ export interface TenantInvoice {
   dueDate: string;
   paidDate: string | null;
   notes: string | null;
+  recipientEmail: string | null;
   createdAtUtc: string;
 }
 
@@ -519,6 +520,7 @@ export const platformApi = {
     dueDate: string;
     paidDate?: string | null;
     notes?: string;
+    recipientEmail?: string;
   }) =>
     platform.post<TenantInvoice>(`/api/platform/tenants/${tenantId}/invoices`, body).then(r => r.data),
 
@@ -528,6 +530,7 @@ export const platformApi = {
     paymentReference?: string;
     paidDate?: string | null;
     notes?: string;
+    recipientEmail?: string;
   }) =>
     platform.put<TenantInvoice>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}`, body).then(r => r.data),
 
