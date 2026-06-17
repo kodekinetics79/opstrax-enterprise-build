@@ -42,7 +42,7 @@ export function LoginPage() {
   const [newPassword,   setNewPassword]   = useState('');
   const [confirmPass,   setConfirmPass]   = useState('');
 
-  // Auto-detect tenant slug from subdomain or ?workspace= query param
+  // Auto-detect tenant slug from subdomain or ?workspace= query param (pre-fills but stays editable)
   useEffect(() => {
     const wsParam = searchParams?.get('workspace') ?? searchParams?.get('w');
     if (wsParam) { setTenantSlug(wsParam); setTenantLocked(true); return; }
@@ -51,7 +51,7 @@ export function LoginPage() {
     const skip = new Set(['www', 'app', 'admin', 'mail', 'localhost']);
     if (parts.length >= 3 && !skip.has(parts[0])) {
       setTenantSlug(parts[0]);
-      setTenantLocked(true);
+      setTenantLocked(false); // pre-fill only, not locked
     }
   }, [searchParams]);
 
@@ -121,6 +121,9 @@ export function LoginPage() {
         @keyframes kx-float3 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-10px)} }
         @keyframes kx-float4 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-17px)} }
         @keyframes kx-float5 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-12px)} }
+        @keyframes kx-float6 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-19px)} }
+        @keyframes kx-float7 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-11px)} }
+        @keyframes kx-float8 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-16px)} }
         @keyframes kx-spin-l { from{transform:rotate(0deg)}   to{transform:rotate(360deg)}  }
         @keyframes kx-spin-r { from{transform:rotate(0deg)}   to{transform:rotate(-360deg)} }
         @keyframes kx-ring   { 0%{transform:scale(1);opacity:0.35} 100%{transform:scale(2.4);opacity:0} }
@@ -131,6 +134,9 @@ export function LoginPage() {
         .kx-f3{animation:kx-float3 6.4s ease-in-out infinite 3.6s}
         .kx-f4{animation:kx-float4 8.1s ease-in-out infinite 0.9s}
         .kx-f5{animation:kx-float5 5.9s ease-in-out infinite 2.7s}
+        .kx-f6{animation:kx-float6 9.3s ease-in-out infinite 1.4s}
+        .kx-f7{animation:kx-float7 6.7s ease-in-out infinite 3.2s}
+        .kx-f8{animation:kx-float8 7.8s ease-in-out infinite 0.5s}
         .kx-sl{animation:kx-spin-l 80s linear infinite}
         .kx-sr{animation:kx-spin-r 60s linear infinite}
         .kx-r1{animation:kx-ring 2.8s ease-out infinite}
@@ -171,6 +177,108 @@ export function LoginPage() {
             <p className="text-[160px] font-black text-white opacity-[0.022] -rotate-[10deg] tracking-tighter whitespace-nowrap">KYNEXONE</p>
           </div>
 
+          {/* ── Floating cards — scattered across full panel ───────────── */}
+          <div className="pointer-events-none absolute inset-0 z-[5] overflow-hidden">
+
+            {/* Card 1 — Active employees (top-left) */}
+            <div className="kx-f1 absolute left-[4%] top-[12%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/20 ring-1 ring-emerald-500/30">
+                <Users className="h-7 w-7 text-emerald-300" />
+                <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse rounded-full bg-emerald-400 ring-[3px] ring-[#07122e]" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">Active Today</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-emerald-300">347</p>
+                <p className="mt-1 text-[11px] text-white/25">employees clocked in</p>
+              </div>
+            </div>
+
+            {/* Card 2 — Attendance rate (top-right) */}
+            <div className="kx-f2 absolute right-[5%] top-[8%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-cyan-500/20 ring-1 ring-cyan-500/30">
+                <TrendingUp className="h-7 w-7 text-cyan-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">Attendance</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-cyan-300">98.2%</p>
+                <p className="mt-1 text-[11px] text-white/25">monthly average</p>
+              </div>
+            </div>
+
+            {/* Card 3 — Payroll (mid-left) */}
+            <div className="kx-f3 absolute left-[3%] top-[38%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-amber-500/20 ring-1 ring-amber-500/30">
+                <CheckCircle2 className="h-7 w-7 text-amber-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">Payroll</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-amber-300">$2.4M</p>
+                <p className="mt-1 text-[11px] text-white/25">last cycle · on time</p>
+              </div>
+            </div>
+
+            {/* Card 4 — Leave pending (mid-right) */}
+            <div className="kx-f4 absolute right-[4%] top-[36%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-violet-500/20 ring-1 ring-violet-500/30">
+                <Clock className="h-7 w-7 text-violet-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">Leave Pending</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-violet-300">24</p>
+                <p className="mt-1 text-[11px] text-white/25">awaiting approval</p>
+              </div>
+            </div>
+
+            {/* Card 5 — WPS Compliance (lower-left) */}
+            <div className="kx-f5 absolute left-[6%] top-[62%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/20 ring-1 ring-indigo-500/30">
+                <FileCheck className="h-7 w-7 text-indigo-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">WPS Compliance</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-indigo-300">100%</p>
+                <p className="mt-1 text-[11px] text-white/25">all records submitted</p>
+              </div>
+            </div>
+
+            {/* Card 6 — Overtime (lower-right) */}
+            <div className="kx-f6 absolute right-[3%] top-[60%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-orange-500/20 ring-1 ring-orange-500/30">
+                <BarChart3 className="h-7 w-7 text-orange-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">Overtime hrs</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-orange-300">1,280</p>
+                <p className="mt-1 text-[11px] text-white/25">this month</p>
+              </div>
+            </div>
+
+            {/* Card 7 — New Hires (bottom-left) */}
+            <div className="kx-f7 absolute left-[8%] top-[80%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-teal-500/20 ring-1 ring-teal-500/30">
+                <Zap className="h-7 w-7 text-teal-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">New Hires</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-teal-300">18</p>
+                <p className="mt-1 text-[11px] text-white/25">onboarded this month</p>
+              </div>
+            </div>
+
+            {/* Card 8 — AI Alerts (bottom-right) */}
+            <div className="kx-f8 absolute right-[6%] top-[78%] flex items-center gap-4 rounded-2xl border border-white/[0.16] bg-white/[0.09] px-5 py-4 shadow-2xl backdrop-blur-md">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-rose-500/20 ring-1 ring-rose-500/30">
+                <ShieldCheck className="h-7 w-7 text-rose-300" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40">AI Alerts</p>
+                <p className="mt-0.5 text-4xl font-black leading-none text-rose-300">3</p>
+                <p className="mt-1 text-[11px] text-white/25">anomalies flagged</p>
+              </div>
+            </div>
+
+          </div>
+
           {/* Content */}
           <div className="relative z-10 flex h-full flex-col justify-between px-14 py-14">
 
@@ -191,7 +299,7 @@ export function LoginPage() {
             </div>
 
             {/* Headline */}
-            <div className="mt-10">
+            <div>
               <h1 className="text-5xl font-extrabold leading-tight tracking-tight">
                 <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-indigo-400 bg-clip-text text-transparent">
                   The Complete
@@ -203,72 +311,6 @@ export function LoginPage() {
                 From hire to retire — payroll, attendance, compliance, and AI insights in a single unified workspace built for GCC enterprises.
               </p>
             </div>
-
-              {/* ── Floating glassmorphism stat cards ─────────────────────── */}
-              <div className="relative h-[340px]">
-
-                {/* Card 1 — employees (top-left) */}
-                <div className="kx-f1 absolute left-0 top-0 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
-                  <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 ring-1 ring-emerald-500/30">
-                    <Users className="h-5 w-5 text-emerald-300" />
-                    <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400 ring-[3px] ring-[#07122e]" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Active today</p>
-                    <p className="text-3xl font-black leading-none text-emerald-300">347</p>
-                    <p className="text-[10px] text-white/25 mt-0.5">employees clocked in</p>
-                  </div>
-                </div>
-
-                {/* Card 2 — attendance (top-right) */}
-                <div className="kx-f2 absolute right-6 top-4 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/20 ring-1 ring-cyan-500/30">
-                    <TrendingUp className="h-5 w-5 text-cyan-300" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Attendance</p>
-                    <p className="text-3xl font-black leading-none text-cyan-300">98.2%</p>
-                    <p className="text-[10px] text-white/25 mt-0.5">monthly average</p>
-                  </div>
-                </div>
-
-                {/* Card 3 — payroll (mid-left) */}
-                <div className="kx-f3 absolute left-16 top-[110px] flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 ring-1 ring-amber-500/30">
-                    <CheckCircle2 className="h-5 w-5 text-amber-300" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Payroll</p>
-                    <p className="text-3xl font-black leading-none text-amber-300">$2.4M</p>
-                    <p className="text-[10px] text-white/25 mt-0.5">last cycle · on time</p>
-                  </div>
-                </div>
-
-                {/* Card 4 — Leave requests (mid-right) */}
-                <div className="kx-f4 absolute right-4 top-[120px] flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/20 ring-1 ring-violet-500/30">
-                    <Clock className="h-5 w-5 text-violet-300" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Leave pending</p>
-                    <p className="text-3xl font-black leading-none text-violet-300">24</p>
-                    <p className="text-[10px] text-white/25 mt-0.5">awaiting approval</p>
-                  </div>
-                </div>
-
-                {/* Card 5 — Compliance (bottom-center) */}
-                <div className="kx-f5 absolute left-1/2 -translate-x-1/2 bottom-0 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 ring-1 ring-indigo-500/30">
-                    <FileCheck className="h-5 w-5 text-indigo-300" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">WPS Compliance</p>
-                    <p className="text-3xl font-black leading-none text-indigo-300">100%</p>
-                    <p className="text-[10px] text-white/25 mt-0.5">all records submitted</p>
-                  </div>
-                </div>
-
-              </div>
 
             {/* Feature grid — glassmorphism */}
             <div className="grid grid-cols-2 gap-2.5">
@@ -362,13 +404,13 @@ export function LoginPage() {
                       <label htmlFor="login-workspace" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                         Workspace
                         {tenantLocked && <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Lock className="h-3 w-3" />Auto-detected</span>}
-                        {!tenantLocked && <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries)." />}
+                        {!tenantLocked && tenantSlug && <span className="ml-auto text-[10px] text-slate-400">Pre-filled · you can edit</span>}
+                        {!tenantLocked && !tenantSlug && <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries)." />}
                       </label>
                       <input
                         id="login-workspace" type="text" value={tenantSlug}
-                        onChange={(e) => { if (!tenantLocked) setTenantSlug(e.target.value); }}
-                        readOnly={tenantLocked}
-                        className={`input w-full ${tenantLocked ? 'cursor-default bg-slate-50 text-slate-500 dark:bg-white/[0.03] dark:text-slate-400' : ''}`}
+                        onChange={(e) => setTenantSlug(e.target.value)}
+                        className="input w-full"
                         placeholder="your-workspace"
                         autoComplete="organization" required
                       />
@@ -443,9 +485,8 @@ export function LoginPage() {
                       </label>
                       <input
                         id="forgot-workspace" type="text" value={tenantSlug}
-                        onChange={(e) => { if (!tenantLocked) setTenantSlug(e.target.value); }}
-                        readOnly={tenantLocked}
-                        className={`input w-full ${tenantLocked ? 'cursor-default bg-slate-50 text-slate-500 dark:bg-white/[0.03] dark:text-slate-400' : ''}`}
+                        onChange={(e) => setTenantSlug(e.target.value)}
+                        className="input w-full"
                         placeholder="your-workspace"
                       />
                     </div>
