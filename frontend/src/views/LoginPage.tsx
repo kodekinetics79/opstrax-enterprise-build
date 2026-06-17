@@ -255,10 +255,10 @@ export function LoginPage() {
             </div>
 
             {/* Compliance pill strip */}
-            <div className="flex flex-wrap gap-1.5 shrink-0">
+            <div className="flex flex-wrap justify-center gap-2 shrink-0">
               {PILLS.map(p => (
                 <span key={p}
-                  className="rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1 text-[10px] font-medium text-white/30">
+                  className="rounded-full border border-white/[0.12] bg-white/[0.07] px-4 py-1.5 text-[12px] font-medium text-white/50 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   {p}
                 </span>
               ))}
