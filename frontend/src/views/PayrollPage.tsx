@@ -19,6 +19,7 @@ import {
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
 import { InfoTip } from '../components/InfoTip';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenantSettings } from '../contexts/TenantSettingsContext';
 import client from '../api/client';
 
 // ── Payroll import/export helpers ───────────────────────────────────────────────
@@ -40,11 +41,11 @@ const salaryStructuresImportExport = {
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—';
-  return new Date(s).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(s).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function fmtAmt(n: number, currency = 'AED') {
-  return `${currency} ${n.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function fmtAmt(n: number, currency = 'USD') {
+  return `${currency} ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -214,7 +215,9 @@ function DashboardTab({ onNavigate }: { onNavigate: (t: Tab) => void }) {
 // ── Salary Structures Tab ───────────────────────────────────────────────────────
 
 function CreateSalaryStructureModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ code: '', name: '', currency: 'AED', effectiveDate: new Date().toISOString().slice(0, 10) });
+  const { currencyCode } = useTenantSettings();
+  const [form, setForm] = useState({ code: '', name: '', currency: '', effectiveDate: new Date().toISOString().slice(0, 10) });
+  const effectiveCurrency = form.currency || currencyCode;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
@@ -235,7 +238,7 @@ function CreateSalaryStructureModal({ onClose, onSaved }: { onClose: () => void;
         <div className="grid grid-cols-2 gap-3">
           <Field label="Currency">
             <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
+              {['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'SGD', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'EGP', 'INR', 'PKR', 'PHP', 'JOD', 'ZAR', 'NGN', 'KES'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
@@ -301,11 +304,13 @@ function SalaryStructuresTab() {
 
 function AssignSalaryModal({ structures, onClose, onSaved }: { structures: SalaryStructure[]; onClose: () => void; onSaved: () => void }) {
   const today = new Date().toISOString().slice(0, 10);
+  const { currencyCode } = useTenantSettings();
   const [form, setForm] = useState({
     employeeId: '', salaryStructureId: '', basicSalary: '', housingAllowance: '',
     transportAllowance: '', foodAllowance: '', mobileAllowance: '', otherAllowance: '',
-    fixedDeduction: '', effectiveDate: today, currency: 'AED',
+    fixedDeduction: '', effectiveDate: today, currency: '',
   });
+  const effectiveCurrency = form.currency || currencyCode;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
@@ -356,7 +361,7 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
             ))}
           </div>
           <div className="mt-3 rounded-lg bg-slate-50 px-4 py-2.5 dark:bg-white/5">
-            <p className="text-sm font-semibold text-sapphire dark:text-cyanAccent">Gross Total: {form.currency} {gross.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+            <p className="text-sm font-semibold text-sapphire dark:text-cyanAccent">Gross Total: {form.currency} {gross.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
 
@@ -364,8 +369,8 @@ function AssignSalaryModal({ structures, onClose, onSaved }: { structures: Salar
           <Field label="Fixed Deduction" info="A fixed amount removed every month (e.g. accommodation recovery), in the salary currency. Numbers only." infoKey="payroll.fixed_deduction"><input type="number" step="0.01" aria-label="Fixed deduction" className={inp} value={form.fixedDeduction} onChange={e => set('fixedDeduction', e.target.value)} /></Field>
           <Field label="Effective Date"><input type="date" aria-label="Effective date" className={inp} value={form.effectiveDate} onChange={e => set('effectiveDate', e.target.value)} /></Field>
           <Field label="Currency">
-            <select aria-label="Currency" className={sel} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD', 'EUR', 'GBP', 'INR', 'PKR', 'PHP', 'EGP', 'JOD', 'LBP', 'ZAR', 'NGN', 'KES', 'SGD', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
+            <select aria-label="Currency" className={sel} value={effectiveCurrency} onChange={e => set('currency', e.target.value)}>
+              {['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'SGD', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'EGP', 'INR', 'PKR', 'PHP', 'JOD', 'ZAR', 'NGN', 'KES'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
         </div>
@@ -491,7 +496,7 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
     if (updated) { setRuns(rs => rs.map(r => r.id === id ? updated : r)); if (selectedRun?.id === id) setSelectedRun(updated); }
   };
 
-  const fmt = (n: number) => n.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div className="space-y-4">
@@ -1043,7 +1048,7 @@ function BankWpsTab() {
                   {records.map(r => (
                     <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                       <td className="px-4 py-2 font-medium text-slate-900 dark:text-white">Emp #{r.employeeId}</td>
-                      <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-300">{r.amount.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-300">{r.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                       <td className="px-4 py-2 font-mono text-xs text-slate-500">{r.iban || <span className="text-rose-500">Missing IBAN</span>}</td>
                       <td className="px-4 py-2 text-xs text-slate-400">{r.wpsReference}</td>
                       <td className="px-4 py-2"><StatusBadge status={r.status} /></td>
@@ -1103,7 +1108,7 @@ function PaymentTrackingTab() {
                 <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                   <td className="px-4 py-2 font-mono text-xs font-medium text-slate-900 dark:text-white">{b.batchNumber}</td>
                   <td className="px-4 py-2 text-slate-500">{b.paymentMethod}</td>
-                  <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-300">{b.totalAmount.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-300">{b.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-2 text-slate-500">{b.currency}</td>
                   <td className="px-4 py-2"><StatusBadge status={b.status} /></td>
                   <td className="px-4 py-2 text-xs text-slate-400">{fmtDate(b.createdAtUtc)}</td>
@@ -1137,7 +1142,7 @@ function ReportsTab() {
     payrollApi.reportRegister(runId).then(setSlips).catch(() => {}).finally(() => setLoading(false));
   };
 
-  const fmt = (n: number) => n.toLocaleString('en-AE', { minimumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
   return (
     <div className="space-y-6">
@@ -1336,14 +1341,14 @@ function EOSBTab() {
           <p className="font-semibold text-slate-900 dark:text-white">{result.employeeName as string}</p>
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
             <div className="text-slate-500">Total Service</div><div className="font-medium">{(result.totalYears as number).toFixed(2)} years</div>
-            <div className="text-slate-500">Eligible Salary</div><div className="font-medium">{result.currency as string} {(result.eligibleSalary as number).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Eligible Salary</div><div className="font-medium">{result.currency as string} {(result.eligibleSalary as number).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-slate-500">Daily Rate</div><div className="font-medium">{result.currency as string} {(result.dailySalary as number).toFixed(4)}</div>
             <div className="text-slate-500">Rate (1–5 yrs)</div><div className="font-medium">{result.rate1To5Years as number} days/year</div>
             <div className="text-slate-500">Rate (5+ yrs)</div><div className="font-medium">{result.rateAbove5Years as number} days/year</div>
           </div>
           <div className="rounded-xl bg-sapphire/10 p-4 dark:bg-cyanAccent/10">
             <p className="text-xs text-slate-500 dark:text-slate-400">Calculated EOSB</p>
-            <p className="text-2xl font-bold text-sapphire dark:text-cyanAccent">{result.currency as string} {(result.eosbAmount as number).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold text-sapphire dark:text-cyanAccent">{result.currency as string} {(result.eosbAmount as number).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
             <p className="mt-1 text-xs text-slate-500">{result.message as string}</p>
           </div>
           <p className="text-xs text-amber-600 dark:text-amber-400">Advisory only. Consult legal/HR before processing EOSB payment.</p>
@@ -1494,7 +1499,7 @@ function ReconciliationTab({ selectedRunId }: { selectedRunId?: string }) {
     payrollApi.reconciliation(runId).then(r => setReport(r)).catch(() => {}).finally(() => setLoading(false));
   };
 
-  const fmt = (n: number) => n.toLocaleString('en-AE', { minimumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
   return (
     <div className="space-y-4">
@@ -1636,8 +1641,8 @@ function FinalSettlementTab() {
           </div>
 
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-            <div className="text-slate-500">Basic Salary</div><div className="font-medium text-right">{result.currency} {result.basicSalary.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
-            <div className="text-slate-500">Gross Salary</div><div className="font-medium text-right">{result.currency} {result.grossSalary.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Basic Salary</div><div className="font-medium text-right">{result.currency} {result.basicSalary.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Gross Salary</div><div className="font-medium text-right">{result.currency} {result.grossSalary.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-slate-500">Days Worked in Month</div><div className="font-medium text-right">{result.daysWorkedInMonth} / {result.daysInMonth}</div>
             <div className="text-slate-500">Leave Balance</div><div className="font-medium text-right">{result.leaveBalanceDays.toFixed(2)} days</div>
           </div>
@@ -1647,7 +1652,7 @@ function FinalSettlementTab() {
               <div key={b.component} className="flex items-center justify-between px-4 py-3">
                 <span className="text-sm text-slate-600 dark:text-slate-300">{b.component}</span>
                 <span className={`text-sm font-semibold tabular-nums ${b.amount < 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                  {b.amount < 0 ? '-' : '+'}{result.currency} {Math.abs(b.amount).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                  {b.amount < 0 ? '-' : '+'}{result.currency} {Math.abs(b.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </span>
               </div>
             ))}
@@ -1655,7 +1660,7 @@ function FinalSettlementTab() {
 
           <div className="rounded-xl bg-sapphire/10 px-5 py-4 dark:bg-cyanAccent/10">
             <p className="text-xs text-slate-500 dark:text-slate-400">Total Settlement Payable</p>
-            <p className="text-2xl font-extrabold text-sapphire dark:text-cyanAccent">{result.currency} {result.totalPayable.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-extrabold text-sapphire dark:text-cyanAccent">{result.currency} {result.totalPayable.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
           </div>
 
           <p className="text-xs text-amber-600 dark:text-amber-400">Advisory only. Consult legal/HR before processing final settlement payment. Values are based on current salary records and leave balance data.</p>
@@ -1669,6 +1674,7 @@ function FinalSettlementTab() {
 
 export function PayrollPage() {
   const { user } = useAuth();
+  const { currencyCode } = useTenantSettings();
   const isAdmin    = user?.roles.some(r => r === 'Admin') ?? false;
   const isFinance  = user?.roles.some(r => ['Finance Controller', 'Finance Approver'].includes(r)) ?? false;
   const isHROrPayroll = !isAdmin && !isFinance && (user?.roles.some(r => ['HR Manager', 'Payroll Manager', 'Payroll Officer'].includes(r)) ?? false);

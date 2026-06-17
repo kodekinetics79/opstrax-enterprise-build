@@ -2,6 +2,7 @@
 
 import { InfoTip } from '../components/InfoTip';
 import { useAuth } from '../contexts/AuthContext';
+import { useTenantSettings } from '../contexts/TenantSettingsContext';
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle, BarChart2, Calculator, CheckCircle2, Clock3, FileClock,
@@ -21,7 +22,7 @@ const dt = (date: string, time: string) => new Date(`${date}T${time}:00`).toISOS
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—';
-  return new Date(s).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(s).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function fmtMins(m: number) {
@@ -30,8 +31,8 @@ function fmtMins(m: number) {
   return h > 0 ? `${h}h ${min > 0 ? `${min}m` : ''}`.trim() : `${min}m`;
 }
 
-function fmtAmt(n: number, currency = 'AED') {
-  return `${currency} ${n.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function fmtAmt(n: number, currency = 'USD') {
+  return `${currency} ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -928,6 +929,7 @@ function ReportsTab() {
 
 export function OvertimePage() {
   const { user } = useAuth();
+  const { currencyCode } = useTenantSettings();
   const isAdmin    = user?.roles.some(r => r === 'Admin') ?? false;
   const isHRManager = user?.roles.some(r => r === 'HR Manager') ?? false;
   const isManager  = !isAdmin && !isHRManager && (user?.roles.some(r => ['Manager', 'Supervisor'].includes(r)) ?? false);

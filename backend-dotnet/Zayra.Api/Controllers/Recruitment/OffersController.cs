@@ -208,7 +208,7 @@ public class OffersController : ControllerBase
             Position: offer.OfferedJobTitle,
             Department: offer.OfferedDepartment,
             Salary: offer.GrossSalary,
-            Currency: "AED",
+            Currency: "USD",
             StartDate: offer.StartDate.ToDateTime(TimeOnly.MinValue),
             CompanyName: tenant?.Name ?? "KynexOne Technologies",
             IssuedBy: GetUserName(),

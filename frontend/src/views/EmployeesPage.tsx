@@ -72,7 +72,7 @@ const emptyEmployee = (): EmployeeCreateRequest => ({
     iban: '',
     accountNumber: '',
     paymentMethod: 'BankTransfer',
-    salaryCurrency: 'AED',
+    salaryCurrency: 'USD',
     payrollGroup: '',
     salaryStructureReference: '',
     wpsEligible: true,
@@ -733,7 +733,7 @@ export function EmployeesPage() {
             <Input label="Bank name" value={form.payrollProfile?.bankName ?? ''} onChange={(v) => setPayrollField('bankName', v)} />
             <Input label="IBAN" value={form.payrollProfile?.iban ?? ''} onChange={(v) => setPayrollField('iban', v)} info="International bank account number for salary transfers, e.g. AE07 0331 2345 6789 0123 456. No spaces needed." infoKey="employees.iban" />
             <Input label="Account number" value={form.payrollProfile?.accountNumber ?? ''} onChange={(v) => setPayrollField('accountNumber', v)} />
-            <Select label="Salary currency" value={form.payrollProfile?.salaryCurrency ?? 'AED'} onChange={(v) => setPayrollField('salaryCurrency', v)} options={['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD']} />
+            <Select label="Salary currency" value={form.payrollProfile?.salaryCurrency ?? 'AED'} onChange={(v) => setPayrollField('salaryCurrency', v)} options={['USD', 'GBP', 'EUR', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR']} />
             <Input label="Payroll group" value={form.payrollProfile?.payrollGroup ?? ''} onChange={(v) => setPayrollField('payrollGroup', v)} />
             <Input label="Salary structure reference" value={form.payrollProfile?.salaryStructureReference ?? ''} onChange={(v) => setPayrollField('salaryStructureReference', v)} />
           </Section>

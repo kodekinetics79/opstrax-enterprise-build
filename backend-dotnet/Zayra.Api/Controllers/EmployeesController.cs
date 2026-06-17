@@ -728,7 +728,7 @@ public class EmployeesController : ControllerBase
             JoiningDate: employee.JoiningDate,
             LeavingDate: null,
             BasicSalary: salary?.BasicSalary ?? employee.Salary ?? 0m,
-            Currency: "AED",
+            Currency: "USD",
             CompanyName: tenant?.Name ?? "KynexOne Technologies",
             IssuedBy: "HR Department",
             IssuedDate: DateTime.UtcNow
@@ -755,7 +755,7 @@ public class EmployeesController : ControllerBase
             JoiningDate: employee.JoiningDate,
             LeavingDate: employee.ContractEndDate.HasValue ? employee.ContractEndDate.Value.ToDateTime(TimeOnly.MinValue) : null,
             BasicSalary: salary?.BasicSalary ?? employee.Salary ?? 0m,
-            Currency: "AED",
+            Currency: "USD",
             CompanyName: tenant?.Name ?? "KynexOne Technologies",
             IssuedBy: "HR Department",
             IssuedDate: DateTime.UtcNow

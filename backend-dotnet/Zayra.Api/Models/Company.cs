@@ -13,7 +13,7 @@ public class Company
     public string WpsEmployerId { get; set; } = string.Empty;
     public string GosiEmployerId { get; set; } = string.Empty;
     public string QiwaEstablishmentId { get; set; } = string.Empty;
-    public string DefaultCurrency { get; set; } = "AED";
+    public string DefaultCurrency { get; set; } = "USD";
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }

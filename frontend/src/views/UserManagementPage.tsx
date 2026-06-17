@@ -1448,7 +1448,7 @@ function AuthoritiesTab() {
   const [items, setItems] = useState<ApprovalAuthority[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ employeeId: '', authorityScope: '', approverRole: '', amountLimit: '', currency: 'AED', canFinalApprove: false });
+  const [form, setForm] = useState({ employeeId: '', authorityScope: '', approverRole: '', amountLimit: '', currency: 'USD', canFinalApprove: false });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -1463,7 +1463,7 @@ function AuthoritiesTab() {
     setSaving(true); setErr('');
     try {
       await authoritiesApi.create({ employeeId: +form.employeeId, authorityScope: form.authorityScope, approverRole: form.approverRole, amountLimit: form.amountLimit ? +form.amountLimit : undefined, currency: form.currency, canFinalApprove: form.canFinalApprove });
-      setShowCreate(false); setForm({ employeeId: '', authorityScope: '', approverRole: '', amountLimit: '', currency: 'AED', canFinalApprove: false }); load();
+      setShowCreate(false); setForm({ employeeId: '', authorityScope: '', approverRole: '', amountLimit: '', currency: 'USD', canFinalApprove: false }); load();
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
       setErr(msg ?? 'Failed to create authority.');
@@ -1519,7 +1519,7 @@ function AuthoritiesTab() {
             <FormField label="Approver Role *"><input className={inp()} value={form.approverRole} onChange={e => setForm(f => ({ ...f, approverRole: e.target.value }))} placeholder="e.g. HR Manager, Finance Approver" /></FormField>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Amount Limit"><input className={inp()} type="number" value={form.amountLimit} onChange={e => setForm(f => ({ ...f, amountLimit: e.target.value }))} placeholder="Leave empty for no limit" /></FormField>
-              <FormField label="Currency"><input className={inp()} value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))} placeholder="e.g. AED" /></FormField>
+              <FormField label="Currency"><input className={inp()} value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))} placeholder="e.g. USD" /></FormField>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={form.canFinalApprove} onChange={e => setForm(f => ({ ...f, canFinalApprove: e.target.checked }))} />

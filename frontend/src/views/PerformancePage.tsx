@@ -21,11 +21,11 @@ import type {
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—';
-  return new Date(s).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(s).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function fmtCurrency(n: number) {
-  return n.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 function scoreColor(score: number) {

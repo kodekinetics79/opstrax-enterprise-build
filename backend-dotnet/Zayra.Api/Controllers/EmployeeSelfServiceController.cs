@@ -150,7 +150,7 @@ public class EmployeeSelfServiceController : ControllerBase
             Designation: employee?.Designation ?? string.Empty,
             PayYear: run?.Year ?? DateTime.UtcNow.Year,
             PayMonth: run?.Month ?? DateTime.UtcNow.Month,
-            Currency: "AED",
+            Currency: "USD",
             Items: items,
             CompanyName: tenant?.Name ?? "KynexOne Technologies"
         );

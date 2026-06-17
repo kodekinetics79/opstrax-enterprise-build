@@ -72,14 +72,19 @@ input:focus-visible {
 @layer components {
 
   /* ─── Surfaces ─────────────────────────────────────────── */
+  /*
+   * No backdrop-filter here — backdrop-filter creates a new containing block for
+   * position:fixed children, which causes modals rendered inside cards to be
+   * clipped to the card's bounds instead of covering the full viewport.
+   */
   .surface {
-    @apply rounded-xl border border-white/70 bg-white/80 shadow-panel backdrop-blur-sm
-      dark:border-white/[0.07] dark:bg-white/[0.04] dark:backdrop-blur-sm;
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-panel
+      dark:border-white/[0.07] dark:bg-[#0d1225];
   }
 
   .surface-raised {
-    @apply border border-white/80 bg-white/90 shadow-soft backdrop-blur-md
-      dark:border-white/[0.09] dark:bg-white/[0.06];
+    @apply rounded-xl border border-slate-200/90 bg-white shadow-soft
+      dark:border-white/[0.09] dark:bg-[#111827];
   }
 
   .muted-text {
@@ -165,7 +170,9 @@ input:focus-visible {
 
 /* ── Animations ─────────────────────────────────────────────────────────── */
 @keyframes kx-fade-in-up {
-  from { opacity: 0; transform: translateY(10px); }
+  /* Opacity-only — transform would create a CSS stacking context on <main>,
+     breaking position:fixed modals inside page content. */
+  from { opacity: 0; }
   to   { opacity: 1; }
 }
 @keyframes kx-fade-in {

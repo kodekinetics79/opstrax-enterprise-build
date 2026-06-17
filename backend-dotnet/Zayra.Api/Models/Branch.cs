@@ -12,7 +12,7 @@ public class Branch
     public string City { get; set; } = string.Empty;
     public string AddressLine1 { get; set; } = string.Empty;
     public string AddressLine2 { get; set; } = string.Empty;
-    public string TimeZoneId { get; set; } = "Asia/Dubai";
+    public string TimeZoneId { get; set; } = "America/New_York";
     public string LaborOfficeCode { get; set; } = string.Empty;
     public bool IsHeadOffice { get; set; }
     public bool IsActive { get; set; } = true;

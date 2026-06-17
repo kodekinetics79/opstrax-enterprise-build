@@ -54,11 +54,11 @@ const leaveRequestsImportExport = {
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '—';
-  return new Date(s).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(s).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function fmtAmt(n: number) {
-  return n.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function daysBetween(start: string, end: string) {
@@ -698,7 +698,7 @@ function CalendarTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" className={btn.ghost} onClick={() => { const d = new Date(calYear, month - 1); setMonth(d.getMonth()); setCalYear(d.getFullYear()); }}>‹ Prev</button>
-        <p className="text-sm font-semibold text-slate-800 dark:text-white">{new Date(calYear, month).toLocaleDateString('en-AE', { month: 'long', year: 'numeric' })}</p>
+        <p className="text-sm font-semibold text-slate-800 dark:text-white">{new Date(calYear, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
         <button type="button" className={btn.ghost} onClick={() => { const d = new Date(calYear, month + 1); setMonth(d.getMonth()); setCalYear(d.getFullYear()); }}>Next ›</button>
         <input className={`${inp} w-48`} placeholder="Filter by department…" value={dept} onChange={e => setDept(e.target.value)} />
       </div>

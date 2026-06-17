@@ -42,7 +42,7 @@ public class PayrollController : ControllerBase
         var tenantId = GetTenantId();
         if (await _db.SalaryStructures.AnyAsync(x => x.TenantId == tenantId && x.Code == req.Code && !x.IsDeleted, cancellationToken))
             return Conflict(new { message = "Salary structure code already exists." });
-        var structure = new SalaryStructure { TenantId = tenantId, Code = req.Code.Trim(), Name = req.Name.Trim(), Currency = req.Currency ?? "AED", EffectiveDate = req.EffectiveDate, CreatedBy = GetUserId() };
+        var structure = new SalaryStructure { TenantId = tenantId, Code = req.Code.Trim(), Name = req.Name.Trim(), Currency = req.Currency ?? "USD", EffectiveDate = req.EffectiveDate, CreatedBy = GetUserId() };
         _db.SalaryStructures.Add(structure);
         foreach (var component in req.Components ?? Array.Empty<SalaryComponentRequest>())
             _db.SalaryComponents.Add(new SalaryComponent { TenantId = tenantId, SalaryStructureId = structure.Id, Code = component.Code, Name = component.Name, ComponentType = component.ComponentType, CalculationType = component.CalculationType, Amount = component.Amount, Percentage = component.Percentage, IsTaxable = component.IsTaxable });
@@ -61,7 +61,7 @@ public class PayrollController : ControllerBase
         if (!await _db.Employees.AnyAsync(x => x.TenantId == tenantId && x.Id == req.EmployeeId && !x.IsDeleted, cancellationToken)) return BadRequest(new { message = "Employee not found." });
         if (!await _db.SalaryStructures.AnyAsync(x => x.TenantId == tenantId && x.Id == req.SalaryStructureId && !x.IsDeleted, cancellationToken)) return BadRequest(new { message = "Salary structure not found." });
         await _db.EmployeeSalaryStructures.Where(x => x.TenantId == tenantId && x.EmployeeId == req.EmployeeId && x.IsActive).ExecuteUpdateAsync(x => x.SetProperty(p => p.IsActive, false), cancellationToken);
-        var assignment = new EmployeeSalaryStructure { TenantId = tenantId, EmployeeId = req.EmployeeId, SalaryStructureId = req.SalaryStructureId, BasicSalary = req.BasicSalary, HousingAllowance = req.HousingAllowance, TransportAllowance = req.TransportAllowance, FoodAllowance = req.FoodAllowance, MobileAllowance = req.MobileAllowance, OtherAllowance = req.OtherAllowance, FixedDeduction = req.FixedDeduction, EffectiveDate = req.EffectiveDate, Currency = req.Currency ?? "AED", CreatedBy = GetUserId() };
+        var assignment = new EmployeeSalaryStructure { TenantId = tenantId, EmployeeId = req.EmployeeId, SalaryStructureId = req.SalaryStructureId, BasicSalary = req.BasicSalary, HousingAllowance = req.HousingAllowance, TransportAllowance = req.TransportAllowance, FoodAllowance = req.FoodAllowance, MobileAllowance = req.MobileAllowance, OtherAllowance = req.OtherAllowance, FixedDeduction = req.FixedDeduction, EffectiveDate = req.EffectiveDate, Currency = req.Currency ?? "USD", CreatedBy = GetUserId() };
         _db.EmployeeSalaryStructures.Add(assignment);
         await PayrollAudit("payroll.employee_salary.assigned", "EmployeeSalaryStructure", assignment.Id.ToString(), new { employeeId = req.EmployeeId, basicSalary = req.BasicSalary }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
@@ -595,7 +595,7 @@ public class PayrollController : ControllerBase
             : DateTime.UtcNow;
 
         // Currency: batch currency, falling back to the tenant company default (SAR for Saudi).
-        var currency = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "AED"
+        var currency = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
             ? batch.Currency
             : await ResolveCurrencyAsync(tenantId, cancellationToken);
 
@@ -685,7 +685,7 @@ public class PayrollController : ControllerBase
     public async Task<IActionResult> CreateGroup(PayrollGroupRequest req, CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
-        var group = new PayrollGroup { TenantId = tenantId, Code = req.Code.Trim(), Name = req.Name.Trim(), Currency = req.Currency ?? "AED" };
+        var group = new PayrollGroup { TenantId = tenantId, Code = req.Code.Trim(), Name = req.Name.Trim(), Currency = req.Currency ?? "USD" };
         _db.PayrollGroups.Add(group);
         await _db.SaveChangesAsync(cancellationToken);
         return Created($"/api/payroll/groups/{group.Id}", group);
@@ -815,8 +815,8 @@ public class PayrollController : ControllerBase
             rate1To5Years = rate1,
             rateAbove5Years = rate2,
             eosbAmount,
-            currency = salary?.Currency ?? "AED",
-            message = $"Calculated EOSB/Gratuity for {employee.FullName}: {salary?.Currency ?? "AED"} {eosbAmount:N2}"
+            currency = salary?.Currency ?? "USD",
+            message = $"Calculated EOSB/Gratuity for {employee.FullName}: {salary?.Currency ?? "USD"} {eosbAmount:N2}"
         });
     }
 
@@ -912,7 +912,7 @@ public class PayrollController : ControllerBase
                 TenantId = tenantId,
                 Code = code,
                 Name = name,
-                Currency = row.GetValueOrDefault("Currency", "AED"),
+                Currency = row.GetValueOrDefault("Currency", "USD"),
                 EffectiveDate = effectiveDate,
                 CreatedBy = GetUserId()
             });
@@ -1052,7 +1052,7 @@ public class PayrollController : ControllerBase
         var basicSalary    = salary?.BasicSalary ?? employee.Salary ?? 0m;
         var grossSalary    = basicSalary + (salary?.HousingAllowance ?? 0m) + (salary?.TransportAllowance ?? 0m)
                            + (salary?.FoodAllowance ?? 0m) + (salary?.MobileAllowance ?? 0m) + (salary?.OtherAllowance ?? 0m);
-        var currency       = salary?.Currency ?? "AED";
+        var currency       = salary?.Currency ?? "USD";
 
         // Pro-rata salary for partial month
         var lastDay        = req.LastWorkingDay;
@@ -1109,15 +1109,24 @@ public class PayrollController : ControllerBase
         });
     }
 
-    /// <summary>Resolves the tenant's default payroll currency from its primary company (SAR fallback for Saudi context).</summary>
+    /// <summary>
+    /// Resolves the tenant's payroll currency.
+    /// Priority: Company.DefaultCurrency → TenantLocalizationSetting.CurrencyCode → "USD"
+    /// </summary>
     private async Task<string> ResolveCurrencyAsync(Guid tenantId, CancellationToken ct)
     {
         var company = await _db.Companies.AsNoTracking()
             .Where(c => c.TenantId == tenantId)
             .OrderByDescending(c => c.IsActive)
+            .Select(c => c.DefaultCurrency)
             .FirstOrDefaultAsync(ct);
-        var cur = company?.DefaultCurrency;
-        return string.IsNullOrWhiteSpace(cur) ? "SAR" : cur;
+        if (!string.IsNullOrWhiteSpace(company)) return company;
+
+        var loc = await _db.TenantLocalizationSettings.AsNoTracking()
+            .Where(l => l.TenantId == tenantId)
+            .Select(l => l.CurrencyCode)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(loc) ? "USD" : loc;
     }
 
     private Guid GetTenantId() => Guid.Parse(User.FindFirstValue("tenant_id")!);

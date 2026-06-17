@@ -110,7 +110,7 @@ function ContractsTab() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ employeeId: '', contractType: 'Employment', startDate: '', basicSalary: '', currencyCode: 'AED', language: 'en' });
+  const [form, setForm] = useState({ employeeId: '', contractType: 'Employment', startDate: '', basicSalary: '', currencyCode: 'USD', language: 'en' });
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -174,7 +174,7 @@ function ContractsTab() {
               <label htmlFor="contract-currency" className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Currency</label>
               <select id="contract-currency" title="Currency" value={form.currencyCode} onChange={e => setForm(f => ({ ...f, currencyCode: e.target.value }))}
                 className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3 py-1.5 text-sm text-slate-900 dark:text-white">
-                {['AED', 'SAR', 'QAR', 'KWD', 'USD'].map(c => <option key={c}>{c}</option>)}
+                {['USD', 'GBP', 'EUR', 'AED', 'SAR', 'QAR', 'KWD'].map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
           </div>

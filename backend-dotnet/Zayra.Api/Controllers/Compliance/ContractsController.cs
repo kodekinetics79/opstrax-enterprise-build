@@ -148,7 +148,7 @@ public class ContractsController : ControllerBase
             StartDate = req.StartDate,
             EndDate = req.EndDate,
             BasicSalary = req.BasicSalary,
-            CurrencyCode = req.CurrencyCode ?? "AED",
+            CurrencyCode = req.CurrencyCode ?? "USD",
             ContentHtmlEn = htmlEn,
             ContentHtmlAr = htmlAr,
             Language = req.Language ?? "en",

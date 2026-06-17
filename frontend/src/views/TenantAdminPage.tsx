@@ -609,7 +609,7 @@ export default function TenantAdminPage() {
                 onChange={e => setLocalization(p => p ? { ...p, countryCode: e.target.value } : p)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               >
-                {['AE', 'SA', 'QA', 'KW', 'BH', 'OM', 'JO', 'EG', 'PK', 'IN'].map(c => <option key={c}>{c}</option>)}
+                {['US', 'GB', 'CA', 'AU', 'DE', 'FR', 'AE', 'SA', 'QA', 'KW', 'BH', 'OM', 'JO', 'EG', 'PK', 'IN', 'SG', 'PH'].map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div>
@@ -620,7 +620,7 @@ export default function TenantAdminPage() {
                 onChange={e => setLocalization(p => p ? { ...p, currencyCode: e.target.value } : p)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               >
-                {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'EGP', 'PKR', 'INR', 'USD'].map(c => <option key={c}>{c}</option>)}
+                {['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'SGD', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'EGP', 'PKR', 'INR', 'PHP'].map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div>
@@ -644,9 +644,13 @@ export default function TenantAdminPage() {
                 onChange={e => setLocalization(p => p ? { ...p, defaultTimezone: e.target.value } : p)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               >
-                {['Asia/Dubai', 'Asia/Riyadh', 'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Muscat', 'Asia/Doha', 'Africa/Cairo', 'Asia/Karachi', 'Asia/Kolkata'].map(tz => (
-                  <option key={tz}>{tz}</option>
-                ))}
+                {[
+                  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+                  'America/Toronto', 'Europe/London', 'Europe/Berlin', 'Europe/Paris',
+                  'Australia/Sydney', 'Asia/Singapore', 'Asia/Dubai', 'Asia/Riyadh',
+                  'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Muscat', 'Asia/Doha',
+                  'Africa/Cairo', 'Asia/Karachi', 'Asia/Kolkata', 'UTC',
+                ].map(tz => <option key={tz}>{tz}</option>)}
               </select>
             </div>
           </div>

@@ -79,7 +79,7 @@ public class WorkforcePlanningController : ControllerBase
             PlannedHeadcount = req.PlannedHeadcount,
             GapCount = req.PlannedHeadcount - req.CurrentHeadcount,
             BudgetAllocated = req.BudgetAllocated,
-            CurrencyCode = req.CurrencyCode ?? "AED",
+            CurrencyCode = req.CurrencyCode ?? "USD",
             Notes = req.Notes ?? string.Empty,
             CreatedByUserId = GetUserId(),
             CreatedByName = GetUserName(),

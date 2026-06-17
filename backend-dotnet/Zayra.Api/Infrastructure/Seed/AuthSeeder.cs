@@ -439,31 +439,31 @@ public class AuthSeeder : IAuthSeeder
             company = new Company
             {
                 TenantId = tenantId,
-                LegalNameEn = "KynexOne Technologies FZ-LLC",
+                LegalNameEn = "KynexOne Technologies Inc.",
                 LegalNameAr = "كينكس ون للتقنية",
                 TradeName = "KynexOne",
-                CountryCode = "UAE",
+                CountryCode = "US",
                 RegistrationNumber = "KNX-DEMO",
-                DefaultCurrency = "AED"
+                DefaultCurrency = "USD"
             };
             _db.Companies.Add(company);
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var branch = await _db.Branches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Code == "DXB-HQ", cancellationToken);
+        var branch = await _db.Branches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Code == "NYC-HQ", cancellationToken);
         if (branch is null)
         {
             branch = new Branch
             {
                 TenantId = tenantId,
                 CompanyId = company.Id,
-                Code = "DXB-HQ",
-                NameEn = "Dubai Headquarters",
-                NameAr = "المقر الرئيسي دبي",
-                CountryCode = "UAE",
-                City = "Dubai",
-                AddressLine1 = "Business Bay",
-                TimeZoneId = "Asia/Dubai",
+                Code = "NYC-HQ",
+                NameEn = "New York Headquarters",
+                NameAr = "المقر الرئيسي نيويورك",
+                CountryCode = "US",
+                City = "New York",
+                AddressLine1 = "350 Fifth Avenue",
+                TimeZoneId = "America/New_York",
                 IsHeadOffice = true
             };
             _db.Branches.Add(branch);
@@ -623,16 +623,16 @@ public class AuthSeeder : IAuthSeeder
         var seedFlag = await _db.TenantFeatureFlags.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FeatureKey == "demo_seed_version", ct);
         if (seedFlag is not null && int.TryParse(seedFlag.ConfigJson, out var seededVersion) && seededVersion >= DemoSeedVersion) return;
 
-        // ── Abu Dhabi branch ─────────────────────────────────────────────────────
+        // ── Boston branch ────────────────────────────────────────────────────────
         var abuDhabiBranch = await _db.Branches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Code == "AUH-BR", ct);
         if (abuDhabiBranch is null)
         {
             abuDhabiBranch = new Branch
             {
                 TenantId = tenantId, CompanyId = companyId, Code = "AUH-BR",
-                NameEn = "Abu Dhabi Office", NameAr = "مكتب أبوظبي",
-                CountryCode = "UAE", City = "Abu Dhabi", AddressLine1 = "Corniche Road",
-                TimeZoneId = "Asia/Dubai", IsHeadOffice = false
+                NameEn = "Boston Office", NameAr = "مكتب بوسطن",
+                CountryCode = "US", City = "Boston", AddressLine1 = "100 Federal Street",
+                TimeZoneId = "America/New_York", IsHeadOffice = false
             };
             _db.Branches.Add(abuDhabiBranch);
             await _db.SaveChangesAsync(ct);
@@ -692,7 +692,7 @@ public class AuthSeeder : IAuthSeeder
         {
             var existing = await _db.Employees.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeCode == p.Code, ct);
             if (existing is not null) { employees.Add(existing); continue; }
-            var loc = i < 20 ? "Dubai HQ" : "Abu Dhabi";
+            var loc = i < 20 ? "New York HQ" : "Boston";
             var bId = i < 20 ? branchId : abuDhabiBranch.Id;
             var emp = new Employee
             {
@@ -700,7 +700,7 @@ public class AuthSeeder : IAuthSeeder
                 EmployeeCode = p.Code, FullName = p.Name, EnglishName = p.Name,
                 WorkEmail = $"{p.Name.Split(' ')[0].ToLowerInvariant()}.{p.Name.Split(' ')[^1].ToLowerInvariant()}@kynexone.com",
                 Phone = $"+9715{(50000000 + i):00000000}",
-                Gender = p.Gender, Nationality = p.Nationality, CountryCode = "UAE",
+                Gender = p.Gender, Nationality = p.Nationality, CountryCode = "US",
                 Department = p.Dept, Designation = p.Title, JobTitle = p.Title,
                 EmploymentType = p.Type, ContractType = p.Type == "Contract" ? "Fixed-term" : "Permanent",
                 WorkLocation = loc, Status = "Active",
@@ -839,7 +839,7 @@ public class AuthSeeder : IAuthSeeder
         {
             _db.EmployeeComplianceRecords.Add(new EmployeeComplianceRecord
             {
-                TenantId=tenantId, EmployeeId=employees[c.EmpIdx].Id, CountryCode="UAE",
+                TenantId=tenantId, EmployeeId=employees[c.EmpIdx].Id, CountryCode="US",
                 FieldKey=c.Key, FieldLabel=c.Label, FieldValue=c.Value,
                 ExpiryDate=today.AddDays(c.ExpiryDays), IsRequired=true
             });
@@ -849,11 +849,11 @@ public class AuthSeeder : IAuthSeeder
         // ── Recruitment: job openings + candidates (per-record top-up) ───────────
         var openingDefs = new[]
         {
-            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0001", Title="Senior Software Engineer",    DepartmentName="Engineering",             EmploymentType="Full-Time", HeadCount=2, FilledCount=0, Location="Dubai HQ",   SalaryFrom=18000, SalaryTo=26000, Status="Open",       Description="Build and scale platform microservices.", PublishedAtUtc=DateTime.UtcNow.AddDays(-12) },
-            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0002", Title="Payroll Specialist",          DepartmentName="Finance",                  EmploymentType="Full-Time", HeadCount=1, FilledCount=0, Location="Dubai HQ",   SalaryFrom=11000, SalaryTo=15000, Status="Open",       Description="Own monthly WPS payroll processing.",     PublishedAtUtc=DateTime.UtcNow.AddDays(-6) },
-            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0003", Title="Sales Account Executive",     DepartmentName="Sales",                    EmploymentType="Full-Time", HeadCount=3, FilledCount=1, Location="Abu Dhabi",  SalaryFrom=12000, SalaryTo=18000, Status="InProgress", Description="Drive enterprise SaaS sales in GCC.",     PublishedAtUtc=DateTime.UtcNow.AddDays(-20) },
-            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0004", Title="HR Business Partner",         DepartmentName="Human Resources",          EmploymentType="Full-Time", HeadCount=1, FilledCount=0, Location="Dubai HQ",   SalaryFrom=16000, SalaryTo=21000, Status="Open",       Description="Strategic HR partner for tech divisions.",PublishedAtUtc=DateTime.UtcNow.AddDays(-4) },
-            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0005", Title="Cloud Infrastructure Engineer",DepartmentName="Information Technology",  EmploymentType="Full-Time", HeadCount=2, FilledCount=0, Location="Dubai HQ",   SalaryFrom=17000, SalaryTo=24000, Status="Open",       Description="Manage Azure/AWS cloud workloads.",       PublishedAtUtc=DateTime.UtcNow.AddDays(-9) },
+            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0001", Title="Senior Software Engineer",    DepartmentName="Engineering",             EmploymentType="Full-Time", HeadCount=2, FilledCount=0, Location="New York HQ",   SalaryFrom=18000, SalaryTo=26000, Status="Open",       Description="Build and scale platform microservices.", PublishedAtUtc=DateTime.UtcNow.AddDays(-12) },
+            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0002", Title="Payroll Specialist",          DepartmentName="Finance",                  EmploymentType="Full-Time", HeadCount=1, FilledCount=0, Location="New York HQ",   SalaryFrom=11000, SalaryTo=15000, Status="Open",       Description="Own monthly WPS payroll processing.",     PublishedAtUtc=DateTime.UtcNow.AddDays(-6) },
+            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0003", Title="Sales Account Executive",     DepartmentName="Sales",                    EmploymentType="Full-Time", HeadCount=3, FilledCount=1, Location="Boston",  SalaryFrom=12000, SalaryTo=18000, Status="InProgress", Description="Drive enterprise SaaS sales in North America.",     PublishedAtUtc=DateTime.UtcNow.AddDays(-20) },
+            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0004", Title="HR Business Partner",         DepartmentName="Human Resources",          EmploymentType="Full-Time", HeadCount=1, FilledCount=0, Location="New York HQ",   SalaryFrom=16000, SalaryTo=21000, Status="Open",       Description="Strategic HR partner for tech divisions.",PublishedAtUtc=DateTime.UtcNow.AddDays(-4) },
+            new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0005", Title="Cloud Infrastructure Engineer",DepartmentName="Information Technology",  EmploymentType="Full-Time", HeadCount=2, FilledCount=0, Location="New York HQ",   SalaryFrom=17000, SalaryTo=24000, Status="Open",       Description="Manage Azure/AWS cloud workloads.",       PublishedAtUtc=DateTime.UtcNow.AddDays(-9) },
             new JobOpening { TenantId=tenantId, JobCode="JOB-2026-0006", Title="Operations Supervisor",       DepartmentName="Operations",               EmploymentType="Full-Time", HeadCount=1, FilledCount=0, Location="Sharjah",    SalaryFrom=10000, SalaryTo=14000, Status="Open",       Description="Oversee warehouse operations.",           PublishedAtUtc=DateTime.UtcNow.AddDays(-15) }
         };
         var existingJobCodes = await _db.JobOpenings.Where(x => x.TenantId == tenantId).Select(x => x.JobCode).ToListAsync(ct);
@@ -1149,7 +1149,7 @@ public class AuthSeeder : IAuthSeeder
                 (9,  "Grow marketing-qualified leads",          "Leads",      400, 310),
                 (10, "Resolve engineering tickets within SLA",  "Percent",    95, 91),
                 (12, "Automate 6 finance reports",              "Reports",    6,  4),
-                (14, "Increase sales pipeline value (AED m)",   "Million",    10, 6),
+                (14, "Increase sales pipeline value (USD m)",   "Million",    10, 6),
                 (8,  "Maintain IT uptime",                      "Percent",    99, 99),
                 (5,  "Cut order fulfilment time",               "Hours",      24, 30),
             };

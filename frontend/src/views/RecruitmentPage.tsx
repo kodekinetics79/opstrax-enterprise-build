@@ -50,7 +50,7 @@ function ago(utc: string) {
 
 function fmt(n: number | null | undefined) {
   if (n == null) return '—';
-  return n.toLocaleString('en-AE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -1203,7 +1203,7 @@ function WorkforcePlanningTab() {
   const [plans, setPlans] = useState<WorkforcePlan[]>([]);
   const [summary, setSummary] = useState<{ totalPlans: number; totalGap: number; totalBudget: number; approved: number } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'AED', notes: '' });
+  const [form, setForm] = useState({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'USD', notes: '' });
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -1217,7 +1217,7 @@ function WorkforcePlanningTab() {
 
   const save = async () => {
     setSaving(true);
-    try { await workforcePlanningApi.create(form); setShowCreate(false); setForm({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'AED', notes: '' }); load(); } catch {} finally { setSaving(false); }
+    try { await workforcePlanningApi.create(form); setShowCreate(false); setForm({ planName: '', planYear: new Date().getFullYear(), departmentName: '', currentHeadcount: 0, plannedHeadcount: 0, budgetAllocated: 0, currencyCode: 'USD', notes: '' }); load(); } catch {} finally { setSaving(false); }
   };
 
   const STATUS_COLORS: Record<string, string> = {

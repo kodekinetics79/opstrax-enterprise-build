@@ -182,7 +182,7 @@ function CompaniesTab() {
           </FormField>
           <FormField label="Default Currency" required>
             <select value={form.defaultCurrency} onChange={(e) => f('defaultCurrency', e.target.value)} className="select w-full">
-              {['AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'USD'].map((c) => <option key={c}>{c}</option>)}
+              {['USD', 'GBP', 'EUR', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR'].map((c) => <option key={c}>{c}</option>)}
             </select>
           </FormField>
           <FormField label="Status">
@@ -326,7 +326,7 @@ function BranchesTab({ companies }: { companies: CompanyDto[] }) {
             <input type="text" value={form.city} onChange={(e) => f('city', e.target.value)} className="input w-full" placeholder="Dubai" />
           </FormField>
           <FormField label="Time Zone" required>
-            <input type="text" value={form.timeZoneId} onChange={(e) => f('timeZoneId', e.target.value)} className="input w-full" placeholder="Asia/Dubai" />
+            <input type="text" value={form.timeZoneId} onChange={(e) => f('timeZoneId', e.target.value)} className="input w-full" placeholder="America/New_York" />
           </FormField>
           <FormField label="Status">
             <select value={form.isActive ? 'true' : 'false'} onChange={(e) => f('isActive', e.target.value === 'true')} className="select w-full">
@@ -1147,9 +1147,9 @@ function GCCSettingsTab() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<GCCComplianceSetting | null>(null);
   const [form, setForm] = useState<Partial<GCCComplianceSetting> & { countryCode: string }>({
-    countryCode: 'AE', wpsEnabled: false, wpsAgentId: '', wpsMolCode: '', sifEnabled: false,
+    countryCode: 'US', wpsEnabled: false, wpsAgentId: '', wpsMolCode: '', sifEnabled: false,
     eosbEnabled: true, eosbYears1To5Rate: 0.5, eosbYearsAbove5Rate: 1.0, eosbMinYears: 1,
-    workWeek: 'Sun-Thu', weekendDays: 'Fri,Sat', visaTrackingEnabled: true, visaAlertDays: 30,
+    workWeek: 'Mon-Fri', weekendDays: 'Sat,Sun', visaTrackingEnabled: true, visaAlertDays: 30,
     iqamaRequired: false, iqamaAlertDays: 30, emiratesIdRequired: false,
     ramadanHoursEnabled: false, ramadanReducedHoursPerDay: 2,
   });
@@ -1165,7 +1165,7 @@ function GCCSettingsTab() {
 
   const openNew = () => {
     setEditing(null);
-    setForm({ countryCode: 'AE', wpsEnabled: false, wpsAgentId: '', wpsMolCode: '', sifEnabled: false, eosbEnabled: true, eosbYears1To5Rate: 0.5, eosbYearsAbove5Rate: 1.0, eosbMinYears: 1, workWeek: 'Sun-Thu', weekendDays: 'Fri,Sat', visaTrackingEnabled: true, visaAlertDays: 30, iqamaRequired: false, iqamaAlertDays: 30, emiratesIdRequired: false, ramadanHoursEnabled: false, ramadanReducedHoursPerDay: 2 });
+    setForm({ countryCode: 'US', wpsEnabled: false, wpsAgentId: '', wpsMolCode: '', sifEnabled: false, eosbEnabled: true, eosbYears1To5Rate: 0.5, eosbYearsAbove5Rate: 1.0, eosbMinYears: 1, workWeek: 'Mon-Fri', weekendDays: 'Sat,Sun', visaTrackingEnabled: true, visaAlertDays: 30, iqamaRequired: false, iqamaAlertDays: 30, emiratesIdRequired: false, ramadanHoursEnabled: false, ramadanReducedHoursPerDay: 2 });
     setError(''); setModalOpen(true);
   };
   const openEdit = (s: GCCComplianceSetting) => {
@@ -1215,7 +1215,7 @@ function GCCSettingsTab() {
         <FormError error={error} />
         <div className="grid grid-cols-2 gap-3 text-sm">
           <FormField label="Country Code" required><input value={form.countryCode} onChange={(e) => f('countryCode', e.target.value)} className="input w-full" placeholder="AE" maxLength={5} disabled={!!editing} /></FormField>
-          <FormField label="Work Week"><input value={form.workWeek ?? ''} onChange={(e) => f('workWeek', e.target.value)} className="input w-full" placeholder="Sun-Thu" /></FormField>
+          <FormField label="Work Week"><input value={form.workWeek ?? ''} onChange={(e) => f('workWeek', e.target.value)} className="input w-full" placeholder="Mon-Fri" /></FormField>
           <FormField label="Weekend Days"><input value={form.weekendDays ?? ''} onChange={(e) => f('weekendDays', e.target.value)} className="input w-full" placeholder="Fri,Sat" /></FormField>
           <div />
 
@@ -1334,7 +1334,7 @@ function LocationsTab() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminLocation | null>(null);
-  const [form, setForm] = useState({ code: '', nameEn: '', nameAr: '', addressLine1: '', city: '', countryCode: 'AE', postalCode: '', latitude: '', longitude: '', geofenceRadiusMeters: '' });
+  const [form, setForm] = useState({ code: '', nameEn: '', nameAr: '', addressLine1: '', city: '', countryCode: 'US', postalCode: '', latitude: '', longitude: '', geofenceRadiusMeters: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -1346,7 +1346,7 @@ function LocationsTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const emptyForm = () => ({ code: '', nameEn: '', nameAr: '', addressLine1: '', city: '', countryCode: 'AE', postalCode: '', latitude: '', longitude: '', geofenceRadiusMeters: '' });
+  const emptyForm = () => ({ code: '', nameEn: '', nameAr: '', addressLine1: '', city: '', countryCode: 'US', postalCode: '', latitude: '', longitude: '', geofenceRadiusMeters: '' });
   const openNew = () => { setEditing(null); setForm(emptyForm()); setError(''); setModalOpen(true); };
   const openEdit = (l: AdminLocation) => {
     setEditing(l);
@@ -1807,7 +1807,7 @@ function FormError({ error }: { error: string }) {
 const emptyCompany = (): CompanyRequest => ({
   legalNameEn: '', legalNameAr: '', tradeName: '', countryCode: '', registrationNumber: '',
   taxNumber: '', wpsEmployerId: '', gosiEmployerId: '', qiwaEstablishmentId: '',
-  defaultCurrency: 'AED', isActive: true,
+  defaultCurrency: 'USD', isActive: true,
 });
 
 const emptyBranch = (companyId: string): BranchRequest => ({
