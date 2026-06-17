@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import {
-  ShieldCheck, AlertTriangle, CheckCircle, XCircle, RefreshCw, Banknote, FileWarning,
+  ShieldCheck, AlertTriangle, CheckCircle, XCircle, RefreshCw, Banknote, FileWarning, Settings,
 } from 'lucide-react';
 import client from '../api/client';
+import { SaudiComplianceConfig } from './SaudiComplianceConfig';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -92,9 +93,9 @@ function ProgressBar({ percent }: { percent: number }) {
   );
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
-export function SaudiComplianceDashboard() {
+function DashboardTab() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +118,6 @@ export function SaudiComplianceDashboard() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="h-8 w-64 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
         <div className="grid gap-4 lg:grid-cols-3">
           {[0, 1, 2].map(i => <div key={i} className="surface h-48 animate-pulse p-4" />)}
         </div>
@@ -141,11 +141,8 @@ export function SaudiComplianceDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-6 w-6 text-sapphire" />
-          <h1 className="text-xl font-semibold text-slate-800 dark:text-slate-100">Saudi Compliance</h1>
-        </div>
+      <div className="flex items-end justify-between">
+        <div />
         <button type="button" onClick={load} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700">
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
@@ -263,6 +260,51 @@ export function SaudiComplianceDashboard() {
           </p>
         </section>
       </div>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
+type Tab = 'dashboard' | 'configure';
+
+const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: ShieldCheck },
+  { id: 'configure', label: 'Configure', icon: Settings },
+];
+
+export function SaudiComplianceDashboard() {
+  const [tab, setTab] = useState<Tab>('dashboard');
+
+  return (
+    <div className="space-y-5">
+      {/* Page header */}
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="h-6 w-6 text-sapphire dark:text-cyanAccent" />
+        <h1 className="text-xl font-semibold text-slate-800 dark:text-slate-100">Saudi Compliance</h1>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-slate-200 dark:border-white/[0.08]">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`flex items-center gap-2 border-b-2 px-4 pb-2.5 pt-2 text-sm font-semibold transition ${
+              tab === id
+                ? 'border-sapphire text-sapphire dark:border-cyanAccent dark:text-cyanAccent'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'dashboard' && <DashboardTab />}
+      {tab === 'configure' && <SaudiComplianceConfig />}
     </div>
   );
 }
