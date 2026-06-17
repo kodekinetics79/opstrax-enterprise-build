@@ -264,7 +264,13 @@ using (var scope = app.Services.CreateScope())
         await dbContext.Database.EnsureCreatedAsync();
         await MissingTableCreator.EnsureAsync(dbContext, logger);
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
-        await scope.ServiceProvider.GetRequiredService<IAuthSeeder>().SeedAsync();
+        var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
+        await authSeeder.SeedAsync();
+        await DemoDataSeeder.SeedAsync(
+            dbContext,
+            scope.ServiceProvider.GetRequiredService<IPasswordHasher>(),
+            authSeeder,
+            logger);
     }
     catch (Exception ex)
     {

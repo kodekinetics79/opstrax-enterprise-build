@@ -125,9 +125,14 @@ public class SaudiComplianceController : ControllerBase
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // Absent flag = feature enabled by default (see FeaturesController design).
+    // Block only if every gating feature is explicitly disabled.
     private async Task<bool> HasAnyGatingFeatureAsync(Guid tenantId, CancellationToken ct)
-        => await _db.TenantFeatureFlags
-            .AnyAsync(f => f.TenantId == tenantId && GatingFeatures.Contains(f.FeatureKey) && f.IsEnabled, ct);
+    {
+        var explicitlyDisabled = await _db.TenantFeatureFlags
+            .CountAsync(f => f.TenantId == tenantId && GatingFeatures.Contains(f.FeatureKey) && !f.IsEnabled, ct);
+        return explicitlyDisabled < GatingFeatures.Length;
+    }
 
     private Guid RequireTenant()
         => Guid.Parse(User.FindFirstValue("tenant_id") ?? throw new UnauthorizedAccessException("Tenant claim missing."));
