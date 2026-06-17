@@ -4,22 +4,36 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle, BarChart3, CheckCircle2, Clock,
-  Eye, EyeOff, FileCheck, KeyRound, Lock, Mail,
-  ShieldCheck, TrendingUp, Users, Zap,
+  Eye, EyeOff, FileText, KeyRound, Lock, Mail,
+  Settings, ShieldCheck, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { authApi } from '../api/auth';
 import { Logo } from '../components/Logo';
 
-// Mock data for the product preview card
 const WEEK = [
-  { d: 'Mon', v: 96 }, { d: 'Tue', v: 99 }, { d: 'Wed', v: 97 },
-  { d: 'Thu', v: 98 }, { d: 'Fri', v: 94 },
+  { d: 'M', v: 96 }, { d: 'T', v: 99 }, { d: 'W', v: 97 },
+  { d: 'T', v: 98 }, { d: 'F', v: 94 }, { d: 'S', v: 88 }, { d: 'S', v: 91 },
 ];
 
-const PILLS = ['Saudi Labour Law', 'UAE MoHRE', 'WPS Ready', 'Multi-branch', 'AI Insights', 'Cloud-native'];
+const ACTIVITY = [
+  { name: 'Ahmad K.', action: 'Clocked in',       time: '8:02 AM', dot: 'bg-emerald-400' },
+  { name: 'Sarah M.', action: 'Leave approved',   time: '8:15 AM', dot: 'bg-blue-400'    },
+  { name: 'Payroll',  action: 'Run completed',    time: '7:00 AM', dot: 'bg-amber-400'   },
+];
 
-type LoginMode = 'login' | 'forgot' | 'reset';
+const PILLS = ['Saudi Labour Law', 'UAE MoHRE', 'WPS Compliant', 'ISO 27001', 'Multi-branch', 'AI-powered'];
+
+const NAV_ICONS = [
+  { icon: BarChart3,  active: true  },
+  { icon: Users,      active: false },
+  { icon: Clock,      active: false },
+  { icon: FileText,   active: false },
+  { icon: ShieldCheck,active: false },
+  { icon: Settings,   active: false },
+];
+
+type Mode = 'login' | 'forgot' | 'reset';
 
 export function LoginPage() {
   const { login }    = useAuth();
@@ -27,14 +41,14 @@ export function LoginPage() {
   const searchParams = useSearchParams();
   const from         = searchParams?.get('from') ?? '/dashboard';
 
-  const [mode,         setMode]         = useState<LoginMode>('login');
+  const [mode,         setMode]         = useState<Mode>('login');
   const [email,        setEmail]        = useState('');
   const [password,     setPassword]     = useState('');
   const [tenantSlug,   setTenantSlug]   = useState('');
   const [tenantLocked, setTenantLocked] = useState(false);
   const [error,        setError]        = useState('');
   const [info,         setInfo]         = useState('');
-  const [isLoading,    setIsLoading]    = useState(false);
+  const [loading,      setLoading]      = useState(false);
   const [showPw,       setShowPw]       = useState(false);
   const [forgotEmail,  setForgotEmail]  = useState('');
   const [resetToken,   setResetToken]   = useState('');
@@ -51,378 +65,451 @@ export function LoginPage() {
   }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setIsLoading(true);
+    e.preventDefault(); setError(''); setLoading(true);
     try { await login(email, password, tenantSlug); router.replace(from); }
     catch { setError('Invalid credentials. Check your email, password, and workspace.'); }
-    finally { setIsLoading(false); }
+    finally { setLoading(false); }
   };
 
   const handleForgot = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setIsLoading(true);
+    e.preventDefault(); setError(''); setLoading(true);
     try {
       const res = await authApi.forgotPassword(forgotEmail || email, tenantSlug || undefined);
       if (res.resetToken) { setResetToken(res.resetToken); setMode('reset'); }
       else setInfo(res.message ?? 'Check your email for a reset link.');
-    } catch (err: any) { setError(err.response?.data?.message ?? 'Could not process request.'); }
-    finally { setIsLoading(false); }
+    } catch (err: any) { setError(err.response?.data?.message ?? 'Request failed.'); }
+    finally { setLoading(false); }
   };
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault(); setError('');
     if (newPw !== confirmPw) { setError('Passwords do not match.'); return; }
-    if (newPw.length < 10)   { setError('Password must be at least 10 characters.'); return; }
-    setIsLoading(true);
+    if (newPw.length < 10)   { setError('Minimum 10 characters required.'); return; }
+    setLoading(true);
     try {
       await authApi.resetPassword(forgotEmail || email, resetToken, newPw, tenantSlug || undefined);
-      setInfo('Password updated. You can now sign in.');
+      setInfo('Password updated. Sign in below.');
       setMode('login');
     } catch (err: any) { setError(err.response?.data?.message ?? 'Reset failed. Token may have expired.'); }
-    finally { setIsLoading(false); }
+    finally { setLoading(false); }
   };
 
-  const go = (m: LoginMode) => {
-    setError(''); setInfo(''); setMode(m);
-    if (m === 'forgot' && email) setForgotEmail(email);
-  };
+  const go = (m: Mode) => { setError(''); setInfo(''); setMode(m); if (m === 'forgot' && email) setForgotEmail(email); };
 
   return (
     <>
       <style>{`
-        @keyframes kx-blob  { 0%,100%{transform:translate(0,0) scale(1)}   33%{transform:translate(18px,-12px) scale(1.04)}  66%{transform:translate(-10px,14px) scale(0.97)} }
-        @keyframes kx-blob2 { 0%,100%{transform:translate(0,0) scale(1)}   40%{transform:translate(-14px,10px) scale(1.05)} 70%{transform:translate(12px,-8px) scale(0.96)} }
-        @keyframes kx-lift  { 0%,100%{transform:translateY(0)}  50%{transform:translateY(-8px)} }
-        @keyframes kx-bar   { from{opacity:0;transform:scaleY(0)} to{opacity:1;transform:scaleY(1)} }
-        .kx-b1{animation:kx-blob  18s ease-in-out infinite}
-        .kx-b2{animation:kx-blob2 22s ease-in-out infinite}
-        .kx-lf{animation:kx-lift   6s ease-in-out infinite}
-        .kx-bar{animation:kx-bar 0.7s ease-out both;transform-origin:bottom}
-        .kx-dots{background-image:radial-gradient(circle,rgba(120,160,255,0.5) 1px,transparent 1px);background-size:32px 32px}
+        @keyframes kx-grid-shift { from{background-position:0 0} to{background-position:44px 44px} }
+        @keyframes kx-window-in  { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes kx-bar-in     { from{transform:scaleY(0)} to{transform:scaleY(1)} }
+        @keyframes kx-pulse-dot  { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        .kx-grid {
+          background-image:
+            linear-gradient(rgba(100,150,255,0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(100,150,255,0.04) 1px, transparent 1px);
+          background-size: 44px 44px;
+        }
+        .kx-win  { animation: kx-window-in 0.7s ease-out both }
+        .kx-bar  { animation: kx-bar-in 0.4s ease-out both; transform-origin: bottom }
+        .kx-dot  { animation: kx-pulse-dot 2s ease-in-out infinite }
       `}</style>
 
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen font-sans">
 
-        {/* ══════════════ LEFT — product story panel ══════════════════════════ */}
-        <div className="relative hidden overflow-hidden lg:flex lg:w-[56%]">
+        {/* ════════════════ LEFT — product showcase ══════════════════════════ */}
+        <div className="relative hidden overflow-hidden lg:flex lg:w-[58%] flex-col bg-[#060c1a]">
 
-          {/* Base gradient */}
-          <div className="absolute inset-0 bg-gradient-to-br from-[#020818] via-[#061428] to-[#030c20]" />
+          {/* Subtle grid pattern */}
+          <div className="kx-grid absolute inset-0" />
 
-          {/* Dot grid */}
-          <div className="kx-dots absolute inset-0 opacity-[0.028]" />
+          {/* Single deep-blue gradient radial — no blobs, no spinning rings */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_30%_50%,rgba(37,99,235,0.12),transparent)]" />
 
-          {/* Atmospheric glow blobs — stay behind everything */}
-          <div className="kx-b1 absolute -left-48 -top-48 h-[600px] w-[600px] rounded-full bg-blue-700/[0.18] blur-[120px]" />
-          <div className="kx-b2 absolute -bottom-32 -right-32 h-[500px] w-[500px] rounded-full bg-indigo-700/[0.14] blur-[100px]" />
-          <div className="absolute left-1/3 top-1/2 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-cyan-700/[0.09] blur-[80px]" />
+          {/* Faint KYNEXONE stamp — bottom right */}
+          <p className="pointer-events-none absolute bottom-6 right-8 select-none text-[72px] font-black tracking-tighter text-white opacity-[0.015] -rotate-3">KYNEXONE</p>
 
-          {/* Faint KYNEXONE watermark */}
-          <div className="pointer-events-none absolute inset-0 flex items-end justify-end overflow-hidden select-none pb-6 pr-8">
-            <p className="text-[88px] font-black tracking-tighter text-white opacity-[0.018] -rotate-6 whitespace-nowrap">KYNEXONE</p>
-          </div>
+          {/* ── Content ────────────────────────────────────────────────────── */}
+          <div className="relative z-10 flex h-full flex-col justify-between gap-6 px-12 py-10">
 
-          {/* ── Main content ─────────────────────────────────────────────────── */}
-          <div className="relative z-10 flex w-full flex-col justify-between px-12 py-10">
-
-            {/* Logo + tagline */}
+            {/* Logo row */}
             <div className="flex items-center gap-3">
               <Logo size="lg" />
-              <div className="h-5 w-px bg-white/[0.12]" />
-              <span className="text-xs font-semibold tracking-[0.2em] text-blue-300/50 uppercase">Workforce Intelligence</span>
+              <div className="h-5 w-px bg-white/[0.1]" />
+              <span className="text-[10px] font-bold tracking-[0.22em] uppercase text-blue-400/50">
+                Enterprise Workforce Platform
+              </span>
             </div>
 
             {/* Headline */}
-            <div className="mt-2">
-              <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/[0.07] px-3 py-1 text-[11px] font-semibold tracking-widest text-cyan-400/80 uppercase">
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                GCC Enterprise Platform
-              </p>
-              <h1 className="text-[52px] font-black leading-[1.04] tracking-tight">
-                <span className="text-white">Everything your</span><br />
-                <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-indigo-400 bg-clip-text text-transparent">workforce needs.</span>
+            <div className="shrink-0">
+              <h1 className="text-[46px] font-black leading-[1.06] tracking-tight">
+                <span className="text-white">The complete workforce</span><br />
+                <span className="bg-gradient-to-r from-blue-400 via-cyan-300 to-sky-300 bg-clip-text text-transparent">
+                  platform for GCC.
+                </span>
               </h1>
-              <p className="mt-3 max-w-[380px] text-[15px] leading-relaxed text-blue-200/40">
-                HR, payroll, attendance &amp; compliance — unified for GCC enterprises. Saudi, UAE, Qatar labour law built in.
+              <p className="mt-3 max-w-[400px] text-[14px] leading-relaxed text-slate-400">
+                HR, payroll, attendance and compliance — unified. Built for Saudi, UAE and GCC labour law from day one.
               </p>
             </div>
 
-            {/* ── Dashboard preview card — the hero visual ─────────────────── */}
-            <div className="kx-lf rounded-2xl border border-white/[0.10] bg-white/[0.05] p-5 shadow-[0_32px_80px_rgba(0,0,0,0.5)] backdrop-blur-2xl ring-1 ring-white/[0.04]">
+            {/* ── App window mockup — the product speaks for itself ─────── */}
+            <div className="kx-win flex-1 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a1525] shadow-[0_32px_80px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.04)]">
 
-              {/* Card header */}
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">Live Workforce Overview</p>
-                  <p className="mt-0.5 text-xs text-white/20">Monday, Jun 16 · KSA time zone</p>
+              {/* Browser-style chrome bar */}
+              <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#070e1c] px-4 py-2.5">
+                <div className="flex gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
                 </div>
-                <div className="flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/[0.08] px-2.5 py-1">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                  <span className="text-[11px] font-medium text-emerald-400">Live</span>
-                </div>
-              </div>
-
-              {/* KPI row */}
-              <div className="mb-4 grid grid-cols-3 gap-2.5">
-                {[
-                  { label: 'Active Employees', value: '347', sub: '↑ 12 today', color: 'text-emerald-300', bg: 'bg-emerald-500/[0.08]', border: 'border-emerald-500/15', icon: Users },
-                  { label: 'Attendance Rate',  value: '98.2%', sub: 'monthly avg', color: 'text-cyan-300', bg: 'bg-cyan-500/[0.08]', border: 'border-cyan-500/15', icon: TrendingUp },
-                  { label: 'Payroll Processed', value: '$2.4M', sub: 'on time', color: 'text-amber-300', bg: 'bg-amber-500/[0.08]', border: 'border-amber-500/15', icon: CheckCircle2 },
-                ].map(({ label, value, sub, color, bg, border, icon: Icon }) => (
-                  <div key={label} className={`rounded-xl border ${border} ${bg} p-3`}>
-                    <Icon className={`mb-2 h-4 w-4 ${color} opacity-70`} />
-                    <p className={`text-[22px] font-black leading-none ${color}`}>{value}</p>
-                    <p className="mt-1 text-[10px] font-medium text-white/30 leading-tight">{label}</p>
-                    <p className="mt-0.5 text-[10px] text-white/20">{sub}</p>
+                <div className="flex flex-1 justify-center">
+                  <div className="flex items-center gap-2 rounded-md bg-white/[0.05] px-3 py-1">
+                    <div className="kx-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-[11px] text-white/25">app.kynexone.com / dashboard</span>
                   </div>
-                ))}
+                </div>
+                <div className="h-6 w-6 overflow-hidden rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 ring-1 ring-white/[0.15]" />
               </div>
 
-              {/* Attendance sparkline */}
-              <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3">
-                <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-white/25">Attendance — This Week</p>
-                <div className="flex items-end gap-2 h-14">
-                  {WEEK.map(({ d, v }, i) => (
-                    <div key={d} className="flex flex-1 flex-col items-center gap-1.5">
-                      <p className="text-[9px] font-semibold text-white/35">{v}%</p>
-                      <div
-                        className="kx-bar w-full rounded-t-sm bg-gradient-to-t from-cyan-500/40 to-cyan-400/70"
-                        style={{ height: `${Math.round((v / 100) * 44)}px`, animationDelay: `${i * 80}ms` }}
-                      />
-                      <p className="text-[9px] text-white/20">{d}</p>
+              {/* App layout */}
+              <div className="flex h-full">
+
+                {/* Narrow sidebar */}
+                <div className="flex flex-col items-center gap-1 border-r border-white/[0.05] bg-[#070e1c] px-2 py-3">
+                  {NAV_ICONS.map(({ icon: Icon, active }, i) => (
+                    <div key={i} className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                      active
+                        ? 'bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/20'
+                        : 'text-white/[0.18] hover:bg-white/[0.04] hover:text-white/30'
+                    }`}>
+                      <Icon className="h-3.5 w-3.5" />
                     </div>
                   ))}
                 </div>
-              </div>
 
-              {/* Status strip */}
-              <div className="flex gap-2">
-                {[
-                  { icon: Clock,     text: '24 leave pending',  color: 'text-violet-400', bg: 'bg-violet-500/[0.08]', border: 'border-violet-500/15' },
-                  { icon: FileCheck, text: 'WPS 100%',           color: 'text-indigo-400', bg: 'bg-indigo-500/[0.08]', border: 'border-indigo-500/15' },
-                  { icon: Zap,       text: '18 new hires',       color: 'text-teal-400',   bg: 'bg-teal-500/[0.08]',   border: 'border-teal-500/15'   },
-                  { icon: ShieldCheck, text: '3 AI alerts',      color: 'text-rose-400',   bg: 'bg-rose-500/[0.08]',   border: 'border-rose-500/15'   },
-                ].map(({ icon: Icon, text, color, bg, border }) => (
-                  <div key={text} className={`flex items-center gap-1.5 rounded-lg border ${border} ${bg} px-2 py-1.5`}>
-                    <Icon className={`h-3 w-3 ${color}`} />
-                    <span className="text-[10px] font-medium text-white/50 whitespace-nowrap">{text}</span>
+                {/* Main dashboard content */}
+                <div className="flex-1 overflow-hidden p-4">
+
+                  {/* Page header */}
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-white/30">Dashboard</p>
+                      <p className="mt-0.5 text-sm font-bold text-white/80">Workforce Overview</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/[0.08] px-2.5 py-1 ring-1 ring-emerald-500/20">
+                      <div className="kx-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      <span className="text-[10px] font-semibold text-emerald-400">Live</span>
+                    </div>
                   </div>
-                ))}
+
+                  {/* KPI tiles */}
+                  <div className="mb-3 grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Active Employees', value: '347',   sub: '↑ 12 today',   color: 'text-emerald-300', ring: 'ring-emerald-500/15', bg: 'bg-emerald-500/[0.06]', Icon: Users       },
+                      { label: 'Attendance Rate',  value: '98.2%', sub: 'Monthly avg',   color: 'text-cyan-300',    ring: 'ring-cyan-500/15',    bg: 'bg-cyan-500/[0.06]',    Icon: TrendingUp   },
+                      { label: 'Payroll',          value: '$2.4M', sub: 'On time · Jun', color: 'text-amber-300',   ring: 'ring-amber-500/15',   bg: 'bg-amber-500/[0.06]',   Icon: CheckCircle2 },
+                    ].map(({ label, value, sub, color, ring, bg, Icon }) => (
+                      <div key={label} className={`${bg} rounded-xl p-3 ring-1 ${ring}`}>
+                        <Icon className={`mb-2 h-3.5 w-3.5 ${color} opacity-60`} />
+                        <p className={`text-[20px] font-black leading-none ${color}`}>{value}</p>
+                        <p className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-white/25">{label}</p>
+                        <p className="text-[9px] text-white/15">{sub}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Attendance sparkline */}
+                  <div className="mb-3 rounded-xl bg-white/[0.025] p-3 ring-1 ring-white/[0.04]">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-white/20">Attendance — This Week</p>
+                      <p className="text-[9px] text-white/15">Mon–Sun</p>
+                    </div>
+                    <div className="flex items-end gap-1.5 h-[36px]">
+                      {WEEK.map(({ d, v }, i) => (
+                        <div key={i} className="flex flex-1 flex-col items-center gap-1">
+                          <div
+                            className="kx-bar w-full rounded-t-[2px] bg-gradient-to-t from-blue-500/50 to-cyan-400/70"
+                            style={{ height: `${Math.round((v / 100) * 28)}px`, animationDelay: `${i * 55}ms` }}
+                          />
+                          <p className="text-[7px] text-white/15">{d}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recent activity */}
+                  <div className="space-y-1">
+                    {ACTIVITY.map(({ name, action, time, dot }) => (
+                      <div key={name} className="flex items-center gap-2.5 rounded-lg bg-white/[0.02] px-2.5 py-1.5 ring-1 ring-white/[0.03]">
+                        <div className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                        <p className="flex-1 text-[10px] text-white/40">
+                          <span className="font-semibold text-white/60">{name}</span> · {action}
+                        </p>
+                        <p className="text-[9px] text-white/15">{time}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Compliance pill strip */}
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 shrink-0">
               {PILLS.map(p => (
-                <span key={p} className="rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1 text-[11px] font-medium text-white/30 hover:border-white/[0.12] hover:text-white/45 transition-colors">
+                <span key={p}
+                  className="rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1 text-[10px] font-medium text-white/30">
                   {p}
                 </span>
               ))}
             </div>
 
             {/* Footer */}
-            <p className="text-[11px] text-white/20">
+            <p className="shrink-0 text-[11px] text-white/20">
               A <span className="font-semibold text-white/30">Kode Kinetics</span> product · Trusted by 50+ GCC enterprises
             </p>
 
           </div>
         </div>
 
-        {/* ══════════════ RIGHT — auth panel ══════════════════════════════════ */}
-        <div className="flex flex-1 flex-col items-center justify-center bg-slate-50 px-8 py-12 dark:bg-[#040e22]">
+        {/* ════════════════ RIGHT — auth forms ════════════════════════════════ */}
+        <div className="flex flex-1 flex-col items-center justify-center bg-white px-10 py-14 dark:bg-[#040b18]">
 
           {/* Mobile logo */}
           <div className="mb-10 lg:hidden"><Logo /></div>
 
-          <div className="w-full max-w-[420px]">
+          <div className="w-full max-w-[380px]">
 
-            {/* ── LOGIN ────────────────────────────────────────────────────── */}
+            {/* ── SIGN IN ─────────────────────────────────────────────────── */}
             {mode === 'login' && (
-              <form onSubmit={handleLogin} className="space-y-1">
-                <h2 className="text-[28px] font-black tracking-tight text-slate-900 dark:text-white">Welcome back</h2>
-                <p className="pb-6 text-sm text-slate-400 dark:text-slate-500">Sign in to your workspace to continue.</p>
+              <form onSubmit={handleLogin} noValidate>
+                <p className="mb-1 text-[10px] font-bold tracking-[0.22em] uppercase text-slate-400 dark:text-slate-500">
+                  KynexOne
+                </p>
+                <h2 className="mb-1 text-[32px] font-black tracking-tight text-slate-900 dark:text-white">
+                  Sign in
+                </h2>
+                <p className="mb-8 text-[14px] text-slate-400 dark:text-slate-500">
+                  Access your workforce workspace to continue.
+                </p>
 
-                <Field label="Work email">
-                  <input
-                    id="f-email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-                    className="input w-full" placeholder="you@company.com"
-                    autoComplete="email" required
-                  />
-                </Field>
+                <div className="space-y-5">
+                  <FormField label="Work Email">
+                    <input id="li-em" type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      className="auth-input" placeholder="you@company.com" autoComplete="email" required />
+                  </FormField>
 
-                <Field label="Password" action={
-                  <button type="button" onClick={() => go('forgot')}
-                    className="text-[11px] text-blue-500 hover:text-blue-600 dark:text-blue-400">
-                    Forgot password?
-                  </button>
-                }>
-                  <div className="relative">
-                    <input
-                      id="f-pw" type={showPw ? 'text' : 'password'} value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      className="input w-full pr-10" placeholder="••••••••••"
-                      autoComplete="current-password" required
-                    />
-                    <button type="button" onClick={() => setShowPw(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                      aria-label={showPw ? 'Hide' : 'Show'} tabIndex={-1}>
-                      {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  <FormField label="Password" labelRight={
+                    <button type="button" onClick={() => go('forgot')}
+                      className="text-[11px] font-medium text-blue-500 hover:text-blue-600 dark:text-blue-400">
+                      Forgot password?
                     </button>
-                  </div>
-                </Field>
+                  }>
+                    <div className="relative">
+                      <input id="li-pw" type={showPw ? 'text' : 'password'} value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="auth-input pr-11" placeholder="••••••••••"
+                        autoComplete="current-password" required />
+                      <button type="button" onClick={() => setShowPw(v => !v)} tabIndex={-1}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                        aria-label={showPw ? 'Hide' : 'Show'}>
+                        {showPw ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
+                      </button>
+                    </div>
+                  </FormField>
 
-                <Field
-                  label="Workspace"
-                  hint={tenantLocked
-                    ? <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><Lock className="h-3 w-3" />Auto-detected</span>
-                    : tenantSlug ? 'Pre-filled — you can edit' : "Your company's unique workspace ID"}
-                >
-                  <input
-                    id="f-ws" type="text" value={tenantSlug} onChange={e => setTenantSlug(e.target.value)}
-                    className="input w-full" placeholder="your-workspace"
-                    autoComplete="organization" required
-                  />
-                </Field>
+                  <FormField
+                    label="Workspace"
+                    labelRight={tenantLocked
+                      ? <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"><Lock className="h-3 w-3" />Auto-detected</span>
+                      : tenantSlug ? <span className="text-[11px] text-slate-400">Pre-filled</span> : null}
+                    hint="Your company's unique workspace identifier"
+                  >
+                    <input id="li-ws" type="text" value={tenantSlug} onChange={e => setTenantSlug(e.target.value)}
+                      className="auth-input" placeholder="your-workspace" autoComplete="organization" required />
+                  </FormField>
+                </div>
 
-                <Feedback error={error} info={info} />
+                <AuthFeedback error={error} info={info} />
 
-                <button type="submit" disabled={isLoading}
-                  className="btn-primary mt-2 w-full justify-center py-3 text-[15px] font-bold disabled:cursor-not-allowed disabled:opacity-60">
-                  {isLoading
-                    ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> Signing in…</>
-                    : 'Sign in →'}
+                <button type="submit" disabled={loading}
+                  className="auth-btn mt-6 disabled:cursor-not-allowed disabled:opacity-60">
+                  {loading
+                    ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    : 'Sign in'}
                 </button>
 
-                <p className="pt-4 text-center text-[11px] text-slate-400 dark:text-slate-600">
-                  Secured with AES-256 · SOC 2 ready · GCC data residency
-                </p>
+                <div className="mt-8 flex items-center justify-center gap-5 border-t border-slate-100 pt-6 dark:border-white/[0.06]">
+                  {['AES-256 encrypted', 'SOC 2 ready', 'GCC data residency'].map(t => (
+                    <span key={t} className="text-[10px] font-medium text-slate-300 dark:text-slate-600">{t}</span>
+                  ))}
+                </div>
               </form>
             )}
 
-            {/* ── FORGOT ───────────────────────────────────────────────────── */}
+            {/* ── FORGOT PASSWORD ──────────────────────────────────────────── */}
             {mode === 'forgot' && (
-              <form onSubmit={handleForgot} className="space-y-1">
+              <form onSubmit={handleForgot} noValidate>
                 <button type="button" onClick={() => go('login')}
-                  className="mb-5 flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                  className="mb-6 flex items-center gap-1.5 text-[13px] font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
                   ← Back to sign in
                 </button>
-                <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 ring-1 ring-blue-500/20">
-                  <Mail className="h-5 w-5 text-blue-500" />
+                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 ring-1 ring-blue-200/60 dark:bg-blue-500/10 dark:ring-blue-500/20">
+                  <Mail className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                 </div>
-                <h2 className="text-[28px] font-black tracking-tight text-slate-900 dark:text-white">Reset password</h2>
-                <p className="pb-6 text-sm text-slate-400 dark:text-slate-500">Enter your email and we'll send a reset code.</p>
+                <h2 className="mb-1 text-[28px] font-black tracking-tight text-slate-900 dark:text-white">Reset password</h2>
+                <p className="mb-8 text-[14px] text-slate-400 dark:text-slate-500">
+                  We'll send a reset code to your email address.
+                </p>
 
-                <Field label="Work email">
-                  <input id="fg-em" type="email" value={forgotEmail || email}
-                    onChange={e => setForgotEmail(e.target.value)}
-                    className="input w-full" placeholder="you@company.com" autoComplete="email" required />
-                </Field>
+                <div className="space-y-5">
+                  <FormField label="Work Email">
+                    <input id="fg-em" type="email" value={forgotEmail || email}
+                      onChange={e => setForgotEmail(e.target.value)}
+                      className="auth-input" placeholder="you@company.com" autoComplete="email" required />
+                  </FormField>
+                  <FormField label="Workspace" hint="Optional — helps locate your account">
+                    <input id="fg-ws" type="text" value={tenantSlug}
+                      onChange={e => setTenantSlug(e.target.value)}
+                      className="auth-input" placeholder="your-workspace" />
+                  </FormField>
+                </div>
 
-                <Field label="Workspace" hint="Optional — helps locate your account faster">
-                  <input id="fg-ws" type="text" value={tenantSlug}
-                    onChange={e => setTenantSlug(e.target.value)}
-                    className="input w-full" placeholder="your-workspace" />
-                </Field>
+                <AuthFeedback error={error} info={info} />
 
-                <Feedback error={error} info={info} />
-
-                <button type="submit" disabled={isLoading}
-                  className="btn-primary mt-2 w-full justify-center py-3 text-[15px] font-bold disabled:cursor-not-allowed disabled:opacity-60">
-                  {isLoading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Send reset code →'}
+                <button type="submit" disabled={loading} className="auth-btn mt-6 disabled:cursor-not-allowed disabled:opacity-60">
+                  {loading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Send reset code'}
                 </button>
-
-                <p className="pt-3 text-center text-xs text-slate-400">
-                  Already have a code?{' '}
-                  <button type="button" onClick={() => go('reset')} className="text-blue-500 hover:text-blue-600 dark:text-blue-400">
-                    Enter it here
-                  </button>
+                <p className="mt-4 text-center text-[12px] text-slate-400">
+                  Have a code already?{' '}
+                  <button type="button" onClick={() => go('reset')} className="font-medium text-blue-500 hover:text-blue-600 dark:text-blue-400">Enter it here</button>
                 </p>
               </form>
             )}
 
-            {/* ── RESET ────────────────────────────────────────────────────── */}
+            {/* ── SET NEW PASSWORD ─────────────────────────────────────────── */}
             {mode === 'reset' && (
-              <form onSubmit={handleReset} className="space-y-1">
+              <form onSubmit={handleReset} noValidate>
                 <button type="button" onClick={() => go('forgot')}
-                  className="mb-5 flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                  className="mb-6 flex items-center gap-1.5 text-[13px] font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
                   ← Back
                 </button>
-                <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 ring-1 ring-blue-500/20">
-                  <KeyRound className="h-5 w-5 text-blue-500" />
+                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 ring-1 ring-blue-200/60 dark:bg-blue-500/10 dark:ring-blue-500/20">
+                  <KeyRound className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                 </div>
-                <h2 className="text-[28px] font-black tracking-tight text-slate-900 dark:text-white">New password</h2>
-                <p className="pb-6 text-sm text-slate-400 dark:text-slate-500">Enter the reset code from your email.</p>
+                <h2 className="mb-1 text-[28px] font-black tracking-tight text-slate-900 dark:text-white">New password</h2>
+                <p className="mb-8 text-[14px] text-slate-400 dark:text-slate-500">Enter the code from your email and set a new password.</p>
 
-                <Field label="Work email">
-                  <input id="rs-em" type="email" value={forgotEmail || email}
-                    onChange={e => setForgotEmail(e.target.value)}
-                    className="input w-full" placeholder="you@company.com" autoComplete="email" required />
-                </Field>
+                <div className="space-y-5">
+                  <FormField label="Work Email">
+                    <input id="rs-em" type="email" value={forgotEmail || email}
+                      onChange={e => setForgotEmail(e.target.value)}
+                      className="auth-input" placeholder="you@company.com" autoComplete="email" required />
+                  </FormField>
+                  <FormField label="Reset Code">
+                    <input id="rs-tk" type="text" value={resetToken} onChange={e => setResetToken(e.target.value)}
+                      className="auth-input font-mono tracking-wider" placeholder="Paste code from email" required />
+                  </FormField>
+                  <FormField label="New Password" hint="Min. 10 characters">
+                    <input id="rs-pw" type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
+                      className="auth-input" placeholder="••••••••••" autoComplete="new-password" required />
+                  </FormField>
+                  <FormField label="Confirm Password">
+                    <input id="rs-cf" type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                      className="auth-input" placeholder="••••••••••" autoComplete="new-password" required />
+                  </FormField>
+                </div>
 
-                <Field label="Reset code">
-                  <input id="rs-tk" type="text" value={resetToken}
-                    onChange={e => setResetToken(e.target.value)}
-                    className="input w-full font-mono tracking-wider" placeholder="Paste code from email" required />
-                </Field>
+                <AuthFeedback error={error} info={info} />
 
-                <Field label="New password" hint="Minimum 10 characters">
-                  <input id="rs-pw" type="password" value={newPw}
-                    onChange={e => setNewPw(e.target.value)}
-                    className="input w-full" placeholder="••••••••••" autoComplete="new-password" required />
-                </Field>
-
-                <Field label="Confirm password">
-                  <input id="rs-cf" type="password" value={confirmPw}
-                    onChange={e => setConfirmPw(e.target.value)}
-                    className="input w-full" placeholder="••••••••••" autoComplete="new-password" required />
-                </Field>
-
-                <Feedback error={error} info={info} />
-
-                <button type="submit" disabled={isLoading}
-                  className="btn-primary mt-2 w-full justify-center py-3 text-[15px] font-bold disabled:cursor-not-allowed disabled:opacity-60">
-                  {isLoading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Update password →'}
+                <button type="submit" disabled={loading} className="auth-btn mt-6 disabled:cursor-not-allowed disabled:opacity-60">
+                  {loading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Update password'}
                 </button>
               </form>
             )}
 
-            <p className="mt-8 text-center text-[11px] text-slate-300 dark:text-slate-700 lg:hidden">
-              A <span className="font-semibold">Kode Kinetics</span> product
-            </p>
           </div>
         </div>
 
       </div>
+
+      {/* Global scoped styles for auth inputs and button */}
+      <style>{`
+        .auth-input {
+          display: block; width: 100%;
+          border-radius: 10px;
+          border: 1.5px solid #e2e8f0;
+          background: #ffffff;
+          padding: 12px 16px;
+          font-size: 15px;
+          color: #0f172a;
+          transition: border-color 0.15s, box-shadow 0.15s;
+          outline: none;
+        }
+        .auth-input::placeholder { color: #94a3b8; }
+        .auth-input:focus {
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 3px rgba(59,130,246,0.10);
+        }
+        @media (prefers-color-scheme: dark) {
+          .auth-input {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.09);
+            color: #f1f5f9;
+          }
+          .auth-input::placeholder { color: rgba(255,255,255,0.2); }
+          .auth-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+        }
+        .auth-btn {
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          width: 100%;
+          border-radius: 10px;
+          background: #2563eb;
+          padding: 14px 24px;
+          font-size: 15px;
+          font-weight: 700;
+          color: white;
+          letter-spacing: 0.01em;
+          transition: background 0.15s, transform 0.1s;
+        }
+        .auth-btn:hover:not(:disabled) { background: #1d4ed8; }
+        .auth-btn:active:not(:disabled) { background: #1e40af; transform: scale(0.99); }
+      `}</style>
     </>
   );
 }
 
-// ── Tiny shared components (file-local) ───────────────────────────────────────
+// ── File-local sub-components ─────────────────────────────────────────────────
 
-function Field({ label, hint, action, children }: {
-  label: string; hint?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode;
+function FormField({ label, labelRight, hint, children }: {
+  label: string;
+  labelRight?: React.ReactNode;
+  hint?: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="pt-4">
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</label>
-        {action && <span>{action}</span>}
-        {!action && hint && <span className="text-[11px] text-slate-400 dark:text-slate-500">{hint}</span>}
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-slate-400 dark:text-slate-500">{label}</p>
+        {labelRight}
       </div>
       {children}
+      {hint && <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">{hint}</p>}
     </div>
   );
 }
 
-function Feedback({ error, info }: { error: string; info: string }) {
+function AuthFeedback({ error, info }: { error: string; info: string }) {
   if (error) return (
-    <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 dark:border-rose-500/20 dark:bg-rose-500/[0.07]">
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
-      <p className="text-sm text-rose-700 dark:text-rose-400">{error}</p>
+    <div className="mt-5 flex items-start gap-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 dark:border-red-500/15 dark:bg-red-500/[0.07]">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+      <p className="text-[13px] text-red-700 dark:text-red-400">{error}</p>
     </div>
   );
   if (info) return (
-    <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 dark:border-emerald-500/20 dark:bg-emerald-500/[0.07]">
+    <div className="mt-5 flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 dark:border-emerald-500/15 dark:bg-emerald-500/[0.07]">
       <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-      <p className="text-sm text-emerald-700 dark:text-emerald-400">{info}</p>
+      <p className="text-[13px] text-emerald-700 dark:text-emerald-400">{info}</p>
     </div>
   );
   return null;
