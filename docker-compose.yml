@@ -26,6 +26,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://0.0.0.0:5117
@@ -47,6 +49,7 @@ services:
       SeedAdmin__SeedDemoData: ${SEED_DEMO_DATA:-true}
       PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-platform@kynexone.com}
       PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-PlatformAdmin123!}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
       - "${BACKEND_PORT:-5117}:5117"
     extra_hosts:
@@ -73,9 +76,13 @@ services:
     image: redis:7-alpine
     container_name: zayra-redis
     restart: unless-stopped
-    profiles: ["optional"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   zayra-mysql-data:

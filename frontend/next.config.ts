@@ -22,6 +22,26 @@ const nextConfig: NextConfig = {
     ];
   },
 
+  async headers() {
+    return [
+      {
+        // Hashed JS/CSS bundles are content-addressed — safe to cache forever in browser + CDN.
+        source: '/_next/static/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+      },
+      {
+        // Favicons and public images: 1 hour browser cache.
+        source: '/:path(favicon.ico|.*\\.png|.*\\.svg|.*\\.jpg|.*\\.webp)',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=3600' }],
+      },
+      {
+        // API proxy: never cache — the backend sets its own Cache-Control per endpoint.
+        source: '/api/:path*',
+        headers: [{ key: 'Cache-Control', value: 'no-store' }],
+      },
+    ];
+  },
+
   images: {
     remotePatterns: [{ protocol: 'https', hostname: '**' }],
   },

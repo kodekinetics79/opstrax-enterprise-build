@@ -1,8 +1,9 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Distributed;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 
@@ -14,13 +15,17 @@ namespace Zayra.Api.Controllers;
 public class DashboardController : ControllerBase
 {
     private readonly ZayraDbContext _db;
-    private readonly IMemoryCache _cache;
+    private readonly IDistributedCache _cache;
     private readonly IDataScopeService _scopeService;
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
+
+    private static readonly DistributedCacheEntryOptions CacheOptions = new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60)
+    };
 
     private static readonly string[] QiwaRequiredDocs = ["Iqama", "Work Permit", "National ID", "Passport"];
 
-    public DashboardController(ZayraDbContext db, IMemoryCache cache, IDataScopeService scopeService)
+    public DashboardController(ZayraDbContext db, IDistributedCache cache, IDataScopeService scopeService)
     {
         _db = db;
         _cache = cache;
@@ -37,11 +42,12 @@ public class DashboardController : ControllerBase
             return Ok(EmptyFull());
 
         var cacheKey = $"dashboard:full:{tenantId}:{months}";
-        if (_cache.TryGetValue(cacheKey, out DashboardFullDto? cached))
-            return Ok(cached);
+        var cachedBytes = await _cache.GetAsync(cacheKey, cancellationToken);
+        if (cachedBytes is not null)
+            return Ok(JsonSerializer.Deserialize<DashboardFullDto>(cachedBytes));
 
         var result = await BuildFull(tenantId.Value, months, cancellationToken);
-        _cache.Set(cacheKey, result, CacheTtl);
+        await _cache.SetAsync(cacheKey, JsonSerializer.SerializeToUtf8Bytes(result), CacheOptions, cancellationToken);
         return Ok(result);
     }
 
@@ -54,11 +60,12 @@ public class DashboardController : ControllerBase
         if (tenantId is null) return Ok(new DashboardSummaryDto(0, 0, 0, 0, 0, 0m, 0));
 
         var cacheKey = $"dashboard:summary:{tenantId}";
-        if (_cache.TryGetValue(cacheKey, out DashboardSummaryDto? cached))
-            return Ok(cached);
+        var cachedBytes = await _cache.GetAsync(cacheKey, cancellationToken);
+        if (cachedBytes is not null)
+            return Ok(JsonSerializer.Deserialize<DashboardSummaryDto>(cachedBytes));
 
         var result = await BuildSummary(tenantId.Value, cancellationToken);
-        _cache.Set(cacheKey, result, CacheTtl);
+        await _cache.SetAsync(cacheKey, JsonSerializer.SerializeToUtf8Bytes(result), CacheOptions, cancellationToken);
         return Ok(result);
     }
 
@@ -70,11 +77,12 @@ public class DashboardController : ControllerBase
         if (tenantId is null) return Ok(Array.Empty<DashboardTrendDto>());
 
         var cacheKey = $"dashboard:trends:{tenantId}:{months}";
-        if (_cache.TryGetValue(cacheKey, out IReadOnlyList<DashboardTrendDto>? cached))
-            return Ok(cached);
+        var cachedBytes = await _cache.GetAsync(cacheKey, cancellationToken);
+        if (cachedBytes is not null)
+            return Ok(JsonSerializer.Deserialize<List<DashboardTrendDto>>(cachedBytes));
 
         var result = await BuildTrends(tenantId.Value, months, cancellationToken);
-        _cache.Set(cacheKey, result, CacheTtl);
+        await _cache.SetAsync(cacheKey, JsonSerializer.SerializeToUtf8Bytes(result), CacheOptions, cancellationToken);
         return Ok(result);
     }
 
@@ -88,11 +96,12 @@ public class DashboardController : ControllerBase
                 Array.Empty<NamedValueDto>(), Array.Empty<DashboardAlertDto>(), 0, 0));
 
         var cacheKey = $"dashboard:overview:{tenantId}";
-        if (_cache.TryGetValue(cacheKey, out DashboardOverviewDto? cached))
-            return Ok(cached);
+        var cachedBytes = await _cache.GetAsync(cacheKey, cancellationToken);
+        if (cachedBytes is not null)
+            return Ok(JsonSerializer.Deserialize<DashboardOverviewDto>(cachedBytes));
 
         var result = await BuildOverview(tenantId.Value, cancellationToken);
-        _cache.Set(cacheKey, result, CacheTtl);
+        await _cache.SetAsync(cacheKey, JsonSerializer.SerializeToUtf8Bytes(result), CacheOptions, cancellationToken);
         return Ok(result);
     }
 

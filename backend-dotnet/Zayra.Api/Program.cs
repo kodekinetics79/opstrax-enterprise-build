@@ -79,6 +79,17 @@ builder.Services.AddDbContextPool<ZayraDbContext>(options => options
 
 builder.Services.AddMemoryCache();
 
+// Distributed cache: Redis when REDIS_URL is set, in-memory fallback for local dev without Redis.
+var redisUrl = builder.Configuration["REDIS_URL"] ?? Environment.GetEnvironmentVariable("REDIS_URL");
+if (!string.IsNullOrEmpty(redisUrl))
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisUrl;
+        options.InstanceName = "zayra:";
+    });
+else
+    builder.Services.AddDistributedMemoryCache();
+
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -199,7 +210,7 @@ app.UseExceptionHandler(errApp => errApp.Run(async ctx =>
     });
 }));
 
-// Security response headers (SOC defence-in-depth: anti-sniffing, anti-clickjacking).
+// Security + Cache-Control response headers.
 app.Use(async (context, next) =>
 {
     var headers = context.Response.Headers;
@@ -207,6 +218,30 @@ app.Use(async (context, next) =>
     headers["X-Frame-Options"] = "DENY";
     headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     headers["X-Permitted-Cross-Domain-Policies"] = "none";
+
+    var path = context.Request.Path.Value ?? string.Empty;
+    // Sensitive: auth, payroll, personal data — must never be cached anywhere.
+    if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/api/payroll", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/api/employees", StringComparison.OrdinalIgnoreCase))
+    {
+        headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+        headers["Pragma"] = "no-cache";
+    }
+    // Semi-static reference data: short private cache so browser avoids round trips.
+    else if (path.StartsWith("/api/master-data", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWith("/api/features", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWith("/api/localization", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWith("/api/help-text", StringComparison.OrdinalIgnoreCase))
+    {
+        headers["Cache-Control"] = "private, max-age=300"; // 5 min, per-user
+    }
+    // Everything else: don't cache by default; controllers can override explicitly.
+    else
+    {
+        headers["Cache-Control"] = "no-store";
+    }
+
     await next();
 });
 

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -71,9 +72,24 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         ("/api/qiwa",           FeatureKeys.QiwaIntegration),
     };
 
-    private readonly ZayraDbContext _db;
+    private static readonly TimeSpan FlagCacheTtl = TimeSpan.FromMinutes(2);
 
-    public FeatureFlagGuardFilter(ZayraDbContext db) => _db = db;
+    private readonly ZayraDbContext _db;
+    private readonly IMemoryCache _cache;
+
+    public FeatureFlagGuardFilter(ZayraDbContext db, IMemoryCache cache)
+    {
+        _db = db;
+        _cache = cache;
+    }
+
+    /// <summary>
+    /// Call this whenever a tenant feature flag is toggled so cached values are immediately evicted.
+    /// </summary>
+    public static void InvalidateCache(IMemoryCache cache, Guid tenantId, string featureKey)
+        => cache.Remove(FlagCacheKey(tenantId, featureKey));
+
+    private static string FlagCacheKey(Guid tenantId, string featureKey) => $"ff:{tenantId}:{featureKey}";
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -113,12 +129,22 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
             return;
         }
 
-        var flag = await _db.TenantFeatureFlags
-            .AsNoTracking()
-            .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.FeatureKey == featureKey);
+        // Cache feature flags per (tenant, feature) to avoid a DB hit on every request.
+        var cacheKey = FlagCacheKey(tenantId, featureKey);
+        if (!_cache.TryGetValue(cacheKey, out bool? isEnabled))
+        {
+            var flag = await _db.TenantFeatureFlags
+                .AsNoTracking()
+                .Where(f => f.TenantId == tenantId && f.FeatureKey == featureKey)
+                .Select(f => (bool?)f.IsEnabled)
+                .FirstOrDefaultAsync();
+
+            isEnabled = flag; // null = row absent = allowed
+            _cache.Set(cacheKey, isEnabled, FlagCacheTtl);
+        }
 
         // Absent = allowed. Only block when the flag is explicitly set to false.
-        if (flag is not null && !flag.IsEnabled)
+        if (isEnabled == false)
         {
             context.Result = new ObjectResult(new
             {
