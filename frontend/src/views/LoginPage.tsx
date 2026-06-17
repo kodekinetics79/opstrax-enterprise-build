@@ -131,8 +131,8 @@ export function LoginPage() {
           {/* ── Content ────────────────────────────────────────────────────── */}
           <div className="relative z-10 flex h-full flex-col justify-between gap-6 px-12 py-10">
 
-            {/* Logo row */}
-            <div className="flex items-center gap-3">
+            {/* Logo row — forced dark context so text renders white on dark bg */}
+            <div className="flex items-center gap-3 dark">
               <Logo size="lg" />
               <div className="h-5 w-px bg-white/[0.1]" />
               <span className="text-[10px] font-bold tracking-[0.22em] uppercase text-blue-400/50">
@@ -273,10 +273,17 @@ export function LoginPage() {
         </div>
 
         {/* ════════════════ RIGHT — auth forms ════════════════════════════════ */}
-        <div className="flex flex-1 flex-col items-center justify-center bg-white px-10 py-14 dark:bg-[#040b18]">
+        <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-[#eef2ff] via-[#f5f8ff] to-[#e8f0fe] px-10 py-14 dark:from-[#040b18] dark:via-[#060d20] dark:to-[#040a16]">
+
+          {/* Glass background blobs — subtle, behind the card */}
+          <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-700/10" />
+          <div className="pointer-events-none absolute -bottom-16 -left-16 h-64 w-64 rounded-full bg-indigo-300/20 blur-3xl dark:bg-indigo-700/10" />
 
           {/* Mobile logo */}
           <div className="mb-10 lg:hidden"><Logo /></div>
+
+          {/* Glass card wrapper */}
+          <div className="w-full max-w-[420px] rounded-3xl border border-white/70 bg-white/65 px-10 py-10 shadow-[0_24px_80px_rgba(37,99,235,0.10),0_0_0_1px_rgba(255,255,255,0.6)] backdrop-blur-2xl dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-[0_24px_80px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.04)]">
 
           <div className="w-full max-w-[380px]">
 
@@ -429,6 +436,7 @@ export function LoginPage() {
             )}
 
           </div>
+          </div>{/* /glass card wrapper */}
         </div>
 
       </div>
