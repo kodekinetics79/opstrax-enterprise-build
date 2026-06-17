@@ -307,3 +307,35 @@ public class BonusAuditLog
     public string PerformedByName { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
+
+// ── Finance GL Entry (audit-ready journal entries) ────────────────────────────
+
+public class FinanceGlEntry
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+
+    // Source reference
+    public string SourceModule { get; set; } = string.Empty;  // Loan, Advance, Bonus
+    public Guid SourceEntityId { get; set; }
+    public string SourceEntityRef { get; set; } = string.Empty; // LN-2026-00001, ADV-…, BON-…
+    public string EventType { get; set; } = string.Empty;       // Disbursement, Repayment, Settlement, BonusPayment, Reversal
+
+    // Accounting fields (double-entry)
+    public string DebitAccount { get; set; } = string.Empty;    // e.g. "1400 - Employee Loans Receivable"
+    public string CreditAccount { get; set; } = string.Empty;   // e.g. "1000 - Cash/Bank"
+    public decimal Amount { get; set; }
+    public string Currency { get; set; } = "USD";
+
+    // Period
+    public DateOnly EntryDate { get; set; }
+    public string Period { get; set; } = string.Empty;          // YYYY-MM
+
+    // Audit
+    public string Description { get; set; } = string.Empty;
+    public string PostedByName { get; set; } = string.Empty;
+    public Guid? PostedBy { get; set; }
+    public bool IsReversed { get; set; }
+    public Guid? ReversalOfEntryId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}

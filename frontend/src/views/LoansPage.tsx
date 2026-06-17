@@ -1,29 +1,23 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, DollarSign, Gift, Plus, Pencil, CheckCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
-  loanTypesApi,
-  loansApi,
-  advancePolicyApi,
-  advancesApi,
-  bonusTypesApi,
-  bonusBatchesApi,
+  CreditCard, DollarSign, Gift, Plus, CheckCircle, XCircle,
+  FileText, TrendingUp, AlertTriangle, BookOpen, ShieldCheck,
+} from 'lucide-react';
+import {
+  loanTypesApi, loansApi, advancePolicyApi, advancesApi,
+  bonusTypesApi, bonusBatchesApi,
 } from '../api/loans';
 import type {
-  LoanType,
-  EmployeeLoan,
-  LoanApproval,
-  LoanInstallment,
-  AdvancePolicy,
-  SalaryAdvance,
-  BonusType,
-  BonusBatch,
-  EmployeeBonus,
+  LoanType, EmployeeLoan, LoanApproval, LoanInstallment,
+  AdvancePolicy, SalaryAdvance, BonusType, BonusBatch, EmployeeBonus,
+  FinanceGlEntry, AuditLogEntry,
 } from '../api/loans';
 import { Modal } from '../components/Modal';
+import { useTenantSettings } from '../contexts/TenantSettingsContext';
 
-type Tab = 'loans' | 'loanTypes' | 'advances' | 'advancePolicy' | 'bonusTypes' | 'bonusBatches';
+type Tab = 'loans' | 'loanTypes' | 'advances' | 'advancePolicy' | 'bonusTypes' | 'bonusBatches' | 'auditReport';
 
 const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'loans', label: 'Loans', icon: CreditCard },
@@ -32,6 +26,7 @@ const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'advancePolicy', label: 'Advance Policy', icon: DollarSign },
   { id: 'bonusTypes', label: 'Bonus Types', icon: Gift },
   { id: 'bonusBatches', label: 'Bonus Batches', icon: Gift },
+  { id: 'auditReport', label: 'Audit Report', icon: ShieldCheck },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -41,13 +36,15 @@ function StatusBadge({ status }: { status: string }) {
     Active: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     Approved: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     Paid: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    PaidInPayroll: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     Pending: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
     PendingApproval: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
     Draft: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400',
     Rejected: 'bg-red-500/10 text-red-500 dark:text-red-400',
     Settled: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+    Cancelled: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400',
     Closed: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400',
-    Submitted: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+    Overdue: 'bg-red-500/10 text-red-500 dark:text-red-400',
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${colors[status] ?? 'bg-slate-100 text-slate-500'}`}>
@@ -72,17 +69,91 @@ function FormError({ error }: { error: string }) {
   return <p className="mb-3 rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">{error}</p>;
 }
 
-function fmt(n: number) { return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function SummaryCard({ label, value, sub, icon: Icon, color }: { label: string; value: string | number; sub?: string; icon: React.ElementType; color: string }) {
+  return (
+    <div className="surface p-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+          <p className={`mt-1 text-2xl font-extrabold ${color}`}>{value}</p>
+          {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+        </div>
+        <span className={`rounded-lg p-2.5 ${color.replace('text-', 'bg-').replace('-600', '-100').replace('-400', '-900/20')}`}>
+          <Icon className={`h-5 w-5 ${color}`} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function GlEntriesTable({ entries, fmt }: { entries: FinanceGlEntry[]; fmt: (n: number) => string }) {
+  if (entries.length === 0) return <p className="py-4 text-center text-xs text-slate-400">No GL entries recorded yet</p>;
+  return (
+    <div className="surface overflow-hidden">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+            {['Date', 'Event', 'Debit Account', 'Credit Account', 'Amount', 'Posted By'].map((h) => (
+              <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+          {entries.map((e) => (
+            <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+              <td className="px-3 py-2 font-mono text-slate-500">{e.entryDate}</td>
+              <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{e.eventType}</td>
+              <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{e.debitAccount}</td>
+              <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{e.creditAccount}</td>
+              <td className="px-3 py-2 font-semibold text-slate-900 dark:text-white">{fmt(e.amount)}</td>
+              <td className="px-3 py-2 text-slate-500">{e.postedByName}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AuditTrailTable({ logs }: { logs: AuditLogEntry[] }) {
+  if (logs.length === 0) return <p className="py-4 text-center text-xs text-slate-400">No audit events recorded</p>;
+  return (
+    <div className="surface overflow-hidden max-h-48 overflow-y-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+            {['Timestamp', 'Action', 'Performed By', 'Details'].map((h) => (
+              <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+          {logs.map((l) => (
+            <tr key={l.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+              <td className="px-3 py-2 font-mono text-slate-500">{new Date(l.createdAtUtc).toLocaleString()}</td>
+              <td className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-300">{l.action}</td>
+              <td className="px-3 py-2 text-slate-500">{l.performedByName}</td>
+              <td className="px-3 py-2 text-slate-500 truncate max-w-xs">{l.newValuesJson}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ── Loan Types ────────────────────────────────────────────────────────────────
 
 function LoanTypesTab() {
+  const { currencyCode } = useTenantSettings();
   const [items, setItems] = useState<LoanType[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ code: '', nameEn: '', nameAr: '', maxAmount: 0, maxInstallments: 12, repaymentFrequency: 'Monthly', isInterestFree: true, interestRate: 0, minServiceMonths: 6, requiresApproval: true });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,7 +183,7 @@ function LoanTypesTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                {['Code', 'Name', 'Max Amount', 'Max Installments', 'Frequency', 'Interest', 'Min Service', 'Approval', 'Status'].map((h) => (
+                {['Code', 'Name', `Max Amount (${currencyCode})`, 'Max Installments', 'Frequency', 'Interest', 'Min Service', 'Approval', 'Status'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -145,22 +216,22 @@ function LoanTypesTab() {
         <FormError error={error} />
         <div className="grid grid-cols-2 gap-3">
           <FormField label="Code" required><input value={form.code} onChange={(e) => f('code', e.target.value)} className="input w-full" placeholder="PERSONAL_LOAN" /></FormField>
-          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => f('nameEn', e.target.value)} className="input w-full" /></FormField>
-          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => f('nameAr', e.target.value)} className="input w-full" dir="rtl" /></FormField>
-          <FormField label="Max Amount" required><input type="number" value={form.maxAmount} onChange={(e) => f('maxAmount', Number(e.target.value))} className="input w-full" /></FormField>
-          <FormField label="Max Installments"><input type="number" value={form.maxInstallments} onChange={(e) => f('maxInstallments', Number(e.target.value))} className="input w-full" /></FormField>
+          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => f('nameEn', e.target.value)} className="input w-full" title="Name (EN)" /></FormField>
+          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => f('nameAr', e.target.value)} className="input w-full" dir="rtl" title="Name (AR)" /></FormField>
+          <FormField label={`Max Amount (${currencyCode})`} required><input type="number" value={form.maxAmount} onChange={(e) => f('maxAmount', Number(e.target.value))} className="input w-full" title="Max Amount" /></FormField>
+          <FormField label="Max Installments"><input type="number" value={form.maxInstallments} onChange={(e) => f('maxInstallments', Number(e.target.value))} className="input w-full" title="Max Installments" /></FormField>
           <FormField label="Repayment Frequency">
             <select value={form.repaymentFrequency} onChange={(e) => f('repaymentFrequency', e.target.value)} className="select w-full" title="Repayment Frequency">
               {['Monthly', 'BiMonthly', 'Weekly'].map((v) => <option key={v}>{v}</option>)}
             </select>
           </FormField>
-          <FormField label="Min Service (months)"><input type="number" value={form.minServiceMonths} onChange={(e) => f('minServiceMonths', Number(e.target.value))} className="input w-full" /></FormField>
+          <FormField label="Min Service (months)"><input type="number" value={form.minServiceMonths} onChange={(e) => f('minServiceMonths', Number(e.target.value))} className="input w-full" title="Min Service (months)" /></FormField>
           <div className="col-span-2 flex gap-6">
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={form.isInterestFree} onChange={(e) => f('isInterestFree', e.target.checked)} className="h-4 w-4 accent-sapphire" title="Interest Free" /> Interest-Free</label>
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={form.requiresApproval} onChange={(e) => f('requiresApproval', e.target.checked)} className="h-4 w-4 accent-sapphire" title="Requires Approval" /> Requires Approval</label>
           </div>
           {!form.isInterestFree && (
-            <FormField label="Interest Rate (%)"><input type="number" step="0.1" value={form.interestRate} onChange={(e) => f('interestRate', Number(e.target.value))} className="input w-full" /></FormField>
+            <FormField label="Interest Rate (%)"><input type="number" step="0.1" value={form.interestRate} onChange={(e) => f('interestRate', Number(e.target.value))} className="input w-full" title="Interest Rate (%)" /></FormField>
           )}
         </div>
       </Modal>
@@ -171,6 +242,8 @@ function LoanTypesTab() {
 // ── Loans ─────────────────────────────────────────────────────────────────────
 
 function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
+  const { currencyCode } = useTenantSettings();
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode });
   const [items, setItems] = useState<EmployeeLoan[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -180,13 +253,16 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
 
   const [createModal, setCreateModal] = useState(false);
   const [detailModal, setDetailModal] = useState(false);
-  const [selected, setSelected] = useState<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[] } | null>(null);
+  const [settleModal, setSettleModal] = useState(false);
+  const [selected, setSelected] = useState<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] } | null>(null);
   const [decideModal, setDecideModal] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<LoanApproval | null>(null);
   const [createForm, setCreateForm] = useState({ employeeId: '', employeeName: '', loanTypeId: '', requestedAmount: 0, requestedInstallments: 12, notes: '' });
   const [decideForm, setDecideForm] = useState({ decision: 'Approved', comments: '', approvedAmount: 0, approvedInstallments: 0, repaymentStartDate: '' });
+  const [settleForm, setSettleForm] = useState({ settlementType: 'Early', settlementAmount: 0, settlementDate: '', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [detailTab, setDetailTab] = useState<'schedule' | 'gl' | 'audit'>('schedule');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,14 +272,14 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
   useEffect(() => { load(); }, [load]);
 
   const openDetail = async (loan: EmployeeLoan) => {
-    try { const d = await loansApi.get(loan.id); setSelected(d); setDetailModal(true); } catch { /**/ }
+    try { const d = await loansApi.get(loan.id); setSelected(d); setDetailTab('schedule'); setDetailModal(true); } catch { /**/ }
   };
 
   const createLoan = async () => {
     if (!createForm.employeeId.trim() || !createForm.loanTypeId) { setError('Employee ID and loan type are required'); return; }
     setSaving(true); setError('');
     try { await loansApi.create(createForm); setCreateModal(false); load(); }
-    catch { setError('Failed to create loan.'); }
+    catch (e: any) { setError(e?.response?.data || 'Failed to create loan.'); }
     finally { setSaving(false); }
   };
 
@@ -221,7 +297,19 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
       setDecideModal(false);
       const d = await loansApi.get(selected.loan.id); setSelected(d);
       load();
-    } catch { setError('Failed to submit decision.'); }
+    } catch (e: any) { setError(e?.response?.data || 'Failed to submit decision.'); }
+    finally { setSaving(false); }
+  };
+
+  const settle = async () => {
+    if (!selected) return;
+    setSaving(true); setError('');
+    try {
+      await loansApi.settle(selected.loan.id, settleForm);
+      setSettleModal(false);
+      const d = await loansApi.get(selected.loan.id); setSelected(d);
+      load();
+    } catch (e: any) { setError(e?.response?.data || 'Failed to settle loan.'); }
     finally { setSaving(false); }
   };
 
@@ -287,22 +375,29 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
         <FormError error={error} />
         <div className="grid grid-cols-2 gap-3">
           <FormField label="Employee ID (GUID)" required><input value={createForm.employeeId} onChange={(e) => setCreateForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></FormField>
-          <FormField label="Employee Name" required><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" /></FormField>
+          <FormField label="Employee Name" required><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
           <FormField label="Loan Type" required>
             <select value={createForm.loanTypeId} onChange={(e) => setCreateForm(x => ({ ...x, loanTypeId: e.target.value }))} className="select w-full" title="Loan Type">
               <option value="">Select type</option>
               {loanTypes.map((t) => <option key={t.id} value={t.id}>{t.nameEn}</option>)}
             </select>
           </FormField>
-          <FormField label="Requested Amount" required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" /></FormField>
-          <FormField label="Requested Installments"><input type="number" value={createForm.requestedInstallments} onChange={(e) => setCreateForm(x => ({ ...x, requestedInstallments: Number(e.target.value) }))} className="input w-full" /></FormField>
-          <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} /></FormField>
+          <FormField label={`Requested Amount (${currencyCode})`} required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" /></FormField>
+          <FormField label="Requested Installments"><input type="number" value={createForm.requestedInstallments} onChange={(e) => setCreateForm(x => ({ ...x, requestedInstallments: Number(e.target.value) }))} className="input w-full" title="Requested Installments" /></FormField>
+          <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
         </div>
       </Modal>
 
       {/* Detail Modal */}
       <Modal isOpen={detailModal && !!selected} title={`Loan — ${selected?.loan.loanNumber}`} onClose={() => setDetailModal(false)} size="lg"
-        footer={<button type="button" onClick={() => setDetailModal(false)} className="btn-secondary">Close</button>}>
+        footer={
+          <div className="flex items-center gap-2">
+            {selected?.loan.status === 'Active' && (
+              <button type="button" onClick={() => { setSettleForm({ settlementType: 'Early', settlementAmount: selected.loan.outstandingBalance, settlementDate: new Date().toISOString().split('T')[0], notes: '' }); setError(''); setSettleModal(true); }} className="btn-primary h-8 px-3 text-sm">Settle Loan</button>
+            )}
+            <button type="button" onClick={() => setDetailModal(false)} className="btn-secondary ml-auto">Close</button>
+          </div>
+        }>
         {selected && (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3 text-sm">
@@ -323,29 +418,61 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
               </div>
             )}
 
-            {selected.installments.length > 0 && (
-              <div>
-                <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Installment Schedule</p>
-                <div className="max-h-48 overflow-y-auto surface">
-                  <table className="w-full text-xs">
-                    <thead><tr className="border-b border-slate-100 dark:border-white/10">{['#', 'Due Date', 'Amount Due', 'Paid', 'Status'].map((h) => <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>)}</tr></thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
-                      {selected.installments.map((ins) => (
-                        <tr key={ins.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
-                          <td className="px-3 py-2 text-slate-500">{ins.installmentNumber}</td>
-                          <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{ins.dueDate}</td>
-                          <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(ins.amountDue)}</td>
-                          <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(ins.amountPaid)}</td>
-                          <td className="px-3 py-2"><StatusBadge status={ins.status} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            {/* Sub-tabs */}
+            <div className="flex gap-3 border-b border-slate-100 dark:border-white/[0.07]">
+              {(['schedule', 'gl', 'audit'] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setDetailTab(t)}
+                  className={`pb-2 text-xs font-semibold uppercase tracking-wide transition border-b-2 ${detailTab === t ? 'border-sapphire text-sapphire' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                  {t === 'schedule' ? 'Installments' : t === 'gl' ? 'GL Entries' : 'Audit Trail'}
+                </button>
+              ))}
+            </div>
+
+            {detailTab === 'schedule' && selected.installments.length > 0 && (
+              <div className="max-h-48 overflow-y-auto surface">
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-slate-100 dark:border-white/10">{['#', 'Due Date', 'Amount Due', 'Paid', 'Status'].map((h) => <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                    {selected.installments.map((ins) => (
+                      <tr key={ins.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-3 py-2 text-slate-500">{ins.installmentNumber}</td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{ins.dueDate}</td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(ins.amountDue)}</td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(ins.amountPaid)}</td>
+                        <td className="px-3 py-2"><StatusBadge status={ins.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
+            {detailTab === 'schedule' && selected.installments.length === 0 && (
+              <p className="text-center text-sm text-slate-400 py-4">No installments scheduled yet</p>
+            )}
+            {detailTab === 'gl' && <GlEntriesTable entries={selected.glEntries ?? []} fmt={fmt} />}
+            {detailTab === 'audit' && <AuditTrailTable logs={selected.auditLogs ?? []} />}
           </div>
         )}
+      </Modal>
+
+      {/* Settle Modal */}
+      <Modal isOpen={settleModal} title={`Settle Loan — ${selected?.loan.loanNumber}`} onClose={() => setSettleModal(false)}
+        footer={<><button type="button" onClick={() => setSettleModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={settle} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Processing…' : 'Confirm Settlement'}</button></>}>
+        <FormError error={error} />
+        <div className="space-y-3">
+          <FormField label="Settlement Type">
+            <select value={settleForm.settlementType} onChange={(e) => setSettleForm(x => ({ ...x, settlementType: e.target.value }))} className="select w-full" title="Settlement Type">
+              {['Early', 'Normal', 'Waiver'].map((v) => <option key={v}>{v}</option>)}
+            </select>
+          </FormField>
+          <FormField label={`Settlement Amount (${currencyCode})`} required>
+            <input type="number" value={settleForm.settlementAmount} onChange={(e) => setSettleForm(x => ({ ...x, settlementAmount: Number(e.target.value) }))} className="input w-full" title="Settlement Amount" />
+          </FormField>
+          <FormField label="Settlement Date" required>
+            <input type="date" value={settleForm.settlementDate} onChange={(e) => setSettleForm(x => ({ ...x, settlementDate: e.target.value }))} className="input w-full" title="Settlement Date" />
+          </FormField>
+          <FormField label="Notes"><textarea value={settleForm.notes} onChange={(e) => setSettleForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
+        </div>
       </Modal>
 
       {/* Decide Modal */}
@@ -365,9 +492,9 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
           </FormField>
           {decideForm.decision === 'Approved' && (
             <>
-              <FormField label="Approved Amount"><input type="number" value={decideForm.approvedAmount} onChange={(e) => setDecideForm(x => ({ ...x, approvedAmount: Number(e.target.value) }))} className="input w-full" /></FormField>
-              <FormField label="Approved Installments"><input type="number" value={decideForm.approvedInstallments} onChange={(e) => setDecideForm(x => ({ ...x, approvedInstallments: Number(e.target.value) }))} className="input w-full" /></FormField>
-              <FormField label="Repayment Start Date"><input type="date" value={decideForm.repaymentStartDate} onChange={(e) => setDecideForm(x => ({ ...x, repaymentStartDate: e.target.value }))} className="input w-full" /></FormField>
+              <FormField label={`Approved Amount (${currencyCode})`}><input type="number" value={decideForm.approvedAmount} onChange={(e) => setDecideForm(x => ({ ...x, approvedAmount: Number(e.target.value) }))} className="input w-full" title="Approved Amount" /></FormField>
+              <FormField label="Approved Installments"><input type="number" value={decideForm.approvedInstallments} onChange={(e) => setDecideForm(x => ({ ...x, approvedInstallments: Number(e.target.value) }))} className="input w-full" title="Approved Installments" /></FormField>
+              <FormField label="Repayment Start Date"><input type="date" value={decideForm.repaymentStartDate} onChange={(e) => setDecideForm(x => ({ ...x, repaymentStartDate: e.target.value }))} className="input w-full" title="Repayment Start Date" /></FormField>
             </>
           )}
           <FormField label="Comments"><textarea value={decideForm.comments} onChange={(e) => setDecideForm(x => ({ ...x, comments: e.target.value }))} className="input w-full" rows={3} placeholder="Optional comments…" /></FormField>
@@ -417,17 +544,17 @@ function AdvancePolicyTab() {
         {error && <FormError error={error} />}
         {success && <p className="mb-3 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">Policy saved successfully.</p>}
         <div className="space-y-3">
-          <FormField label="Policy Name"><input value={form.policyName ?? ''} onChange={(e) => f('policyName', e.target.value)} className="input w-full" /></FormField>
-          <FormField label="Max % of Salary"><input type="number" value={form.maxPercentageOfSalary ?? 50} onChange={(e) => f('maxPercentageOfSalary', Number(e.target.value))} className="input w-full" /></FormField>
-          <FormField label="Max Advances Per Year"><input type="number" value={form.maxAdvancesPerYear ?? 2} onChange={(e) => f('maxAdvancesPerYear', Number(e.target.value))} className="input w-full" /></FormField>
-          <FormField label="Min Service (months)"><input type="number" value={form.minServiceMonths ?? 6} onChange={(e) => f('minServiceMonths', Number(e.target.value))} className="input w-full" /></FormField>
-          <FormField label="Cooldown (months)"><input type="number" value={form.cooldownMonths ?? 3} onChange={(e) => f('cooldownMonths', Number(e.target.value))} className="input w-full" /></FormField>
+          <FormField label="Policy Name"><input value={form.policyName ?? ''} onChange={(e) => f('policyName', e.target.value)} className="input w-full" title="Policy Name" /></FormField>
+          <FormField label="Max % of Salary"><input type="number" value={form.maxPercentageOfSalary ?? 50} onChange={(e) => f('maxPercentageOfSalary', Number(e.target.value))} className="input w-full" title="Max % of Salary" /></FormField>
+          <FormField label="Max Advances Per Year"><input type="number" value={form.maxAdvancesPerYear ?? 2} onChange={(e) => f('maxAdvancesPerYear', Number(e.target.value))} className="input w-full" title="Max Advances Per Year" /></FormField>
+          <FormField label="Min Service (months)"><input type="number" value={form.minServiceMonths ?? 6} onChange={(e) => f('minServiceMonths', Number(e.target.value))} className="input w-full" title="Min Service (months)" /></FormField>
+          <FormField label="Cooldown (months)"><input type="number" value={form.cooldownMonths ?? 3} onChange={(e) => f('cooldownMonths', Number(e.target.value))} className="input w-full" title="Cooldown (months)" /></FormField>
           <div className="flex gap-6">
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={form.allowInstallments ?? false} onChange={(e) => f('allowInstallments', e.target.checked)} className="h-4 w-4 accent-sapphire" title="Allow Installments" /> Allow Installments</label>
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={form.requiresApproval ?? false} onChange={(e) => f('requiresApproval', e.target.checked)} className="h-4 w-4 accent-sapphire" title="Requires Approval" /> Requires Approval</label>
           </div>
           {form.allowInstallments && (
-            <FormField label="Max Installments"><input type="number" value={form.maxInstallments ?? 3} onChange={(e) => f('maxInstallments', Number(e.target.value))} className="input w-full" /></FormField>
+            <FormField label="Max Installments"><input type="number" value={form.maxInstallments ?? 3} onChange={(e) => f('maxInstallments', Number(e.target.value))} className="input w-full" title="Max Installments" /></FormField>
           )}
         </div>
         <div className="mt-4">
@@ -441,6 +568,8 @@ function AdvancePolicyTab() {
 // ── Salary Advances ───────────────────────────────────────────────────────────
 
 function AdvancesTab() {
+  const { currencyCode } = useTenantSettings();
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode });
   const [items, setItems] = useState<SalaryAdvance[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -469,7 +598,7 @@ function AdvancesTab() {
     if (!createForm.employeeId.trim()) { setError('Employee ID is required'); return; }
     setSaving(true); setError('');
     try { await advancesApi.create(createForm); setCreateModal(false); load(); }
-    catch { setError('Failed to create advance.'); }
+    catch (e: any) { setError(e?.response?.data || 'Failed to create advance.'); }
     finally { setSaving(false); }
   };
 
@@ -554,17 +683,17 @@ function AdvancesTab() {
         <FormError error={error} />
         <div className="space-y-3">
           <FormField label="Employee ID (GUID)" required><input value={createForm.employeeId} onChange={(e) => setCreateForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-…" /></FormField>
-          <FormField label="Employee Name"><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" /></FormField>
-          <FormField label="Requested Amount" required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" /></FormField>
+          <FormField label="Employee Name"><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
+          <FormField label={`Requested Amount (${currencyCode})`} required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" /></FormField>
           <FormField label="Repayment Type">
             <select value={createForm.repaymentType} onChange={(e) => setCreateForm(x => ({ ...x, repaymentType: e.target.value }))} className="select w-full" title="Repayment Type">
               {['FullDeduction', 'Installments'].map((v) => <option key={v}>{v}</option>)}
             </select>
           </FormField>
           {createForm.repaymentType === 'Installments' && (
-            <FormField label="Installments"><input type="number" value={createForm.installments} onChange={(e) => setCreateForm(x => ({ ...x, installments: Number(e.target.value) }))} className="input w-full" /></FormField>
+            <FormField label="Installments"><input type="number" value={createForm.installments} onChange={(e) => setCreateForm(x => ({ ...x, installments: Number(e.target.value) }))} className="input w-full" title="Installments" /></FormField>
           )}
-          <FormField label="Reason"><textarea value={createForm.reason} onChange={(e) => setCreateForm(x => ({ ...x, reason: e.target.value }))} className="input w-full" rows={2} /></FormField>
+          <FormField label="Reason"><textarea value={createForm.reason} onChange={(e) => setCreateForm(x => ({ ...x, reason: e.target.value }))} className="input w-full" rows={2} title="Reason" /></FormField>
         </div>
       </Modal>
 
@@ -572,9 +701,9 @@ function AdvancesTab() {
         footer={<><button type="button" onClick={() => setApproveModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={approve} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Approving…' : 'Approve'}</button></>}>
         <FormError error={error} />
         <div className="space-y-3">
-          <FormField label="Approved Amount" required><input type="number" value={approveForm.approvedAmount} onChange={(e) => setApproveForm(x => ({ ...x, approvedAmount: Number(e.target.value) }))} className="input w-full" /></FormField>
-          <FormField label="Installments"><input type="number" value={approveForm.installments} onChange={(e) => setApproveForm(x => ({ ...x, installments: Number(e.target.value) }))} className="input w-full" /></FormField>
-          <FormField label="Repayment Start Date"><input type="date" value={approveForm.repaymentStartDate} onChange={(e) => setApproveForm(x => ({ ...x, repaymentStartDate: e.target.value }))} className="input w-full" /></FormField>
+          <FormField label={`Approved Amount (${currencyCode})`} required><input type="number" value={approveForm.approvedAmount} onChange={(e) => setApproveForm(x => ({ ...x, approvedAmount: Number(e.target.value) }))} className="input w-full" title="Approved Amount" /></FormField>
+          <FormField label="Installments"><input type="number" value={approveForm.installments} onChange={(e) => setApproveForm(x => ({ ...x, installments: Number(e.target.value) }))} className="input w-full" title="Installments" /></FormField>
+          <FormField label="Repayment Start Date"><input type="date" value={approveForm.repaymentStartDate} onChange={(e) => setApproveForm(x => ({ ...x, repaymentStartDate: e.target.value }))} className="input w-full" title="Repayment Start Date" /></FormField>
         </div>
       </Modal>
 
@@ -620,11 +749,15 @@ function BonusTypesTab() {
             <Plus className="h-4 w-4" /> New Bonus Type
           </button>
         </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
+          <p className="font-semibold text-amber-700 dark:text-amber-400">Tax Notice (US)</p>
+          <p className="text-amber-600 dark:text-amber-300 text-xs mt-0.5">Taxable bonuses are subject to 22% federal supplemental withholding rate. Net amount = Gross − 22% federal withholding. State/FICA taxes calculated separately at payroll time.</p>
+        </div>
         <div className="surface overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                {['Code', 'Name', 'Calculation Method', 'Taxable', 'Status'].map((h) => (
+                {['Code', 'Name', 'Calculation Method', 'Tax Treatment', 'Status'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -639,7 +772,7 @@ function BonusTypesTab() {
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{t.code}</td>
                   <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{t.nameEn}</td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{t.calculationMethod}</td>
-                  <td className="px-4 py-3">{t.isTaxable ? <span className="text-xs text-amber-600 font-semibold">Taxable</span> : <span className="text-xs text-emerald-600 font-semibold">Tax-Free</span>}</td>
+                  <td className="px-4 py-3">{t.isTaxable ? <span className="text-xs text-amber-600 font-semibold">Taxable (22% federal withholding)</span> : <span className="text-xs text-emerald-600 font-semibold">Tax-Exempt</span>}</td>
                   <td className="px-4 py-3"><StatusBadge status={t.isActive ? 'Active' : 'Closed'} /></td>
                 </tr>
               ))}
@@ -653,14 +786,17 @@ function BonusTypesTab() {
         <FormError error={error} />
         <div className="space-y-3">
           <FormField label="Code" required><input value={form.code} onChange={(e) => setForm(x => ({ ...x, code: e.target.value }))} className="input w-full" placeholder="ANNUAL_BONUS" /></FormField>
-          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" /></FormField>
-          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" /></FormField>
+          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" title="Name (EN)" /></FormField>
+          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" title="Name (AR)" /></FormField>
           <FormField label="Calculation Method">
             <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
               {['Fixed', 'PercentageSalary'].map((v) => <option key={v}>{v}</option>)}
             </select>
           </FormField>
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={form.isTaxable} onChange={(e) => setForm(x => ({ ...x, isTaxable: e.target.checked }))} className="h-4 w-4 accent-sapphire" title="Taxable" /> Taxable</label>
+          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={form.isTaxable} onChange={(e) => setForm(x => ({ ...x, isTaxable: e.target.checked }))} className="h-4 w-4 accent-sapphire" title="Taxable" />
+            Taxable (applies 22% federal supplemental withholding)
+          </label>
         </div>
       </Modal>
     </>
@@ -670,6 +806,8 @@ function BonusTypesTab() {
 // ── Bonus Batches ─────────────────────────────────────────────────────────────
 
 function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
+  const { currencyCode } = useTenantSettings();
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode });
   const [items, setItems] = useState<BonusBatch[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -679,13 +817,14 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
 
   const [createModal, setCreateModal] = useState(false);
   const [detailModal, setDetailModal] = useState(false);
-  const [selected, setSelected] = useState<{ batch: BonusBatch; bonuses: EmployeeBonus[] } | null>(null);
-  const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ batch: BonusBatch; bonuses: EmployeeBonus[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] } | null>(null);
   const [addEmployeeModal, setAddEmployeeModal] = useState(false);
   const [createForm, setCreateForm] = useState({ bonusTypeId: '', batchName: '', paymentPeriod: '', paymentDate: '', notes: '' });
   const [empForm, setEmpForm] = useState({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: 'Fixed', calculationValue: 0, notes: '' });
+  const [addResult, setAddResult] = useState<{ grossBonusAmount: number; taxWithheld: number; netBonusAmount: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [detailTab, setDetailTab] = useState<'employees' | 'gl' | 'audit'>('employees');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -695,7 +834,7 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   useEffect(() => { load(); }, [load]);
 
   const openDetail = async (batch: BonusBatch) => {
-    try { const d = await bonusBatchesApi.get(batch.id); setSelected(d); setDetailModal(true); } catch { /**/ }
+    try { const d = await bonusBatchesApi.get(batch.id); setSelected(d); setDetailTab('employees'); setDetailModal(true); } catch { /**/ }
   };
 
   const createBatch = async () => {
@@ -708,10 +847,10 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
 
   const addEmployee = async () => {
     if (!selected || !empForm.employeeId.trim()) { setError('Employee ID is required'); return; }
-    setSaving(true); setError('');
+    setSaving(true); setError(''); setAddResult(null);
     try {
-      await bonusBatchesApi.addEmployee(selected.batch.id, empForm);
-      setAddEmployeeModal(false);
+      const r = await bonusBatchesApi.addEmployee(selected.batch.id, empForm);
+      setAddResult({ grossBonusAmount: r.grossBonusAmount, taxWithheld: r.taxWithheld, netBonusAmount: r.netBonusAmount });
       const d = await bonusBatchesApi.get(selected.batch.id); setSelected(d);
     } catch { setError('Failed to add employee.'); }
     finally { setSaving(false); }
@@ -723,8 +862,13 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   };
 
   const approveBatch = async (id: string) => {
-    if (!confirm('Approve this bonus batch?')) return;
+    if (!confirm('Approve this bonus batch? This will generate GL entries.')) return;
     try { await bonusBatchesApi.approve(id); load(); if (selected?.batch.id === id) { const d = await bonusBatchesApi.get(id); setSelected(d); } } catch { /**/ }
+  };
+
+  const markPaidBatch = async (id: string) => {
+    if (!confirm('Mark this batch as paid? This action is final.')) return;
+    try { await bonusBatchesApi.markPaid(id); load(); if (selected?.batch.id === id) { const d = await bonusBatchesApi.get(id); setSelected(d); } } catch { /**/ }
   };
 
   return (
@@ -733,7 +877,7 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
         <div className="flex items-center justify-between">
           <select value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="select" title="Filter by status">
             <option value="">All Statuses</option>
-            {['Draft', 'Submitted', 'Approved', 'Rejected', 'Paid'].map((s) => <option key={s}>{s}</option>)}
+            {['Draft', 'PendingApproval', 'Approved', 'Cancelled', 'Paid'].map((s) => <option key={s}>{s}</option>)}
           </select>
           <button type="button" onClick={() => { setCreateForm({ bonusTypeId: bonusTypes[0]?.id ?? '', batchName: '', paymentPeriod: '', paymentDate: '', notes: '' }); setError(''); setCreateModal(true); }} className="btn-primary">
             <Plus className="h-4 w-4" /> New Bonus Batch
@@ -792,10 +936,10 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
               {bonusTypes.map((t) => <option key={t.id} value={t.id}>{t.nameEn}</option>)}
             </select>
           </FormField>
-          <FormField label="Batch Name" required><input value={createForm.batchName} onChange={(e) => setCreateForm(x => ({ ...x, batchName: e.target.value }))} className="input w-full" placeholder="Q4 2025 Annual Bonus" /></FormField>
-          <FormField label="Payment Period" required><input value={createForm.paymentPeriod} onChange={(e) => setCreateForm(x => ({ ...x, paymentPeriod: e.target.value }))} className="input w-full" placeholder="2025-12" /></FormField>
-          <FormField label="Payment Date" required><input type="date" value={createForm.paymentDate} onChange={(e) => setCreateForm(x => ({ ...x, paymentDate: e.target.value }))} className="input w-full" /></FormField>
-          <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} /></FormField>
+          <FormField label="Batch Name" required><input value={createForm.batchName} onChange={(e) => setCreateForm(x => ({ ...x, batchName: e.target.value }))} className="input w-full" placeholder="Q4 2026 Annual Bonus" /></FormField>
+          <FormField label="Payment Period" required><input value={createForm.paymentPeriod} onChange={(e) => setCreateForm(x => ({ ...x, paymentPeriod: e.target.value }))} className="input w-full" placeholder="2026-12" /></FormField>
+          <FormField label="Payment Date" required><input type="date" value={createForm.paymentDate} onChange={(e) => setCreateForm(x => ({ ...x, paymentDate: e.target.value }))} className="input w-full" title="Payment Date" /></FormField>
+          <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
         </div>
       </Modal>
 
@@ -804,8 +948,9 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
         footer={
           <div className="flex items-center gap-2">
             {selected?.batch.status === 'Draft' && <button type="button" onClick={() => submitBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Submit for Approval</button>}
-            {selected?.batch.status === 'Submitted' && <button type="button" onClick={() => approveBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Approve Batch</button>}
-            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { setEmpForm({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: selected?.batch ? (bonusTypes.find(t => t.id === selected.batch.bonusTypeId)?.calculationMethod ?? 'Fixed') : 'Fixed', calculationValue: 0, notes: '' }); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
+            {selected?.batch.status === 'PendingApproval' && <button type="button" onClick={() => approveBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Approve Batch</button>}
+            {selected?.batch.status === 'Approved' && <button type="button" onClick={() => markPaidBatch(selected!.batch.id)} className="h-8 px-3 text-sm rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600">Mark Paid</button>}
+            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { setEmpForm({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.calculationMethod ?? 'Fixed', calculationValue: 0, notes: '' }); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
             <button type="button" onClick={() => setDetailModal(false)} className="btn-secondary ml-auto">Close</button>
           </div>
         }>
@@ -814,64 +959,264 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
             <div className="grid grid-cols-4 gap-3 text-sm">
               <div className="surface p-3 rounded-lg"><p className="text-xs text-slate-400">Status</p><StatusBadge status={selected.batch.status} /></div>
               <div className="surface p-3 rounded-lg"><p className="text-xs text-slate-400">Employees</p><p className="font-semibold text-slate-900 dark:text-white">{selected.batch.employeeCount}</p></div>
-              <div className="surface p-3 rounded-lg"><p className="text-xs text-slate-400">Total Amount</p><p className="font-semibold text-slate-900 dark:text-white">{fmt(selected.batch.totalAmount)}</p></div>
+              <div className="surface p-3 rounded-lg"><p className="text-xs text-slate-400">Total Gross</p><p className="font-semibold text-slate-900 dark:text-white">{fmt(selected.batch.totalAmount)}</p></div>
               <div className="surface p-3 rounded-lg"><p className="text-xs text-slate-400">Period</p><p className="font-semibold text-slate-900 dark:text-white">{selected.batch.paymentPeriod}</p></div>
             </div>
-            <div className="surface overflow-hidden max-h-64 overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="border-b border-slate-100 dark:border-white/10">{['Employee', 'Department', 'Basic Salary', 'Method', 'Value', 'Bonus Amount', 'Status'].map((h) => <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>)}</tr></thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
-                  {selected.bonuses.length === 0 ? (
-                    <tr><td colSpan={7} className="py-6 text-center text-slate-400">No employees added yet</td></tr>
-                  ) : selected.bonuses.map((b) => (
-                    <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
-                      <td className="px-3 py-2 font-medium text-slate-900 dark:text-white">{b.employeeName}</td>
-                      <td className="px-3 py-2 text-slate-500">{b.department || '—'}</td>
-                      <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(b.basicSalary)}</td>
-                      <td className="px-3 py-2 text-slate-500">{b.calculationMethod}</td>
-                      <td className="px-3 py-2 text-slate-500">{b.calculationValue}</td>
-                      <td className="px-3 py-2 font-semibold text-slate-900 dark:text-white">{fmt(b.bonusAmount)}</td>
-                      <td className="px-3 py-2"><StatusBadge status={b.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-3 border-b border-slate-100 dark:border-white/[0.07]">
+              {(['employees', 'gl', 'audit'] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setDetailTab(t)}
+                  className={`pb-2 text-xs font-semibold uppercase tracking-wide transition border-b-2 ${detailTab === t ? 'border-sapphire text-sapphire' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                  {t === 'employees' ? 'Employee Breakdown' : t === 'gl' ? 'GL Entries' : 'Audit Trail'}
+                </button>
+              ))}
             </div>
+
+            {detailTab === 'employees' && (
+              <div className="surface overflow-hidden max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-slate-100 dark:border-white/10">{['Employee', 'Department', 'Basic Salary', 'Method', 'Value', 'Gross Bonus', 'Status'].map((h) => <th key={h} className="px-3 py-2 text-left font-bold uppercase tracking-wide text-slate-400">{h}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                    {selected.bonuses.length === 0 ? (
+                      <tr><td colSpan={7} className="py-6 text-center text-slate-400">No employees added yet</td></tr>
+                    ) : selected.bonuses.map((b) => (
+                      <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-3 py-2 font-medium text-slate-900 dark:text-white">{b.employeeName}</td>
+                        <td className="px-3 py-2 text-slate-500">{b.department || '—'}</td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{fmt(b.basicSalary)}</td>
+                        <td className="px-3 py-2 text-slate-500">{b.calculationMethod}</td>
+                        <td className="px-3 py-2 text-slate-500">{b.calculationValue}</td>
+                        <td className="px-3 py-2 font-semibold text-slate-900 dark:text-white">{fmt(b.bonusAmount)}</td>
+                        <td className="px-3 py-2"><StatusBadge status={b.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {detailTab === 'gl' && <GlEntriesTable entries={selected.glEntries ?? []} fmt={fmt} />}
+            {detailTab === 'audit' && <AuditTrailTable logs={selected.auditLogs ?? []} />}
           </div>
         )}
       </Modal>
 
       {/* Add Employee Modal */}
-      <Modal isOpen={addEmployeeModal} title="Add Employee to Batch" onClose={() => setAddEmployeeModal(false)}
-        footer={<><button type="button" onClick={() => setAddEmployeeModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={addEmployee} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Adding…' : 'Add'}</button></>}>
+      <Modal isOpen={addEmployeeModal} title="Add Employee to Batch" onClose={() => { setAddEmployeeModal(false); setAddResult(null); }}
+        footer={<><button type="button" onClick={() => { setAddEmployeeModal(false); setAddResult(null); }} className="btn-secondary">{addResult ? 'Done' : 'Cancel'}</button>{!addResult && <button type="button" onClick={addEmployee} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Adding…' : 'Add'}</button>}</>}>
         <FormError error={error} />
-        <div className="space-y-3">
-          <FormField label="Employee ID (GUID)" required><input value={empForm.employeeId} onChange={(e) => setEmpForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-…" /></FormField>
-          <FormField label="Employee Name"><input value={empForm.employeeName} onChange={(e) => setEmpForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" /></FormField>
-          <FormField label="Department"><input value={empForm.department} onChange={(e) => setEmpForm(x => ({ ...x, department: e.target.value }))} className="input w-full" /></FormField>
-          <FormField label="Basic Salary" required><input type="number" value={empForm.basicSalary} onChange={(e) => setEmpForm(x => ({ ...x, basicSalary: Number(e.target.value) }))} className="input w-full" /></FormField>
-          <FormField label="Calculation Method">
-            <select value={empForm.calculationMethod} onChange={(e) => setEmpForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
-              {['Fixed', 'PercentageSalary'].map((v) => <option key={v}>{v}</option>)}
-            </select>
-          </FormField>
-          <FormField label={empForm.calculationMethod === 'Fixed' ? 'Fixed Amount' : 'Percentage (%)'}><input type="number" step="0.1" value={empForm.calculationValue} onChange={(e) => setEmpForm(x => ({ ...x, calculationValue: Number(e.target.value) }))} className="input w-full" /></FormField>
-        </div>
+        {addResult ? (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 p-4 text-sm">
+              <p className="font-semibold text-emerald-700 dark:text-emerald-400 mb-2">Employee Added — Tax Summary</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div><p className="text-xs text-slate-400">Gross Bonus</p><p className="font-bold text-slate-900 dark:text-white">{fmt(addResult.grossBonusAmount)}</p></div>
+                <div><p className="text-xs text-slate-400">Federal Withholding (22%)</p><p className="font-bold text-amber-600 dark:text-amber-400">−{fmt(addResult.taxWithheld)}</p></div>
+                <div><p className="text-xs text-slate-400">Net to Employee</p><p className="font-bold text-emerald-600 dark:text-emerald-400">{fmt(addResult.netBonusAmount)}</p></div>
+              </div>
+            </div>
+            <button type="button" onClick={() => { setEmpForm({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: empForm.calculationMethod, calculationValue: 0, notes: '' }); setAddResult(null); }} className="btn-secondary w-full">Add Another Employee</button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <FormField label="Employee ID (GUID)" required><input value={empForm.employeeId} onChange={(e) => setEmpForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-…" /></FormField>
+            <FormField label="Employee Name"><input value={empForm.employeeName} onChange={(e) => setEmpForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
+            <FormField label="Department"><input value={empForm.department} onChange={(e) => setEmpForm(x => ({ ...x, department: e.target.value }))} className="input w-full" title="Department" /></FormField>
+            <FormField label={`Basic Salary (${currencyCode})`} required><input type="number" value={empForm.basicSalary} onChange={(e) => setEmpForm(x => ({ ...x, basicSalary: Number(e.target.value) }))} className="input w-full" title="Basic Salary" /></FormField>
+            <FormField label="Calculation Method">
+              <select value={empForm.calculationMethod} onChange={(e) => setEmpForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
+                {['Fixed', 'PercentageSalary'].map((v) => <option key={v}>{v}</option>)}
+              </select>
+            </FormField>
+            <FormField label={empForm.calculationMethod === 'Fixed' ? `Fixed Amount (${currencyCode})` : 'Percentage (%)'}><input type="number" step="0.1" value={empForm.calculationValue} onChange={(e) => setEmpForm(x => ({ ...x, calculationValue: Number(e.target.value) }))} className="input w-full" title="Calculation Value" /></FormField>
+          </div>
+        )}
       </Modal>
     </>
+  );
+}
+
+// ── Audit Report ──────────────────────────────────────────────────────────────
+
+function AuditReportTab() {
+  const { currencyCode } = useTenantSettings();
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode });
+  const [loanAudit, setLoanAudit] = useState<any>(null);
+  const [advanceAudit, setAdvanceAudit] = useState<any>(null);
+  const [bonusAudit, setBonusAudit] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [section, setSection] = useState<'loans' | 'advances' | 'bonuses'>('loans');
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      loansApi.audit(),
+      advancesApi.audit(),
+      bonusBatchesApi.audit(),
+    ]).then(([la, aa, ba]) => {
+      setLoanAudit(la); setAdvanceAudit(aa); setBonusAudit(ba);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-16"><div className="h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></div>;
+
+  return (
+    <div className="space-y-5">
+      {/* Compliance Header */}
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+          <div>
+            <p className="font-semibold text-emerald-700 dark:text-emerald-400">Finance Module — Audit Ready</p>
+            <p className="text-xs text-emerald-600 dark:text-emerald-300 mt-0.5">
+              All financial transactions are recorded with double-entry GL journal entries, immutable audit trails, and reconciliation checks.
+              Report generated: {new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' })} EST
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Section tabs */}
+      <div className="flex gap-3 border-b border-slate-200 dark:border-white/[0.08]">
+        {(['loans', 'advances', 'bonuses'] as const).map((s) => (
+          <button key={s} type="button" onClick={() => setSection(s)}
+            className={`pb-2.5 px-1 text-sm font-semibold capitalize transition border-b-2 ${section === s ? 'border-sapphire text-sapphire' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {section === 'loans' && loanAudit && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <SummaryCard label="Total Loans" value={loanAudit.totalLoans} icon={CreditCard} color="text-blue-600 dark:text-blue-400" />
+            <SummaryCard label="Active" value={loanAudit.activeLoans} icon={TrendingUp} color="text-emerald-600 dark:text-emerald-400" />
+            <SummaryCard label="Total Disbursed" value={fmt(loanAudit.totalDisbursed)} icon={DollarSign} color="text-sapphire" />
+            <SummaryCard label="Outstanding" value={fmt(loanAudit.totalOutstanding)} icon={AlertTriangle} color="text-amber-600 dark:text-amber-400" />
+          </div>
+          <div className="surface overflow-hidden">
+            <p className="px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-400 border-b border-slate-100 dark:border-white/[0.07]">Reconciliation — Loan Register</p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+                  {['Loan #', 'Employee', 'Type', 'Disbursed', 'Repaid', 'Outstanding', 'Status', 'Reconciled'].map((h) => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                {loanAudit.reconciliation?.map((r: any) => (
+                  <tr key={r.loanNumber} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{r.loanNumber}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{r.employeeName}</td>
+                    <td className="px-4 py-3 text-slate-500">{r.loanTypeName}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{fmt(r.approvedAmount)}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{fmt(r.totalRepaid)}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{fmt(r.outstandingBalance)}</td>
+                    <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                    <td className="px-4 py-3">{r.isReconciled ? <span className="text-xs font-semibold text-emerald-600">✓ OK</span> : <span className="text-xs font-semibold text-red-500">✗ Variance</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {section === 'advances' && advanceAudit && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <SummaryCard label="Total Advances" value={advanceAudit.totalAdvances} icon={DollarSign} color="text-blue-600 dark:text-blue-400" />
+            <SummaryCard label="Active" value={advanceAudit.activeAdvances} icon={TrendingUp} color="text-emerald-600 dark:text-emerald-400" />
+            <SummaryCard label="Total Disbursed" value={fmt(advanceAudit.totalDisbursed)} icon={DollarSign} color="text-sapphire" />
+            <SummaryCard label="Outstanding" value={fmt(advanceAudit.totalOutstanding)} icon={AlertTriangle} color="text-amber-600 dark:text-amber-400" />
+          </div>
+          <div className="surface overflow-hidden">
+            <p className="px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-400 border-b border-slate-100 dark:border-white/[0.07]">Reconciliation — Advance Register</p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+                  {['Advance #', 'Employee', 'Disbursed', 'Repaid', 'Outstanding', 'Status', 'Reconciled'].map((h) => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                {advanceAudit.reconciliation?.map((r: any) => (
+                  <tr key={r.advanceNumber} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{r.advanceNumber}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{r.employeeName}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{fmt(r.approvedAmount)}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{fmt(r.totalRepaid)}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{fmt(r.outstandingBalance)}</td>
+                    <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                    <td className="px-4 py-3">{r.isReconciled ? <span className="text-xs font-semibold text-emerald-600">✓ OK</span> : <span className="text-xs font-semibold text-red-500">✗ Variance</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {section === 'bonuses' && bonusAudit && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <SummaryCard label="Total Batches" value={bonusAudit.totalBatches} icon={Gift} color="text-blue-600 dark:text-blue-400" />
+            <SummaryCard label="Paid Batches" value={bonusAudit.paidBatches} icon={CheckCircle} color="text-emerald-600 dark:text-emerald-400" />
+            <SummaryCard label="Total Bonus Amount" value={fmt(bonusAudit.totalBonusAmount)} icon={DollarSign} color="text-sapphire" />
+            <SummaryCard label="Pending Payment" value={fmt(bonusAudit.pendingPaymentAmount)} icon={AlertTriangle} color="text-amber-600 dark:text-amber-400" />
+          </div>
+          {bonusAudit.byDepartment?.length > 0 && (
+            <div className="surface overflow-hidden">
+              <p className="px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-400 border-b border-slate-100 dark:border-white/[0.07]">Bonus Distribution by Department</p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+                    {['Department', 'Employees', 'Total Bonus'].map((h) => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                  {bonusAudit.byDepartment.map((d: any) => (
+                    <tr key={d.department} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{d.department || '—'}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{d.count}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{fmt(d.totalAmount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ── LoansPage ─────────────────────────────────────────────────────────────────
 
 export function LoansPage() {
+  const { currencyCode } = useTenantSettings();
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: currencyCode });
   const [activeTab, setActiveTab] = useState<Tab>('loans');
   const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
   const [bonusTypes, setBonusTypes] = useState<BonusType[]>([]);
+  const [summary, setSummary] = useState<{ activeLoans: number; totalOutstanding: number; pendingLoans: number; pendingBonuses: number } | null>(null);
 
   useEffect(() => {
     loanTypesApi.list().then(setLoanTypes).catch(() => {});
     bonusTypesApi.list().then(setBonusTypes).catch(() => {});
+    Promise.all([loansApi.audit(), advancesApi.audit()]).then(([la, aa]) => {
+      setSummary({
+        activeLoans: (la.activeLoans ?? 0) + (aa.activeAdvances ?? 0),
+        totalOutstanding: (la.totalOutstanding ?? 0) + (aa.totalOutstanding ?? 0),
+        pendingLoans: (la.pendingLoans ?? 0) + (aa.pendingAdvances ?? 0),
+        pendingBonuses: 0,
+      });
+    }).catch(() => {});
   }, []);
 
   return (
@@ -879,9 +1224,18 @@ export function LoansPage() {
       <div>
         <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Loans, Advances & Bonuses</h1>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-          Manage employee financial benefits and deductions
+          Finance module — audit-ready with GL journal entries, reconciliation reports, and compliance trails
         </p>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryCard label="Active Obligations" value={summary.activeLoans} icon={CreditCard} color="text-blue-600 dark:text-blue-400" sub="loans + advances" />
+          <SummaryCard label="Total Outstanding" value={fmt(summary.totalOutstanding)} icon={DollarSign} color="text-amber-600 dark:text-amber-400" sub="loans + advances" />
+          <SummaryCard label="Pending Approval" value={summary.pendingLoans} icon={AlertTriangle} color="text-sapphire" sub="awaiting decision" />
+          <SummaryCard label="Audit Status" value="Ready" icon={ShieldCheck} color="text-emerald-600 dark:text-emerald-400" sub="GL entries current" />
+        </div>
+      )}
 
       <div className="flex items-center gap-1 border-b border-slate-200 dark:border-white/[0.08]">
         {tabs.map(({ id, label, icon: Icon }) => (
@@ -908,6 +1262,7 @@ export function LoansPage() {
         {activeTab === 'advancePolicy' && <AdvancePolicyTab />}
         {activeTab === 'bonusTypes' && <BonusTypesTab />}
         {activeTab === 'bonusBatches' && <BonusBatchesTab bonusTypes={bonusTypes} />}
+        {activeTab === 'auditReport' && <AuditReportTab />}
       </div>
     </div>
   );

@@ -152,6 +152,31 @@ export interface EmployeeBonus {
   notes: string;
 }
 
+export interface FinanceGlEntry {
+  id: string;
+  sourceModule: string;
+  sourceEntityRef: string;
+  eventType: string;
+  debitAccount: string;
+  creditAccount: string;
+  amount: number;
+  currency: string;
+  entryDate: string;
+  period: string;
+  description: string;
+  postedByName: string;
+  createdAtUtc: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  oldValuesJson: string;
+  newValuesJson: string;
+  performedByName: string;
+  createdAtUtc: string;
+}
+
 // ── API clients ───────────────────────────────────────────────────────────────
 
 export const loanTypesApi = {
@@ -166,7 +191,7 @@ export const loansApi = {
     client.get<{ total: number; items: EmployeeLoan[] }>('/api/finance/loans', { params }).then(r => r.data),
 
   get: (id: string) =>
-    client.get<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[] }>(`/api/finance/loans/${id}`).then(r => r.data),
+    client.get<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] }>(`/api/finance/loans/${id}`).then(r => r.data),
 
   create: (body: { employeeId: string; employeeName: string; loanTypeId: string; requestedAmount: number; requestedInstallments: number; notes?: string }) =>
     client.post<EmployeeLoan>('/api/finance/loans', body).then(r => r.data),
@@ -179,6 +204,9 @@ export const loansApi = {
 
   decide: (loanId: string, approvalId: string, body: { decision: string; comments?: string; approvedAmount?: number; approvedInstallments?: number; repaymentStartDate?: string }) =>
     client.patch(`/api/finance/loans/${loanId}/approvals/${approvalId}/decide`, body).then(r => r.data),
+
+  audit: (params: { status?: string; period?: string } = {}) =>
+    client.get<{ totalLoans: number; activeLoans: number; settledLoans: number; pendingLoans: number; totalDisbursed: number; totalOutstanding: number; totalRepaid: number; reconciliation: { loanNumber: string; employeeName: string; loanTypeName: string; status: string; approvedAmount: number; totalRepaid: number; outstandingBalance: number; isReconciled: boolean }[] }>('/api/finance/loans/audit', { params }).then(r => r.data),
 };
 
 export const advancePolicyApi = {
@@ -193,7 +221,7 @@ export const advancesApi = {
     client.get<{ total: number; items: SalaryAdvance[] }>('/api/finance/advances', { params }).then(r => r.data),
 
   get: (id: string) =>
-    client.get<{ advance: SalaryAdvance; installments: AdvanceInstallment[] }>(`/api/finance/advances/${id}`).then(r => r.data),
+    client.get<{ advance: SalaryAdvance; installments: AdvanceInstallment[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] }>(`/api/finance/advances/${id}`).then(r => r.data),
 
   create: (body: { employeeId: string; employeeName: string; requestedAmount: number; repaymentType: string; installments: number; repaymentStartDate?: string; reason?: string }) =>
     client.post<SalaryAdvance>('/api/finance/advances', body).then(r => r.data),
@@ -203,6 +231,9 @@ export const advancesApi = {
 
   reject: (id: string, reason?: string) =>
     client.patch<SalaryAdvance>(`/api/finance/advances/${id}/reject`, { reason }).then(r => r.data),
+
+  audit: () =>
+    client.get<{ totalAdvances: number; activeAdvances: number; settledAdvances: number; pendingAdvances: number; totalDisbursed: number; totalOutstanding: number; totalRepaid: number; reconciliation: { advanceNumber: string; employeeName: string; status: string; approvedAmount: number; totalRepaid: number; outstandingBalance: number; isReconciled: boolean }[] }>('/api/finance/advances/audit').then(r => r.data),
 };
 
 export const bonusTypesApi = {
@@ -217,13 +248,13 @@ export const bonusBatchesApi = {
     client.get<{ total: number; items: BonusBatch[] }>('/api/finance/bonuses/batches', { params }).then(r => r.data),
 
   get: (id: string) =>
-    client.get<{ batch: BonusBatch; bonuses: EmployeeBonus[] }>(`/api/finance/bonuses/batches/${id}`).then(r => r.data),
+    client.get<{ batch: BonusBatch; bonuses: EmployeeBonus[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] }>(`/api/finance/bonuses/batches/${id}`).then(r => r.data),
 
   create: (body: { bonusTypeId: string; batchName: string; paymentPeriod: string; paymentDate: string; notes?: string }) =>
     client.post<BonusBatch>('/api/finance/bonuses/batches', body).then(r => r.data),
 
   addEmployee: (batchId: string, body: { employeeId: string; employeeName: string; department?: string; basicSalary: number; calculationMethod: string; calculationValue: number; notes?: string }) =>
-    client.post<EmployeeBonus>(`/api/finance/bonuses/batches/${batchId}/employees`, body).then(r => r.data),
+    client.post<{ bonus: EmployeeBonus; grossBonusAmount: number; taxWithheld: number; netBonusAmount: number }>(`/api/finance/bonuses/batches/${batchId}/employees`, body).then(r => r.data),
 
   removeEmployee: (batchId: string, bonusId: string) =>
     client.delete(`/api/finance/bonuses/batches/${batchId}/employees/${bonusId}`),
@@ -237,6 +268,12 @@ export const bonusBatchesApi = {
   reject: (id: string, reason?: string) =>
     client.patch<BonusBatch>(`/api/finance/bonuses/batches/${id}/reject`, { reason }).then(r => r.data),
 
+  markPaid: (id: string, payrollRunId?: string) =>
+    client.patch<BonusBatch>(`/api/finance/bonuses/batches/${id}/mark-paid`, { payrollRunId }).then(r => r.data),
+
   payrollPending: (paymentPeriod: string) =>
     client.get<{ count: number; totalAmount: number; bonuses: EmployeeBonus[] }>('/api/finance/bonuses/payroll-pending', { params: { paymentPeriod } }).then(r => r.data),
+
+  audit: (period?: string) =>
+    client.get<{ totalBatches: number; approvedBatches: number; paidBatches: number; totalBonusAmount: number; paidAmount: number; pendingPaymentAmount: number; byDepartment: { department: string; count: number; totalAmount: number }[] }>('/api/finance/bonuses/audit', { params: period ? { period } : {} }).then(r => r.data),
 };

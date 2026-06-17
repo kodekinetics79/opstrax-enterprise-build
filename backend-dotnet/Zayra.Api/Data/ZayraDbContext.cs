@@ -322,6 +322,7 @@ public class ZayraDbContext : DbContext
     public DbSet<EmployeeBonus> EmployeeBonuses => Set<EmployeeBonus>();
     public DbSet<BonusApproval> BonusApprovals => Set<BonusApproval>();
     public DbSet<BonusAuditLog> BonusAuditLogs => Set<BonusAuditLog>();
+    public DbSet<FinanceGlEntry> FinanceGlEntries => Set<FinanceGlEntry>();
     // ── Reports & Analytics ────────────────────────────────────────────────────
     public DbSet<SavedReport> SavedReports => Set<SavedReport>();
     public DbSet<ReportSchedule> ReportSchedules => Set<ReportSchedule>();
@@ -2066,6 +2067,15 @@ public class ZayraDbContext : DbContext
             entity.ToTable("bonus_audit_logs");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.BonusBatchId });
+        });
+
+        modelBuilder.Entity<FinanceGlEntry>(entity =>
+        {
+            entity.ToTable("finance_gl_entries");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Amount).HasColumnType("decimal(18,4)");
+            entity.HasIndex(x => new { x.TenantId, x.SourceModule, x.SourceEntityId });
+            entity.HasIndex(x => new { x.TenantId, x.Period });
         });
 
         // ── Reports & Analytics ────────────────────────────────────────────────

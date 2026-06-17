@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Search, X } from 'lucide-react';
+import { Bot, Clock, Search, X } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -11,6 +11,22 @@ import { usersApi } from '../api/identity';
 import { useAuth } from '../contexts/AuthContext';
 import { navigationItems } from '../routes/navigation';
 import type { ThemeMode } from '../types/ui';
+
+const HISTORY_KEY = 'zayra-search-history';
+const MAX_HISTORY = 8;
+
+function loadHistory(): string[] {
+  if (typeof window === 'undefined') return [];
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); } catch { return []; }
+}
+
+function saveToHistory(query: string) {
+  const trimmed = query.trim();
+  if (!trimmed || trimmed.length < 2) return;
+  const existing = loadHistory().filter((h) => h.toLowerCase() !== trimmed.toLowerCase());
+  const next = [trimmed, ...existing].slice(0, MAX_HISTORY);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+}
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -34,6 +50,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== 'undefined' && localStorage.getItem('sidebar-collapsed') === 'true');
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [employeeResults, setEmployeeResults] = useState<Array<{ id: number; label: string; sublabel: string }>>([]);
   const [userResults, setUserResults] = useState<Array<{ id: string; label: string; sublabel: string; searchText: string }>>([]);
   const [reportResults, setReportResults] = useState<Array<{ key: string; label: string; sublabel: string }>>([]);
@@ -190,6 +207,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   }, [commandOpen, commandQuery]);
 
   const openCommandPalette = () => {
+    setSearchHistory(loadHistory());
     setCommandQuery('');
     setCommandOpen(true);
   };
@@ -197,23 +215,42 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   const closeCommandPalette = () => setCommandOpen(false);
 
   const runCommand = (path: string) => {
+    if (commandQuery.trim().length >= 2) saveToHistory(commandQuery.trim());
+    setSearchHistory(loadHistory());
     router.push(path);
     closeCommandPalette();
   };
 
   const openEmployeeResult = (id: number) => {
+    if (commandQuery.trim().length >= 2) saveToHistory(commandQuery.trim());
+    setSearchHistory(loadHistory());
     router.push(`/people?employeeId=${id}`);
     closeCommandPalette();
   };
 
   const openUserResult = (searchText: string) => {
+    if (commandQuery.trim().length >= 2) saveToHistory(commandQuery.trim());
+    setSearchHistory(loadHistory());
     router.push(`/user-management?search=${encodeURIComponent(searchText)}`);
     closeCommandPalette();
   };
 
   const openReportResult = (key: string) => {
+    if (commandQuery.trim().length >= 2) saveToHistory(commandQuery.trim());
+    setSearchHistory(loadHistory());
     router.push(`/reports?report=${encodeURIComponent(key)}`);
     closeCommandPalette();
+  };
+
+  const removeHistoryItem = (item: string) => {
+    const next = searchHistory.filter((h) => h !== item);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    setSearchHistory(next);
+  };
+
+  const clearHistory = () => {
+    localStorage.removeItem(HISTORY_KEY);
+    setSearchHistory([]);
   };
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
@@ -350,6 +387,28 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
             </div>
 
             <div className="max-h-[26rem] overflow-y-auto p-2">
+              {/* Recent searches — shown when query is empty */}
+              {!commandQuery.trim() && searchHistory.length > 0 && (
+                <div className="mb-2 p-2">
+                  <div className="mb-1 flex items-center justify-between px-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Recent Searches</p>
+                    <button type="button" onClick={clearHistory} className="text-[10px] text-slate-400 hover:text-rose-500 transition">Clear all</button>
+                  </div>
+                  <div className="space-y-0.5">
+                    {searchHistory.map((item) => (
+                      <div key={item} className="group flex items-center gap-2 rounded-xl px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-white/[0.05]">
+                        <Clock className="h-3.5 w-3.5 shrink-0 text-slate-300 dark:text-slate-600" />
+                        <button type="button" className="flex-1 text-left text-sm text-slate-600 dark:text-slate-300" onClick={() => setCommandQuery(item)}>
+                          {item}
+                        </button>
+                        <button type="button" onClick={() => removeHistoryItem(item)} title="Remove from history" className="opacity-0 group-hover:opacity-100 transition grid h-5 w-5 place-items-center rounded text-slate-300 hover:text-slate-500 dark:text-slate-600 dark:hover:text-slate-400">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {showingSearchResults ? (
                 <div className="space-y-3 p-2">
                   {employeeResults.length > 0 && (
