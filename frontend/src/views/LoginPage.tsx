@@ -22,7 +22,7 @@ const ACTIVITY = [
   { name: 'Payroll',  action: 'Run completed',    time: '7:00 AM', dot: 'bg-amber-400'   },
 ];
 
-const PILLS = ['Saudi Labour Law', 'UAE MoHRE', 'WPS Compliant', 'ISO 27001', 'Multi-branch', 'AI-powered'];
+const PILLS = ['Multi-country Payroll', 'Labour Law Compliance', 'ISO 27001', 'SOC 2 Ready', 'Multi-branch', 'AI-powered'];
 
 const NAV_ICONS = [
   { icon: BarChart3,  active: true  },
@@ -145,11 +145,11 @@ export function LoginPage() {
               <h1 className="text-[46px] font-black leading-[1.06] tracking-tight">
                 <span className="text-white">The complete workforce</span><br />
                 <span className="bg-gradient-to-r from-blue-400 via-cyan-300 to-sky-300 bg-clip-text text-transparent">
-                  platform for GCC.
+                  platform for every team.
                 </span>
               </h1>
               <p className="mt-3 max-w-[400px] text-[14px] leading-relaxed text-slate-400">
-                HR, payroll, attendance and compliance — unified. Built for Saudi, UAE and GCC labour law from day one.
+                HR, payroll, attendance and compliance — unified. Built to adapt to any country, any labour law, any workforce size.
               </p>
             </div>
 
@@ -266,7 +266,7 @@ export function LoginPage() {
 
             {/* Footer */}
             <p className="shrink-0 text-[11px] text-white/20">
-              A <span className="font-semibold text-white/30">Kode Kinetics</span> product · Trusted by 50+ GCC enterprises
+              A <span className="font-semibold text-white/30">Kode Kinetics</span> product · Trusted by growing enterprises worldwide
             </p>
 
           </div>
@@ -347,7 +347,7 @@ export function LoginPage() {
                 </button>
 
                 <div className="mt-8 flex items-center justify-center gap-5 border-t border-slate-100 pt-6 dark:border-white/[0.06]">
-                  {['AES-256 encrypted', 'SOC 2 ready', 'GCC data residency'].map(t => (
+                  {['AES-256 encrypted', 'SOC 2 ready', 'Global data residency'].map(t => (
                     <span key={t} className="text-[10px] font-medium text-slate-300 dark:text-slate-600">{t}</span>
                   ))}
                 </div>
