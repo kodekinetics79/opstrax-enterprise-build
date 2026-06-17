@@ -11,6 +11,27 @@ import { useAuth } from '../contexts/AuthContext';
 import { authApi } from '../api/auth';
 import { Logo } from '../components/Logo';
 
+function useCountUp(target: number, duration = 800, delay = 0): number {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const tid = setTimeout(() => {
+      const start = performance.now();
+      const step = (now: number) => {
+        if (cancelled) return;
+        const t = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setVal(eased * target);
+        if (t < 1) requestAnimationFrame(step);
+        else setVal(target);
+      };
+      requestAnimationFrame(step);
+    }, delay);
+    return () => { cancelled = true; clearTimeout(tid); };
+  }, [target, duration, delay]);
+  return val;
+}
+
 const WEEK = [
   { d: 'M', v: 96 }, { d: 'T', v: 99 }, { d: 'W', v: 97 },
   { d: 'T', v: 98 }, { d: 'F', v: 94 }, { d: 'S', v: 88 }, { d: 'S', v: 91 },
@@ -96,6 +117,10 @@ export function LoginPage() {
 
   const go = (m: Mode) => { setError(''); setInfo(''); setMode(m); if (m === 'forgot' && email) setForgotEmail(email); };
 
+  const kpi0 = useCountUp(347,  800, 300);
+  const kpi1 = useCountUp(98.2, 800, 420);
+  const kpi2 = useCountUp(2.4,  800, 540);
+
   return (
     <>
       <style>{`
@@ -109,9 +134,13 @@ export function LoginPage() {
             linear-gradient(90deg, rgba(100,150,255,0.04) 1px, transparent 1px);
           background-size: 44px 44px;
         }
-        .kx-win  { animation: kx-window-in 0.7s ease-out both }
-        .kx-bar  { animation: kx-bar-in 0.4s ease-out both; transform-origin: bottom }
-        .kx-dot  { animation: kx-pulse-dot 2s ease-in-out infinite }
+        @keyframes kx-count  { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes kx-row-in { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+        .kx-win   { animation: kx-window-in 0.7s ease-out both }
+        .kx-bar   { animation: kx-bar-in 0.4s ease-out both; transform-origin: bottom }
+        .kx-dot   { animation: kx-pulse-dot 2s ease-in-out infinite }
+        .kx-count { animation: kx-count 0.5s ease-out both }
+        .kx-row   { animation: kx-row-in 0.4s ease-out both }
       `}</style>
 
       <div className="flex min-h-screen font-sans">
@@ -206,13 +235,13 @@ export function LoginPage() {
                   {/* KPI tiles */}
                   <div className="mb-3 grid grid-cols-3 gap-2">
                     {[
-                      { label: 'Active Employees', value: '347',   sub: '↑ 12 today',   color: 'text-emerald-300', ring: 'ring-emerald-500/15', bg: 'bg-emerald-500/[0.06]', Icon: Users       },
-                      { label: 'Attendance Rate',  value: '98.2%', sub: 'Monthly avg',   color: 'text-cyan-300',    ring: 'ring-cyan-500/15',    bg: 'bg-cyan-500/[0.06]',    Icon: TrendingUp   },
-                      { label: 'Payroll',          value: '$2.4M', sub: 'On time · Jun', color: 'text-amber-300',   ring: 'ring-amber-500/15',   bg: 'bg-amber-500/[0.06]',   Icon: CheckCircle2 },
-                    ].map(({ label, value, sub, color, ring, bg, Icon }) => (
+                      { label: 'Active Employees', value: String(Math.round(kpi0)),       sub: '↑ 12 today',   color: 'text-emerald-300', ring: 'ring-emerald-500/15', bg: 'bg-emerald-500/[0.06]', Icon: Users,       delay: 300 },
+                      { label: 'Attendance Rate',  value: kpi1.toFixed(1) + '%',          sub: 'Monthly avg',   color: 'text-cyan-300',    ring: 'ring-cyan-500/15',    bg: 'bg-cyan-500/[0.06]',    Icon: TrendingUp,  delay: 420 },
+                      { label: 'Payroll',          value: '$' + kpi2.toFixed(1) + 'M',    sub: 'On time · Jun', color: 'text-amber-300',   ring: 'ring-amber-500/15',   bg: 'bg-amber-500/[0.06]',   Icon: CheckCircle2,delay: 540 },
+                    ].map(({ label, value, sub, color, ring, bg, Icon, delay }) => (
                       <div key={label} className={`${bg} rounded-xl p-3 ring-1 ${ring}`}>
                         <Icon className={`mb-2 h-3.5 w-3.5 ${color} opacity-60`} />
-                        <p className={`text-[20px] font-black leading-none ${color}`}>{value}</p>
+                        <p className={`kx-count text-[20px] font-black leading-none ${color}`} style={{ animationDelay: `${delay}ms` }}>{value}</p>
                         <p className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-white/25">{label}</p>
                         <p className="text-[9px] text-white/15">{sub}</p>
                       </div>
@@ -240,8 +269,8 @@ export function LoginPage() {
 
                   {/* Recent activity */}
                   <div className="space-y-1">
-                    {ACTIVITY.map(({ name, action, time, dot }) => (
-                      <div key={name} className="flex items-center gap-2.5 rounded-lg bg-white/[0.02] px-2.5 py-1.5 ring-1 ring-white/[0.03]">
+                    {ACTIVITY.map(({ name, action, time, dot }, i) => (
+                      <div key={name} className="kx-row flex items-center gap-2.5 rounded-lg bg-white/[0.02] px-2.5 py-1.5 ring-1 ring-white/[0.03]" style={{ animationDelay: `${700 + i * 60}ms` }}>
                         <div className={`h-1.5 w-1.5 rounded-full ${dot}`} />
                         <p className="flex-1 text-[10px] text-white/40">
                           <span className="font-semibold text-white/60">{name}</span> · {action}
@@ -437,6 +466,19 @@ export function LoginPage() {
 
           </div>
           </div>{/* /glass card wrapper */}
+
+          <p className="mt-8 text-center text-[11px] text-slate-400 dark:text-slate-600">
+            By signing in you agree to our{' '}
+            <a href="/privacy" target="_blank" rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-slate-600 dark:hover:text-slate-400 transition-colors">
+              Privacy Policy
+            </a>
+            {' '}and{' '}
+            <a href="/terms" target="_blank" rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-slate-600 dark:hover:text-slate-400 transition-colors">
+              Terms of Service
+            </a>
+          </p>
         </div>
 
       </div>

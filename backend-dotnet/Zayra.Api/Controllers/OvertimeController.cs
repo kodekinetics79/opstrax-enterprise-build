@@ -160,27 +160,63 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpPost("requests/{id:guid}/approve")]
-    [Authorize(Roles = "Admin,HR Manager,Manager")]
-    public async Task<ActionResult<OvertimeCalculation>> Approve(Guid id, OvertimeDecisionRequest req, CancellationToken ct)
+    [Authorize(Roles = "Admin,HR Manager,Manager,Supervisor")]
+    public async Task<ActionResult> Approve(Guid id, OvertimeDecisionRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
         var request = await _db.OvertimeRequests.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
         if (request is null) return NotFound();
         if (!request.Status.StartsWith("Pending")) return BadRequest(new { message = "Only pending overtime can be approved." });
-        request.Status = "Approved";
-        request.ApprovedMinutes = req.ApprovedMinutes > 0 ? req.ApprovedMinutes : request.RequestedMinutes;
-        request.DecidedAtUtc = DateTime.UtcNow;
-        _db.OvertimeApprovals.Add(new OvertimeApproval { TenantId = tenantId, OvertimeRequestId = id, Decision = "Approved", Notes = req.Notes ?? string.Empty, DecidedByUserId = GetUserId(), DecidedAtUtc = DateTime.UtcNow });
-        var calc = await Calculate(request, ct);
-        _db.OvertimeCalculations.Add(calc);
-        _db.OvertimePayrollImpacts.Add(new OvertimePayrollImpact { TenantId = tenantId, OvertimeRequestId = request.Id, EmployeeId = request.EmployeeId, Hours = calc.ApprovedHours, Amount = calc.Amount });
-        await SaveAudit("overtime.request.approved", "OvertimeRequest", request.Id.ToString(), ct);
-        await _db.SaveChangesAsync(ct);
-        return Ok(calc);
+
+        var isAdmin = User.IsInRole("Admin");
+        var isHR = User.IsInRole("HR Manager");
+        var isManager = User.IsInRole("Manager") || User.IsInRole("Supervisor");
+
+        _db.OvertimeApprovals.Add(new OvertimeApproval
+        {
+            TenantId = tenantId,
+            OvertimeRequestId = id,
+            Decision = "Approved",
+            Notes = req.Notes ?? string.Empty,
+            DecidedByUserId = GetUserId(),
+            DecidedAtUtc = DateTime.UtcNow
+        });
+
+        // Admin bypasses all steps; HR Manager finalises from PendingHR
+        if (isAdmin || (isHR && request.Status == "PendingHR"))
+        {
+            request.Status = "Approved";
+            request.ApprovedMinutes = req.ApprovedMinutes > 0 ? req.ApprovedMinutes : request.RequestedMinutes;
+            request.DecidedAtUtc = DateTime.UtcNow;
+            var calc = await Calculate(request, ct);
+            _db.OvertimeCalculations.Add(calc);
+            _db.OvertimePayrollImpacts.Add(new OvertimePayrollImpact
+            {
+                TenantId = tenantId,
+                OvertimeRequestId = request.Id,
+                EmployeeId = request.EmployeeId,
+                Hours = calc.ApprovedHours,
+                Amount = calc.Amount
+            });
+            await SaveAudit("overtime.request.approved", "OvertimeRequest", request.Id.ToString(), ct);
+            await _db.SaveChangesAsync(ct);
+            return Ok(calc);
+        }
+
+        // Manager/Supervisor advances PendingManager → PendingHR (no calculation yet)
+        if (isManager && request.Status == "PendingManager")
+        {
+            request.Status = "PendingHR";
+            await SaveAudit("overtime.request.manager_approved", "OvertimeRequest", request.Id.ToString(), ct);
+            await _db.SaveChangesAsync(ct);
+            return Ok(request);
+        }
+
+        return BadRequest(new { message = "You cannot approve this request at its current stage." });
     }
 
     [HttpPost("requests/{id:guid}/reject")]
-    [Authorize(Roles = "Admin,HR Manager,Manager")]
+    [Authorize(Roles = "Admin,HR Manager,Manager,Supervisor")]
     public async Task<IActionResult> Reject(Guid id, OvertimeDecisionRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();

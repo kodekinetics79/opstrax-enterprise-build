@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Activity, AlertTriangle, BarChart2, Calendar, CheckCircle,
   ChevronRight, Clock, FileText, Plus, Settings, Star,
@@ -244,10 +245,10 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
 // ── Balance Tab ───────────────────────────────────────────────────────────────
 
-function BalanceTab() {
+function BalanceTab({ selfEmployeeId }: { selfEmployeeId?: number }) {
   const [balances, setBalances] = useState<EmployeeLeaveBalance[]>([]);
   const [loading, setLoading] = useState(true);
-  const [empId, setEmpId] = useState('');
+  const [empId, setEmpId] = useState(selfEmployeeId ? String(selfEmployeeId) : '');
   const [year, setYear] = useState(new Date().getFullYear());
   const [adjustModal, setAdjustModal] = useState<EmployeeLeaveBalance | null>(null);
   const [adjAmount, setAdjAmount] = useState('');
@@ -271,11 +272,13 @@ function BalanceTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <input type="number" className={`${inp} w-40`} placeholder="Employee ID" value={empId} onChange={e => setEmpId(e.target.value)} />
+        {!selfEmployeeId && (
+          <input type="number" className={`${inp} w-40`} placeholder="Employee ID" value={empId} onChange={e => setEmpId(e.target.value)} />
+        )}
         <select className={`${sel} w-32`} value={year} onChange={e => setYear(Number(e.target.value))}>
           {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
         </select>
-        <button type="button" className={btn.primary} onClick={load}>Search</button>
+        {!selfEmployeeId && <button type="button" className={btn.primary} onClick={load}>Search</button>}
         <p className="ml-auto text-sm text-slate-400">{balances.length} balance{balances.length !== 1 ? 's' : ''}</p>
       </div>
 
@@ -344,10 +347,10 @@ function BalanceTab() {
 
 // ── Apply Leave Tab ───────────────────────────────────────────────────────────
 
-function ApplyLeaveTab() {
+function ApplyLeaveTab({ selfEmployeeId, isEmployee = false }: { selfEmployeeId?: number; isEmployee?: boolean }) {
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [form, setForm] = useState({
-    employeeId: '', employeeName: '', departmentName: '', designationTitle: '',
+    employeeId: selfEmployeeId ? String(selfEmployeeId) : '', employeeName: '', departmentName: '', designationTitle: '',
     leaveTypeId: '', startDate: '', endDate: '', dayType: 'Full',
     hoursRequested: '', reason: '', isEmergency: false,
     delegateEmployeeId: '', delegateEmployeeName: '',
@@ -407,7 +410,11 @@ function ApplyLeaveTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required." infoKey="leave.employee_id"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+          <Field label="Employee ID *">
+            <input type="number" className={`${inp} ${isEmployee ? 'bg-slate-50 dark:bg-white/[0.02] cursor-not-allowed' : ''}`}
+              value={form.employeeId} onChange={e => set('employeeId', e.target.value)} readOnly={isEmployee} />
+            {isEmployee && <p className="mt-1 text-[11px] text-slate-400">Your employee ID — applying on your own behalf.</p>}
+          </Field>
           <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
           <Field label="Department"><input className={inp} value={form.departmentName} onChange={e => set('departmentName', e.target.value)} /></Field>
           <Field label="Designation"><input className={inp} value={form.designationTitle} onChange={e => set('designationTitle', e.target.value)} /></Field>
@@ -1546,20 +1553,52 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
 ];
 
 export function LeavePage() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('dashboard');
+
+  const isAdmin    = user?.roles.some(r => ['Admin', 'HR Manager', 'HR Officer'].includes(r)) ?? false;
+  const isManager  = !isAdmin && (user?.roles.some(r => ['Manager', 'Supervisor'].includes(r)) ?? false);
+  const isEmployee = !isAdmin && !isManager;
+  const selfEmployeeId = user?.employeeId;
+
+  const requestsLabel = isAdmin ? 'All Requests' : isManager ? 'Team Requests' : 'My Leave';
+
+  const visibleTabs = TABS
+    .map(t => t.id === 'requests' ? { ...t, label: requestsLabel } : t)
+    .filter(t => {
+      if (['types', 'policies', 'holidays', 'reports', 'ai-insights'].includes(t.id)) return isAdmin;
+      if (t.id === 'approvals') return isAdmin || isManager;
+      if (t.id === 'absences') return isAdmin || isManager;
+      if (t.id === 'encashment') return isAdmin || isManager;
+      if (t.id === 'compoff') return isAdmin || isManager;
+      return true;
+    });
+
+  const subtitle = isAdmin
+    ? 'Manage leave across the organisation — policies, balances, workflows, encashment, comp-off, absence records, and AI insights.'
+    : isManager
+    ? 'Approve team leave requests, track your team\'s balances, and manage absences.'
+    : 'Apply for leave, track your balance, and view your leave history.';
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
-      <div>
-        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Leave &amp; Absence Management</h1>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-          GCC-ready enterprise leave — configurable policies, balance engine, workflows, encashment, comp-off, absence intelligence, and AI insights.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Leave &amp; Absence Management</h1>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
+        </div>
+        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+          isAdmin   ? 'bg-sapphire/10 text-sapphire dark:bg-sapphire/20 dark:text-cyanAccent'
+          : isManager ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
+        }`}>
+          {isAdmin ? 'Admin / HR' : isManager ? 'Manager' : 'Employee'}
+        </span>
       </div>
 
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'max-content' }}>
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <button key={t.id} type="button" onClick={() => setTab(t.id)}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === t.id ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
               <t.icon className="h-3.5 w-3.5" />
@@ -1569,20 +1608,20 @@ export function LeavePage() {
         </div>
       </div>
 
-      {tab === 'dashboard' && <DashboardTab onNavigate={setTab} />}
-      {tab === 'balance' && <BalanceTab />}
-      {tab === 'apply' && <ApplyLeaveTab />}
-      {tab === 'requests' && <MyRequestsTab />}
-      {tab === 'approvals' && <ApprovalsTab />}
-      {tab === 'calendar' && <CalendarTab />}
-      {tab === 'types' && <LeaveTypesTab />}
-      {tab === 'policies' && <PoliciesTab />}
-      {tab === 'holidays' && <HolidayCalendarTab />}
+      {tab === 'dashboard'  && <DashboardTab onNavigate={setTab} />}
+      {tab === 'balance'    && <BalanceTab selfEmployeeId={isEmployee ? selfEmployeeId : undefined} />}
+      {tab === 'apply'      && <ApplyLeaveTab selfEmployeeId={isEmployee ? selfEmployeeId : undefined} isEmployee={isEmployee} />}
+      {tab === 'requests'   && <MyRequestsTab />}
+      {tab === 'approvals'  && <ApprovalsTab />}
+      {tab === 'calendar'   && <CalendarTab />}
+      {tab === 'types'      && <LeaveTypesTab />}
+      {tab === 'policies'   && <PoliciesTab />}
+      {tab === 'holidays'   && <HolidayCalendarTab />}
       {tab === 'encashment' && <EncashmentTab />}
-      {tab === 'compoff' && <CompOffTab />}
-      {tab === 'absences' && <AbsencesTab />}
-      {tab === 'reports' && <ReportsTab />}
-      {tab === 'ai-insights' && <AIInsightsTab />}
+      {tab === 'compoff'    && <CompOffTab />}
+      {tab === 'absences'   && <AbsencesTab />}
+      {tab === 'reports'    && <ReportsTab />}
+      {tab === 'ai-insights'&& <AIInsightsTab />}
     </div>
   );
 }

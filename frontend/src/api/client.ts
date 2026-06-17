@@ -49,9 +49,12 @@ client.interceptors.response.use(
       return Promise.reject(err);
     }
 
-    // 403 — authenticated but not authorized; show access-denied page
+    // 403 — authenticated but not authorized.
+    // If the error is a feature_not_enabled, silently reject (caller handles it).
+    // Only redirect to access-denied for true RBAC/permission failures.
     if (err.response?.status === 403) {
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/access-denied')) {
+      const isFeatureGated = err.response?.data?.error === 'feature_not_enabled';
+      if (!isFeatureGated && typeof window !== 'undefined' && !window.location.pathname.startsWith('/access-denied')) {
         window.location.href = '/access-denied';
       }
       return Promise.reject(err);

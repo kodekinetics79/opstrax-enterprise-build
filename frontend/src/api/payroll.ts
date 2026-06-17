@@ -123,6 +123,79 @@ export interface PayrollApproval {
   decidedAtUtc: string | null;
 }
 
+export interface PayrollGLEntry {
+  componentCode: string;
+  componentName: string;
+  glAccount: string;
+  glAccountName: string;
+  entryType: 'DR' | 'CR';
+  amount: number;
+}
+
+export interface PayrollGLJournal {
+  runId: string;
+  period: string;
+  entries: PayrollGLEntry[];
+  totalDebits: number;
+  totalCredits: number;
+  isBalanced: boolean;
+}
+
+export interface PayrollVarianceRow {
+  employeeId: number;
+  employeeName: string;
+  employeeCode: string;
+  priorGross: number;
+  currentGross: number;
+  grossDelta: number;
+  grossVariancePct: number;
+  priorNet: number;
+  currentNet: number;
+  netDelta: number;
+  isVarianceFlag: boolean;
+}
+
+export interface PayrollReconciliation {
+  runId: string;
+  period: string;
+  priorPeriod: string | null;
+  currentHeadcount: number;
+  priorHeadcount: number;
+  joinerCount: number;
+  leaverCount: number;
+  currentTotalGross: number;
+  priorTotalGross: number;
+  currentTotalNet: number;
+  priorTotalNet: number;
+  flaggedVariances: number;
+  variances: PayrollVarianceRow[];
+}
+
+export interface FinalSettlementBreakdown {
+  component: string;
+  amount: number;
+}
+
+export interface FinalSettlementResult {
+  employeeId: number;
+  employeeName: string;
+  lastWorkingDay: string;
+  currency: string;
+  basicSalary: number;
+  grossSalary: number;
+  proRataSalary: number;
+  daysWorkedInMonth: number;
+  daysInMonth: number;
+  eosbAmount: number;
+  totalYears: number;
+  leaveBalanceDays: number;
+  leaveEncashment: number;
+  noticePeriodDaysShort: number;
+  noticePeriodDeduction: number;
+  totalPayable: number;
+  breakdown: FinalSettlementBreakdown[];
+}
+
 export interface PayrollGroup {
   id: string;
   code: string;
@@ -162,6 +235,18 @@ export const payrollApi = {
 
   approveRun: (id: string, notes?: string) =>
     client.post<PayrollRun>(`/api/payroll/runs/${id}/approve`, { notes }).then((r) => r.data),
+
+  sendBackRun: (id: string, notes?: string) =>
+    client.post<PayrollRun>(`/api/payroll/runs/${id}/send-back`, { notes }).then((r) => r.data),
+
+  glJournal: (id: string) =>
+    client.get<PayrollGLJournal>(`/api/payroll/runs/${id}/gl-journal`).then((r) => r.data),
+
+  reconciliation: (runId: string) =>
+    client.get<PayrollReconciliation>('/api/payroll/reports/reconciliation', { params: { runId } }).then((r) => r.data),
+
+  finalSettlement: (employeeId: number, lastWorkingDay: string, noticePeriodDaysShort = 0) =>
+    client.post<FinalSettlementResult>('/api/payroll/final-settlement', { employeeId, lastWorkingDay, noticePeriodDaysShort }).then((r) => r.data),
 
   slips: (runId: string, params: { page?: number; pageSize?: number } = {}) =>
     client.get<PagedResult<PayrollSlip>>(`/api/payroll/runs/${runId}/slips`, { params }).then((r) => r.data),

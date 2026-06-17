@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Clock, X, Wand2, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Clock, X, Wand2, CheckCircle2, Coffee, CalendarDays } from 'lucide-react';
 import { shiftsApi } from '../api/shifts';
 import type { ShiftDefinition, RosterEmployee, RosterAssignment } from '../api/shifts';
+import { useAuth } from '../contexts/AuthContext';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -551,6 +552,172 @@ function RosterTab({ definitions }: RosterTabProps) {
   );
 }
 
+// ── My Schedule Tab (employee view) ──────────────────────────────────────────
+
+function MyScheduleTab({ definitions }: { definitions: ShiftDefinition[] }) {
+  const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
+  const [assignments, setAssignments] = useState<RosterAssignment[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const from = toDateString(weekStart);
+  const to   = toDateString(addDays(weekStart, 6));
+  const days  = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const today = toDateString(new Date());
+
+  useEffect(() => {
+    setLoading(true);
+    shiftsApi.getRoster(from, to)
+      .then(r => setAssignments(r.assignments))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [from]);
+
+  const assignmentMap = new Map(assignments.map(a => [a.date as unknown as string, a]));
+
+  const defMap = new Map(definitions.map(d => [d.id, d]));
+
+  const weekLabel = `${weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${addDays(weekStart, 6).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+
+  // Next 4 weeks for the upcoming strip
+  const upcomingDays = Array.from({ length: 28 }, (_, i) => addDays(getWeekStart(new Date()), i + 7));
+  const [upcoming, setUpcoming] = useState<RosterAssignment[]>([]);
+  useEffect(() => {
+    const f = toDateString(upcomingDays[0]);
+    const t = toDateString(upcomingDays[upcomingDays.length - 1]);
+    shiftsApi.getRoster(f, t).then(r => setUpcoming(r.assignments)).catch(() => {});
+  }, []);
+  const upcomingMap = new Map(upcoming.map(a => [a.date as unknown as string, a]));
+
+  return (
+    <div className="space-y-6">
+      {/* Week navigation */}
+      <div className="flex items-center gap-3">
+        <button type="button" aria-label="Previous week"
+          onClick={() => setWeekStart(w => addDays(w, -7))}
+          className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-white/10 dark:text-slate-400 dark:hover:bg-white/10">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{weekLabel}</span>
+        <button type="button" aria-label="Next week"
+          onClick={() => setWeekStart(w => addDays(w, 7))}
+          className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-white/10 dark:text-slate-400 dark:hover:bg-white/10">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <button type="button"
+          onClick={() => setWeekStart(getWeekStart(new Date()))}
+          className="rounded-lg border border-slate-200 px-3 py-1 text-xs text-slate-500 hover:bg-slate-50 dark:border-white/10 dark:text-slate-400 dark:hover:bg-white/10">
+          This week
+        </button>
+      </div>
+
+      {/* 7-day card row */}
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-7 gap-2">
+          {days.map((d, i) => {
+            const ds = toDateString(d);
+            const a  = assignmentMap.get(ds);
+            const def = a ? defMap.get(a.shiftDefinitionId) : undefined;
+            const isToday   = ds === today;
+            const isPast    = ds < today;
+            const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+
+            return (
+              <div key={ds}
+                className={`relative flex flex-col overflow-hidden rounded-2xl border transition ${
+                  isToday
+                    ? 'border-sapphire/40 ring-2 ring-sapphire/20 dark:border-cyanAccent/40 dark:ring-cyanAccent/15'
+                    : 'border-slate-200 dark:border-white/10'
+                } ${isPast && !isToday ? 'opacity-55' : ''}`}>
+                {/* Day header */}
+                <div className={`px-3 pt-3 pb-2 ${
+                  isToday ? 'bg-sapphire/[0.06] dark:bg-cyanAccent/[0.06]' : isWeekend ? 'bg-slate-50/80 dark:bg-white/[0.02]' : 'bg-white dark:bg-white/[0.02]'
+                }`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider ${isToday ? 'text-sapphire dark:text-cyanAccent' : 'text-slate-400'}`}>
+                    {DAY_LABELS[i]}
+                  </p>
+                  <p className={`mt-0.5 text-xl font-black ${isToday ? 'text-sapphire dark:text-cyanAccent' : isPast ? 'text-slate-400' : 'text-slate-800 dark:text-white'}`}>
+                    {d.getDate()}
+                  </p>
+                  <p className="text-[10px] text-slate-400">{d.toLocaleDateString('en-GB', { month: 'short' })}</p>
+                </div>
+
+                {/* Shift content */}
+                <div className="flex flex-1 flex-col p-3">
+                  {a ? (
+                    <>
+                      <div className="mb-2 h-1.5 w-full rounded-full" style={{ backgroundColor: a.shiftColor }} />
+                      <p className="text-[11px] font-bold text-slate-800 dark:text-white">{a.shiftName}</p>
+                      <p className="mt-1 text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                        {def ? `${fmt12(def.startTime)} – ${fmt12(def.endTime)}` : a.shiftCode}
+                      </p>
+                      {def && def.breakMinutes > 0 && (
+                        <div className="mt-auto pt-2 flex items-center gap-1 text-[10px] text-slate-400">
+                          <Coffee className="h-3 w-3" />
+                          {def.breakMinutes}m break
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex flex-1 flex-col items-center justify-center py-2 text-center">
+                      <p className="text-[10px] text-slate-300 dark:text-slate-600">
+                        {isWeekend ? 'Weekend' : 'Not scheduled'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Upcoming shifts strip */}
+      <div>
+        <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <CalendarDays className="h-3.5 w-3.5" />
+          Upcoming — next 4 weeks
+        </h3>
+        <div className="surface divide-y divide-slate-100 dark:divide-white/5">
+          {upcomingDays
+            .filter(d => {
+              const ds = toDateString(d);
+              return upcomingMap.has(ds);
+            })
+            .slice(0, 10)
+            .map(d => {
+              const ds = toDateString(d);
+              const a  = upcomingMap.get(ds)!;
+              const def = defMap.get(a.shiftDefinitionId);
+              return (
+                <div key={ds} className="flex items-center gap-4 px-4 py-3">
+                  <div className="w-20 shrink-0">
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      {d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </p>
+                  </div>
+                  <div className="h-3 w-1 rounded-full shrink-0" style={{ backgroundColor: a.shiftColor }} />
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{a.shiftName}</p>
+                  {def && (
+                    <p className="ml-auto text-xs text-slate-400 font-mono">
+                      {fmt12(def.startTime)} – {fmt12(def.endTime)}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          {upcomingDays.filter(d => upcomingMap.has(toDateString(d))).length === 0 && (
+            <p className="px-4 py-6 text-center text-sm text-slate-400">No upcoming shifts scheduled yet.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Definitions Tab ───────────────────────────────────────────────────────────
 
 interface DefinitionsTabProps {
@@ -639,10 +806,15 @@ function DefinitionsTab({ definitions, onRefresh }: DefinitionsTabProps) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'roster' | 'definitions' | 'autoPlan';
+type Tab = 'roster' | 'definitions' | 'autoPlan' | 'schedule';
 
 export function ShiftsPage() {
-  const [tab, setTab] = useState<Tab>('roster');
+  const { user } = useAuth();
+  const isAdmin   = user?.roles.some(r => ['Admin', 'HR Manager', 'HR Officer'].includes(r)) ?? false;
+  const isManager = !isAdmin && (user?.roles.some(r => ['Manager', 'Supervisor'].includes(r)) ?? false);
+  const isEmployee = !isAdmin && !isManager;
+
+  const [tab, setTab] = useState<Tab>(() => isEmployee ? 'schedule' : 'roster');
   const [definitions, setDefinitions] = useState<ShiftDefinition[]>([]);
   const [defsLoading, setDefsLoading] = useState(true);
   const [autoPlanOpen, setAutoPlanOpen] = useState(false);
@@ -657,42 +829,50 @@ export function ShiftsPage() {
 
   useEffect(() => { loadDefinitions(); }, []);
 
-  const TAB_LABELS: Record<Tab, string> = { roster: 'Weekly Roster', definitions: 'Shift Definitions', autoPlan: 'Auto Plan' };
+  const subtitle = isEmployee
+    ? 'Your weekly schedule and upcoming shifts.'
+    : isManager
+    ? 'View and manage your team\'s roster and shift assignments.'
+    : 'Manage shift definitions, assign employees to rosters, and auto-plan schedules.';
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Shifts & Rosters</h1>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Manage shift definitions and assign employees to weekly schedules.</p>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Shifts &amp; Rosters</h1>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAutoPlanOpen(true)}
-          className="btn-primary flex items-center gap-1.5 text-sm"
-        >
-          <Wand2 className="h-3.5 w-3.5" />
-          Auto Plan
-        </button>
+        {isAdmin && (
+          <button type="button" onClick={() => setAutoPlanOpen(true)}
+            className="btn-primary flex items-center gap-1.5 text-sm">
+            <Wand2 className="h-3.5 w-3.5" />
+            Auto Plan
+          </button>
+        )}
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — role-scoped */}
       <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'fit-content' }}>
-        {(['roster', 'definitions'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${
-              tab === t
-                ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-            }`}
-          >
-            {TAB_LABELS[t]}
+        {isEmployee ? (
+          <button type="button"
+            className="rounded-lg px-4 py-1.5 text-sm font-medium bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent">
+            My Schedule
           </button>
-        ))}
+        ) : (
+          <>
+            <button type="button" onClick={() => setTab('roster')}
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${tab === 'roster' ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
+              {isManager ? 'Team Roster' : 'Weekly Roster'}
+            </button>
+            {isAdmin && (
+              <button type="button" onClick={() => setTab('definitions')}
+                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${tab === 'definitions' ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
+                Shift Definitions
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Content */}
@@ -700,6 +880,8 @@ export function ShiftsPage() {
         <div className="flex justify-center py-12">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
         </div>
+      ) : isEmployee ? (
+        <MyScheduleTab definitions={definitions} />
       ) : tab === 'roster' ? (
         <RosterTab definitions={definitions} />
       ) : (

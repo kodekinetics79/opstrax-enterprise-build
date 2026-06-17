@@ -139,6 +139,11 @@ public class PayrollController : ControllerBase
             .Select(x => x.SettingValue)
             .FirstOrDefaultAsync(cancellationToken);
         decimal.TryParse(taxRateSetting, out var incomeTaxRate); // 0 if unset
+        var gosiRateSetting = await _db.SystemSettings.AsNoTracking()
+            .Where(x => x.Category == "Payroll" && x.SettingKey == "GosiEmployeeRate")
+            .Select(x => x.SettingValue)
+            .FirstOrDefaultAsync(cancellationToken);
+        decimal.TryParse(gosiRateSetting, out var gosiEmployeeRate); // 0 if unset — GCC GOSI/social insurance
         var attendanceImpacts = await _db.AttendancePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.WorkDate >= periodStart && x.WorkDate <= periodEnd && x.Status != "Processed").ToListAsync(cancellationToken);
         var leaveImpacts = await _db.LeavePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayPeriod == $"{run.Year}-{run.Month:00}" && x.Status != "Processed").ToListAsync(cancellationToken);
 
@@ -186,7 +191,8 @@ public class PayrollController : ControllerBase
                 taxDeduction = Math.Round(taxableBase * incomeTaxRate / 100m, 2);
             }
 
-            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction;
+            var gosiDeduction = gosiEmployeeRate > 0 && basic > 0 ? Math.Round(basic * gosiEmployeeRate / 100m, 2) : 0m;
+            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiDeduction;
             // C3: net salary cannot be negative (GCC labour law)
             var netSalary = Math.Max(0m, gross + overtimePay - deductions);
             if (gross + overtimePay - deductions < 0)
@@ -220,6 +226,7 @@ public class PayrollController : ControllerBase
             if (attendanceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ATTENDANCE", "Late/early attendance deduction", attendanceDeduction, "Attendance");
             if (absenceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ABSENCE", "Absence deduction", absenceDeduction, "Attendance");
             if (leaveDeduction > 0) AddDeduction(tenantId, id, e.Id, "LEAVE", "Leave deduction", leaveDeduction, "Leave");
+            if (gosiDeduction > 0) AddDeduction(tenantId, id, e.Id, "GOSI_EMPLOYEE", $"GOSI employee contribution ({gosiEmployeeRate}%)", gosiDeduction, "GOSI");
             if (overtimePay > gross * 0.35m && gross > 0) _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Warning", Code = "UNUSUAL_OVERTIME", Message = "Overtime payout is above 35% of regular gross earnings." });
         }
 
@@ -246,7 +253,7 @@ public class PayrollController : ControllerBase
         var tenantId = GetTenantId();
         var run = await _db.PayrollRuns.FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, cancellationToken);
         if (run is null) return NotFound();
-        if (run.Status != "Processed" && run.Status != "Approved") return BadRequest(new { message = "Only processed or approved runs can be locked." });
+        if (run.Status is not ("Processed" or "Approved" or "PendingFinanceReview")) return BadRequest(new { message = "Only processed, pending finance review, or approved runs can be locked." });
         run.Status = "Locked";
         run.LockedAtUtc = DateTime.UtcNow;
         await _db.PayrollSlips.Where(s => s.RunId == id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, "Final"), cancellationToken);
@@ -293,25 +300,133 @@ public class PayrollController : ControllerBase
         return Ok(await _db.PayrollValidationResults.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).OrderByDescending(x => x.Severity).ToListAsync(cancellationToken));
     }
 
-    // C1: segregation of duties — only Finance Approver / Payroll Manager / Admin can approve
-    // The Payroll Officer who processes must not be able to self-approve
+    // C1: segregation of duties — Payroll Officer who processes cannot self-approve.
+    // Two-step: Payroll Manager/HR advances Processed → PendingFinanceReview (level 1);
+    // Finance Controller/Approver finalises PendingFinanceReview → Approved (level 2).
+    // Admin bypasses all levels.
     [HttpPost("runs/{id:guid}/approve")]
-    [Authorize(Roles = "Admin,HR Manager,Finance Approver,Payroll Manager")]
+    [Authorize(Roles = "Admin,HR Manager,Finance Approver,Finance Controller,Payroll Manager")]
     public async Task<IActionResult> Approve(Guid id, PayrollDecisionRequest req, CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
         var run = await _db.PayrollRuns.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (run is null) return NotFound();
-        if (run.Status != "Processed")
-            return BadRequest(new { message = "Only a processed run can be approved." });
-        _db.PayrollApprovals.Add(new PayrollApproval { TenantId = tenantId, PayrollRunId = id, Decision = "Approved", Notes = req.Notes ?? string.Empty, DecidedByUserId = GetUserId(), DecidedAtUtc = DateTime.UtcNow });
-        run.Status = "Approved";
-        await PayrollAudit("payroll.run.approved", "PayrollRun", id.ToString(), new { notes = req.Notes }, cancellationToken);
+        if (run.Status != "Processed" && run.Status != "PendingFinanceReview")
+            return BadRequest(new { message = "Only a Processed or PendingFinanceReview run can be approved." });
+
+        var isAdmin = User.IsInRole("Admin");
+        var isHROrPayroll = User.IsInRole("HR Manager") || User.IsInRole("Payroll Manager");
+        var isFinance = User.IsInRole("Finance Controller") || User.IsInRole("Finance Approver");
+
+        // Admin and Finance finalise directly to Approved
+        if (isAdmin || isFinance)
+        {
+            _db.PayrollApprovals.Add(new PayrollApproval { TenantId = tenantId, PayrollRunId = id, ApprovalLevel = "FinanceReview", Decision = "Approved", Notes = req.Notes ?? string.Empty, DecidedByUserId = GetUserId(), DecidedAtUtc = DateTime.UtcNow });
+            run.Status = "Approved";
+            await PayrollAudit("payroll.run.approved", "PayrollRun", id.ToString(), new { notes = req.Notes, level = "Finance" }, cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            await _notifications.NotifyAsync(tenantId, GetUserId(), $"Payroll Run Approved — {run.Year}/{run.Month:D2}", $"Payroll run for {run.Year}/{run.Month:D2} has been approved by Finance. Total net: {run.TotalNetSalary:N2} AED.", "PayrollRun", id.ToString(), cancellationToken);
+            return Ok(run);
+        }
+
+        // HR Manager or Payroll Manager advances Processed → PendingFinanceReview
+        if (isHROrPayroll && run.Status == "Processed")
+        {
+            _db.PayrollApprovals.Add(new PayrollApproval { TenantId = tenantId, PayrollRunId = id, ApprovalLevel = "PayrollReview", Decision = "Approved", Notes = req.Notes ?? string.Empty, DecidedByUserId = GetUserId(), DecidedAtUtc = DateTime.UtcNow });
+            run.Status = "PendingFinanceReview";
+            await PayrollAudit("payroll.run.payroll_approved", "PayrollRun", id.ToString(), new { notes = req.Notes }, cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            return Ok(run);
+        }
+
+        return BadRequest(new { message = "You cannot approve this run at its current stage." });
+    }
+
+    [HttpPost("runs/{id:guid}/send-back")]
+    [Authorize(Roles = "Admin,Finance Controller,Finance Approver")]
+    public async Task<IActionResult> SendBack(Guid id, PayrollDecisionRequest req, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var run = await _db.PayrollRuns.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
+        if (run is null) return NotFound();
+        if (run.Status != "PendingFinanceReview")
+            return BadRequest(new { message = "Only a PendingFinanceReview run can be sent back." });
+        _db.PayrollApprovals.Add(new PayrollApproval { TenantId = tenantId, PayrollRunId = id, ApprovalLevel = "FinanceReview", Decision = "SentBack", Notes = req.Notes ?? string.Empty, DecidedByUserId = GetUserId(), DecidedAtUtc = DateTime.UtcNow });
+        run.Status = "Processed";
+        await PayrollAudit("payroll.run.sent_back", "PayrollRun", id.ToString(), new { notes = req.Notes }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
-        // Notify payroll team
-        var approverUserId = GetUserId();
-        await _notifications.NotifyAsync(tenantId, approverUserId, $"Payroll Run Approved — {run.Year}/{run.Month:D2}", $"Payroll run for {run.Year}/{run.Month:D2} has been approved. Total net: {run.TotalNetSalary:N2} AED.", "PayrollRun", id.ToString(), cancellationToken);
         return Ok(run);
+    }
+
+    [HttpGet("runs/{id:guid}/gl-journal")]
+    [Authorize(Roles = "Admin,HR Manager,Finance Approver,Finance Controller,Payroll Manager")]
+    public async Task<IActionResult> GlJournal(Guid id, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
+        if (run is null) return NotFound();
+
+        var earnings  = await _db.PayrollEarnings.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).ToListAsync(cancellationToken);
+        var deductions = await _db.PayrollDeductions.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).ToListAsync(cancellationToken);
+        var totalNet   = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).SumAsync(x => x.NetSalary, cancellationToken);
+
+        var glMap = new Dictionary<string, (string Account, string AccountName, string EntryType)>
+        {
+            ["BASIC"]            = ("5001", "Basic Salary Expense",            "DR"),
+            ["HOUSING"]          = ("5002", "Housing Allowance Expense",       "DR"),
+            ["TRANSPORT"]        = ("5003", "Transport Allowance Expense",     "DR"),
+            ["OTHER_ALLOWANCES"] = ("5004", "Other Allowances Expense",        "DR"),
+            ["OVERTIME"]         = ("5005", "Overtime Expense",                "DR"),
+            ["GOSI_EMPLOYEE"]    = ("2101", "GOSI / Social Insurance Payable", "CR"),
+            ["INCOME_TAX"]       = ("2102", "Income Tax Payable",              "CR"),
+            ["FIXED_DEDUCTION"]  = ("2103", "Fixed Deductions Payable",        "CR"),
+            ["ATTENDANCE"]       = ("2104", "Attendance Adjustment Payable",   "CR"),
+            ["ABSENCE"]          = ("2104", "Attendance Adjustment Payable",   "CR"),
+            ["LEAVE"]            = ("2105", "Leave Deduction Payable",         "CR"),
+        };
+
+        var entries = new List<(string Code, string Name, string Account, string AccountName, string EntryType, decimal Amount)>();
+
+        foreach (var grp in earnings.GroupBy(e => e.ComponentCode))
+        {
+            if (!glMap.TryGetValue(grp.Key, out var acct))
+                acct = ("5099", $"Other Earnings — {grp.Key}", "DR");
+            entries.Add((grp.Key, grp.First().ComponentName, acct.Account, acct.AccountName, acct.EntryType, grp.Sum(e => e.Amount)));
+        }
+        foreach (var grp in deductions.GroupBy(d => d.ComponentCode))
+        {
+            if (!glMap.TryGetValue(grp.Key, out var acct))
+                acct = ("2199", $"Other Deductions — {grp.Key}", "CR");
+            entries.Add((grp.Key, grp.First().ComponentName, acct.Account, acct.AccountName, acct.EntryType, grp.Sum(d => d.Amount)));
+        }
+
+        // Employer GOSI contra-entry (if configured)
+        var gosiEmployerRateSetting = await _db.SystemSettings.AsNoTracking()
+            .Where(x => x.Category == "Payroll" && x.SettingKey == "GosiEmployerRate")
+            .Select(x => x.SettingValue).FirstOrDefaultAsync(cancellationToken);
+        decimal.TryParse(gosiEmployerRateSetting, out var gosiEmployerRate);
+        if (gosiEmployerRate > 0)
+        {
+            var totalBasic    = earnings.Where(e => e.ComponentCode == "BASIC").Sum(e => e.Amount);
+            var employerGosi  = Math.Round(totalBasic * gosiEmployerRate / 100m, 2);
+            entries.Add(("GOSI_EMPLOYER",    "Employer GOSI Expense",              "5101", "Employer GOSI Expense",    "DR", employerGosi));
+            entries.Add(("GOSI_EMPLOYER_CR", "Employer GOSI Contribution Payable", "2106", "Employer GOSI Payable",    "CR", employerGosi));
+        }
+
+        // Net salary payable CR balances all earning DRs net of deduction CRs
+        entries.Add(("NET_SALARY", "Net Salary Payable", "2100", "Salaries Payable", "CR", totalNet));
+
+        var totalDebits  = entries.Where(e => e.EntryType == "DR").Sum(e => e.Amount);
+        var totalCredits = entries.Where(e => e.EntryType == "CR").Sum(e => e.Amount);
+
+        return Ok(new
+        {
+            runId    = id,
+            period   = $"{run.Year}-{run.Month:D2}",
+            entries  = entries.Select(e => new { componentCode = e.Code, componentName = e.Name, glAccount = e.Account, glAccountName = e.AccountName, entryType = e.EntryType, amount = e.Amount }),
+            totalDebits, totalCredits,
+            isBalanced = Math.Abs(totalDebits - totalCredits) < 0.01m
+        });
     }
 
     [HttpPost("runs/{id:guid}/payslips/generate")]
@@ -871,6 +986,129 @@ public class PayrollController : ControllerBase
         return Ok(new { runId = id, period = $"{run.Year}-{run.Month:D2}", employeeCount = rows.Count, employees = rows });
     }
 
+    /// <summary>Month-over-month headcount and compensation reconciliation vs the prior payroll run.</summary>
+    [HttpGet("reports/reconciliation")]
+    public async Task<IActionResult> Reconciliation([FromQuery] Guid runId, CancellationToken cancellationToken)
+    {
+        if (!HasPermission("payroll.review")) return Forbid();
+        var tenantId = GetTenantId();
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == runId, cancellationToken);
+        if (run is null) return NotFound();
+
+        var (priorYear, priorMonth) = run.Month == 1 ? (run.Year - 1, 12) : (run.Year, run.Month - 1);
+        var priorRun = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Year == priorYear && x.Month == priorMonth, cancellationToken);
+
+        var currentSlips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == runId).ToListAsync(cancellationToken);
+        var priorSlips   = priorRun is not null ? await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == priorRun.Id).ToListAsync(cancellationToken) : new List<PayrollSlip>();
+
+        var currentIds = currentSlips.Select(s => s.EmployeeId).ToHashSet();
+        var priorIds   = priorSlips.Select(s => s.EmployeeId).ToHashSet();
+
+        var joiners    = currentIds.Except(priorIds).ToList();
+        var leavers    = priorIds.Except(currentIds).ToList();
+        var continuing = currentIds.Intersect(priorIds).ToList();
+
+        var variances = continuing.Select(empId =>
+        {
+            var cur  = currentSlips.First(s => s.EmployeeId == empId);
+            var prev = priorSlips.First(s => s.EmployeeId == empId);
+            var grossDelta       = cur.GrossSalary - prev.GrossSalary;
+            var grossVariancePct = prev.GrossSalary == 0 ? 0.0 : Math.Round((double)(grossDelta / prev.GrossSalary) * 100, 2);
+            return new
+            {
+                employeeId = empId, employeeName = cur.EmployeeName, employeeCode = cur.EmployeeCode,
+                priorGross = prev.GrossSalary, currentGross = cur.GrossSalary, grossDelta, grossVariancePct,
+                priorNet = prev.NetSalary, currentNet = cur.NetSalary, netDelta = cur.NetSalary - prev.NetSalary,
+                isVarianceFlag = Math.Abs(grossVariancePct) > 5
+            };
+        }).ToList();
+
+        return Ok(new
+        {
+            runId, period = $"{run.Year}-{run.Month:D2}",
+            priorPeriod   = priorRun is not null ? $"{priorRun.Year}-{priorRun.Month:D2}" : null,
+            currentHeadcount = currentIds.Count, priorHeadcount = priorIds.Count,
+            joinerCount = joiners.Count, leaverCount = leavers.Count,
+            currentTotalGross = currentSlips.Sum(s => s.GrossSalary), priorTotalGross = priorSlips.Sum(s => s.GrossSalary),
+            currentTotalNet   = currentSlips.Sum(s => s.NetSalary),   priorTotalNet   = priorSlips.Sum(s => s.NetSalary),
+            flaggedVariances  = variances.Count(v => v.isVarianceFlag),
+            variances
+        });
+    }
+
+    /// <summary>Final settlement calculator: pro-rata salary + EOSB + leave encashment - notice deduction.</summary>
+    [HttpPost("final-settlement")]
+    [Authorize(Roles = "Admin,HR Manager,Payroll Manager")]
+    public async Task<IActionResult> FinalSettlement([FromBody] FinalSettlementRequest req, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var employee = await _db.Employees.FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == req.EmployeeId && !e.IsDeleted, cancellationToken);
+        if (employee is null) return NotFound(new { message = "Employee not found." });
+
+        var salary = await _db.EmployeeSalaryStructures.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.EmployeeId == req.EmployeeId && x.IsActive)
+            .OrderByDescending(x => x.EffectiveDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        var basicSalary    = salary?.BasicSalary ?? employee.Salary ?? 0m;
+        var grossSalary    = basicSalary + (salary?.HousingAllowance ?? 0m) + (salary?.TransportAllowance ?? 0m)
+                           + (salary?.FoodAllowance ?? 0m) + (salary?.MobileAllowance ?? 0m) + (salary?.OtherAllowance ?? 0m);
+        var currency       = salary?.Currency ?? "AED";
+
+        // Pro-rata salary for partial month
+        var lastDay        = req.LastWorkingDay;
+        var daysInMonth    = DateTime.DaysInMonth(lastDay.Year, lastDay.Month);
+        var dailyGross     = grossSalary / daysInMonth;
+        var proRataSalary  = Math.Round(dailyGross * lastDay.Day, 2);
+
+        // EOSB / Gratuity (reuse GCC compliance settings)
+        var gcc = await _db.GCCComplianceSettings.AsNoTracking().Where(x => x.TenantId == tenantId).FirstOrDefaultAsync(cancellationToken);
+        var calcDate    = lastDay.ToDateTime(TimeOnly.MinValue);
+        var totalYears  = (calcDate - employee.JoiningDate).Days / 365.0;
+        var minYears    = gcc?.EosbMinYears > 0 ? gcc!.EosbMinYears : 1;
+        var rate1       = gcc?.EosbYears1To5Rate > 0 ? gcc!.EosbYears1To5Rate : 21m;
+        var rate2       = gcc?.EosbYearsAbove5Rate > 0 ? gcc!.EosbYearsAbove5Rate : 30m;
+        var dailySalary = basicSalary * 12 / 365m;
+        decimal eosbAmount = 0m;
+        if (totalYears >= minYears)
+            eosbAmount = totalYears <= 5
+                ? Math.Round(dailySalary * rate1 * (decimal)totalYears, 2)
+                : Math.Round(dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5), 2);
+
+        // Leave encashment: remaining balance × daily gross (30-day basis)
+        var leaveBalances = await _db.EmployeeLeaveBalances.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.EmployeeId == req.EmployeeId && x.Year == lastDay.Year)
+            .ToListAsync(cancellationToken);
+        var leaveBalanceDays = Math.Max(0m, leaveBalances.Sum(b => b.Accrued + b.CarriedForward + b.ManualAdjustment - b.Used - b.Pending - b.Encashed - b.Expired));
+        var leaveEncashment  = Math.Round(leaveBalanceDays * grossSalary / 30m, 2);
+
+        // Notice period deduction for days short
+        var noticePeriodDeduction = Math.Round(req.NoticePeriodDaysShort * grossSalary / 30m, 2);
+
+        var totalPayable = proRataSalary + eosbAmount + leaveEncashment - noticePeriodDeduction;
+
+        await PayrollAudit("payroll.final_settlement.calculated", "Employee", req.EmployeeId.ToString(), new { lastWorkingDay = req.LastWorkingDay, totalPayable }, cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            employeeId = req.EmployeeId, employeeName = employee.FullName,
+            lastWorkingDay = req.LastWorkingDay, currency,
+            basicSalary, grossSalary,
+            proRataSalary, daysWorkedInMonth = lastDay.Day, daysInMonth,
+            eosbAmount, totalYears = Math.Round(totalYears, 2),
+            leaveBalanceDays, leaveEncashment,
+            noticePeriodDaysShort = req.NoticePeriodDaysShort, noticePeriodDeduction,
+            totalPayable = Math.Round(totalPayable, 2),
+            breakdown = new[]
+            {
+                new { component = "Pro-rata Salary",          amount =  proRataSalary },
+                new { component = "EOSB / Gratuity",          amount =  eosbAmount },
+                new { component = "Leave Encashment",         amount =  leaveEncashment },
+                new { component = "Notice Period Deduction",  amount = -noticePeriodDeduction },
+            }
+        });
+    }
+
     /// <summary>Resolves the tenant's default payroll currency from its primary company (SAR fallback for Saudi context).</summary>
     private async Task<string> ResolveCurrencyAsync(Guid tenantId, CancellationToken ct)
     {
@@ -898,3 +1136,4 @@ public record WpsStatusRequest(string Status, string? Notes);
 public record PayrollGroupRequest(string Code, string Name, string? Currency);
 public record ImportSalaryStructuresRequest(string CsvContent);
 public record EosbCalculationRequest(int EmployeeId, DateTime? AsOfDate);
+public record FinalSettlementRequest(int EmployeeId, DateOnly LastWorkingDay, int NoticePeriodDaysShort = 0);

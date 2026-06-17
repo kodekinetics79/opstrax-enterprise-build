@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import {
-  AlertTriangle, BarChart2, Bot, CheckCircle2, ChevronRight,
-  FileText, Landmark, Layers3, Lock, Play, Plus,
+  AlertTriangle, BarChart2, Bot, BookOpen, Calculator,
+  CheckCircle2, ChevronRight, FileText, Landmark, Layers3,
+  Lock, Play, Plus, RefreshCw, RotateCcw,
   Settings, TrendingUp, Users, WalletCards, X,
   Zap, Shield,
 } from 'lucide-react';
@@ -13,9 +14,11 @@ import {
   type SalaryStructure, type EmployeeSalaryStructure, type Payslip,
   type PayrollPaymentBatch, type PayrollPaymentRecord,
   type PayrollApproval, type PayrollSummary,
+  type PayrollGLJournal, type PayrollReconciliation, type FinalSettlementResult,
 } from '../api/payroll';
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
 import { InfoTip } from '../components/InfoTip';
+import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 
 // ── Payroll import/export helpers ───────────────────────────────────────────────
@@ -49,6 +52,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const STATUS_COLOR: Record<string, string> = {
   Draft: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
   Processed: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  PendingFinanceReview: 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400',
   Approved: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400',
   Locked: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
   Pending: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
@@ -56,6 +60,7 @@ const STATUS_COLOR: Record<string, string> = {
   Failed: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
   Generated: 'bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-400',
   FileGenerated: 'bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-400',
+  SentBack: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
   Warning: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
   Error: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
   Info: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400',
@@ -120,21 +125,24 @@ const btn = {
 
 // ── Tabs ────────────────────────────────────────────────────────────────────────
 
-type Tab = 'dashboard' | 'salary-structures' | 'employee-salary' | 'runs' | 'validation' | 'approvals' | 'payslips' | 'bank-wps' | 'payment-tracking' | 'reports' | 'eosb' | 'ai-validation';
+type Tab = 'dashboard' | 'salary-structures' | 'employee-salary' | 'runs' | 'validation' | 'approvals' | 'payslips' | 'bank-wps' | 'payment-tracking' | 'reports' | 'eosb' | 'ai-validation' | 'gl-journal' | 'reconciliation' | 'final-settlement';
 
 const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { key: 'dashboard', label: 'Dashboard', icon: BarChart2 },
-  { key: 'salary-structures', label: 'Salary Structures', icon: Layers3 },
-  { key: 'employee-salary', label: 'Employee Salary', icon: Users },
-  { key: 'runs', label: 'Payroll Runs', icon: Play },
-  { key: 'validation', label: 'Validation', icon: AlertTriangle },
-  { key: 'approvals', label: 'Approvals', icon: CheckCircle2 },
-  { key: 'payslips', label: 'Payslips', icon: FileText },
-  { key: 'bank-wps', label: 'Bank / WPS Files', icon: Landmark },
-  { key: 'payment-tracking', label: 'Payment Tracking', icon: TrendingUp },
-  { key: 'reports', label: 'Reports', icon: BarChart2 },
-  { key: 'eosb', label: 'EOSB / Gratuity', icon: FileText },
-  { key: 'ai-validation', label: 'AI Validation', icon: Bot },
+  { key: 'dashboard',        label: 'Dashboard',          icon: BarChart2 },
+  { key: 'salary-structures', label: 'Salary Structures',  icon: Layers3 },
+  { key: 'employee-salary',  label: 'Employee Salary',     icon: Users },
+  { key: 'runs',             label: 'Payroll Runs',        icon: Play },
+  { key: 'validation',       label: 'Validation',          icon: AlertTriangle },
+  { key: 'approvals',        label: 'Approvals',           icon: CheckCircle2 },
+  { key: 'payslips',         label: 'Payslips',            icon: FileText },
+  { key: 'bank-wps',         label: 'Bank / WPS Files',    icon: Landmark },
+  { key: 'payment-tracking', label: 'Payment Tracking',    icon: TrendingUp },
+  { key: 'reports',          label: 'Reports',             icon: BarChart2 },
+  { key: 'eosb',             label: 'EOSB / Gratuity',    icon: FileText },
+  { key: 'gl-journal',       label: 'GL Journal',          icon: BookOpen },
+  { key: 'reconciliation',   label: 'Reconciliation',      icon: RefreshCw },
+  { key: 'final-settlement', label: 'Final Settlement',    icon: Calculator },
+  { key: 'ai-validation',    label: 'AI Validation',       icon: Bot },
 ];
 
 // ── Dashboard Tab ───────────────────────────────────────────────────────────────
@@ -682,65 +690,138 @@ function ValidationTab({ selectedRunId }: { selectedRunId?: string }) {
 
 // ── Approvals Tab ───────────────────────────────────────────────────────────────
 
-function ApprovalsTab({ selectedRunId }: { selectedRunId?: string }) {
+function ApprovalsTab({ selectedRunId, isAdmin, isFinance, isHROrPayroll }: {
+  selectedRunId?: string;
+  isAdmin: boolean;
+  isFinance: boolean;
+  isHROrPayroll: boolean;
+}) {
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [runId, setRunId] = useState(selectedRunId ?? '');
   const [approvals, setApprovals] = useState<PayrollApproval[]>([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    payrollApi.listRuns({ status: 'Processed', pageSize: 50 }).then(r => setRuns(r.items)).catch(() => {});
-  }, []);
+  const refreshRuns = () =>
+    payrollApi.listRuns({ pageSize: 50 }).then(r => setRuns(r.items)).catch(() => {});
 
+  useEffect(() => { refreshRuns(); }, []);
+  useEffect(() => { if (selectedRunId) setRunId(selectedRunId); }, [selectedRunId]);
   useEffect(() => {
     if (!runId) return;
     payrollApi.runApprovals(runId).then(setApprovals).catch(() => {});
   }, [runId]);
 
-  useEffect(() => { if (selectedRunId) setRunId(selectedRunId); }, [selectedRunId]);
+  const selectedRun = runs.find(r => r.id === runId);
 
-  const approve = async () => {
+  const handleApprove = async () => {
     if (!runId) return;
-    setSaving(true);
-    await payrollApi.approveRun(runId, notes).catch(() => {});
-    payrollApi.runApprovals(runId).then(setApprovals).catch(() => {});
-    setSaving(false);
+    setSaving(true); setError('');
+    try {
+      await payrollApi.approveRun(runId, notes);
+      await refreshRuns();
+      setRuns(r => r.map(x => x.id === runId ? { ...x, status: selectedRun?.status === 'Processed' && (isHROrPayroll && !isFinance && !isAdmin) ? 'PendingFinanceReview' : 'Approved' } : x));
+      payrollApi.runApprovals(runId).then(setApprovals).catch(() => {});
+      setNotes('');
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Action failed.');
+    } finally { setSaving(false); }
   };
 
-  const selectedRun = runs.find(r => r.id === runId);
+  const handleSendBack = async () => {
+    if (!runId) return;
+    setSaving(true); setError('');
+    try {
+      await payrollApi.sendBackRun(runId, notes);
+      await refreshRuns();
+      payrollApi.runApprovals(runId).then(setApprovals).catch(() => {});
+      setNotes('');
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Action failed.');
+    } finally { setSaving(false); }
+  };
+
+  const canApproveStep1 = (isHROrPayroll || isAdmin) && selectedRun?.status === 'Processed';
+  const canApproveStep2 = (isFinance || isAdmin) && selectedRun?.status === 'PendingFinanceReview';
+  const canFinanceApproveDirectly = (isFinance || isAdmin) && selectedRun?.status === 'Processed';
+  const canSendBack = (isFinance || isAdmin) && selectedRun?.status === 'PendingFinanceReview';
+  const canAct = canApproveStep1 || canApproveStep2 || canFinanceApproveDirectly;
 
   return (
     <div className="space-y-4">
+      {/* Approval chain diagram */}
+      <div className="surface p-4">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Approval Workflow</p>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {[
+            { label: 'Process', badge: 'Payroll Officer', color: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
+            { label: '→', badge: null, color: '' },
+            { label: 'HR / Payroll Review', badge: 'Payroll Manager · HR Manager', color: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+            { label: '→', badge: null, color: '' },
+            { label: 'Finance Approval', badge: 'Finance Controller · Finance Approver', color: 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400' },
+            { label: '→', badge: null, color: '' },
+            { label: 'Approved', badge: null, color: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400' },
+          ].map((step, i) => step.badge === null && step.label === '→' ? (
+            <span key={i} className="text-slate-300 dark:text-slate-600">→</span>
+          ) : (
+            <div key={i} className={`rounded-lg px-2 py-1 text-xs font-medium ${step.color}`}>
+              {step.label}
+              {step.badge && <span className="ml-1 opacity-60">({step.badge})</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="flex items-center gap-3">
         <select aria-label="Select payroll run to approve" className={`${sel} flex-1 max-w-xs`} value={runId} onChange={e => setRunId(e.target.value)}>
-          <option value="">Select run to approve…</option>
+          <option value="">Select run…</option>
           {runs.map(r => <option key={r.id} value={r.id}>{MONTHS[r.month - 1]} {r.year} — {r.status}</option>)}
         </select>
       </div>
 
       {selectedRun && (
-        <div className="surface p-5">
-          <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="surface p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-slate-900 dark:text-white">Payroll Run — {MONTHS[selectedRun.month - 1]} {selectedRun.year}</p>
               <p className="text-xs text-slate-400">{selectedRun.employeeCount} employees · Gross {fmtAmt(selectedRun.totalGrossSalary)} · Net {fmtAmt(selectedRun.totalNetSalary)}</p>
             </div>
             <StatusBadge status={selectedRun.status} />
           </div>
-          {selectedRun.status === 'Processed' && (
+
+          {canApproveStep1 && !canFinanceApproveDirectly && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-400">
+              Your approval will advance this run to <strong>Pending Finance Review</strong> for final Finance Controller sign-off.
+            </div>
+          )}
+
+          {canAct && (
             <div className="space-y-3">
-              <Field label="Approval Notes">
-                <textarea aria-label="Approval notes" className={inp} rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional comments…" />
+              <Field label="Notes / Comments">
+                <textarea aria-label="Approval notes" className={inp} rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional comments for the record…" />
               </Field>
-              <div className="flex gap-2">
-                <button type="button" className={btn.primary} onClick={approve} disabled={saving}>{saving ? 'Approving…' : 'Approve Payroll Run'}</button>
+              {error && <p className="text-xs text-rose-500">{error}</p>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className={btn.primary} onClick={handleApprove} disabled={saving}>
+                  <CheckCircle2 className="h-4 w-4" />
+                  {saving ? 'Saving…' : canFinanceApproveDirectly || canApproveStep2 ? 'Approve — Final' : 'Approve → Send to Finance'}
+                </button>
+                {canSendBack && (
+                  <button type="button" className={btn.danger} onClick={handleSendBack} disabled={saving}>
+                    <RotateCcw className="h-4 w-4" /> Send Back to Payroll
+                  </button>
+                )}
               </div>
             </div>
           )}
-          {selectedRun.status !== 'Processed' && (
+
+          {!canAct && (
             <p className="text-sm text-slate-400">
-              {selectedRun.status === 'Approved' ? 'Already approved.' : selectedRun.status === 'Locked' ? 'Run is locked and finalised.' : 'Run must be in Processed status to approve.'}
+              {selectedRun.status === 'Approved' ? 'Payroll run has been approved and is ready to lock.' :
+               selectedRun.status === 'Locked' ? 'Run is locked and finalised.' :
+               selectedRun.status === 'PendingFinanceReview' ? 'Awaiting Finance Controller approval.' :
+               'No action available for this run at its current stage.'}
             </p>
           )}
         </div>
@@ -748,14 +829,14 @@ function ApprovalsTab({ selectedRunId }: { selectedRunId?: string }) {
 
       {approvals.length > 0 && (
         <div className="surface divide-y divide-slate-100 dark:divide-white/5">
-          <div className="px-5 py-3"><p className="text-sm font-semibold text-slate-800 dark:text-white">Approval History</p></div>
+          <div className="px-5 py-3"><p className="text-sm font-semibold text-slate-800 dark:text-white">Approval Chain History</p></div>
           {approvals.map(a => (
             <div key={a.id} className="flex items-start gap-3 px-5 py-4">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+              {a.decision === 'SentBack' ? <RotateCcw className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />}
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <StatusBadge status={a.decision} />
-                  <span className="text-xs text-slate-400">{a.approvalLevel}</span>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 dark:bg-white/10 dark:text-slate-400">{a.approvalLevel}</span>
                 </div>
                 {a.notes && <p className="mt-1 text-xs text-slate-500">{a.notes}</p>}
                 <p className="mt-1 text-xs text-slate-400">{fmtDate(a.decidedAtUtc)}</p>
@@ -1295,9 +1376,303 @@ function EOSBTab() {
   );
 }
 
+// ── GL Journal Tab ──────────────────────────────────────────────────────────────
+
+function GlJournalTab({ selectedRunId }: { selectedRunId?: string }) {
+  const [runs, setRuns] = useState<PayrollRun[]>([]);
+  const [runId, setRunId] = useState(selectedRunId ?? '');
+  const [journal, setJournal] = useState<PayrollGLJournal | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { payrollApi.listRuns({ pageSize: 50 }).then(r => setRuns(r.items)).catch(() => {}); }, []);
+  useEffect(() => { if (selectedRunId) setRunId(selectedRunId); }, [selectedRunId]);
+
+  const load = async () => {
+    if (!runId) return;
+    setLoading(true);
+    payrollApi.glJournal(runId).then(j => setJournal(j)).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  const debits  = journal?.entries.filter(e => e.entryType === 'DR') ?? [];
+  const credits = journal?.entries.filter(e => e.entryType === 'CR') ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="surface p-4">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Double-entry GL journal generated from processed payroll earnings and deductions. Use this to post payroll to your accounting system.
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <select aria-label="Select payroll run for GL journal" className={`${sel} max-w-xs flex-1`} value={runId} onChange={e => setRunId(e.target.value)}>
+          <option value="">Select payroll run…</option>
+          {runs.map(r => <option key={r.id} value={r.id}>{MONTHS[r.month - 1]} {r.year} — {r.status}</option>)}
+        </select>
+        <button type="button" className={btn.primary} onClick={load} disabled={!runId || loading}>
+          <BookOpen className="h-4 w-4" /> {loading ? 'Loading…' : 'Generate Journal'}
+        </button>
+      </div>
+
+      {journal && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="surface p-4">
+              <p className="text-xs text-slate-400">Period</p>
+              <p className="text-lg font-bold text-slate-900 dark:text-white">{journal.period}</p>
+            </div>
+            <div className="surface p-4">
+              <p className="text-xs text-slate-400">Total Debits</p>
+              <p className="text-lg font-bold text-sapphire dark:text-cyanAccent">{fmtAmt(journal.totalDebits)}</p>
+            </div>
+            <div className="surface p-4">
+              <p className="text-xs text-slate-400">Total Credits</p>
+              <p className="text-lg font-bold text-sapphire dark:text-cyanAccent">{fmtAmt(journal.totalCredits)}</p>
+            </div>
+          </div>
+
+          {journal.isBalanced ? (
+            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 dark:bg-emerald-500/10">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Journal is balanced — Debits = Credits</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg bg-rose-50 px-4 py-2.5 dark:bg-rose-500/10">
+              <AlertTriangle className="h-4 w-4 text-rose-500" />
+              <p className="text-sm font-medium text-rose-700 dark:text-rose-400">Journal is out of balance — investigate before posting</p>
+            </div>
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {[{ title: 'Debit Entries (DR)', entries: debits, color: 'text-sapphire dark:text-cyanAccent' }, { title: 'Credit Entries (CR)', entries: credits, color: 'text-emerald-600 dark:text-emerald-400' }].map(side => (
+              <div key={side.title} className="surface overflow-hidden">
+                <div className="border-b border-slate-100 px-4 py-2.5 dark:border-white/5">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">{side.title}</p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-white/5">
+                      {['GL Account', 'Description', 'Amount'].map(h => <th key={h} className="px-3 py-2 text-left text-xs font-bold uppercase text-slate-400">{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                    {side.entries.map((e, i) => (
+                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-3 py-2 font-mono text-xs text-slate-500">{e.glAccount}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{e.glAccountName}</td>
+                        <td className={`px-3 py-2 text-right font-semibold tabular-nums ${side.color}`}>{fmtAmt(e.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-slate-200 dark:border-white/10">
+                      <td colSpan={2} className="px-3 py-2 text-xs font-bold text-slate-600 dark:text-slate-300">Total</td>
+                      <td className={`px-3 py-2 text-right text-sm font-extrabold tabular-nums ${side.color}`}>{fmtAmt(side.entries.reduce((s, e) => s + e.amount, 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reconciliation Tab ──────────────────────────────────────────────────────────
+
+function ReconciliationTab({ selectedRunId }: { selectedRunId?: string }) {
+  const [runs, setRuns] = useState<PayrollRun[]>([]);
+  const [runId, setRunId] = useState(selectedRunId ?? '');
+  const [report, setReport] = useState<PayrollReconciliation | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { payrollApi.listRuns({ pageSize: 50 }).then(r => setRuns(r.items)).catch(() => {}); }, []);
+  useEffect(() => { if (selectedRunId) setRunId(selectedRunId); }, [selectedRunId]);
+
+  const load = async () => {
+    if (!runId) return;
+    setLoading(true);
+    payrollApi.reconciliation(runId).then(r => setReport(r)).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  const fmt = (n: number) => n.toLocaleString('en-AE', { minimumFractionDigits: 2 });
+
+  return (
+    <div className="space-y-4">
+      <div className="surface p-4">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Month-over-month payroll reconciliation. Compares current run headcount and compensation vs the prior month. Variances above 5% are flagged for review.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <select aria-label="Select payroll run for reconciliation" className={`${sel} max-w-xs flex-1`} value={runId} onChange={e => setRunId(e.target.value)}>
+          <option value="">Select payroll run…</option>
+          {runs.map(r => <option key={r.id} value={r.id}>{MONTHS[r.month - 1]} {r.year} — {r.status}</option>)}
+        </select>
+        <button type="button" className={btn.primary} onClick={load} disabled={!runId || loading}>
+          <RefreshCw className="h-4 w-4" /> {loading ? 'Loading…' : 'Reconcile'}
+        </button>
+      </div>
+
+      {report && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <KpiCard label="Headcount" value={`${report.priorHeadcount} → ${report.currentHeadcount}`} icon={Users} color="bg-sapphire/10 text-sapphire dark:bg-sapphire/20" />
+            <KpiCard label="Joiners" value={report.joinerCount} icon={Plus} color="bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" />
+            <KpiCard label="Leavers" value={report.leaverCount} icon={X} color="bg-rose-100 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400" />
+            <KpiCard label="Flagged Variances" value={report.flaggedVariances} icon={AlertTriangle} color={report.flaggedVariances > 0 ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400'} />
+          </div>
+
+          <div className="surface overflow-hidden">
+            <div className="grid grid-cols-2 divide-x divide-slate-100 dark:divide-white/5">
+              {[{ label: 'Gross', prior: report.priorTotalGross, current: report.currentTotalGross }, { label: 'Net', prior: report.priorTotalNet, current: report.currentTotalNet }].map(m => (
+                <div key={m.label} className="p-4">
+                  <p className="text-xs text-slate-400">Total {m.label}</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white">{fmtAmt(m.current)}</p>
+                  <p className={`text-xs ${m.current >= m.prior ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {m.current >= m.prior ? '+' : ''}{fmtAmt(m.current - m.prior)} vs {report.priorPeriod ?? 'prior period'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {report.variances.length > 0 && (
+            <div className="surface overflow-hidden">
+              <div className="border-b border-slate-100 px-4 py-3 dark:border-white/5">
+                <p className="text-sm font-semibold text-slate-800 dark:text-white">Employee Variance Detail</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-white/[0.07]">
+                      {['Employee', 'Prior Gross', 'Current Gross', 'Δ Gross', 'Var %', 'Prior Net', 'Current Net', 'Flag'].map(h => (
+                        <th key={h} className="px-3 py-2 text-left text-xs font-bold uppercase text-slate-400">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
+                    {report.variances.map(v => (
+                      <tr key={v.employeeId} className={`hover:bg-slate-50 dark:hover:bg-white/[0.03] ${v.isVarianceFlag ? 'bg-amber-50/50 dark:bg-amber-500/5' : ''}`}>
+                        <td className="px-3 py-2">
+                          <p className="font-medium text-slate-900 dark:text-white">{v.employeeName}</p>
+                          <p className="text-xs text-slate-400">{v.employeeCode}</p>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-600 dark:text-slate-300">{fmt(v.priorGross)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-900 dark:text-white">{fmt(v.currentGross)}</td>
+                        <td className={`px-3 py-2 text-right tabular-nums ${v.grossDelta >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{v.grossDelta >= 0 ? '+' : ''}{fmt(v.grossDelta)}</td>
+                        <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Math.abs(v.grossVariancePct) > 5 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`}>{v.grossVariancePct >= 0 ? '+' : ''}{v.grossVariancePct.toFixed(1)}%</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmt(v.priorNet)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-700 dark:text-slate-300">{fmt(v.currentNet)}</td>
+                        <td className="px-3 py-2">{v.isVarianceFlag && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/20 dark:text-amber-400"><AlertTriangle className="h-3 w-3" />Flag</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Final Settlement Tab ────────────────────────────────────────────────────────
+
+function FinalSettlementTab() {
+  const [form, setForm] = useState({ employeeId: '', lastWorkingDay: new Date().toISOString().slice(0, 10), noticePeriodDaysShort: '0' });
+  const [result, setResult] = useState<FinalSettlementResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const calculate = async () => {
+    if (!form.employeeId || !form.lastWorkingDay) return;
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await payrollApi.finalSettlement(Number(form.employeeId), form.lastWorkingDay, Number(form.noticePeriodDaysShort));
+      setResult(res);
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Calculation failed.');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="surface p-4">
+        <p className="text-sm font-semibold text-slate-800 dark:text-white">Final Settlement Calculator</p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Calculates the total amount payable to a departing employee: pro-rata salary, EOSB/Gratuity, leave encashment, minus notice period shortfall.
+        </p>
+      </div>
+
+      <div className="surface p-5 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Employee ID *</label>
+            <input type="number" className={inp} placeholder="e.g. 1" value={form.employeeId} onChange={e => setForm(f => ({ ...f, employeeId: e.target.value }))} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Last Working Day *</label>
+            <input type="date" className={inp} aria-label="Last working day" value={form.lastWorkingDay} onChange={e => setForm(f => ({ ...f, lastWorkingDay: e.target.value }))} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Notice Period Short (days)</label>
+            <input type="number" className={inp} min="0" placeholder="0" value={form.noticePeriodDaysShort} onChange={e => setForm(f => ({ ...f, noticePeriodDaysShort: e.target.value }))} />
+            <p className="mt-0.5 text-xs text-slate-400">Days employee served less than the contractual notice period</p>
+          </div>
+        </div>
+        {error && <p className="text-xs text-rose-500">{error}</p>}
+        <button type="button" className={btn.primary} onClick={calculate} disabled={!form.employeeId || !form.lastWorkingDay || loading}>
+          <Calculator className="h-4 w-4" /> {loading ? 'Calculating…' : 'Calculate Settlement'}
+        </button>
+      </div>
+
+      {result && (
+        <div className="surface p-5 space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">{result.employeeName}</p>
+            <p className="text-xs text-slate-400">Last working day: {result.lastWorkingDay} · Service: {result.totalYears.toFixed(2)} years</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div className="text-slate-500">Basic Salary</div><div className="font-medium text-right">{result.currency} {result.basicSalary.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Gross Salary</div><div className="font-medium text-right">{result.currency} {result.grossSalary.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-500">Days Worked in Month</div><div className="font-medium text-right">{result.daysWorkedInMonth} / {result.daysInMonth}</div>
+            <div className="text-slate-500">Leave Balance</div><div className="font-medium text-right">{result.leaveBalanceDays.toFixed(2)} days</div>
+          </div>
+
+          <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-white/5 dark:border-white/10">
+            {result.breakdown.map(b => (
+              <div key={b.component} className="flex items-center justify-between px-4 py-3">
+                <span className="text-sm text-slate-600 dark:text-slate-300">{b.component}</span>
+                <span className={`text-sm font-semibold tabular-nums ${b.amount < 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {b.amount < 0 ? '-' : '+'}{result.currency} {Math.abs(b.amount).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl bg-sapphire/10 px-5 py-4 dark:bg-cyanAccent/10">
+            <p className="text-xs text-slate-500 dark:text-slate-400">Total Settlement Payable</p>
+            <p className="text-2xl font-extrabold text-sapphire dark:text-cyanAccent">{result.currency} {result.totalPayable.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+          </div>
+
+          <p className="text-xs text-amber-600 dark:text-amber-400">Advisory only. Consult legal/HR before processing final settlement payment. Values are based on current salary records and leave balance data.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ───────────────────────────────────────────────────────────────────
 
 export function PayrollPage() {
+  const { user } = useAuth();
+  const isAdmin    = user?.roles.some(r => r === 'Admin') ?? false;
+  const isFinance  = user?.roles.some(r => ['Finance Controller', 'Finance Approver'].includes(r)) ?? false;
+  const isHROrPayroll = !isAdmin && !isFinance && (user?.roles.some(r => ['HR Manager', 'Payroll Manager', 'Payroll Officer'].includes(r)) ?? false);
+
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [contextRunId, setContextRunId] = useState<string | undefined>(undefined);
 
@@ -1306,32 +1681,49 @@ export function PayrollPage() {
     setActiveTab(tab);
   };
 
+  const visibleTabs = TABS.filter(t => {
+    // Finance-only tabs
+    if (['gl-journal', 'reconciliation'].includes(t.key)) return isAdmin || isFinance || isHROrPayroll;
+    return true;
+  });
+
   const renderTab = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardTab onNavigate={setActiveTab} />;
+      case 'dashboard':       return <DashboardTab onNavigate={setActiveTab} />;
       case 'salary-structures': return <SalaryStructuresTab />;
       case 'employee-salary': return <EmployeeSalaryTab />;
-      case 'runs': return <RunsTab onSelectRun={handleSelectRun} />;
-      case 'validation': return <ValidationTab selectedRunId={contextRunId} />;
-      case 'approvals': return <ApprovalsTab selectedRunId={contextRunId} />;
-      case 'payslips': return <PayslipsTab />;
-      case 'bank-wps': return <BankWpsTab />;
+      case 'runs':            return <RunsTab onSelectRun={handleSelectRun} />;
+      case 'validation':      return <ValidationTab selectedRunId={contextRunId} />;
+      case 'approvals':       return <ApprovalsTab selectedRunId={contextRunId} isAdmin={isAdmin} isFinance={isFinance} isHROrPayroll={isHROrPayroll || isAdmin} />;
+      case 'payslips':        return <PayslipsTab />;
+      case 'bank-wps':        return <BankWpsTab />;
       case 'payment-tracking': return <PaymentTrackingTab />;
-      case 'reports': return <ReportsTab />;
-      case 'eosb': return <EOSBTab />;
-      case 'ai-validation': return <AIValidationTab />;
+      case 'reports':         return <ReportsTab />;
+      case 'eosb':            return <EOSBTab />;
+      case 'gl-journal':      return <GlJournalTab selectedRunId={contextRunId} />;
+      case 'reconciliation':  return <ReconciliationTab selectedRunId={contextRunId} />;
+      case 'final-settlement': return <FinalSettlementTab />;
+      case 'ai-validation':   return <AIValidationTab />;
     }
   };
 
+  const roleBadge = isAdmin ? { label: 'Admin', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' }
+    : isFinance ? { label: 'Finance', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300' }
+    : isHROrPayroll ? { label: 'HR / Payroll', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' }
+    : null;
+
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Payroll Management</h1>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">End-to-end payroll lifecycle — salary structures, runs, WPS/bank files, payslips, and AI validation.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Payroll Management</h1>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">End-to-end payroll lifecycle — structures, processing, Finance Controller approval, GL journal, WPS files, and final settlement.</p>
+        </div>
+        {roleBadge && <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-semibold ${roleBadge.cls}`}>{roleBadge.label}</span>}
       </div>
 
       <div className="scrollbar-hide flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.key}
             type="button"

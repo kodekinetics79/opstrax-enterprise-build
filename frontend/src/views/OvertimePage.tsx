@@ -1,6 +1,7 @@
 'use client';
 
 import { InfoTip } from '../components/InfoTip';
+import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle, BarChart2, Calculator, CheckCircle2, Clock3, FileClock,
@@ -183,10 +184,10 @@ function DashboardTab({ onNavigate }: { onNavigate: (t: Tab) => void }) {
 
 // ── Submit OT Tab ───────────────────────────────────────────────────────────────
 
-function SubmitOTTab() {
+function SubmitOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; isEmployee?: boolean }) {
   const [policies, setPolicies] = useState<OvertimePolicy[]>([]);
   const [form, setForm] = useState({
-    employeeId: '', workDate: today, startTime: '18:00', endTime: '20:00',
+    employeeId: selfEmployeeId ? String(selfEmployeeId) : '', workDate: today, startTime: '18:00', endTime: '20:00',
     reason: '', source: 'Manual', policyId: '', typeId: '',
   });
   const [saving, setSaving] = useState(false);
@@ -232,7 +233,7 @@ function SubmitOTTab() {
       <CheckCircle2 className="mb-3 h-12 w-12 text-emerald-500" />
       <p className="text-lg font-semibold text-slate-800 dark:text-white">Overtime Request Submitted</p>
       <p className="mt-1 text-sm text-slate-400">Your request is pending manager approval.</p>
-      <button type="button" className={`mt-6 ${btn.primary}`} onClick={() => { setSuccess(false); setForm(f => ({ ...f, reason: '' })); }}>Submit Another</button>
+      <button type="button" className={`mt-6 ${btn.primary}`} onClick={() => { setSuccess(false); setForm(f => ({ ...f, reason: '', employeeId: selfEmployeeId ? String(selfEmployeeId) : '' })); }}>Submit Another</button>
     </div>
   );
 
@@ -243,7 +244,10 @@ function SubmitOTTab() {
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee & Date</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *" info="The numeric ID of the employee who worked the overtime (see their profile in the People module)." infoKey="overtime.employee_id"><input type="number" aria-label="Employee ID" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
+          <Field label="Employee ID *" info="The numeric ID of the employee who worked the overtime (see their profile in the People module)." infoKey="overtime.employee_id">
+            <input type="number" aria-label="Employee ID" className={`${inp}${isEmployee ? ' cursor-not-allowed opacity-75' : ''}`} value={form.employeeId} readOnly={isEmployee} onChange={e => !isEmployee && set('employeeId', e.target.value)} />
+            {isEmployee && <p className="mt-1 text-[11px] text-slate-400">Your employee ID is pre-filled automatically.</p>}
+          </Field>
           <Field label="Work Date *" info="The day the overtime was actually worked — not the date you submit the request." infoKey="overtime.work_date"><input type="date" aria-label="Work date" className={inp} value={form.workDate} onChange={e => set('workDate', e.target.value)} /></Field>
           <Field label="Start Time *" info="When the overtime began, in 24-hour time (e.g. 18:00 = 6pm)." infoKey="overtime.start_time"><input type="time" aria-label="Start time" className={inp} value={form.startTime} onChange={e => set('startTime', e.target.value)} /></Field>
           <Field label="End Time *"><input type="time" aria-label="End time" className={inp} value={form.endTime} onChange={e => set('endTime', e.target.value)} /></Field>
@@ -337,15 +341,16 @@ function OTRequestsTable({ requests, onApprove, onReject, showActions }: {
 
 // ── My OT Tab ───────────────────────────────────────────────────────────────────
 
-function MyOTTab() {
+function MyOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; isEmployee?: boolean }) {
   const [requests, setRequests] = useState<OvertimeRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [empId, setEmpId] = useState('');
+  const [empId, setEmpId] = useState(selfEmployeeId ? String(selfEmployeeId) : '');
   const [statusFilter, setStatusFilter] = useState('');
 
   const load = () => {
     setLoading(true);
-    overtimeApi.requests({ employeeId: empId ? Number(empId) : undefined, status: statusFilter || undefined, pageSize: 100 })
+    const eid = (isEmployee && selfEmployeeId) ? selfEmployeeId : (empId ? Number(empId) : undefined);
+    overtimeApi.requests({ employeeId: eid, status: statusFilter || undefined, pageSize: 100 })
       .then(r => { setRequests(r.items); setLoading(false); })
       .catch(() => setLoading(false));
   };
@@ -354,12 +359,12 @@ function MyOTTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <input type="number" aria-label="Employee ID" placeholder="Employee ID" className={`${inp} w-40`} value={empId} onChange={e => setEmpId(e.target.value)} />
+        {!isEmployee && <input type="number" aria-label="Employee ID" placeholder="Employee ID" className={`${inp} w-40`} value={empId} onChange={e => setEmpId(e.target.value)} />}
         <select aria-label="Filter by status" className={`${sel} w-48`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
-          {['PendingManager', 'Approved', 'Rejected'].map(s => <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>)}
+          {['PendingManager', 'PendingHR', 'Approved', 'Rejected'].map(s => <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>)}
         </select>
-        <button type="button" className={btn.primary} onClick={load}>Search</button>
+        {!isEmployee && <button type="button" className={btn.primary} onClick={load}>Search</button>}
         <p className="ml-auto text-sm text-slate-400">{requests.length} request{requests.length !== 1 ? 's' : ''}</p>
       </div>
       <div className="surface overflow-hidden">
@@ -398,7 +403,7 @@ function TeamOTTab() {
       <div className="flex flex-wrap items-center gap-3">
         <select aria-label="Filter by status" className={`${sel} w-48`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
-          {['PendingManager', 'Approved', 'Rejected'].map(s => <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>)}
+          {['PendingManager', 'PendingHR', 'Approved', 'Rejected'].map(s => <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>)}
         </select>
         <button type="button" className={btn.ghost} onClick={() => overtimeApi.detectFromAttendance(today, today).then(load).catch(() => {})}>
           <RefreshCw className="h-4 w-4" /> Detect from Attendance
@@ -414,43 +419,103 @@ function TeamOTTab() {
 
 // ── Approvals Tab ───────────────────────────────────────────────────────────────
 
-function ApprovalsTab() {
+function ApprovalsTab({ isAdmin, isHRManager, isManager }: { isAdmin: boolean; isHRManager: boolean; isManager: boolean }) {
+  const isFinalApprover = isAdmin || isHRManager;
   const [requests, setRequests] = useState<OvertimeRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [approveModal, setApproveModal] = useState<OvertimeRequest | null>(null);
+  const [approveMinutes, setApproveMinutes] = useState('');
+  const [approveNotes, setApproveNotes] = useState('');
   const [rejectModal, setRejectModal] = useState<OvertimeRequest | null>(null);
   const [rejectNotes, setRejectNotes] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    overtimeApi.requests({ status: 'PendingManager', pageSize: 100 })
-      .then(r => { setRequests(r.items); setLoading(false); })
-      .catch(() => setLoading(false));
+    try {
+      if (isAdmin) {
+        const [r1, r2] = await Promise.all([
+          overtimeApi.requests({ status: 'PendingManager', pageSize: 100 }),
+          overtimeApi.requests({ status: 'PendingHR', pageSize: 100 }),
+        ]);
+        setRequests([...r1.items, ...r2.items].sort((a, b) => (a.workDate < b.workDate ? 1 : -1)));
+      } else {
+        const status = isHRManager ? 'PendingHR' : 'PendingManager';
+        const r = await overtimeApi.requests({ status, pageSize: 100 });
+        setRequests(r.items);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
-  const approve = async (r: OvertimeRequest) => {
-    try { await overtimeApi.approve(r.id, r.requestedMinutes, 'Approved'); load(); } catch { alert('Approval failed.'); }
+  const openApprove = (r: OvertimeRequest) => {
+    setApproveModal(r);
+    setApproveMinutes(String(r.requestedMinutes));
+    setApproveNotes('');
   };
-  const reject = async () => {
+
+  const doApprove = async () => {
+    if (!approveModal) return;
+    setSaving(true);
+    try {
+      const mins = isFinalApprover ? (Number(approveMinutes) || approveModal.requestedMinutes) : approveModal.requestedMinutes;
+      await overtimeApi.approve(approveModal.id, mins, approveNotes || undefined);
+      setApproveModal(null);
+      load();
+    } catch { alert('Approval failed.'); }
+    setSaving(false);
+  };
+
+  const doReject = async () => {
     if (!rejectModal) return;
-    try { await overtimeApi.reject(rejectModal.id, rejectNotes); setRejectModal(null); load(); } catch { alert('Rejection failed.'); }
+    setSaving(true);
+    try {
+      await overtimeApi.reject(rejectModal.id, rejectNotes || undefined);
+      setRejectModal(null);
+      load();
+    } catch { alert('Rejection failed.'); }
+    setSaving(false);
   };
+
+  const queueTitle = isAdmin ? 'All Pending Approvals' : isHRManager ? 'Pending HR Approval — Step 2' : 'Pending Your Approval — Step 1';
+  const queueSubtitle = isAdmin
+    ? 'As admin, approving any request finalises it immediately, bypassing the standard HR step.'
+    : isHRManager
+    ? 'These requests have been forwarded by a manager. Adjust hours if needed, then approve or reject.'
+    : 'Approving forwards the request to HR for final review and payroll calculation.';
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-slate-500 dark:text-slate-400">{requests.length} pending approval{requests.length !== 1 ? 's' : ''}</p>
-      {loading ? <p className="text-sm text-slate-400">Loading…</p> : requests.length === 0 ? (
+      <div>
+        <p className="text-sm font-semibold text-slate-800 dark:text-white">{queueTitle}</p>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{queueSubtitle}</p>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-slate-400">Loading…</p>
+      ) : requests.length === 0 ? (
         <div className="surface flex flex-col items-center py-16 text-center">
           <CheckCircle2 className="mb-3 h-8 w-8 text-slate-300 dark:text-slate-600" />
-          <p className="text-sm font-medium text-slate-600 dark:text-slate-400">No pending overtime approvals</p>
+          <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+            {isHRManager ? 'No overtime awaiting HR approval' : 'No pending overtime approvals'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {requests.map(r => (
             <div key={r.id} className="surface p-5">
               <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{r.employeeName || `Employee #${r.employeeId}`}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{r.employeeName || `Employee #${r.employeeId}`}</p>
+                    <StatusBadge status={r.status} />
+                    {isAdmin && (
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${r.status === 'PendingManager' ? 'bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400'}`}>
+                        {r.status === 'PendingManager' ? 'Step 1 — Manager' : 'Step 2 — HR'}
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-3">
                     <span className="text-xs text-slate-500">{fmtDate(r.workDate)}</span>
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-white/10 dark:text-slate-300">
@@ -462,7 +527,9 @@ function ApprovalsTab() {
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <button type="button" className={btn.ghost} onClick={() => { setRejectModal(r); setRejectNotes(''); }}>Reject</button>
-                  <button type="button" className={btn.primary} onClick={() => approve(r)}>Approve</button>
+                  <button type="button" className={btn.primary} onClick={() => openApprove(r)}>
+                    {isFinalApprover ? 'Approve' : 'Forward to HR'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -470,15 +537,54 @@ function ApprovalsTab() {
         </div>
       )}
 
+      {approveModal && (
+        <Modal
+          title={`${isFinalApprover ? 'Approve OT' : 'Forward to HR'} — ${approveModal.employeeName || `#${approveModal.employeeId}`}`}
+          onClose={() => setApproveModal(null)}
+        >
+          <div className="space-y-4">
+            {isFinalApprover ? (
+              <>
+                <Field label="Approved Minutes" info="Adjust if the actual overtime differs from what was requested.">
+                  <input type="number" aria-label="Approved minutes" className={inp} value={approveMinutes} onChange={e => setApproveMinutes(e.target.value)} />
+                </Field>
+                <p className="text-xs text-slate-400">
+                  Requested: {fmtMins(approveModal.requestedMinutes)} · Will approve: {fmtMins(Number(approveMinutes) || approveModal.requestedMinutes)}
+                </p>
+                {isAdmin && approveModal.status === 'PendingManager' && (
+                  <div className="rounded-lg bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">
+                    Admin override — this will skip the manager→HR chain and approve immediately.
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-lg bg-amber-50 px-4 py-3 dark:bg-amber-500/10">
+                <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Forwarding to HR for final approval</p>
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">The HR team will review, set the final approved hours, and trigger payroll calculation.</p>
+              </div>
+            )}
+            <Field label="Notes (optional)">
+              <textarea className={inp} rows={2} value={approveNotes} onChange={e => setApproveNotes(e.target.value)} placeholder="Add notes for the next reviewer…" />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.ghost} onClick={() => setApproveModal(null)}>Cancel</button>
+              <button type="button" className={btn.primary} onClick={doApprove} disabled={saving}>
+                {saving ? 'Processing…' : isFinalApprover ? 'Approve & Calculate' : 'Forward to HR'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {rejectModal && (
         <Modal title={`Reject OT — ${rejectModal.employeeName || `#${rejectModal.employeeId}`}`} onClose={() => setRejectModal(null)}>
           <div className="space-y-4">
-            <Field label="Rejection Notes *">
+            <Field label="Rejection Reason *">
               <textarea className={inp} rows={3} value={rejectNotes} onChange={e => setRejectNotes(e.target.value)} placeholder="Reason for rejection…" />
             </Field>
             <div className="flex justify-end gap-2">
               <button type="button" className={btn.ghost} onClick={() => setRejectModal(null)}>Cancel</button>
-              <button type="button" className={btn.danger} onClick={reject}>Reject</button>
+              <button type="button" className={btn.danger} onClick={doReject} disabled={saving}>{saving ? 'Rejecting…' : 'Reject'}</button>
             </div>
           </div>
         </Modal>
@@ -821,31 +927,60 @@ function ReportsTab() {
 // ── Main Page ───────────────────────────────────────────────────────────────────
 
 export function OvertimePage() {
+  const { user } = useAuth();
+  const isAdmin    = user?.roles.some(r => r === 'Admin') ?? false;
+  const isHRManager = user?.roles.some(r => r === 'HR Manager') ?? false;
+  const isManager  = !isAdmin && !isHRManager && (user?.roles.some(r => ['Manager', 'Supervisor'].includes(r)) ?? false);
+  const isEmployee = !isAdmin && !isHRManager && !isManager;
+  const selfEmployeeId = (user as { employeeId?: number } | undefined)?.employeeId;
+
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+
+  const visibleTabs = TABS.filter(t => {
+    if (isEmployee) return ['dashboard', 'submit', 'my-ot'].includes(t.key);
+    if (isManager)  return ['dashboard', 'submit', 'my-ot', 'team-ot', 'approvals'].includes(t.key);
+    return true; // HR Manager & Admin see all tabs
+  });
+
+  const roleBadge = isAdmin
+    ? <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-400">Admin</span>
+    : isHRManager
+    ? <span className="rounded-md bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-400">HR Manager</span>
+    : isManager
+    ? <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">Manager</span>
+    : <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">Employee</span>;
 
   const renderTab = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardTab onNavigate={setActiveTab} />;
-      case 'submit': return <SubmitOTTab />;
-      case 'my-ot': return <MyOTTab />;
-      case 'team-ot': return <TeamOTTab />;
-      case 'approvals': return <ApprovalsTab />;
-      case 'policies': return <PoliciesTab />;
-      case 'calc-preview': return <CalcPreviewTab />;
+      case 'dashboard':     return <DashboardTab onNavigate={setActiveTab} />;
+      case 'submit':        return <SubmitOTTab selfEmployeeId={selfEmployeeId} isEmployee={isEmployee} />;
+      case 'my-ot':         return <MyOTTab selfEmployeeId={selfEmployeeId} isEmployee={isEmployee} />;
+      case 'team-ot':       return <TeamOTTab />;
+      case 'approvals':     return <ApprovalsTab isAdmin={isAdmin} isHRManager={isHRManager} isManager={isManager} />;
+      case 'policies':      return <PoliciesTab />;
+      case 'calc-preview':  return <CalcPreviewTab />;
       case 'payroll-review': return <PayrollReviewTab />;
-      case 'reports': return <ReportsTab />;
+      case 'reports':       return <ReportsTab />;
     }
   };
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Overtime Management</h1>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">GCC overtime policies, approvals, calculations, and payroll integration.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Overtime Management</h1>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            {isEmployee   ? 'Submit and track your overtime requests.' :
+             isManager    ? 'Approve team overtime and forward to HR for final review.' :
+             isHRManager  ? 'Final approval, hour adjustments, calculations, and payroll review.' :
+             'GCC overtime policies, approvals, calculations, and payroll integration.'}
+          </p>
+        </div>
+        {roleBadge}
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.key}
             type="button"

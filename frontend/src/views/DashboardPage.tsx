@@ -31,6 +31,7 @@ import { dashboardApi } from '../api/dashboard';
 import type { DashboardSummary, DashboardTrend, DashboardOverview, DashboardKpis } from '../api/dashboard';
 import { aiAssistantApi } from '../api/intelligence';
 import type { AIInsight } from '../api/intelligence';
+import { useFeatureFlags } from '../contexts/FeatureFlagContext';
 import type { AiInsight } from '../types/ui';
 
 const DashboardAttendanceTrendChart = dynamic(
@@ -273,6 +274,7 @@ const sevToTone = { Critical: 'critical', Warning: 'warning', Info: 'info' } as 
 export function DashboardPage() {
   const router    = useRouter();
   const clock     = useClock();
+  const { isFeatureEnabled } = useFeatureFlags();
   const [loading, setLoading] = useState(false);
   const loadRef   = useRef(false);
 
@@ -286,11 +288,14 @@ export function DashboardPage() {
     if (loadRef.current) return;
     loadRef.current = true;
     setLoading(true);
-    await Promise.allSettled([
+    const tasks: Promise<void>[] = [
       dashboardApi.full(6).then((d) => { setSummary(d.summary); setTrends(d.trends); setOverview(d.overview); }),
       dashboardApi.kpis().then(setOpsKpis),
-      aiAssistantApi.listInsights({ acknowledged: false }).then((r) => setInsights(r.items)),
-    ]);
+    ];
+    if (isFeatureEnabled('ai_assistant')) {
+      tasks.push(aiAssistantApi.listInsights({ acknowledged: false }).then((r) => setInsights(r.items)).catch(() => {}));
+    }
+    await Promise.allSettled(tasks);
     setLoading(false);
     loadRef.current = false;
   };

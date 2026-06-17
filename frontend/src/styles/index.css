@@ -166,7 +166,7 @@ input:focus-visible {
 /* ── Animations ─────────────────────────────────────────────────────────── */
 @keyframes kx-fade-in-up {
   from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; }
 }
 @keyframes kx-fade-in {
   from { opacity: 0; }
@@ -174,7 +174,7 @@ input:focus-visible {
 }
 @keyframes kx-slide-in {
   from { opacity: 0; transform: translateX(-6px); }
-  to   { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; }
 }
 .animate-fade-in-up { animation: kx-fade-in-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .animate-fade-in    { animation: kx-fade-in 0.25s ease-out both; }
