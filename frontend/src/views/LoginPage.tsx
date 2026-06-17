@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  BarChart3, CheckCircle2, Clock, Eye, EyeOff,
-  ShieldCheck, TrendingUp, Users, Zap,
+  AlertCircle, BarChart3, CheckCircle2, Clock, Eye, EyeOff,
+  FileCheck, KeyRound, Lock, Mail, ShieldCheck, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { authApi } from '../api/auth';
 import { Logo } from '../components/Logo';
 import { InfoTip } from '../components/InfoTip';
 
@@ -17,20 +18,44 @@ const FEATURES = [
   { icon: Zap,        label: 'Auto Workflows',      desc: 'Leave, overtime, approvals automated' },
 ];
 
+type LoginMode = 'login' | 'forgot' | 'reset';
+
 export function LoginPage() {
   const { login } = useAuth();
-  const router     = useRouter();
+  const router       = useRouter();
   const searchParams = useSearchParams();
   const from = searchParams?.get('from') ?? '/dashboard';
 
-  const [email,        setEmail]        = useState('');
-  const [password,     setPassword]     = useState('');
-  const [tenantSlug,   setTenantSlug]   = useState('');
-  const [error,        setError]        = useState('');
-  const [isLoading,    setIsLoading]    = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [mode,          setMode]          = useState<LoginMode>('login');
+  const [email,         setEmail]         = useState('');
+  const [password,      setPassword]      = useState('');
+  const [tenantSlug,    setTenantSlug]    = useState('');
+  const [tenantLocked,  setTenantLocked]  = useState(false);
+  const [error,         setError]         = useState('');
+  const [info,          setInfo]          = useState('');
+  const [isLoading,     setIsLoading]     = useState(false);
+  const [showPassword,  setShowPassword]  = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Forgot / reset password fields
+  const [forgotEmail,   setForgotEmail]   = useState('');
+  const [resetToken,    setResetToken]    = useState('');
+  const [newPassword,   setNewPassword]   = useState('');
+  const [confirmPass,   setConfirmPass]   = useState('');
+
+  // Auto-detect tenant slug from subdomain or ?workspace= query param
+  useEffect(() => {
+    const wsParam = searchParams?.get('workspace') ?? searchParams?.get('w');
+    if (wsParam) { setTenantSlug(wsParam); setTenantLocked(true); return; }
+    if (typeof window === 'undefined') return;
+    const parts = window.location.hostname.split('.');
+    const skip = new Set(['www', 'app', 'admin', 'mail', 'localhost']);
+    if (parts.length >= 3 && !skip.has(parts[0])) {
+      setTenantSlug(parts[0]);
+      setTenantLocked(true);
+    }
+  }, [searchParams]);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
@@ -44,12 +69,58 @@ export function LoginPage() {
     }
   };
 
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+    try {
+      const res = await authApi.forgotPassword(forgotEmail || email, tenantSlug || undefined);
+      setInfo(res.message ?? 'Check your email for a reset link.');
+      if (res.resetToken) {
+        setResetToken(res.resetToken);
+        setMode('reset');
+        setInfo('');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Could not process reset request.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (newPassword !== confirmPass) { setError('Passwords do not match.'); return; }
+    if (newPassword.length < 10) { setError('Password must be at least 10 characters.'); return; }
+    setIsLoading(true);
+    try {
+      await authApi.resetPassword(forgotEmail || email, resetToken, newPassword, tenantSlug || undefined);
+      setInfo('Password updated. You can now sign in.');
+      setMode('login');
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Reset failed. The token may have expired.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const switchMode = (m: LoginMode) => {
+    setError('');
+    setInfo('');
+    setMode(m);
+    if (m === 'forgot' && email) setForgotEmail(email);
+  };
+
   return (
     <>
       <style>{`
         @keyframes kx-float  { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-14px)} }
         @keyframes kx-float2 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-20px)} }
         @keyframes kx-float3 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-10px)} }
+        @keyframes kx-float4 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-17px)} }
+        @keyframes kx-float5 { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-12px)} }
         @keyframes kx-spin-l { from{transform:rotate(0deg)}   to{transform:rotate(360deg)}  }
         @keyframes kx-spin-r { from{transform:rotate(0deg)}   to{transform:rotate(-360deg)} }
         @keyframes kx-ring   { 0%{transform:scale(1);opacity:0.35} 100%{transform:scale(2.4);opacity:0} }
@@ -58,6 +129,8 @@ export function LoginPage() {
         .kx-f1{animation:kx-float  5.5s ease-in-out infinite}
         .kx-f2{animation:kx-float2 7.2s ease-in-out infinite 1.8s}
         .kx-f3{animation:kx-float3 6.4s ease-in-out infinite 3.6s}
+        .kx-f4{animation:kx-float4 8.1s ease-in-out infinite 0.9s}
+        .kx-f5{animation:kx-float5 5.9s ease-in-out infinite 2.7s}
         .kx-sl{animation:kx-spin-l 80s linear infinite}
         .kx-sr{animation:kx-spin-r 60s linear infinite}
         .kx-r1{animation:kx-ring 2.8s ease-out infinite}
@@ -79,72 +152,62 @@ export function LoginPage() {
           {/* Deep gradient base */}
           <div className="absolute inset-0 bg-gradient-to-br from-[#020818] via-[#07122e] to-[#030b1c]" />
 
-          {/* Animated colour blobs */}
-          <div className="kx-dr  pointer-events-none absolute -top-40 -left-40 h-[600px] w-[600px] rounded-full bg-blue-600/[0.13] blur-[80px] kx-gl" />
-          <div className="kx-dr2 pointer-events-none absolute top-1/3 right-0 h-[450px] w-[450px] translate-x-1/3 rounded-full bg-indigo-500/[0.10] blur-[80px] kx-gl2" />
-          <div className="kx-dr3 pointer-events-none absolute bottom-0 left-1/4 h-[400px] w-[400px] rounded-full bg-cyan-500/[0.08] blur-[80px] kx-gl" />
-
           {/* Dot-grid watermark */}
-          <div className="kx-dots pointer-events-none absolute inset-0 opacity-[0.045]" />
+          <div className="kx-dots absolute inset-0 opacity-[0.045]" />
+
+          {/* Drifting colour blobs */}
+          <div className="kx-dr absolute -left-32 -top-32 h-[520px] w-[520px] rounded-full bg-blue-600/[0.14] blur-[100px]" />
+          <div className="kx-dr2 absolute -right-24 top-1/4 h-[420px] w-[420px] rounded-full bg-indigo-600/[0.12] blur-[90px]" />
+          <div className="kx-dr3 absolute bottom-0 left-1/3 h-[380px] w-[380px] rounded-full bg-cyan-600/[0.10] blur-[80px]" />
 
           {/* Rotating concentric rings */}
-          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div className="kx-sl  h-[900px] w-[900px] rounded-full border border-white/[0.035]" />
-            <div className="kx-sr  absolute inset-[60px] rounded-full border border-white/[0.025]" />
-            <div className="kx-sl  absolute inset-[120px] rounded-full border border-dashed border-white/[0.018]" />
-            <div className="kx-sr  absolute inset-[200px] rounded-full border border-white/[0.012]" />
+          <div className="kx-sl absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[700px] w-[700px] rounded-full border border-blue-500/[0.05]" />
+          <div className="kx-sr absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[560px] w-[560px] rounded-full border border-indigo-400/[0.06]" />
+          <div className="kx-sl absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[420px] w-[420px] rounded-full border border-cyan-400/[0.07]" />
+          <div className="kx-sr absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[280px] w-[280px] rounded-full border border-blue-300/[0.08]" />
+
+          {/* KYNEXONE text watermark */}
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden select-none">
+            <p className="text-[160px] font-black text-white opacity-[0.022] -rotate-[10deg] tracking-tighter whitespace-nowrap">KYNEXONE</p>
           </div>
 
-          {/* Large text watermark */}
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-            <p className="select-none whitespace-nowrap text-[160px] font-black tracking-[-0.06em] text-white opacity-[0.022] -rotate-[10deg]">
-              KYNEXONE
-            </p>
-          </div>
+          {/* Content */}
+          <div className="relative z-10 flex h-full flex-col justify-between px-14 py-14">
 
-          {/* Radar pulse rings (anchored at mid-left of panel) */}
-          <div className="pointer-events-none absolute left-[28%] top-[52%]">
-            <div className="kx-r1 absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-400/50" />
-            <div className="kx-r2 absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-400/40" />
-            <div className="kx-r3 absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-indigo-400/30" />
-            <div className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-400 shadow-[0_0_12px_4px_rgba(96,165,250,0.5)]" />
-          </div>
-
-          {/* ── Content ────────────────────────────────────────────────────── */}
-          <div className="relative z-10 flex h-full flex-col justify-between p-12 xl:p-14">
-
-            {/* Logo — large + glow */}
-            <div className="flex items-center gap-3">
+            {/* Radar pulse + Logo */}
+            <div className="flex items-center gap-4">
               <div className="relative">
-                <div className="absolute -inset-3 rounded-2xl bg-blue-500/25 blur-2xl" />
-                <div className="relative flex items-center gap-3">
-                  <Logo collapsed={false} size="lg" />
+                <div className="kx-r1 absolute inset-0 rounded-full border-2 border-blue-400/40" />
+                <div className="kx-r2 absolute inset-0 rounded-full border-2 border-blue-400/25" />
+                <div className="kx-r3 absolute inset-0 rounded-full border-2 border-blue-400/15" />
+                <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/20 backdrop-blur-sm ring-1 ring-blue-400/30">
+                  <span className="h-2.5 w-2.5 rounded-full bg-blue-400 shadow-lg shadow-blue-400/60" />
                 </div>
+              </div>
+              <div className="relative">
+                <div className="absolute -inset-6 rounded-full bg-blue-400/[0.06] blur-2xl" />
+                <Logo size="lg" />
               </div>
             </div>
 
-            {/* Headline + stats */}
-            <div className="space-y-10">
-              <div>
-                <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.24em] text-blue-400/70">
-                  Enterprise Workforce Intelligence
-                </p>
-                <h1 className="text-[2.6rem] font-extrabold leading-[1.1] tracking-tight text-white xl:text-5xl">
-                  One platform for<br />
-                  <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-indigo-400 bg-clip-text text-transparent">
-                    every workforce
-                  </span>
-                  <br />operation.
-                </h1>
-                <p className="mt-4 max-w-md text-sm leading-relaxed text-blue-200/55">
-                  From hire to retire — payroll, attendance, compliance, and AI insights in a single unified workspace built for GCC enterprises.
-                </p>
-              </div>
+            {/* Headline */}
+            <div className="mt-10">
+              <h1 className="text-5xl font-extrabold leading-tight tracking-tight">
+                <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-indigo-400 bg-clip-text text-transparent">
+                  The Complete
+                </span>
+                <br />
+                <span className="text-white">Workforce Platform</span>
+              </h1>
+              <p className="mt-4 max-w-md text-base leading-relaxed text-blue-200/50">
+                From hire to retire — payroll, attendance, compliance, and AI insights in a single unified workspace built for GCC enterprises.
+              </p>
+            </div>
 
               {/* ── Floating glassmorphism stat cards ─────────────────────── */}
-              <div className="relative h-[200px]">
+              <div className="relative h-[340px]">
 
-                {/* Card 1 — employees */}
+                {/* Card 1 — employees (top-left) */}
                 <div className="kx-f1 absolute left-0 top-0 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
                   <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 ring-1 ring-emerald-500/30">
                     <Users className="h-5 w-5 text-emerald-300" />
@@ -157,7 +220,7 @@ export function LoginPage() {
                   </div>
                 </div>
 
-                {/* Card 2 — attendance */}
+                {/* Card 2 — attendance (top-right) */}
                 <div className="kx-f2 absolute right-6 top-4 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/20 ring-1 ring-cyan-500/30">
                     <TrendingUp className="h-5 w-5 text-cyan-300" />
@@ -169,34 +232,57 @@ export function LoginPage() {
                   </div>
                 </div>
 
-                {/* Card 3 — payroll */}
-                <div className="kx-f3 absolute left-20 bottom-0 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
+                {/* Card 3 — payroll (mid-left) */}
+                <div className="kx-f3 absolute left-16 top-[110px] flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 ring-1 ring-amber-500/30">
                     <CheckCircle2 className="h-5 w-5 text-amber-300" />
                   </div>
                   <div>
                     <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Payroll</p>
-                    <p className="text-3xl font-black leading-none text-amber-300">SAR 2.4M</p>
+                    <p className="text-3xl font-black leading-none text-amber-300">$2.4M</p>
                     <p className="text-[10px] text-white/25 mt-0.5">last cycle · on time</p>
+                  </div>
+                </div>
+
+                {/* Card 4 — Leave requests (mid-right) */}
+                <div className="kx-f4 absolute right-4 top-[120px] flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/20 ring-1 ring-violet-500/30">
+                    <Clock className="h-5 w-5 text-violet-300" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Leave pending</p>
+                    <p className="text-3xl font-black leading-none text-violet-300">24</p>
+                    <p className="text-[10px] text-white/25 mt-0.5">awaiting approval</p>
+                  </div>
+                </div>
+
+                {/* Card 5 — Compliance (bottom-center) */}
+                <div className="kx-f5 absolute left-1/2 -translate-x-1/2 bottom-0 flex items-center gap-3.5 rounded-2xl border border-white/[0.14] bg-white/[0.07] px-4 py-3.5 shadow-2xl backdrop-blur-md">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 ring-1 ring-indigo-500/30">
+                    <FileCheck className="h-5 w-5 text-indigo-300" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">WPS Compliance</p>
+                    <p className="text-3xl font-black leading-none text-indigo-300">100%</p>
+                    <p className="text-[10px] text-white/25 mt-0.5">all records submitted</p>
                   </div>
                 </div>
 
               </div>
 
-              {/* Feature grid — glassmorphism */}
-              <div className="grid grid-cols-2 gap-2.5">
-                {FEATURES.map(({ icon: Icon, label, desc }) => (
-                  <div key={label} className="flex items-start gap-2.5 rounded-xl border border-white/[0.09] bg-white/[0.04] p-3 backdrop-blur-sm transition-colors hover:bg-white/[0.07]">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/20">
-                      <Icon className="h-3.5 w-3.5 text-blue-300" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold text-white">{label}</p>
-                      <p className="mt-0.5 text-[11px] leading-relaxed text-blue-200/45">{desc}</p>
-                    </div>
+            {/* Feature grid — glassmorphism */}
+            <div className="grid grid-cols-2 gap-2.5">
+              {FEATURES.map(({ icon: Icon, label, desc }) => (
+                <div key={label} className="flex items-start gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.04] p-3 transition hover:bg-white/[0.07]">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/20">
+                    <Icon className="h-3.5 w-3.5 text-blue-300" />
                   </div>
-                ))}
-              </div>
+                  <div>
+                    <p className="text-xs font-semibold text-white">{label}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-blue-200/45">{desc}</p>
+                  </div>
+                </div>
+              ))}
             </div>
 
             {/* Footer */}
@@ -216,90 +302,251 @@ export function LoginPage() {
           </div>
 
           <div className="w-full max-w-[400px]">
-            <div className="mb-7">
-              <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                Welcome back
-              </h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Sign in to your workspace to continue.
-              </p>
-            </div>
 
-            {/* Glass form card */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xl shadow-blue-900/[0.07] dark:border-white/[0.08] dark:bg-white/[0.04] dark:backdrop-blur-xl dark:shadow-none">
-              <form onSubmit={handleSubmit} className="space-y-4">
-
-                <div>
-                  <label htmlFor="login-email" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Email address
-                    <InfoTip text="The work email your company admin registered you with, e.g. you@company.com." />
-                  </label>
-                  <input
-                    id="login-email" type="email" value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="input w-full" placeholder="you@company.com"
-                    autoComplete="email" required
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="login-password" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Password
-                    <InfoTip text="Your account password (case-sensitive). Contact your HR admin if you can't sign in." />
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="login-password" type={showPassword ? 'text' : 'password'} value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="input w-full pr-10" placeholder="••••••••"
-                      autoComplete="current-password" required
-                    />
-                    <button
-                      type="button" onClick={() => setShowPassword(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'} tabIndex={-1}
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="login-workspace" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Workspace
-                    <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries). Shared by your admin when the workspace was created." />
-                  </label>
-                  <input
-                    id="login-workspace" type="text" value={tenantSlug}
-                    onChange={(e) => setTenantSlug(e.target.value)}
-                    className="input w-full" placeholder="your-workspace"
-                    autoComplete="organization" required
-                  />
-                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                    Your company&apos;s unique workspace identifier
+            {/* ── Login form ──────────────────────────────────────────────── */}
+            {mode === 'login' && (
+              <>
+                <div className="mb-7">
+                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+                    Welcome back
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Sign in to your workspace to continue.
                   </p>
                 </div>
 
-                {error && (
-                  <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-500/20 dark:bg-rose-500/[0.08]">
-                    <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-rose-500" />
-                    <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
-                  </div>
-                )}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xl shadow-blue-900/[0.07] dark:border-white/[0.08] dark:bg-white/[0.04] dark:backdrop-blur-xl dark:shadow-none">
+                  <form onSubmit={handleLogin} className="space-y-4">
 
-                <button
-                  type="submit" disabled={isLoading}
-                  className="btn-primary mt-1 w-full justify-center py-2.5 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isLoading ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                      Signing in…
-                    </>
-                  ) : 'Sign in'}
-                </button>
-              </form>
-            </div>
+                    <div>
+                      <label htmlFor="login-email" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Email address
+                        <InfoTip text="The work email your company admin registered you with." />
+                      </label>
+                      <input
+                        id="login-email" type="email" value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="input w-full" placeholder="you@company.com"
+                        autoComplete="email" required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="login-password" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Password
+                        <InfoTip text="Your account password (case-sensitive)." />
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="login-password" type={showPassword ? 'text' : 'password'} value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          className="input w-full pr-10" placeholder="••••••••"
+                          autoComplete="current-password" required
+                        />
+                        <button
+                          type="button" onClick={() => setShowPassword(v => !v)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                          aria-label={showPassword ? 'Hide password' : 'Show password'} tabIndex={-1}
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <div className="mt-1.5 flex justify-end">
+                        <button type="button" onClick={() => switchMode('forgot')} className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300">
+                          Forgot password?
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="login-workspace" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Workspace
+                        {tenantLocked && <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Lock className="h-3 w-3" />Auto-detected</span>}
+                        {!tenantLocked && <InfoTip text="Your company's unique workspace ID (lowercase, e.g. acme-industries)." />}
+                      </label>
+                      <input
+                        id="login-workspace" type="text" value={tenantSlug}
+                        onChange={(e) => { if (!tenantLocked) setTenantSlug(e.target.value); }}
+                        readOnly={tenantLocked}
+                        className={`input w-full ${tenantLocked ? 'cursor-default bg-slate-50 text-slate-500 dark:bg-white/[0.03] dark:text-slate-400' : ''}`}
+                        placeholder="your-workspace"
+                        autoComplete="organization" required
+                      />
+                      {!tenantLocked && (
+                        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                          Your company&apos;s unique workspace identifier
+                        </p>
+                      )}
+                    </div>
+
+                    {info && (
+                      <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 dark:border-emerald-500/20 dark:bg-emerald-500/[0.08]">
+                        <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                        <p className="text-sm text-emerald-700 dark:text-emerald-400">{info}</p>
+                      </div>
+                    )}
+
+                    {error && (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-500/20 dark:bg-rose-500/[0.08]">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                        <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
+                      </div>
+                    )}
+
+                    <button
+                      type="submit" disabled={isLoading}
+                      className="btn-primary mt-1 w-full justify-center py-2.5 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isLoading ? (
+                        <>
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                          Signing in…
+                        </>
+                      ) : 'Sign in'}
+                    </button>
+                  </form>
+                </div>
+              </>
+            )}
+
+            {/* ── Forgot password ──────────────────────────────────────────── */}
+            {mode === 'forgot' && (
+              <>
+                <div className="mb-7">
+                  <button type="button" onClick={() => switchMode('login')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                    ← Back to sign in
+                  </button>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                    <Mail className="h-6 w-6 text-blue-500" /> Reset password
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Enter your email and workspace to receive a reset link.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xl shadow-blue-900/[0.07] dark:border-white/[0.08] dark:bg-white/[0.04] dark:backdrop-blur-xl dark:shadow-none">
+                  <form onSubmit={handleForgot} className="space-y-4">
+
+                    <div>
+                      <label htmlFor="forgot-email" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Email address</label>
+                      <input
+                        id="forgot-email" type="email" value={forgotEmail || email}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="input w-full" placeholder="you@company.com" autoComplete="email" required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="forgot-workspace" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Workspace
+                        {tenantLocked && <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"><Lock className="h-3 w-3" />Auto-detected</span>}
+                      </label>
+                      <input
+                        id="forgot-workspace" type="text" value={tenantSlug}
+                        onChange={(e) => { if (!tenantLocked) setTenantSlug(e.target.value); }}
+                        readOnly={tenantLocked}
+                        className={`input w-full ${tenantLocked ? 'cursor-default bg-slate-50 text-slate-500 dark:bg-white/[0.03] dark:text-slate-400' : ''}`}
+                        placeholder="your-workspace"
+                      />
+                    </div>
+
+                    {error && (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-500/20 dark:bg-rose-500/[0.08]">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                        <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
+                      </div>
+                    )}
+
+                    {info && (
+                      <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 dark:border-emerald-500/20 dark:bg-emerald-500/[0.08]">
+                        <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                        <p className="text-sm text-emerald-700 dark:text-emerald-400">{info}</p>
+                      </div>
+                    )}
+
+                    <button type="submit" disabled={isLoading} className="btn-primary w-full justify-center py-2.5 disabled:cursor-not-allowed disabled:opacity-60">
+                      {isLoading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Send reset link'}
+                    </button>
+
+                    <p className="text-center text-xs text-slate-400">
+                      Already have a reset code?{' '}
+                      <button type="button" onClick={() => switchMode('reset')} className="text-blue-500 hover:text-blue-600 dark:text-blue-400">
+                        Enter it here
+                      </button>
+                    </p>
+                  </form>
+                </div>
+              </>
+            )}
+
+            {/* ── Reset password ───────────────────────────────────────────── */}
+            {mode === 'reset' && (
+              <>
+                <div className="mb-7">
+                  <button type="button" onClick={() => switchMode('forgot')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                    ← Back
+                  </button>
+                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                    <KeyRound className="h-6 w-6 text-blue-500" /> Set new password
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Enter the reset code from your email and choose a new password.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-7 shadow-xl shadow-blue-900/[0.07] dark:border-white/[0.08] dark:bg-white/[0.04] dark:backdrop-blur-xl dark:shadow-none">
+                  <form onSubmit={handleReset} className="space-y-4">
+
+                    <div>
+                      <label htmlFor="reset-email" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Email address</label>
+                      <input
+                        id="reset-email" type="email" value={forgotEmail || email}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="input w-full" placeholder="you@company.com" autoComplete="email" required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="reset-token" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Reset code</label>
+                      <input
+                        id="reset-token" type="text" value={resetToken}
+                        onChange={(e) => setResetToken(e.target.value)}
+                        className="input w-full font-mono tracking-wider" placeholder="Paste reset code here" required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="reset-newpw" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">New password <span className="text-slate-400 font-normal">(min 10 chars)</span></label>
+                      <input
+                        id="reset-newpw" type="password" value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="input w-full" placeholder="••••••••••" autoComplete="new-password" required
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="reset-confirm" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Confirm password</label>
+                      <input
+                        id="reset-confirm" type="password" value={confirmPass}
+                        onChange={(e) => setConfirmPass(e.target.value)}
+                        className="input w-full" placeholder="••••••••••" autoComplete="new-password" required
+                      />
+                    </div>
+
+                    {error && (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-500/20 dark:bg-rose-500/[0.08]">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                        <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
+                      </div>
+                    )}
+
+                    <button type="submit" disabled={isLoading} className="btn-primary w-full justify-center py-2.5 disabled:cursor-not-allowed disabled:opacity-60">
+                      {isLoading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Update password'}
+                    </button>
+                  </form>
+                </div>
+              </>
+            )}
 
             <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-600">
               One Platform for Every Workforce Operation

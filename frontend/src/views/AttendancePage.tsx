@@ -263,9 +263,38 @@ export function AttendancePage() {
     }), 'Raw attendance event saved.');
   };
 
-  const submitImport = (event: FormEvent) => {
+  const [csvFileName, setCsvFileName] = useState('');
+
+  const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCsvFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setCsvContent((ev.target?.result as string) ?? '');
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const submitImport = async (event: FormEvent) => {
     event.preventDefault();
-    runAction(() => attendanceApi.events.importCsv({ fileName: `attendance-${Date.now()}.csv`, csvContent }), 'CSV import persisted raw attendance rows.');
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const batch = await attendanceApi.events.importCsv({ fileName: csvFileName || `attendance-${Date.now()}.csv`, csvContent });
+      if (batch.failedRows > 0) {
+        setMessage(`Imported ${batch.importedRows} of ${batch.totalRows} rows. ${batch.failedRows} rows failed — check that employee codes exist in the system.`);
+      } else {
+        setMessage(`✓ Imported all ${batch.importedRows} rows successfully.`);
+      }
+      setCsvContent('');
+      setCsvFileName('');
+      await load();
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? err.message ?? 'CSV import failed.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const submitProcessing = (event: FormEvent) => {
@@ -477,9 +506,20 @@ export function AttendancePage() {
               </div>
             </form>
             <form onSubmit={submitImport} className="surface p-4">
-              <SectionTitle icon={Upload} title="CSV Attendance Import" subtitle="Rows: employeeCode,punchTimestamp,punchDirection,location,method" />
-              <textarea className="input mt-4 min-h-32 w-full font-mono" value={csvContent} onChange={(e) => setCsvContent(e.target.value)} placeholder="employeeCode,punchTimestamp,punchDirection&#10;ZAY-KSA-HR-2026-0001,2026-05-23T09:00:00Z,In" />
-              <button type="submit" disabled={saving || !csvContent.trim()} className="btn-primary mt-3 w-full justify-center">Import CSV</button>
+              <SectionTitle icon={Upload} title="CSV Attendance Import" subtitle="Columns: employeeCode, punchTimestamp (ISO 8601), punchDirection, location (opt), method (opt)" />
+              <div className="mt-4 flex items-center gap-2">
+                <label className="btn-secondary flex cursor-pointer items-center gap-1.5 text-sm">
+                  <Upload className="h-3.5 w-3.5" />
+                  {csvFileName ? csvFileName : 'Choose CSV file'}
+                  <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvFile} />
+                </label>
+                {csvFileName && <button type="button" onClick={() => { setCsvContent(''); setCsvFileName(''); }} className="text-xs text-slate-400 hover:text-rose-500">clear</button>}
+              </div>
+              <textarea className="input mt-3 min-h-28 w-full font-mono text-xs" value={csvContent} onChange={(e) => setCsvContent(e.target.value)} placeholder={`employeeCode,punchTimestamp,punchDirection\nEMP-001,2026-06-16T09:00:00Z,In\nEMP-001,2026-06-16T18:00:00Z,Out`} />
+              <p className="mt-1 text-xs text-slate-400">Employee codes must match exactly what is registered in the system.</p>
+              <button type="submit" disabled={saving || !csvContent.trim()} className="btn-primary mt-3 w-full justify-center">
+                {saving ? 'Importing…' : 'Import CSV'}
+              </button>
             </form>
           </div>
           <Panel title="Raw Punch Logs" action={`${rawEvents.length} latest`}>
