@@ -65,7 +65,7 @@ public class EmployeesController : ControllerBase
             return Ok(await employeeManagement.SearchAsync(tenantId, search, status, department, page, pageSize, cancellationToken));
 
         // Restricted scope: query directly and apply AllowedEmployeeIds filter
-        var query = _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted
+        var query = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted
             && scope.AllowedEmployeeIds!.Contains(e.Id));
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(e => e.FullName.Contains(search) || e.EmployeeCode.Contains(search) || (e.WorkEmail != null && e.WorkEmail.Contains(search)));
@@ -93,7 +93,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> Export(CancellationToken ct)
     {
         var tenantId = RequireTenant();
-        var emps = await _db.Employees.Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+        var emps = await _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted)
             .OrderBy(e => e.EmployeeCode).ToListAsync(ct);
         var rows = emps.Select(e => (IReadOnlyList<object?>)new object?[]
         {
@@ -224,7 +224,7 @@ public class EmployeesController : ControllerBase
         rowNum = 1;
         // Re-load all tenant employees (includes just-created ones)
         var allByCode = await _db.Employees
-            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted)
             .ToDictionaryAsync(e => e.EmployeeCode.ToUpperInvariant(), ct);
 
         foreach (var row in rows)
@@ -322,7 +322,7 @@ public class EmployeesController : ControllerBase
         var sub = await _db.TenantSubscriptions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
         int currentCount = await _db.Employees
-            .CountAsync(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted && e.Status == EmployeeStatuses.Active, ct);
+            .CountAsync(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == EmployeeStatuses.Active, ct);
         int remaining = sub is not null && sub.MaxEmployees > 0 ? sub.MaxEmployees - currentCount : int.MaxValue;
 
         var deptByCode = await _db.Departments.AsNoTracking().Where(d => d.TenantId == tenantId && d.IsActive)
@@ -332,7 +332,7 @@ public class EmployeesController : ControllerBase
         var desigByTitle = await _db.Designations.AsNoTracking().Where(d => d.TenantId == tenantId && d.IsActive)
             .ToDictionaryAsync(d => d.TitleEn.ToUpperInvariant(), ct);
         var existingCodesList = await _db.Employees
-            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted)
             .Select(e => e.EmployeeCode.ToUpperInvariant())
             .ToListAsync(ct);
         var existingCodes = new HashSet<string>(existingCodesList);
@@ -776,7 +776,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> UpdateEmployee(int id, EmployeeUpdateRequest request, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && (x.TenantId == tenantId || x.TenantId == null), cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         var sensitive = request.Changes.Keys.Where(SensitiveFields.Contains).ToList();
         if (sensitive.Count > 0)
@@ -919,7 +919,7 @@ public class EmployeesController : ControllerBase
         var tenantId = RequireTenant();
         var change = await _db.EmployeeChangeRequests.FirstOrDefaultAsync(x => x.Id == changeId && x.TenantId == tenantId, cancellationToken);
         if (change is null) return NotFound();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == change.EmployeeId && (x.TenantId == tenantId || x.TenantId == null), cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == change.EmployeeId && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         var changes = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(change.ProposedChangesJson) ?? new();
         ApplyChanges(employee, changes);
@@ -978,7 +978,7 @@ public class EmployeesController : ControllerBase
     public async Task<ActionResult<EmployeeReportsDto>> Reports(CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var employees = _db.Employees.Where(x => x.TenantId == tenantId || x.TenantId == null);
+        var employees = _db.Employees.Where(x => x.TenantId == tenantId);
         var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
         var next60 = today.AddDays(60);
         return Ok(new EmployeeReportsDto(
@@ -1036,7 +1036,7 @@ public class EmployeesController : ControllerBase
     {
         var tenantId = RequireTenant();
         var normalized = (query ?? string.Empty).ToLowerInvariant();
-        var employees = _db.Employees.Where(x => x.TenantId == tenantId || x.TenantId == null);
+        var employees = _db.Employees.Where(x => x.TenantId == tenantId);
         var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
         if (normalized.Contains("iqama") || normalized.Contains("visa") || normalized.Contains("expiry"))
         {
@@ -1118,7 +1118,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> RenderTemplate(int id, string templateType, [FromQuery] string language = "en", CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && (x.TenantId == tenantId || x.TenantId == null), cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         var hijriJoining = _hijri.FromGregorian(DateOnly.FromDateTime(employee.JoiningDate));
         var isArabic = language.Equals("ar", StringComparison.OrdinalIgnoreCase);
@@ -1139,7 +1139,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> LocalizedDates(int id, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && (x.TenantId == tenantId || x.TenantId == null), cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, cancellationToken);
         if (employee is null) return NotFound();
         return Ok(new
         {
@@ -1229,7 +1229,7 @@ public class EmployeesController : ControllerBase
 
     private async Task<string> GenerateEmployeeCode(Guid tenantId, CancellationToken cancellationToken)
     {
-        var count = await _db.Employees.CountAsync(x => x.TenantId == tenantId || x.TenantId == null, cancellationToken) + 1;
+        var count = await _db.Employees.CountAsync(x => x.TenantId == tenantId, cancellationToken) + 1;
         return $"EMP-{count:00000}";
     }
 

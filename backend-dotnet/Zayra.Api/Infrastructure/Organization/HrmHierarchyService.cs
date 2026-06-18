@@ -22,7 +22,7 @@ public class HrmHierarchyService : IHrmHierarchyService
     {
         var employees = await _db.Employees
             .AsNoTracking()
-            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted && e.Status == EmployeeStatuses.Active)
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == EmployeeStatuses.Active)
             .Select(e => new
             {
                 e.Id,
@@ -77,7 +77,7 @@ public class HrmHierarchyService : IHrmHierarchyService
 
         var names = await _db.Employees
             .AsNoTracking()
-            .Where(e => empIds.Contains(e.Id))
+            .Where(e => e.TenantId == tenantId && empIds.Contains(e.Id))
             .Select(e => new { e.Id, e.FullName })
             .ToDictionaryAsync(e => e.Id, e => e.FullName, ct);
 
@@ -96,7 +96,7 @@ public class HrmHierarchyService : IHrmHierarchyService
         Guid tenantId, int employeeId, int? managerEmployeeId, RequestContext context, CancellationToken ct)
     {
         var employee = await _db.Employees
-            .FirstOrDefaultAsync(e => (e.TenantId == tenantId || e.TenantId == null) && e.Id == employeeId && !e.IsDeleted, ct)
+            .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == employeeId && !e.IsDeleted, ct)
             ?? throw new InvalidOperationException($"Employee {employeeId} not found.");
 
         if (managerEmployeeId.HasValue)
@@ -108,7 +108,7 @@ public class HrmHierarchyService : IHrmHierarchyService
 
             // Ensure manager belongs to same tenant
             var managerExists = await _db.Employees
-                .AnyAsync(e => (e.TenantId == tenantId || e.TenantId == null) && e.Id == managerEmployeeId.Value && !e.IsDeleted, ct);
+                .AnyAsync(e => e.TenantId == tenantId && e.Id == managerEmployeeId.Value && !e.IsDeleted, ct);
             if (!managerExists)
                 throw new InvalidOperationException($"Manager employee {managerEmployeeId.Value} not found in this tenant.");
         }
@@ -182,7 +182,7 @@ public class HrmHierarchyService : IHrmHierarchyService
 
         var names = await _db.Employees
             .AsNoTracking()
-            .Where(e => e.Id == employeeId || e.Id == req.ManagerEmployeeId)
+            .Where(e => e.TenantId == tenantId && (e.Id == employeeId || e.Id == req.ManagerEmployeeId))
             .Select(e => new { e.Id, e.FullName })
             .ToDictionaryAsync(e => e.Id, e => e.FullName, ct);
         names.TryGetValue(employeeId, out var empName);
@@ -213,7 +213,7 @@ public class HrmHierarchyService : IHrmHierarchyService
         // Walk the manager chain from newManagerId upward; if we ever reach employeeId, it's circular.
         var allManagers = await _db.Employees
             .AsNoTracking()
-            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted)
             .Select(e => new { e.Id, e.ManagerEmployeeId })
             .ToDictionaryAsync(e => e.Id, e => e.ManagerEmployeeId, ct);
 

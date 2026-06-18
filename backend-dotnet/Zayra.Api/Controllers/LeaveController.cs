@@ -51,7 +51,7 @@ public class LeaveController : ControllerBase
     public async Task<IActionResult> Create([FromBody] LegacyCreateLeaveRequest req, CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
-        var employee = await _db.Employees.FirstOrDefaultAsync(e => e.Id == req.EmployeeId && (e.TenantId == tenantId || e.TenantId == null), cancellationToken);
+        var employee = await _db.Employees.FirstOrDefaultAsync(e => e.Id == req.EmployeeId && e.TenantId == tenantId, cancellationToken);
         if (employee is null) return BadRequest(new { message = "Employee not found." });
         if (req.EndDate < req.StartDate) return BadRequest(new { message = "End date must be after start date." });
 

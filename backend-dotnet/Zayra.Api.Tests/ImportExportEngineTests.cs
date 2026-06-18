@@ -8,6 +8,8 @@ using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
+using Zayra.Api.Application.Auth;
+using System.Text;
 
 namespace Zayra.Api.Tests;
 
@@ -412,5 +414,59 @@ public class ImportExportEngineTests
         // Ensure Tenant A's record is untouched
         var tenantADept = await db.Departments.FirstAsync(d => d.TenantId == tenantA && d.Code == "DEPT-A");
         Assert.Equal("Tenant A Dept", tenantADept.NameEn);
+    }
+
+    // ── Test 14: Department export — returns only own tenant's records ─────────
+
+    [Fact]
+    public async Task DepartmentExport_TenantIsolation_OnlyReturnsTenantOwnRecords()
+    {
+        var db = CreateDb();
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+
+        db.Departments.AddRange(
+            new Department { TenantId = tenantA, Code = "A-DEPT", NameEn = "Tenant A Only", IsActive = true },
+            new Department { TenantId = tenantB, Code = "B-DEPT", NameEn = "Tenant B Only", IsActive = true });
+        await db.SaveChangesAsync();
+
+        var ctrlA = MakeDeptController(db, tenantA);
+        var result = await ctrlA.Export(CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = Encoding.UTF8.GetString(file.FileContents);
+
+        Assert.Contains("A-DEPT", csv);
+        Assert.DoesNotContain("B-DEPT", csv);
+        Assert.DoesNotContain("Tenant B Only", csv);
+    }
+
+    // ── Test 15: Approval policy — tenant isolation prevents cross-tenant access ─
+
+    [Fact]
+    public async Task ApprovalPolicyImport_TenantIsolation_CannotAccessOtherTenantPolicies()
+    {
+        var db = CreateDb();
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+
+        // Seed an approval policy for tenant A
+        db.ApprovalPolicies.Add(new ApprovalPolicy
+        {
+            TenantId = tenantA, Name = "Tenant A Policy", WorkflowType = "Leave",
+            IsDefault = true, IsActive = true
+        });
+        await db.SaveChangesAsync();
+
+        // Tenant B creates a controller and exports — should see zero policies
+        var ctrlB = new ApprovalPoliciesController(db);
+        ctrlB.ControllerContext = MakeContext(tenantB);
+        var result = await ctrlB.Export(CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = Encoding.UTF8.GetString(file.FileContents);
+
+        // No data rows from Tenant A — only headers/template rows allowed
+        Assert.DoesNotContain("Tenant A Policy", csv);
     }
 }
