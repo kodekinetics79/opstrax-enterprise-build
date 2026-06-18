@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Activity, AlertTriangle, BarChart2, Calendar, CheckCircle,
@@ -754,6 +755,9 @@ function CreateLeaveTypeModal({ onClose, onSaved }: { onClose: () => void; onSav
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string | number | boolean) => setForm(f => ({ ...f, [k]: v }));
+  const { translation: autoLeaveNameAr, isTranslating: translatingLeaveNameAr } = useAutoTranslate(form.nameEn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoLeaveNameAr && !form.nameAr) set('nameAr', autoLeaveNameAr); }, [autoLeaveNameAr]);
 
   const save = async () => {
     if (!form.code || !form.nameEn) { setError('Code and English name are required.'); return; }
@@ -774,7 +778,7 @@ function CreateLeaveTypeModal({ onClose, onSaved }: { onClose: () => void; onSav
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name (English) *"><input className={inp} value={form.nameEn} onChange={e => set('nameEn', e.target.value)} /></Field>
-          <Field label="Name (Arabic)"><input className={inp} dir="rtl" value={form.nameAr} onChange={e => set('nameAr', e.target.value)} /></Field>
+          <Field label="Name (Arabic)"><input className={inp} dir="rtl" value={form.nameAr} onChange={e => set('nameAr', e.target.value)} placeholder={translatingLeaveNameAr && !form.nameAr ? 'Translating…' : undefined} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Max Consecutive Days (0=unlimited)"><input type="number" min={0} className={inp} value={form.maxConsecutiveDays} onChange={e => set('maxConsecutiveDays', Number(e.target.value))} /></Field>
@@ -1030,6 +1034,9 @@ function HolidayCalendarTab() {
   const [showCreateCal, setShowCreateCal] = useState(false);
   const [holidayForm, setHolidayForm] = useState({ nameEn: '', nameAr: '', date: '', hijriDate: '', holidayType: 'National', isRecurring: false, isOptional: false });
   const [calForm, setCalForm] = useState({ name: '', countryCode: 'UAE', calendarYear: new Date().getFullYear() });
+  const { translation: autoHolidayNameAr, isTranslating: translatingHolidayNameAr } = useAutoTranslate(holidayForm.nameEn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoHolidayNameAr && !holidayForm.nameAr) setHolidayForm(f => ({ ...f, nameAr: autoHolidayNameAr })); }, [autoHolidayNameAr]);
 
   useEffect(() => {
     holidayCalendarApi.listCalendars().then(setCalendars).catch(() => {});
@@ -1148,7 +1155,7 @@ function HolidayCalendarTab() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Name (English) *"><input className={inp} value={holidayForm.nameEn} onChange={e => setHolidayForm(f => ({ ...f, nameEn: e.target.value }))} /></Field>
-              <Field label="Name (Arabic)"><input className={inp} dir="rtl" value={holidayForm.nameAr} onChange={e => setHolidayForm(f => ({ ...f, nameAr: e.target.value }))} /></Field>
+              <Field label="Name (Arabic)"><input className={inp} dir="rtl" value={holidayForm.nameAr} onChange={e => setHolidayForm(f => ({ ...f, nameAr: e.target.value }))} placeholder={translatingHolidayNameAr && !holidayForm.nameAr ? 'Translating…' : undefined} /></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Date *"><input type="date" className={inp} value={holidayForm.date} onChange={e => setHolidayForm(f => ({ ...f, date: e.target.value }))} /></Field>

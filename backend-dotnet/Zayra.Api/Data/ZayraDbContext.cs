@@ -336,6 +336,8 @@ public class ZayraDbContext : DbContext
     // ── Identity & Security ────────────────────────────────────────────────────
     public DbSet<SecuritySetting> SecuritySettings => Set<SecuritySetting>();
     public DbSet<PermissionGrantorRecord> PermissionGrantorRecords => Set<PermissionGrantorRecord>();
+    // ── HR Workflow Configuration ──────────────────────────────────────────────
+    public DbSet<TenantHrConfig> TenantHrConfigs => Set<TenantHrConfig>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1196,6 +1198,12 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.PermissionScope).HasMaxLength(2000).IsRequired();
             entity.Property(x => x.Reason).HasMaxLength(500);
             entity.HasIndex(x => new { x.TenantId, x.GrantorUserId, x.IsActive });
+        });
+
+        modelBuilder.Entity<TenantHrConfig>(e => {
+            e.ToTable("tenant_hr_configs");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.TenantId).IsUnique();
         });
 
         modelBuilder.Entity<Role>(entity =>

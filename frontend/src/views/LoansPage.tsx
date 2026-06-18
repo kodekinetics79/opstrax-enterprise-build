@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import {
   CreditCard, DollarSign, Gift, Plus, CheckCircle, XCircle,
   FileText, TrendingUp, AlertTriangle, BookOpen, ShieldCheck,
@@ -170,6 +171,9 @@ function LoanTypesTab() {
     finally { setSaving(false); }
   };
   const f = (key: string, v: string | boolean | number) => setForm(x => ({ ...x, [key]: v }));
+  const { translation: autoLoanNameAr, isTranslating: translatingLoanNameAr } = useAutoTranslate(form.nameEn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoLoanNameAr && !form.nameAr) f('nameAr', autoLoanNameAr); }, [autoLoanNameAr]);
 
   return (
     <>
@@ -217,7 +221,7 @@ function LoanTypesTab() {
         <div className="grid grid-cols-2 gap-3">
           <FormField label="Code" required><input value={form.code} onChange={(e) => f('code', e.target.value)} className="input w-full" placeholder="PERSONAL_LOAN" /></FormField>
           <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => f('nameEn', e.target.value)} className="input w-full" title="Name (EN)" /></FormField>
-          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => f('nameAr', e.target.value)} className="input w-full" dir="rtl" title="Name (AR)" /></FormField>
+          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => f('nameAr', e.target.value)} className="input w-full" dir="rtl" title="Name (AR)" placeholder={translatingLoanNameAr && !form.nameAr ? 'Translating…' : undefined} /></FormField>
           <FormField label={`Max Amount (${currencyCode})`} required><input type="number" value={form.maxAmount} onChange={(e) => f('maxAmount', Number(e.target.value))} className="input w-full" title="Max Amount" /></FormField>
           <FormField label="Max Installments"><input type="number" value={form.maxInstallments} onChange={(e) => f('maxInstallments', Number(e.target.value))} className="input w-full" title="Max Installments" /></FormField>
           <FormField label="Repayment Frequency">
@@ -733,6 +737,10 @@ function BonusTypesTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const { translation: autoBonusNameAr, isTranslating: translatingBonusNameAr } = useAutoTranslate(form.nameEn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoBonusNameAr && !form.nameAr) setForm(x => ({ ...x, nameAr: autoBonusNameAr })); }, [autoBonusNameAr]);
+
   const save = async () => {
     if (!form.code.trim() || !form.nameEn.trim()) { setError('Code and name are required'); return; }
     setSaving(true); setError('');
@@ -787,7 +795,7 @@ function BonusTypesTab() {
         <div className="space-y-3">
           <FormField label="Code" required><input value={form.code} onChange={(e) => setForm(x => ({ ...x, code: e.target.value }))} className="input w-full" placeholder="ANNUAL_BONUS" /></FormField>
           <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" title="Name (EN)" /></FormField>
-          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" title="Name (AR)" /></FormField>
+          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" title="Name (AR)" placeholder={translatingBonusNameAr && !form.nameAr ? 'Translating…' : undefined} /></FormField>
           <FormField label="Calculation Method">
             <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
               {['Fixed', 'PercentageSalary'].map((v) => <option key={v}>{v}</option>)}

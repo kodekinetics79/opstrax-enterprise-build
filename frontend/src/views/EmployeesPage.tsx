@@ -23,6 +23,7 @@ const employeesImportExport = {
 import { branchesApi, companiesApi, costCentersApi, departmentsApi, designationsApi, gradesApi } from '../api/organization';
 import type { BranchDto, CompanyDto, CostCenterDto, DepartmentDto, DesignationDto, GradeDto } from '../api/organization';
 import { Avatar } from '../components/Avatar';
+import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import { InfoTip } from '../components/InfoTip';
 import { Modal } from '../components/Modal';
 import { StatusChip } from '../components/StatusChip';
@@ -245,6 +246,10 @@ export function EmployeesPage() {
 
   const setField = (key: keyof EmployeeCreateRequest, value: string | boolean | number | undefined) =>
     setForm((current) => ({ ...current, [key]: value }));
+
+  const { translation: autoArabicName, isTranslating: translatingArabicName } = useAutoTranslate(form.englishName);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (autoArabicName && !form.arabicName) setField('arabicName', autoArabicName); }, [autoArabicName]);
 
   const setPayrollField = (key: string, value: string | boolean) =>
     setForm((current) => ({ ...current, payrollProfile: { ...current.payrollProfile!, [key]: value } }));
@@ -706,7 +711,7 @@ export function EmployeesPage() {
               Manual override
             </label>
             <Input label="English full name" required value={form.englishName} onChange={(v) => setField('englishName', v)} info="Employee's full legal name in English, exactly as on their passport or ID. Required." infoKey="employees.english_name" />
-            <Input label="Arabic full name" value={form.arabicName ?? ''} onChange={(v) => setField('arabicName', v)} rtl />
+            <Input label="Arabic full name" value={form.arabicName ?? ''} onChange={(v) => setField('arabicName', v)} rtl placeholder={translatingArabicName && !form.arabicName ? 'Translating…' : undefined} />
             <Input label="Preferred name" value={form.preferredName ?? ''} onChange={(v) => setField('preferredName', v)} />
             <Select label="Gender" required value={form.gender} onChange={(v) => setField('gender', v)} options={['Male', 'Female', 'Other']} />
             <Input label="Nationality" value={form.nationality ?? ''} onChange={(v) => setField('nationality', v)} />
