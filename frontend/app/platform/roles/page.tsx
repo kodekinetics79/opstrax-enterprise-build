@@ -50,11 +50,24 @@ const MATRIX: { category: string; actions: { label: string; roles: string[] }[] 
     actions: [
       { label: 'View tenant users', roles: ['Owner', 'Admin', 'Support'] },
       { label: 'View tenant admins', roles: ['Owner', 'Admin', 'Support'] },
+      { label: 'Edit user profile (name, email, status, role)', roles: ['Owner', 'Admin'] },
       { label: 'Send password reset email', roles: ['Owner', 'Admin', 'Support'] },
-      { label: 'Force password reset', roles: ['Owner', 'Admin'] },
+      { label: 'Force password reset (set temp password)', roles: ['Owner', 'Admin'] },
+      { label: 'Unlock locked account', roles: ['Owner', 'Admin', 'Support'] },
+      { label: 'Disable MFA for user', roles: ['Owner', 'Admin'] },
+      { label: 'Revoke all sessions for user', roles: ['Owner', 'Admin', 'Support'] },
       { label: 'Start support session', roles: ['Owner', 'Admin', 'Support'] },
       { label: 'End support session', roles: ['Owner', 'Admin', 'Support'] },
       { label: 'View support sessions', roles: ['Owner', 'Admin', 'Support', 'Auditor'] },
+    ],
+  },
+  {
+    category: 'Branding & Localization',
+    actions: [
+      { label: 'Update tenant branding (logo, colors, title)', roles: ['Owner', 'Admin'] },
+      { label: 'Update tenant localization (language, timezone, calendar)', roles: ['Owner', 'Admin'] },
+      { label: 'Delete / deactivate tenant', roles: ['Owner'] },
+      { label: 'List tenant roles', roles: ['Owner', 'Admin', 'Support'] },
     ],
   },
   {

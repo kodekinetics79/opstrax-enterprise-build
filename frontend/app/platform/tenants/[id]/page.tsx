@@ -6,12 +6,14 @@ import Link from 'next/link';
 import {
   ArrowLeft, RefreshCw, Edit3, Check, X, AlertTriangle,
   Zap, Users, CreditCard, FileText, Shield, ExternalLink,
-  UserCog, PlayCircle, StopCircle,
+  UserCog, PlayCircle, StopCircle, Palette, Globe, Trash2,
 } from 'lucide-react';
 import {
   platformApi,
   type PlatformTenantDetail,
   type TenantAdminUser,
+  type TenantBranding,
+  type TenantLocalization,
 } from '@/src/api/platform';
 
 const FEATURE_FLAGS: { key: string; label: string; description: string; category: string }[] = [
@@ -52,19 +54,21 @@ const STATUS_CLS: Record<string, string> = {
   cancelled: 'text-slate-500',
 };
 
-type Tab = 'overview' | 'features' | 'users' | 'billing' | 'audit' | 'security';
+type Tab = 'overview' | 'features' | 'users' | 'billing' | 'audit' | 'security' | 'branding' | 'localization';
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: 'overview',  label: 'Overview',  icon: Edit3 },
-  { id: 'features',  label: 'Features',  icon: Zap },
-  { id: 'users',     label: 'Users',     icon: Users },
-  { id: 'billing',   label: 'Billing',   icon: CreditCard },
-  { id: 'audit',     label: 'Audit',     icon: FileText },
-  { id: 'security',  label: 'Security',  icon: Shield },
+  { id: 'overview',     label: 'Overview',     icon: Edit3 },
+  { id: 'features',     label: 'Features',     icon: Zap },
+  { id: 'users',        label: 'Users',        icon: Users },
+  { id: 'billing',      label: 'Billing',      icon: CreditCard },
+  { id: 'branding',     label: 'Branding',     icon: Palette },
+  { id: 'localization', label: 'Localization', icon: Globe },
+  { id: 'audit',        label: 'Audit',        icon: FileText },
+  { id: 'security',     label: 'Security',     icon: Shield },
 ];
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDetail; onRefresh: () => void; onDelete: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(tenant.name);
   const [saving, setSaving] = useState(false);
@@ -108,7 +112,7 @@ function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
       {msg && (
         <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
           {msg.text}
-          <button type="button" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+          <button type="button" title="Dismiss" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
         </div>
       )}
 
@@ -118,19 +122,19 @@ function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
           <span className="text-xs text-slate-500 w-32 shrink-0">Name</span>
           {editing ? (
             <div className="flex items-center gap-2 flex-1">
-              <input value={name} onChange={e => setName(e.target.value)} autoFocus
+              <input value={name} onChange={e => setName(e.target.value)} autoFocus title="Tenant name" placeholder="Tenant name"
                 className="flex-1 bg-white/[0.05] border border-white/[0.12] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sapphire/60" />
-              <button type="button" onClick={saveName} disabled={saving} className="text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40">
+              <button type="button" title="Save name" onClick={saveName} disabled={saving} className="text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40">
                 <Check className="h-4 w-4" />
               </button>
-              <button type="button" onClick={() => { setEditing(false); setName(tenant.name); }} className="text-slate-500 hover:text-white transition-colors">
+              <button type="button" title="Cancel" onClick={() => { setEditing(false); setName(tenant.name); }} className="text-slate-500 hover:text-white transition-colors">
                 <X className="h-4 w-4" />
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-1">
               <span className="text-sm text-white flex-1">{tenant.name}</span>
-              <button type="button" onClick={() => setEditing(true)} className="text-slate-600 hover:text-white transition-colors">
+              <button type="button" title="Edit name" onClick={() => setEditing(true)} className="text-slate-600 hover:text-white transition-colors">
                 <Edit3 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -201,6 +205,11 @@ function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
           <ExternalLink className="h-3.5 w-3.5" />
           Open Tenant App
         </a>
+        <button type="button" onClick={onDelete}
+          className="flex items-center gap-1.5 text-sm text-rose-500 border border-rose-900/40 hover:border-rose-500/40 px-4 py-2 rounded-lg transition-colors ml-auto">
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete Tenant
+        </button>
       </div>
 
       {/* Suspend modal */}
@@ -273,7 +282,8 @@ function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
                     title={`${enabled ? 'Disable' : 'Enable'} ${f.label}`}
                     onClick={() => toggle(f.key, enabled)}
                     disabled={toggling === f.key}
-                    aria-pressed={enabled ? 'true' : 'false'}
+                    role="switch"
+                    aria-checked={enabled}
                     className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40
                       ${enabled ? 'bg-sapphire' : 'bg-slate-700'}`}
                   >
@@ -324,7 +334,7 @@ function UsersTab({ tenantId }: { tenantId: string }) {
       {msg && (
         <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
           {msg.text}
-          <button type="button" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+          <button type="button" title="Dismiss" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
         </div>
       )}
       <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
@@ -414,6 +424,211 @@ function SecurityTabContent({ tenantId }: { tenantId: string }) {
   );
 }
 
+// ── Branding Tab ──────────────────────────────────────────────────────────────
+
+function BrandingTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+  const initial: Partial<TenantBranding> = {
+    logoUrl:       tenant.branding?.logoUrl       ?? '',
+    faviconUrl:    tenant.branding?.faviconUrl     ?? '',
+    primaryColor:  tenant.branding?.primaryColor   ?? '#2563EB',
+    accentColor:   tenant.branding?.accentColor    ?? '#7C3AED',
+    portalTitle:   tenant.branding?.portalTitle    ?? '',
+    companyNameEn: tenant.branding?.companyNameEn  ?? '',
+    companyNameAr: tenant.branding?.companyNameAr  ?? '',
+  };
+  const [form, setForm] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  function f(k: keyof typeof form, v: string) { setForm(p => ({ ...p, [k]: v })); }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await platformApi.updateBranding(tenant.id, form);
+      setMsg({ text: 'Branding saved.', ok: true });
+      onRefresh();
+    } catch { setMsg({ text: 'Save failed.', ok: false }); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      {msg && (
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {msg.text}
+          <button type="button" title="Dismiss" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl divide-y divide-white/[0.04]">
+        {([
+          { label: 'Portal Title',     key: 'portalTitle',   placeholder: 'My Company HR Portal' },
+          { label: 'Company (English)', key: 'companyNameEn', placeholder: 'Acme Corp' },
+          { label: 'Company (Arabic)',  key: 'companyNameAr', placeholder: 'أكمي كورب' },
+          { label: 'Logo URL',          key: 'logoUrl',       placeholder: 'https://cdn.example.com/logo.png' },
+          { label: 'Favicon URL',       key: 'faviconUrl',    placeholder: 'https://cdn.example.com/favicon.ico' },
+        ] as { label: string; key: keyof typeof form; placeholder: string }[]).map(row => (
+          <div key={row.key} className="flex items-center gap-4 px-5 py-3">
+            <span className="text-xs text-slate-500 w-36 shrink-0">{row.label}</span>
+            <input
+              title={row.label}
+              value={form[row.key] as string ?? ''}
+              onChange={e => f(row.key, e.target.value)}
+              placeholder={row.placeholder}
+              className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sapphire/60 placeholder-slate-700"
+            />
+          </div>
+        ))}
+        <div className="flex items-center gap-4 px-5 py-3">
+          <span className="text-xs text-slate-500 w-36 shrink-0">Primary Color</span>
+          <div className="flex items-center gap-2">
+            <input type="color" title="Primary color" value={form.primaryColor ?? '#2563EB'} onChange={e => f('primaryColor', e.target.value)}
+              className="h-8 w-8 rounded cursor-pointer bg-transparent border-0" />
+            <span className="text-sm text-slate-400 font-mono">{form.primaryColor}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 px-5 py-3">
+          <span className="text-xs text-slate-500 w-36 shrink-0">Accent Color</span>
+          <div className="flex items-center gap-2">
+            <input type="color" title="Accent color" value={form.accentColor ?? '#7C3AED'} onChange={e => f('accentColor', e.target.value)}
+              className="h-8 w-8 rounded cursor-pointer bg-transparent border-0" />
+            <span className="text-sm text-slate-400 font-mono">{form.accentColor}</span>
+          </div>
+        </div>
+      </div>
+      {(form.logoUrl || form.portalTitle) && (
+        <div className="bg-[#161b22] border border-white/[0.07] rounded-xl p-4">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-3">Preview</p>
+          <div className="flex items-center gap-3">
+            {form.logoUrl && <img src={form.logoUrl} alt="Logo preview" className="h-8 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+            {form.portalTitle && <span className="text-sm text-white">{form.portalTitle}</span>}
+          </div>
+        </div>
+      )}
+      <button type="button" onClick={save} disabled={saving}
+        className="flex items-center gap-2 bg-sapphire/90 hover:bg-sapphire text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-50">
+        {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+        Save Branding
+      </button>
+    </div>
+  );
+}
+
+// ── Localization Tab ───────────────────────────────────────────────────────────
+
+function LocalizationTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+  const initial: Partial<TenantLocalization> = {
+    defaultLanguage:  tenant.localization?.defaultLanguage  ?? 'en',
+    defaultTimezone:  tenant.localization?.defaultTimezone  ?? 'Asia/Riyadh',
+    dateFormat:       tenant.localization?.dateFormat       ?? 'DD/MM/YYYY',
+    currencyCode:     tenant.localization?.currencyCode     ?? 'SAR',
+    countryCode:      tenant.localization?.countryCode      ?? 'SA',
+    calendarSystem:   tenant.localization?.calendarSystem   ?? 'Gregorian',
+    workWeek:         tenant.localization?.workWeek         ?? 'Sun-Thu',
+    weekStartDay:     tenant.localization?.weekStartDay     ?? 'Sunday',
+    rtlEnabled:       tenant.localization?.rtlEnabled       ?? false,
+    hijriDatesEnabled: tenant.localization?.hijriDatesEnabled ?? false,
+  };
+  const [form, setForm] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  function sf(k: keyof typeof form, v: string | boolean) { setForm(p => ({ ...p, [k]: v })); }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await platformApi.updateLocalization(tenant.id, form);
+      setMsg({ text: 'Localization saved.', ok: true });
+      onRefresh();
+    } catch { setMsg({ text: 'Save failed.', ok: false }); }
+    finally { setSaving(false); }
+  }
+
+  const selectCls = 'w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60';
+  const inputCls  = 'w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60';
+
+  return (
+    <div className="space-y-5">
+      {msg && (
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {msg.text}
+          <button type="button" title="Dismiss" onClick={() => setMsg(null)}><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Default Language</label>
+          <select title="Default language" value={form.defaultLanguage} onChange={e => sf('defaultLanguage', e.target.value)} className={selectCls}>
+            <option value="en">English</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Timezone</label>
+          <input title="Default timezone" value={form.defaultTimezone ?? ''} onChange={e => sf('defaultTimezone', e.target.value)} placeholder="Asia/Riyadh" className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Date Format</label>
+          <select title="Date format" value={form.dateFormat} onChange={e => sf('dateFormat', e.target.value)} className={selectCls}>
+            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+          <input title="Currency code" value={form.currencyCode ?? ''} onChange={e => sf('currencyCode', e.target.value)} placeholder="SAR" className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Country</label>
+          <input title="Country code" value={form.countryCode ?? ''} onChange={e => sf('countryCode', e.target.value)} placeholder="SA" className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Calendar System</label>
+          <select title="Calendar system" value={form.calendarSystem} onChange={e => sf('calendarSystem', e.target.value)} className={selectCls}>
+            <option value="Gregorian">Gregorian</option>
+            <option value="Hijri">Hijri</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Work Week</label>
+          <select title="Work week" value={form.workWeek} onChange={e => sf('workWeek', e.target.value)} className={selectCls}>
+            <option value="Sun-Thu">Sun–Thu (GCC)</option>
+            <option value="Mon-Fri">Mon–Fri</option>
+            <option value="Mon-Sat">Mon–Sat</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Week Starts On</label>
+          <select title="Week start day" value={form.weekStartDay} onChange={e => sf('weekStartDay', e.target.value)} className={selectCls}>
+            <option value="Sunday">Sunday</option>
+            <option value="Monday">Monday</option>
+            <option value="Saturday">Saturday</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        {([
+          { key: 'rtlEnabled', label: 'RTL Layout' },
+          { key: 'hijriDatesEnabled', label: 'Show Hijri Dates' },
+        ] as { key: 'rtlEnabled' | 'hijriDatesEnabled'; label: string }[]).map(tog => (
+          <label key={tog.key} className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!form[tog.key]} onChange={e => sf(tog.key, e.target.checked)}
+              className="h-4 w-4 rounded accent-sapphire" />
+            <span className="text-sm text-slate-300">{tog.label}</span>
+          </label>
+        ))}
+      </div>
+      <button type="button" onClick={save} disabled={saving}
+        className="flex items-center gap-2 bg-sapphire/90 hover:bg-sapphire text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-50">
+        {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+        Save Localization
+      </button>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TenantDetailPage() {
@@ -422,6 +637,8 @@ export default function TenantDetailPage() {
   const [tenant, setTenant] = useState<PlatformTenantDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('overview');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
@@ -463,7 +680,7 @@ export default function TenantDetailPage() {
             {tenant.userCount} users · {tenant.employeeCount} employees
           </p>
         </div>
-        <button type="button" onClick={load} className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors shrink-0">
+        <button type="button" title="Refresh" onClick={load} className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors shrink-0">
           <RefreshCw className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -486,12 +703,45 @@ export default function TenantDetailPage() {
       </div>
 
       {/* Tab content */}
-      {tab === 'overview'  && <OverviewTab tenant={tenant} onRefresh={load} />}
-      {tab === 'features'  && <FeaturesTab tenant={tenant} onRefresh={load} />}
-      {tab === 'users'     && <UsersTab tenantId={tenant.id} />}
-      {tab === 'billing'   && <BillingTab tenantId={tenant.id} />}
-      {tab === 'audit'     && <AuditTab tenantId={tenant.id} />}
-      {tab === 'security'  && <SecurityTabContent tenantId={tenant.id} />}
+      {tab === 'overview'     && <OverviewTab tenant={tenant} onRefresh={load} onDelete={() => setDeleteOpen(true)} />}
+      {tab === 'features'     && <FeaturesTab tenant={tenant} onRefresh={load} />}
+      {tab === 'users'        && <UsersTab tenantId={tenant.id} />}
+      {tab === 'billing'      && <BillingTab tenantId={tenant.id} />}
+      {tab === 'branding'     && <BrandingTab tenant={tenant} onRefresh={load} />}
+      {tab === 'localization' && <LocalizationTab tenant={tenant} onRefresh={load} />}
+      {tab === 'audit'        && <AuditTab tenantId={tenant.id} />}
+      {tab === 'security'     && <SecurityTabContent tenantId={tenant.id} />}
+
+      {/* Delete tenant modal — Owner only */}
+      {deleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeleteOpen(false)} />
+          <div className="relative w-full max-w-sm bg-[#0d1117] border border-rose-900/40 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                <Trash2 className="h-4 w-4 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Delete Tenant?</h3>
+                <p className="text-xs text-slate-500">{tenant.name}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-400">This will deactivate the tenant, cancel the subscription, and revoke all active sessions. This action is irreversible.</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setDeleteOpen(false)}
+                className="flex-1 border border-white/10 text-slate-400 rounded-lg py-2 text-sm transition-colors">Cancel</button>
+              <button type="button" disabled={deleting} onClick={async () => {
+                setDeleting(true);
+                try { await platformApi.deleteTenant(tenant.id); router.replace('/platform/tenants'); }
+                catch { setDeleting(false); setDeleteOpen(false); }
+              }}
+                className="flex-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-40">
+                {deleting ? 'Deleting…' : 'Delete Tenant'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -540,6 +540,137 @@ public class PlatformController : ControllerBase
         return Ok(flag);
     }
 
+    // ── Branding & Localization ───────────────────────────────────────────────
+
+    [HttpPut("tenants/{tenantId:guid}/branding")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> UpdateBranding(Guid tenantId, [FromBody] UpdateBrandingRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+
+        var branding = await _db.TenantBrandings.FirstOrDefaultAsync(b => b.TenantId == tenantId, ct);
+        if (branding is null)
+        {
+            branding = new TenantBranding { TenantId = tenantId };
+            _db.TenantBrandings.Add(branding);
+        }
+
+        if (req.LogoUrl is not null)       branding.LogoUrl       = req.LogoUrl;
+        if (req.FaviconUrl is not null)    branding.FaviconUrl    = req.FaviconUrl;
+        if (req.PrimaryColor is not null)  branding.PrimaryColor  = req.PrimaryColor;
+        if (req.AccentColor is not null)   branding.AccentColor   = req.AccentColor;
+        if (req.PortalTitle is not null)   branding.PortalTitle   = req.PortalTitle;
+        if (req.CompanyNameEn is not null) branding.CompanyNameEn = req.CompanyNameEn;
+        if (req.CompanyNameAr is not null) branding.CompanyNameAr = req.CompanyNameAr;
+        branding.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "TenantBranding",
+            EntityId = tenantId.ToString(),
+            Action = "BrandingUpdated",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(req),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(branding);
+    }
+
+    [HttpPut("tenants/{tenantId:guid}/localization")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> UpdateLocalization(Guid tenantId, [FromBody] UpdateLocalizationRequest req, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+
+        var loc = await _db.TenantLocalizationSettings.FirstOrDefaultAsync(l => l.TenantId == tenantId, ct);
+        if (loc is null)
+        {
+            loc = new TenantLocalizationSetting { TenantId = tenantId };
+            _db.TenantLocalizationSettings.Add(loc);
+        }
+
+        if (req.DefaultLanguage is not null)  loc.DefaultLanguage  = req.DefaultLanguage;
+        if (req.DefaultTimezone is not null)  loc.DefaultTimezone  = req.DefaultTimezone;
+        if (req.DateFormat is not null)       loc.DateFormat       = req.DateFormat;
+        if (req.CurrencyCode is not null)     loc.CurrencyCode     = req.CurrencyCode;
+        if (req.CountryCode is not null)      loc.CountryCode      = req.CountryCode;
+        if (req.CalendarSystem is not null)   loc.CalendarSystem   = req.CalendarSystem;
+        if (req.WorkWeek is not null)         loc.WorkWeek         = req.WorkWeek;
+        if (req.WeekStartDay is not null)     loc.WeekStartDay     = req.WeekStartDay;
+        if (req.RtlEnabled.HasValue)          loc.RtlEnabled       = req.RtlEnabled.Value;
+        if (req.HijriDatesEnabled.HasValue)   loc.HijriDatesEnabled = req.HijriDatesEnabled.Value;
+        loc.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "TenantLocalization",
+            EntityId = tenantId.ToString(),
+            Action = "LocalizationUpdated",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(req),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(loc);
+    }
+
+    [HttpDelete("tenants/{tenantId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner)]
+    public async Task<IActionResult> DeleteTenant(Guid tenantId, [FromQuery] string? confirm, CancellationToken ct)
+    {
+        if (confirm != "DELETE") return BadRequest(new { message = "Pass ?confirm=DELETE to confirm permanent deletion." });
+
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+
+        tenant.IsActive = false;
+
+        // Deactivate all users in this tenant
+        await _db.Users
+            .Where(u => u.TenantId == tenantId && !u.IsDeleted)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(u => u.IsActive, false)
+                .SetProperty(u => u.Status, "Deactivated")
+                .SetProperty(u => u.UpdatedAtUtc, DateTime.UtcNow), ct);
+
+        // Revoke all refresh tokens for this tenant's users
+        var tenantUserIds = await _db.Users
+            .Where(u => u.TenantId == tenantId)
+            .Select(u => u.Id)
+            .ToListAsync(ct);
+        if (tenantUserIds.Count > 0)
+        {
+            await _db.RefreshTokens
+                .Where(t => t.RevokedAtUtc == null && tenantUserIds.Contains(t.UserId))
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), ct);
+        }
+
+        var sub = await _db.TenantSubscriptions.FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        if (sub is not null) sub.Status = "Cancelled";
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId,
+            EntityType = "Tenant",
+            EntityId = tenantId.ToString(),
+            Action = "TenantDeleted",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { tenantName = tenant.Name, slug = tenant.Slug }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { initiatedBy = "platform_admin", status = "Deactivated" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { tenantId, deleted = true, message = $"Tenant '{tenant.Name}' has been deactivated and all sessions revoked." });
+    }
+
     // ── Impersonation ─────────────────────────────────────────────────────────
 
     [HttpPost("tenants/{tenantId:guid}/impersonate")]
@@ -2382,6 +2513,8 @@ public record UpdatePlanPriceRequest(decimal MonthlyPrice);
 public record CreatePlatformUserRequest(string Email, string? FullName, string Password, string? Role);
 public record UpdatePlatformUserRequest(string? Role, bool? IsActive, string? FullName);
 public record EditUserRequest(string? FullName, string? Email, string? Status, bool? IsActive, string? RoleName);
+public record UpdateBrandingRequest(string? LogoUrl, string? FaviconUrl, string? PrimaryColor, string? AccentColor, string? PortalTitle, string? CompanyNameEn, string? CompanyNameAr);
+public record UpdateLocalizationRequest(string? DefaultLanguage, string? DefaultTimezone, string? DateFormat, string? CurrencyCode, string? CountryCode, string? CalendarSystem, string? WorkWeek, string? WeekStartDay, bool? RtlEnabled, bool? HijriDatesEnabled);
 
 // ── New endpoint request records ──────────────────────────────────────────────
 

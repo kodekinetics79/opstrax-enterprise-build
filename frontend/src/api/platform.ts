@@ -120,6 +120,31 @@ export interface PlatformTenantSummary {
   activeEmployeeCount: number;
 }
 
+export interface TenantBranding {
+  logoUrl: string;
+  faviconUrl: string;
+  primaryColor: string;
+  accentColor: string;
+  portalTitle: string;
+  companyNameEn: string;
+  companyNameAr: string;
+  updatedAtUtc?: string;
+}
+
+export interface TenantLocalization {
+  defaultLanguage: string;
+  rtlEnabled: boolean;
+  calendarSystem: string;
+  defaultTimezone: string;
+  dateFormat: string;
+  currencyCode: string;
+  countryCode: string;
+  weekStartDay: string;
+  workWeek: string;
+  hijriDatesEnabled: boolean;
+  updatedAtUtc?: string;
+}
+
 export interface PlatformTenantDetail {
   id: string;
   name: string;
@@ -138,8 +163,8 @@ export interface PlatformTenantDetail {
     expiresAtUtc: string | null;
   };
   featureFlags: Array<{ featureKey: string; isEnabled: boolean }>;
-  localization: Record<string, unknown> | null;
-  branding: Record<string, unknown> | null;
+  localization: TenantLocalization | null;
+  branding: TenantBranding | null;
   userCount: number;
   employeeCount: number;
 }
@@ -413,6 +438,15 @@ export const platformApi = {
 
   listTenantRoles: (tenantId: string) =>
     platform.get<TenantRole[]>(`/api/platform/tenants/${tenantId}/roles`).then(r => r.data),
+
+  updateBranding: (tenantId: string, body: Partial<TenantBranding>) =>
+    platform.put<TenantBranding>(`/api/platform/tenants/${tenantId}/branding`, body).then(r => r.data),
+
+  updateLocalization: (tenantId: string, body: Partial<TenantLocalization>) =>
+    platform.put<TenantLocalization>(`/api/platform/tenants/${tenantId}/localization`, body).then(r => r.data),
+
+  deleteTenant: (tenantId: string) =>
+    platform.delete(`/api/platform/tenants/${tenantId}?confirm=DELETE`).then(r => r.data),
 
   getAuditLogs: (tenantId?: string, page = 1, pageSize = 50) =>
     platform.get<{ total: number; page: number; pageSize: number; logs: PlatformAuditLog[] }>(
