@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -61,6 +62,7 @@ public class PlatformController : ControllerBase
 
     [HttpPost("auth/login")]
     [AllowAnonymous]
+    [EnableRateLimiting("platform_login")]
     public async Task<IActionResult> Login([FromBody] PlatformLoginRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
@@ -1875,7 +1877,12 @@ public class PlatformController : ControllerBase
                 tenantName = t.Name,
                 isActive = t.IsActive,
                 subscriptionStatus = sub?.Status,
-                hasMfaEnabled = false, // MFA not yet in SecuritySetting model — placeholder
+                // MFA: User.MFAEnabled is a per-user opt-in schema field. The TOTP login challenge
+                // flow is not yet implemented, so even if the flag is set the credential is not
+                // enforced at login time. Report the schema state accurately; callers should treat
+                // mfaStatus:"not_implemented" as the authoritative indicator until the flow ships.
+                hasMfaEnabled = false,
+                mfaStatus = "not_implemented",
                 hasCustomPasswordPolicy = sec is not null && (sec.PasswordMinLength != 10 || !sec.PasswordRequireUppercase),
                 maxFailedLoginAttempts = sec?.MaxFailedLoginAttempts ?? 5,
                 sessionTimeoutMinutes = sec?.SessionTimeoutMinutes ?? 480,

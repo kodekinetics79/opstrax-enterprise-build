@@ -33,27 +33,75 @@ public class AuthService : IAuthService
     {
         var user = await LoadUserGraph(request.Email, request.TenantSlug, cancellationToken);
 
+        // Phase 1 — structural checks that do NOT count toward lockout (user genuinely not usable)
         string? failReason = null;
-        if (user is null)                                           failReason = "user_not_found";
-        else if (user.Tenant is null)                              failReason = "tenant_not_loaded";
-        else if (!user.IsActive)                                   failReason = "user_inactive";
-        else if (!user.Tenant.IsActive)                            failReason = "tenant_inactive";
-        else if (IsNoLogin(user))                                  failReason = "access_mode_no_login";
-        else if (RequiresPasswordSetup(user))                      failReason = "requires_password_setup";
-        else if (!_passwordHasher.Verify(request.Password, user.PasswordHash)) failReason = "password_mismatch";
+        if (user is null)                    failReason = "user_not_found";
+        else if (user.Tenant is null)        failReason = "tenant_not_loaded";
+        else if (!user.IsActive)             failReason = "user_inactive";
+        else if (!user.Tenant.IsActive)      failReason = "tenant_inactive";
+        else if (IsNoLogin(user))            failReason = "access_mode_no_login";
+        else if (RequiresPasswordSetup(user)) failReason = "requires_password_setup";
 
         if (failReason is not null)
         {
             _log.LogWarning("Login failed for {Email} / tenant={Slug}: {Reason}", request.Email, request.TenantSlug, failReason);
-            await _auditService.WriteAsync("auth.login_failed", "User", null, context, $"{{\"email\":\"{request.Email}\",\"reason\":\"{failReason}\"}}", cancellationToken);
+            await _auditService.WriteAsync("auth.login_failed", "User", null, context,
+                $"{{\"email\":\"{request.Email}\",\"reason\":\"{failReason}\"}}", cancellationToken);
             throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
         }
 
-        user.LastLoginAtUtc = DateTime.UtcNow;
-        user.UpdatedAtUtc = DateTime.UtcNow;
+        // Phase 2 — load per-tenant lockout policy; fall back to safe defaults when no policy is configured
+        var sec = await _db.SecuritySettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == user!.TenantId, cancellationToken);
+        int maxAttempts    = sec?.MaxFailedLoginAttempts  ?? 5;
+        int lockoutMinutes = sec?.LockoutDurationMinutes  ?? 15;
+
+        // Phase 3 — check existing lockout before attempting password verification
+        if (user!.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow)
+        {
+            _log.LogWarning("Login blocked — lockout active until {LockoutEnd} for {Email}", user.LockoutEnd, request.Email);
+            await _auditService.WriteAsync("auth.login_blocked_lockout", "User", user.Id.ToString(),
+                context with { UserId = user.Id, TenantId = user.TenantId },
+                $"{{\"email\":\"{request.Email}\",\"lockoutEnd\":\"{user.LockoutEnd:O}\"}}", cancellationToken);
+            throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
+        }
+
+        // Phase 4 — password verification; increment failure counter on mismatch and lock if threshold reached
+        if (!_passwordHasher.Verify(request.Password, user.PasswordHash))
+        {
+            user.FailedLoginCount++;
+            user.UpdatedAtUtc = DateTime.UtcNow;
+
+            bool nowLocked = user.FailedLoginCount >= maxAttempts;
+            if (nowLocked)
+            {
+                user.IsLocked  = true;
+                user.LockoutEnd = DateTime.UtcNow.AddMinutes(lockoutMinutes);
+                _log.LogWarning("Account locked for {Email} after {Count} failed attempts; locked until {Until}",
+                    request.Email, user.FailedLoginCount, user.LockoutEnd);
+            }
+
+            await _db.SaveChangesAsync(cancellationToken);
+            await _auditService.WriteAsync(
+                nowLocked ? "auth.account_locked" : "auth.login_failed",
+                "User", user.Id.ToString(),
+                context with { UserId = user.Id, TenantId = user.TenantId },
+                $"{{\"email\":\"{request.Email}\",\"failedCount\":{user.FailedLoginCount},\"reason\":\"password_mismatch\"}}",
+                cancellationToken);
+            throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
+        }
+
+        // Phase 5 — successful login: clear all lockout state and issue tokens
+        user.FailedLoginCount = 0;
+        user.IsLocked         = false;
+        user.LockoutEnd       = null;
+        user.LastLoginAtUtc   = DateTime.UtcNow;
+        user.UpdatedAtUtc     = DateTime.UtcNow;
         var refreshToken = AddRefreshToken(user, context);
         await _db.SaveChangesAsync(cancellationToken);
-        await _auditService.WriteAsync("auth.login", "User", user.Id.ToString(), context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
+        await _auditService.WriteAsync("auth.login", "User", user.Id.ToString(),
+            context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
         return BuildAuthResponse(user, refreshToken);
     }
 

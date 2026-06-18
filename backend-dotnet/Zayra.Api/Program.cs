@@ -1,5 +1,7 @@
 using System.Text;
 using System.Security.Claims;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -159,6 +161,48 @@ builder.Services.AddHostedService<QiwaSyncWorker>();
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 
+// Rate limiting — brute-force protection on auth endpoints.
+// Limits are configurable via RateLimit:* in appsettings / env vars.
+// Default policy: login 10 req/60s per IP, refresh 30 req/60s per IP, platform login 5 req/60s per IP.
+var rl = builder.Configuration.GetSection("RateLimit");
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    o.AddPolicy("auth_login", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit              = rl.GetValue("LoginPermitLimit", 10),
+                Window                   = TimeSpan.FromSeconds(rl.GetValue("LoginWindowSeconds", 60)),
+                QueueProcessingOrder     = QueueProcessingOrder.OldestFirst,
+                QueueLimit               = 0,
+            }));
+
+    o.AddPolicy("auth_refresh", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit              = rl.GetValue("RefreshPermitLimit", 30),
+                Window                   = TimeSpan.FromSeconds(rl.GetValue("RefreshWindowSeconds", 60)),
+                QueueProcessingOrder     = QueueProcessingOrder.OldestFirst,
+                QueueLimit               = 0,
+            }));
+
+    o.AddPolicy("platform_login", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit              = rl.GetValue("PlatformLoginPermitLimit", 5),
+                Window                   = TimeSpan.FromSeconds(rl.GetValue("PlatformLoginWindowSeconds", 60)),
+                QueueProcessingOrder     = QueueProcessingOrder.OldestFirst,
+                QueueLimit               = 0,
+            }));
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -246,8 +290,12 @@ app.Use(async (context, next) =>
 });
 
 app.UseCors("zayra");
-app.UseSwagger();
-app.UseSwaggerUI();
+app.UseRateLimiter();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -266,11 +314,27 @@ using (var scope = app.Services.CreateScope())
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
         await authSeeder.SeedAsync();
-        await DemoDataSeeder.SeedAsync(
-            dbContext,
-            scope.ServiceProvider.GetRequiredService<IPasswordHasher>(),
-            authSeeder,
-            logger);
+
+        // Demo data seeding — DISABLED by default in all environments.
+        // Enable only for local dev or staging by setting SEED_DEMO_DATA=true
+        // (or SeedAdmin:SeedDemoData=true in appsettings).  Never enable in production.
+        var seedDemoData =
+            string.Equals(Environment.GetEnvironmentVariable("SEED_DEMO_DATA"), "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(app.Configuration["SeedAdmin:SeedDemoData"], "true", StringComparison.OrdinalIgnoreCase);
+
+        logger.LogInformation(
+            "Demo data seeding: {State} (environment={Env})",
+            seedDemoData ? "ENABLED" : "DISABLED",
+            app.Environment.EnvironmentName);
+
+        if (seedDemoData)
+        {
+            await DemoDataSeeder.SeedAsync(
+                dbContext,
+                scope.ServiceProvider.GetRequiredService<IPasswordHasher>(),
+                authSeeder,
+                logger);
+        }
     }
     catch (Exception ex)
     {

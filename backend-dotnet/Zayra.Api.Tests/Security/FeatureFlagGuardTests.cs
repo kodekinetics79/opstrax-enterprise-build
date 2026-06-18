@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Filters;
@@ -71,7 +72,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db);
+        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
         await filter.OnActionExecutionAsync(ctx, () =>
         {
             result = null;
@@ -163,7 +164,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db);
+        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
         IActionResult? blockResult = null;
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
@@ -201,7 +202,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db);
+        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -226,7 +227,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db);
+        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -263,7 +264,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db);
+        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
