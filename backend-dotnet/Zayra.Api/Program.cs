@@ -335,6 +335,8 @@ using (var scope = app.Services.CreateScope())
                 authSeeder,
                 logger);
         }
+
+        await GosiRuleSeeder.SeedDefaultsAsync(dbContext, logger);
     }
     catch (Exception ex)
     {

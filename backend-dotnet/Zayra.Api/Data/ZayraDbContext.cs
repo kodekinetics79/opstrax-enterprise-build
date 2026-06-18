@@ -300,6 +300,8 @@ public class ZayraDbContext : DbContext
     public DbSet<FiscalYear> FiscalYears => Set<FiscalYear>();
     public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
     public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+    // ── GOSI ───────────────────────────────────────────────────────────────────
+    public DbSet<GosiContributionRule> GosiContributionRules => Set<GosiContributionRule>();
     // ── Qiwa Integration ───────────────────────────────────────────────────────
     public DbSet<QiwaTenantConnection> QiwaTenantConnections => Set<QiwaTenantConnection>();
     public DbSet<QiwaSyncLog> QiwaSyncLogs => Set<QiwaSyncLog>();
@@ -366,6 +368,23 @@ public class ZayraDbContext : DbContext
         modelBuilder.Entity<QiwaSyncLog>(entity =>
         {
             entity.Property(x => x.DeadLetterReason).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<GosiContributionRule>(entity =>
+        {
+            entity.ToTable("gosi_contribution_rules");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Rate).HasPrecision(7, 4);
+            entity.Property(x => x.MinContributoryWage).HasPrecision(12, 2);
+            entity.Property(x => x.MaxContributoryWage).HasPrecision(12, 2);
+            entity.Property(x => x.Classification).HasMaxLength(20);
+            entity.Property(x => x.Branch).HasMaxLength(30);
+            entity.Property(x => x.Payer).HasMaxLength(20);
+            entity.Property(x => x.CountryCode).HasMaxLength(5);
+            entity.Property(x => x.SourceReference).HasMaxLength(200);
+            entity.Property(x => x.Notes).HasMaxLength(500);
+            // Lookup index: find active rules for a classification + date range
+            entity.HasIndex(x => new { x.TenantId, x.Classification, x.Branch, x.Payer, x.IsActive });
         });
 
 

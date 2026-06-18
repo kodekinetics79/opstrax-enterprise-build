@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.Notifications;
+using Zayra.Api.Infrastructure.Payroll;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
@@ -139,11 +140,13 @@ public class PayrollController : ControllerBase
             .Select(x => x.SettingValue)
             .FirstOrDefaultAsync(cancellationToken);
         decimal.TryParse(taxRateSetting, out var incomeTaxRate); // 0 if unset
-        var gosiRateSetting = await _db.SystemSettings.AsNoTracking()
-            .Where(x => x.Category == "Payroll" && x.SettingKey == "GosiEmployeeRate")
-            .Select(x => x.SettingValue)
-            .FirstOrDefaultAsync(cancellationToken);
-        decimal.TryParse(gosiRateSetting, out var gosiEmployeeRate); // 0 if unset — GCC GOSI/social insurance
+        // Load GOSI contribution rules (global defaults + tenant overrides) once per run
+        var gosiRules = await _db.GosiContributionRules
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(r => (r.TenantId == Guid.Empty || r.TenantId == tenantId) && r.IsActive)
+            .ToListAsync(cancellationToken);
+        var gosiPeriodDate = periodEnd; // periodEnd is already DateOnly
         var attendanceImpacts = await _db.AttendancePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.WorkDate >= periodStart && x.WorkDate <= periodEnd && x.Status != "Processed").ToListAsync(cancellationToken);
         var leaveImpacts = await _db.LeavePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayPeriod == $"{run.Year}-{run.Month:00}" && x.Status != "Processed").ToListAsync(cancellationToken);
 
@@ -191,8 +194,9 @@ public class PayrollController : ControllerBase
                 taxDeduction = Math.Round(taxableBase * incomeTaxRate / 100m, 2);
             }
 
-            var gosiDeduction = gosiEmployeeRate > 0 && basic > 0 ? Math.Round(basic * gosiEmployeeRate / 100m, 2) : 0m;
-            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiDeduction;
+            var gosiContrib       = GosiCalculationService.Calculate(e.Nationality, basic, gosiRules, gosiPeriodDate, tenantId);
+            var gosiEmployeeTotal = gosiContrib.EmployeeTotal;
+            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiEmployeeTotal;
             // C3: net salary cannot be negative (GCC labour law)
             var netSalary = Math.Max(0m, gross + overtimePay - deductions);
             if (gross + overtimePay - deductions < 0)
@@ -226,7 +230,18 @@ public class PayrollController : ControllerBase
             if (attendanceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ATTENDANCE", "Late/early attendance deduction", attendanceDeduction, "Attendance");
             if (absenceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ABSENCE", "Absence deduction", absenceDeduction, "Attendance");
             if (leaveDeduction > 0) AddDeduction(tenantId, id, e.Id, "LEAVE", "Leave deduction", leaveDeduction, "Leave");
-            if (gosiDeduction > 0) AddDeduction(tenantId, id, e.Id, "GOSI_EMPLOYEE", $"GOSI employee contribution ({gosiEmployeeRate}%)", gosiDeduction, "GOSI");
+            // Per-branch GOSI deduction records — employee contributions reduce net pay
+            foreach (var line in gosiContrib.Lines.Where(l => l.Payer == GosiPayers.Employee && l.Amount > 0))
+                AddDeduction(tenantId, id, e.Id,
+                    GosiCalculationService.ToComponentCode(line.Branch, line.Payer),
+                    GosiCalculationService.ToComponentName(line.Branch, line.Payer, line.Rate),
+                    line.Amount, "GOSI");
+            // Employer-side contributions tracked separately (do NOT reduce employee net pay)
+            foreach (var line in gosiContrib.Lines.Where(l => l.Payer == GosiPayers.Employer && l.Amount > 0))
+                AddDeduction(tenantId, id, e.Id,
+                    GosiCalculationService.ToComponentCode(line.Branch, line.Payer),
+                    GosiCalculationService.ToComponentName(line.Branch, line.Payer, line.Rate),
+                    line.Amount, "GOSI");
             if (overtimePay > gross * 0.35m && gross > 0) _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Warning", Code = "UNUSUAL_OVERTIME", Message = "Overtime payout is above 35% of regular gross earnings." });
         }
 
@@ -377,7 +392,14 @@ public class PayrollController : ControllerBase
             ["TRANSPORT"]        = ("5003", "Transport Allowance Expense",     "DR"),
             ["OTHER_ALLOWANCES"] = ("5004", "Other Allowances Expense",        "DR"),
             ["OVERTIME"]         = ("5005", "Overtime Expense",                "DR"),
-            ["GOSI_EMPLOYEE"]    = ("2101", "GOSI / Social Insurance Payable", "CR"),
+            // GOSI employee contributions — liability to GOSI
+            ["GOSI_EMPLOYEE"]         = ("2101", "GOSI / Social Insurance Payable",           "CR"),  // pre-PR3 backward compat
+            ["GOSI_ANNUITIES_EMP"]    = ("2101", "GOSI Annuities Payable (Employee)",         "CR"),
+            ["GOSI_SANED_EMP"]        = ("2101", "GOSI SANED Payable (Employee)",             "CR"),
+            // GOSI employer contributions — liability to GOSI (DR generated below via employer entry)
+            ["GOSI_ANNUITIES_ER"]     = ("2106", "GOSI Annuities Payable (Employer)",         "CR"),
+            ["GOSI_SANED_ER"]         = ("2106", "GOSI SANED Payable (Employer)",             "CR"),
+            ["GOSI_OCHAZARDS_ER"]     = ("2106", "GOSI Occupational Hazards Payable (Employer)", "CR"),
             ["INCOME_TAX"]       = ("2102", "Income Tax Payable",              "CR"),
             ["FIXED_DEDUCTION"]  = ("2103", "Fixed Deductions Payable",        "CR"),
             ["ATTENDANCE"]       = ("2104", "Attendance Adjustment Payable",   "CR"),
@@ -400,18 +422,14 @@ public class PayrollController : ControllerBase
             entries.Add((grp.Key, grp.First().ComponentName, acct.Account, acct.AccountName, acct.EntryType, grp.Sum(d => d.Amount)));
         }
 
-        // Employer GOSI contra-entry (if configured)
-        var gosiEmployerRateSetting = await _db.SystemSettings.AsNoTracking()
-            .Where(x => x.Category == "Payroll" && x.SettingKey == "GosiEmployerRate")
-            .Select(x => x.SettingValue).FirstOrDefaultAsync(cancellationToken);
-        decimal.TryParse(gosiEmployerRateSetting, out var gosiEmployerRate);
-        if (gosiEmployerRate > 0)
-        {
-            var totalBasic    = earnings.Where(e => e.ComponentCode == "BASIC").Sum(e => e.Amount);
-            var employerGosi  = Math.Round(totalBasic * gosiEmployerRate / 100m, 2);
-            entries.Add(("GOSI_EMPLOYER",    "Employer GOSI Expense",              "5101", "Employer GOSI Expense",    "DR", employerGosi));
-            entries.Add(("GOSI_EMPLOYER_CR", "Employer GOSI Contribution Payable", "2106", "Employer GOSI Payable",    "CR", employerGosi));
-        }
+        // Employer GOSI DR expense entries — one per employer-side component code
+        var employerGosiCodes = new HashSet<string>
+            { "GOSI_ANNUITIES_ER", "GOSI_SANED_ER", "GOSI_OCHAZARDS_ER" };
+        var employerGosiTotal = deductions
+            .Where(d => employerGosiCodes.Contains(d.ComponentCode))
+            .Sum(d => d.Amount);
+        if (employerGosiTotal > 0)
+            entries.Add(("GOSI_EMPLOYER_DR", "Employer GOSI Expense", "5101", "Employer GOSI Expense", "DR", employerGosiTotal));
 
         // Net salary payable CR balances all earning DRs net of deduction CRs
         entries.Add(("NET_SALARY", "Net Salary Payable", "2100", "Salaries Payable", "CR", totalNet));
