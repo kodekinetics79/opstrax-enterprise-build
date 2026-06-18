@@ -65,7 +65,7 @@ public sealed class QiwaSyncWorker : BackgroundService
         _log.LogInformation("QiwaSyncWorker stopping.");
     }
 
-    private async Task ProcessOnceAsync(CancellationToken ct)
+    internal async Task ProcessOnceAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
@@ -110,9 +110,52 @@ public sealed class QiwaSyncWorker : BackgroundService
             string? token = _tokenCache.TryGet(tenantId);
             if (token is null)
             {
-                var clientId = credential?.ClientId ?? string.Empty;
+                var clientId     = credential?.ClientId;
                 var clientSecret = SafeUnprotect(protector, credential?.EncryptedClientSecret);
-                var environment = connection?.Environment ?? credential?.Environment ?? "sandbox";
+                var environment  = connection?.Environment ?? credential?.Environment ?? "sandbox";
+
+                // Validate credentials before calling the adapter.
+                // Missing or un-decryptable secrets are a non-retryable configuration
+                // error — dead-letter all pending logs for this tenant immediately so
+                // we don't burn retries on an unfixable state, and surface the problem
+                // via connection.Status so the admin can see it in the dashboard.
+                if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+                {
+                    var reason = string.IsNullOrWhiteSpace(clientId)
+                        ? "Missing QIWA client ID — credentials not configured for this tenant."
+                        : "QIWA client secret missing or could not be decrypted.";
+
+                    // SAFE: logs a status flag only, never any credential value.
+                    _log.LogWarning(
+                        "QiwaSyncWorker: incomplete credentials for tenant {TenantId} — skipping sync. Reason: {Reason}",
+                        tenantId, reason);
+
+                    if (connection is not null)
+                    {
+                        connection.Status           = QiwaConnectionStatuses.ConfigurationError;
+                        connection.LastErrorMessage = reason;
+                        connection.LastCheckedAtUtc = now;
+                    }
+
+                    foreach (var log in group)
+                    {
+                        log.ErrorMessage     = reason;
+                        log.Status           = QiwaSyncLogStatuses.DeadLetter;
+                        log.DeadLetterReason = reason.Length > 500 ? reason[..500] : reason;
+                        log.CompletedAtUtc   = now;
+
+                        Audit(db, tenantId, "qiwa.sync_missing_credentials", log.EmployeeId,
+                            new { syncLogId = log.Id, reason });
+                    }
+
+                    await db.SaveChangesAsync(ct);
+                    continue; // skip remaining logs for this tenant, advance to next group
+                }
+
+                // clientId and clientSecret are both validated non-null and non-empty here.
+                // C# flow analysis via [NotNullWhen(false)] on IsNullOrWhiteSpace gives the
+                // compiler proof that clientSecret cannot be null — CS8604 is resolved
+                // without null-forgiving operators.
                 token = await _adapter.AcquireAccessTokenAsync(clientId, clientSecret, environment, ct);
                 if (token is not null)
                     _tokenCache.Set(tenantId, token, credential?.TokenExpiresAtUtc is { } e
