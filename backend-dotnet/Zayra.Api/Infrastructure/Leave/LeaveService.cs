@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Approvals;
 using Zayra.Api.Application.Leave;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
@@ -8,10 +9,12 @@ namespace Zayra.Api.Infrastructure.Leave;
 public class LeaveService : ILeaveService
 {
     private readonly ZayraDbContext _db;
+    private readonly IApprovalPolicyService _policyService;
 
-    public LeaveService(ZayraDbContext db)
+    public LeaveService(ZayraDbContext db, IApprovalPolicyService policyService)
     {
         _db = db;
+        _policyService = policyService;
     }
 
     public async Task<EmployeeLeaveBalance> GetOrCreateBalanceAsync(Guid tenantId, int employeeId, Guid leaveTypeId, int year, CancellationToken ct = default)
@@ -270,9 +273,33 @@ public class LeaveService : ILeaveService
             throw new InvalidOperationException("Insufficient leave balance.");
 
         request.TenantId = tenantId;
-        request.Status = "Submitted";
-        request.SubmittedAtUtc = DateTime.UtcNow;
         request.LeaveTypeName = leaveType.NameEn;
+        request.SubmittedAtUtc = DateTime.UtcNow;
+
+        // Resolve approver from hierarchy policy; fall back to "Submitted" (role-based routing)
+        var resolvedPolicy = await _policyService.ResolveAsync(tenantId, request.EmployeeId, "Leave", ct);
+        if (resolvedPolicy is not null && resolvedPolicy.Steps.Count > 0)
+        {
+            var firstStep = resolvedPolicy.Steps[0];
+            request.Status = "PendingManagerApproval";
+            // Create the first pending LeaveApproval record so the right person's inbox populates
+            _db.LeaveApprovals.Add(new LeaveApproval
+            {
+                TenantId = tenantId,
+                LeaveRequestId = request.Id,
+                StepNumber = firstStep.StepOrder,
+                ApproverRole = firstStep.ApproverType,
+                ApproverId = firstStep.ApproverEmployeeId.HasValue
+                    ? await ResolveUserIdAsync(tenantId, firstStep.ApproverEmployeeId.Value, ct)
+                    : null,
+                ApproverName = firstStep.ApproverEmployeeName ?? string.Empty,
+                Decision = "Pending",
+            });
+        }
+        else
+        {
+            request.Status = "Submitted";
+        }
 
         _db.LeaveRequests.Add(request);
 
@@ -530,4 +557,12 @@ public class LeaveService : ILeaveService
 
         await _db.SaveChangesAsync(ct);
     }
+
+    // Resolves the UserAccountId for an employee (used to route the LeaveApproval record to the right user inbox)
+    private async Task<Guid?> ResolveUserIdAsync(Guid tenantId, int employeeId, CancellationToken ct)
+        => await _db.Employees
+            .AsNoTracking()
+            .Where(e => e.TenantId == tenantId && e.Id == employeeId)
+            .Select(e => e.UserAccountId)
+            .FirstOrDefaultAsync(ct);
 }

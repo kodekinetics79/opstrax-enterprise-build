@@ -16,9 +16,10 @@ public class AuthService : IAuthService
     private readonly IAuditService _auditService;
     private readonly IEmailService _emailService;
     private readonly JwtOptions _jwtOptions;
+    private readonly IMfaService _mfaService;
     private readonly ILogger<AuthService> _log;
 
-    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IEmailService emailService, IOptions<JwtOptions> jwtOptions, ILogger<AuthService> log)
+    public AuthService(ZayraDbContext db, IPasswordHasher passwordHasher, ITokenService tokenService, IAuditService auditService, IEmailService emailService, IOptions<JwtOptions> jwtOptions, IMfaService mfaService, ILogger<AuthService> log)
     {
         _db = db;
         _passwordHasher = passwordHasher;
@@ -26,10 +27,11 @@ public class AuthService : IAuthService
         _auditService = auditService;
         _emailService = emailService;
         _jwtOptions = jwtOptions.Value;
+        _mfaService = mfaService;
         _log = log;
     }
 
-    public async Task<AuthResponse> LoginAsync(LoginRequest request, RequestContext context, CancellationToken cancellationToken)
+    public async Task<AuthLoginResult> LoginAsync(LoginRequest request, RequestContext context, CancellationToken cancellationToken)
     {
         var user = await LoadUserGraph(request.Email, request.TenantSlug, cancellationToken);
 
@@ -92,6 +94,18 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
         }
 
+        // Phase 4b — MFA challenge: if the user has TOTP enabled, issue a short-lived challenge
+        // token instead of full session tokens. Full tokens are only issued after the TOTP code
+        // is verified via POST /api/auth/mfa/challenge/verify.
+        if (user.MFAEnabled && !string.IsNullOrEmpty(user.MfaSecretEncrypted))
+        {
+            var challengeToken = await _mfaService.CreateChallengeAsync(
+                user.Id, user.TenantId, context.IpAddress ?? string.Empty, cancellationToken);
+            await _auditService.WriteAsync("auth.mfa_challenge_issued", "User", user.Id.ToString(),
+                context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
+            return new AuthLoginResult(null, new MfaChallengeDto(challengeToken, 300));
+        }
+
         // Phase 5 — successful login: clear all lockout state and issue tokens
         user.FailedLoginCount = 0;
         user.IsLocked         = false;
@@ -102,7 +116,7 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("auth.login", "User", user.Id.ToString(),
             context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
-        return BuildAuthResponse(user, refreshToken);
+        return new AuthLoginResult(BuildAuthResponse(user, refreshToken), null);
     }
 
     public async Task<AuthResponse> RefreshAsync(RefreshTokenRequest request, RequestContext context, CancellationToken cancellationToken)
@@ -230,6 +244,22 @@ public class AuthService : IAuthService
     {
         var user = await LoadUserGraph(userId, cancellationToken);
         return user?.Tenant is null ? null : ToUserDto(user);
+    }
+
+    public async Task<AuthResponse> CompleteMfaLoginAsync(Guid userId, RequestContext context, CancellationToken cancellationToken)
+    {
+        var user = await LoadUserGraph(userId, cancellationToken)
+            ?? throw new UnauthorizedAccessException("User not found.");
+        user.FailedLoginCount = 0;
+        user.IsLocked         = false;
+        user.LockoutEnd       = null;
+        user.LastLoginAtUtc   = DateTime.UtcNow;
+        user.UpdatedAtUtc     = DateTime.UtcNow;
+        var refreshToken = AddRefreshToken(user, context);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _auditService.WriteAsync("auth.login", "User", user.Id.ToString(),
+            context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
+        return BuildAuthResponse(user, refreshToken);
     }
 
     public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, RequestContext context, CancellationToken cancellationToken)

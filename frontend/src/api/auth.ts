@@ -26,9 +26,34 @@ export interface ForgotPasswordResponse {
   resetTokenExpiresAtUtc?: string;
 }
 
+// Returned by /api/auth/login when the user has TOTP enabled.
+export interface MfaChallengeResponse {
+  mfaRequired: true;
+  challengeToken: string;
+  expiresInSeconds: number;
+}
+
+export type LoginResponse = AuthResponse | MfaChallengeResponse;
+
+export function isMfaChallenge(r: LoginResponse): r is MfaChallengeResponse {
+  return (r as MfaChallengeResponse).mfaRequired === true;
+}
+
 export const authApi = {
   login: (email: string, password: string, tenantSlug = '') =>
-    client.post<AuthResponse>('/api/auth/login', { email, password, tenantSlug }).then((r) => r.data),
+    client.post<LoginResponse>('/api/auth/login', { email, password, tenantSlug }).then((r) => r.data),
+
+  mfaVerifyChallenge: (challengeToken: string, totpCode: string) =>
+    client.post<AuthResponse>('/api/auth/mfa/challenge/verify', { challengeToken, totpCode }).then((r) => r.data),
+
+  mfaSetup: () =>
+    client.post<{ provisioningUri: string }>('/api/auth/mfa/setup').then((r) => r.data),
+
+  mfaVerifySetup: (tempSecret: string, totpCode: string) =>
+    client.post('/api/auth/mfa/verify-setup', { tempSecret, totpCode }),
+
+  mfaDisable: (totpCode: string) =>
+    client.post('/api/auth/mfa/disable', { totpCode }),
 
   logout: (refreshToken: string) =>
     client.post('/api/auth/logout', { refreshToken }),

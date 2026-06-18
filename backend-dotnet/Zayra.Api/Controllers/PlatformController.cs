@@ -10,7 +10,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 using Zayra.Api.Application.Auth;
-using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Auth;
@@ -33,6 +32,7 @@ public class PlatformController : ControllerBase
     private readonly ITokenService _tokenService;
     private readonly IEmailService _emailService;
     private readonly IConfiguration _config;
+    private readonly IMfaService _mfa;
     private readonly ILogger<PlatformController> _log;
 
     public PlatformController(
@@ -43,6 +43,7 @@ public class PlatformController : ControllerBase
         ITokenService tokenService,
         IEmailService emailService,
         IConfiguration config,
+        IMfaService mfa,
         ILogger<PlatformController> log)
     {
         _db = db;
@@ -52,6 +53,7 @@ public class PlatformController : ControllerBase
         _tokenService = tokenService;
         _emailService = emailService;
         _config = config;
+        _mfa = mfa;
         _log = log;
     }
 
@@ -80,6 +82,15 @@ public class PlatformController : ControllerBase
         {
             if (!_passwordHasher.Verify(req.Password, dbUser.PasswordHash))
                 return Unauthorized(new { message = "Invalid platform admin credentials." });
+
+            // MFA challenge: if the DB platform user has TOTP configured, issue a challenge
+            // token instead of the full JWT. The client must complete /api/platform/auth/mfa/challenge/verify.
+            if (dbUser.MfaEnabled && !string.IsNullOrEmpty(dbUser.MfaSecretEncrypted))
+            {
+                var challengeToken = await _mfa.CreatePlatformChallengeAsync(
+                    dbUser.Id, HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty, ct);
+                return Ok(new { mfaRequired = true, challengeToken, expiresInSeconds = 300 });
+            }
 
             // Update last login audit fields
             dbUser.LastLoginAtUtc = DateTime.UtcNow;
@@ -125,6 +136,73 @@ public class PlatformController : ControllerBase
         var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
 
         return Ok(new { token = tokenString, expiresAt, role = loginRole });
+    }
+
+    // ── Platform MFA ─────────────────────────────────────────────────────────
+
+    [HttpPost("auth/mfa/setup")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> PlatformMfaSetup(CancellationToken ct)
+    {
+        var platformUserId = GetPlatformUserId();
+        if (platformUserId is null) return Unauthorized();
+        var dto = await _mfa.InitiatePlatformSetupAsync(platformUserId.Value, ct);
+        return Ok(new MfaSetupInitResponse(dto.ProvisioningUri));
+    }
+
+    [HttpPost("auth/mfa/verify-setup")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> PlatformMfaVerifySetup([FromBody] MfaVerifySetupRequest request, CancellationToken ct)
+    {
+        var platformUserId = GetPlatformUserId();
+        if (platformUserId is null) return Unauthorized();
+        var ok = await _mfa.VerifyPlatformSetupAsync(platformUserId.Value, request, ct);
+        return ok ? NoContent() : BadRequest(new { message = "Invalid TOTP code." });
+    }
+
+    [HttpPost("auth/mfa/challenge/verify")]
+    [AllowAnonymous]
+    [EnableRateLimiting("platform_login")]
+    public async Task<IActionResult> PlatformMfaChallengeVerify([FromBody] MfaChallengeVerifyRequest request, CancellationToken ct)
+    {
+        var pu = await _mfa.VerifyPlatformChallengeAsync(request.ChallengeToken, request.TotpCode, ct);
+        if (pu is null) return Unauthorized(new { message = "Invalid or expired MFA challenge." });
+
+        pu.LastLoginAtUtc = DateTime.UtcNow;
+        pu.LastLoginIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        pu.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        var expiresAt = DateTime.UtcNow.AddHours(8);
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, pu.Id.ToString()),
+            new(JwtRegisteredClaimNames.Email, pu.Email),
+            new(ClaimTypes.Role, "PlatformAdmin"),
+            new("is_platform_admin", "true"),
+            new("platform_role", pu.Role),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+        var key         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var token       = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token), expiresAt, role = pu.Role });
+    }
+
+    [HttpPost("auth/mfa/disable")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> PlatformMfaDisable([FromBody] MfaDisableRequest request, CancellationToken ct)
+    {
+        var platformUserId = GetPlatformUserId();
+        if (platformUserId is null) return Unauthorized();
+        var ok = await _mfa.DisablePlatformAsync(platformUserId.Value, request.TotpCode, ct);
+        return ok ? NoContent() : BadRequest(new { message = "Invalid TOTP code or MFA not enabled." });
+    }
+
+    private Guid? GetPlatformUserId()
+    {
+        var v = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(v, out var id) && id != Guid.Empty ? id : null;
     }
 
     // ── Health ────────────────────────────────────────────────────────────────
@@ -1877,12 +1955,8 @@ public class PlatformController : ControllerBase
                 tenantName = t.Name,
                 isActive = t.IsActive,
                 subscriptionStatus = sub?.Status,
-                // MFA: User.MFAEnabled is a per-user opt-in schema field. The TOTP login challenge
-                // flow is not yet implemented, so even if the flag is set the credential is not
-                // enforced at login time. Report the schema state accurately; callers should treat
-                // mfaStatus:"not_implemented" as the authoritative indicator until the flow ships.
-                hasMfaEnabled = false,
-                mfaStatus = "not_implemented",
+                hasMfaEnabled = sec?.MfaRequired ?? false,
+                mfaStatus = sec?.MfaRequired == true ? "required_for_all" : "optional",
                 hasCustomPasswordPolicy = sec is not null && (sec.PasswordMinLength != 10 || !sec.PasswordRequireUppercase),
                 maxFailedLoginAttempts = sec?.MaxFailedLoginAttempts ?? 5,
                 sessionTimeoutMinutes = sec?.SessionTimeoutMinutes ?? 480,

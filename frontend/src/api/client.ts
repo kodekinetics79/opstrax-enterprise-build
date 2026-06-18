@@ -50,12 +50,15 @@ client.interceptors.response.use(
     }
 
     // 403 — authenticated but not authorized.
-    // If the error is a feature_not_enabled, silently reject (caller handles it).
-    // Only redirect to access-denied for true RBAC/permission failures.
+    // Feature-gate 403s are silently rejected (the caller handles them).
+    // All other 403s fire a toast via the 'zayra:access-denied' custom event so the
+    // AppToastProvider can display the message without a full-page navigation.
     if (err.response?.status === 403) {
       const isFeatureGated = err.response?.data?.error === 'feature_not_enabled';
-      if (!isFeatureGated && typeof window !== 'undefined' && !window.location.pathname.startsWith('/access-denied')) {
-        window.location.href = '/access-denied';
+      if (!isFeatureGated && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('zayra:access-denied', {
+          detail: 'You do not have permission to perform this action. Please contact your administrator.',
+        }));
       }
       return Promise.reject(err);
     }

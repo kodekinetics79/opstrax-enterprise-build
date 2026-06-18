@@ -209,7 +209,36 @@ public record SecuritySettingDto(
     int SessionTimeoutMinutes,
     int RefreshTokenExpiryDays,
     bool AllowMultipleSessions,
+    bool MfaRequired,
     DateTime UpdatedAtUtc);
+
+// ── MFA DTOs ──────────────────────────────────────────────────────────────────
+
+/// <summary>Issued after password validates when the user has MFA enabled.
+/// The client must POST this token + TOTP code to /api/auth/mfa/challenge/verify to obtain full tokens.</summary>
+public record MfaChallengeDto(string ChallengeToken, int ExpiresInSeconds);
+
+/// <summary>Union result from LoginAsync — exactly one of Tokens or Challenge is non-null.</summary>
+public record AuthLoginResult(AuthResponse? Tokens, MfaChallengeDto? Challenge)
+{
+    public bool RequiresMfa => Challenge is not null;
+}
+
+/// <summary>Temporary secret + provisioning URI returned during TOTP setup.
+/// The provisioning URI contains the base32 secret embedded and is safe to return once.
+/// After setup confirmation neither the secret nor URI is ever returned again.</summary>
+public record MfaSetupInitResponse(string ProvisioningUri);
+
+public record MfaVerifySetupRequest(
+    [System.ComponentModel.DataAnnotations.Required] string TempSecret,
+    [System.ComponentModel.DataAnnotations.Required] string TotpCode);
+
+public record MfaChallengeVerifyRequest(
+    [System.ComponentModel.DataAnnotations.Required] string ChallengeToken,
+    [System.ComponentModel.DataAnnotations.Required] string TotpCode);
+
+public record MfaDisableRequest(
+    [System.ComponentModel.DataAnnotations.Required] string TotpCode);
 
 public record ReasonRequest(string? Reason);
 
@@ -252,4 +281,5 @@ public record UpdateSecuritySettingRequest(
     int? LockoutDurationMinutes,
     int? SessionTimeoutMinutes,
     int? RefreshTokenExpiryDays,
-    bool? AllowMultipleSessions);
+    bool? AllowMultipleSessions,
+    bool? MfaRequired = null);

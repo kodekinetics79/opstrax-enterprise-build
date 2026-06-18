@@ -9,6 +9,7 @@ import {
   Headphones,
   Landmark,
   Layers3,
+  Network,
   Settings2,
   ShieldCheck,
   TimerReset,
@@ -33,6 +34,7 @@ export const navigationGroups: NavGroup[] = [
     label: 'HR & Time',
     items: [
       { label: 'People', icon: UsersRound, path: '/people', requiredPermissions: ['employees.read'] },
+      { label: 'Org Chart', icon: Network, path: '/org-chart', requiredPermissions: ['employees.read'] },
       { label: 'Attendance', icon: Clock3, path: '/attendance', requiredPermissions: ['attendance.read', 'attendance.write', 'attendance.kiosk'] },
       { label: 'Leave', icon: ClipboardList, path: '/leave', requiredPermissions: ['leave.read', 'leave.write'] },
       { label: 'Shifts & Rosters', icon: CalendarCheck, path: '/shifts', requiredPermissions: ['attendance.read'], requiredFeatureKey: 'shifts' },

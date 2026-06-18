@@ -24,6 +24,12 @@ public class User
     public DateTime? LastPasswordChangedAt { get; set; }
     public bool MustChangePassword { get; set; }
     public bool MFAEnabled { get; set; }
+    // TOTP-specific fields — secrets are always stored encrypted via IDataProtector.
+    // These are never returned in any API response; read them only inside MfaService.
+    public string? MfaSecretEncrypted { get; set; }
+    public DateTime? MfaConfiguredAtUtc { get; set; }
+    public DateTime? MfaLastVerifiedAtUtc { get; set; }
+    public int MfaFailedCount { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAtUtc { get; set; }
     public Guid? DeletedBy { get; set; }

@@ -13,6 +13,8 @@ public class Designation
     public string JobLevel { get; set; } = string.Empty;
     public string JobDescription { get; set; } = string.Empty;
     public bool IsManagerRole { get; set; }
+    public bool IsSystemDefault { get; set; }
+    public int LevelRank { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }

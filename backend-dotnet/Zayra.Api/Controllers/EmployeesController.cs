@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Application.Employees;
+using Zayra.Api.Application.Organization;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Auth;
@@ -79,7 +80,13 @@ public class EmployeesController : ControllerBase
 
     // ── Configurable export / import / shareable template ────────────────────────
     private static readonly string[] EmployeeCsvHeaders =
-        { "EmployeeCode", "FullName", "ArabicName", "WorkEmail", "Phone", "Gender", "Nationality", "Department", "Designation", "JobTitle", "EmploymentType", "ContractType", "Status", "JoiningDate" };
+        {
+            "EmployeeCode", "FullName", "ArabicName", "WorkEmail", "Phone", "Gender", "Nationality",
+            "Department", "DepartmentCode", "Designation", "JobTitle", "EmploymentType", "ContractType",
+            "Status", "JoiningDate",
+            // Hierarchy columns — resolved in Pass 2
+            "ManagerEmployeeCode", "SupervisorEmployeeCode"
+        };
 
     [HttpGet("export")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Officer,Auditor")]
@@ -131,11 +138,31 @@ public class EmployeesController : ControllerBase
                     rowsInFile = rows.Count
                 });
         }
+
         var company = await _db.Companies.FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
         var branch = await _db.Branches.FirstOrDefaultAsync(b => b.TenantId == tenantId, ct);
+
+        // Pre-load department and designation lookups for FK resolution
+        var deptByCode = await _db.Departments
+            .AsNoTracking()
+            .Where(d => d.TenantId == tenantId && !d.IsDeleted)
+            .ToDictionaryAsync(d => d.Code.ToUpperInvariant(), d => d.Id, ct);
+        var deptByName = await _db.Departments
+            .AsNoTracking()
+            .Where(d => d.TenantId == tenantId && !d.IsDeleted)
+            .ToDictionaryAsync(d => d.NameEn.ToLowerInvariant(), d => d.Id, ct);
+        var desigByTitle = await _db.Designations
+            .AsNoTracking()
+            .Where(d => d.TenantId == tenantId && !d.IsDeleted)
+            .ToDictionaryAsync(d => d.TitleEn.ToLowerInvariant(), d => d.Id, ct);
+
         int created = 0, skipped = 0;
         var errors = new List<string>();
         var rowNum = 1;
+        // Track employee codes created in this batch for Pass 2 resolution
+        var batchCodes = new Dictionary<string, Employee>(StringComparer.OrdinalIgnoreCase);
+
+        // ── Pass 1: create all employee records ──────────────────────────────────
         foreach (var row in rows)
         {
             rowNum++;
@@ -144,14 +171,30 @@ public class EmployeesController : ControllerBase
             var code = row.GetValueOrDefault("EmployeeCode", string.Empty).Trim();
             if (!string.IsNullOrWhiteSpace(code) && await _db.Employees.AnyAsync(e => e.TenantId == tenantId && e.EmployeeCode == code, ct))
             { skipped++; errors.Add($"Row {rowNum}: EmployeeCode '{code}' already exists."); continue; }
+
             DateTime.TryParse(row.GetValueOrDefault("JoiningDate", string.Empty), out var jd);
             var statusVal = row.GetValueOrDefault("Status", string.Empty).Trim();
-            _db.Employees.Add(new Employee
+            var deptNameRaw = row.GetValueOrDefault("Department", string.Empty).Trim();
+            var deptCodeRaw = row.GetValueOrDefault("DepartmentCode", string.Empty).Trim().ToUpperInvariant();
+
+            Guid? resolvedDeptId = null;
+            if (!string.IsNullOrEmpty(deptCodeRaw) && deptByCode.TryGetValue(deptCodeRaw, out var dId1))
+                resolvedDeptId = dId1;
+            else if (!string.IsNullOrEmpty(deptNameRaw) && deptByName.TryGetValue(deptNameRaw.ToLowerInvariant(), out var dId2))
+                resolvedDeptId = dId2;
+
+            var desigTitleRaw = row.GetValueOrDefault("Designation", string.Empty).Trim();
+            Guid? resolvedDesigId = null;
+            if (!string.IsNullOrEmpty(desigTitleRaw) && desigByTitle.TryGetValue(desigTitleRaw.ToLowerInvariant(), out var dgId))
+                resolvedDesigId = dgId;
+
+            var finalCode = string.IsNullOrWhiteSpace(code) ? $"IMP-{Guid.NewGuid().ToString()[..6].ToUpperInvariant()}" : code;
+            var employee = new Employee
             {
                 TenantId = tenantId,
                 CompanyId = company?.Id,
                 BranchId = branch?.Id,
-                EmployeeCode = string.IsNullOrWhiteSpace(code) ? $"IMP-{Guid.NewGuid().ToString()[..6].ToUpperInvariant()}" : code,
+                EmployeeCode = finalCode,
                 FullName = name,
                 EnglishName = name,
                 ArabicName = row.GetValueOrDefault("ArabicName", string.Empty),
@@ -159,21 +202,327 @@ public class EmployeesController : ControllerBase
                 Phone = row.GetValueOrDefault("Phone", string.Empty),
                 Gender = row.GetValueOrDefault("Gender", string.Empty),
                 Nationality = row.GetValueOrDefault("Nationality", string.Empty),
-                Department = row.GetValueOrDefault("Department", string.Empty),
-                Designation = row.GetValueOrDefault("Designation", string.Empty),
-                JobTitle = row.GetValueOrDefault("JobTitle", row.GetValueOrDefault("Designation", string.Empty)),
+                Department = deptNameRaw,
+                DepartmentId = resolvedDeptId,
+                Designation = desigTitleRaw,
+                DesignationId = resolvedDesigId,
+                JobTitle = row.GetValueOrDefault("JobTitle", desigTitleRaw),
                 EmploymentType = row.GetValueOrDefault("EmploymentType", "Full-time"),
                 ContractType = row.GetValueOrDefault("ContractType", string.Empty),
                 Status = string.IsNullOrWhiteSpace(statusVal) ? "Active" : statusVal,
                 JoiningDate = jd == default ? DateTime.UtcNow : jd,
-            });
+            };
+            _db.Employees.Add(employee);
+            batchCodes[finalCode] = employee;
             created++;
         }
         await _db.SaveChangesAsync(ct);
-        return Ok(new { received = rows.Count, created, skipped, errors = errors.Take(20) });
+
+        // ── Pass 2: resolve manager/supervisor codes → IDs ────────────────────────
+        int hierarchyLinked = 0;
+        var hierarchyErrors = new List<string>();
+        rowNum = 1;
+        // Re-load all tenant employees (includes just-created ones)
+        var allByCode = await _db.Employees
+            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .ToDictionaryAsync(e => e.EmployeeCode.ToUpperInvariant(), ct);
+
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var code = row.GetValueOrDefault("EmployeeCode", string.Empty).Trim();
+            if (!batchCodes.TryGetValue(code, out var emp)) continue; // skipped in pass 1
+
+            var mgrCode = row.GetValueOrDefault("ManagerEmployeeCode", string.Empty).Trim();
+            var supCode  = row.GetValueOrDefault("SupervisorEmployeeCode", string.Empty).Trim();
+
+            bool changed = false;
+
+            if (!string.IsNullOrEmpty(mgrCode))
+            {
+                if (!allByCode.TryGetValue(mgrCode.ToUpperInvariant(), out var mgr))
+                    hierarchyErrors.Add($"Row {rowNum}: ManagerEmployeeCode '{mgrCode}' not found — hierarchy skipped.");
+                else if (mgr.Id == emp.Id)
+                    hierarchyErrors.Add($"Row {rowNum}: Employee cannot be their own manager — hierarchy skipped.");
+                else
+                {
+                    // Validate no circular chain would be created
+                    bool circular = false;
+                    var visited = new HashSet<int> { emp.Id };
+                    var cursor = (int?)mgr.Id;
+                    for (int depth = 0; cursor.HasValue && depth < 50; depth++)
+                    {
+                        if (visited.Contains(cursor.Value)) { circular = true; break; }
+                        visited.Add(cursor.Value);
+                        cursor = allByCode.Values.FirstOrDefault(e => e.Id == cursor.Value)?.ManagerEmployeeId;
+                    }
+
+                    if (circular)
+                        hierarchyErrors.Add($"Row {rowNum}: Setting '{mgrCode}' as manager of '{code}' would create a circular hierarchy — skipped.");
+                    else
+                    {
+                        emp.ManagerEmployeeId = mgr.Id;
+                        _db.ReportingLines.Add(new ReportingLine
+                        {
+                            TenantId = tenantId,
+                            EmployeeId = emp.Id,
+                            ManagerEmployeeId = mgr.Id,
+                            RelationshipType = "SolidLine",
+                            EffectiveFrom = emp.JoiningDate,
+                            IsPrimary = true,
+                            IsActive = true
+                        });
+                        changed = true;
+                        hierarchyLinked++;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(supCode))
+            {
+                if (!allByCode.TryGetValue(supCode.ToUpperInvariant(), out var sup))
+                    hierarchyErrors.Add($"Row {rowNum}: SupervisorEmployeeCode '{supCode}' not found — skipped.");
+                else if (sup.Id != emp.Id)
+                {
+                    emp.SupervisorEmployeeId = sup.Id;
+                    _db.ReportingLines.Add(new ReportingLine
+                    {
+                        TenantId = tenantId,
+                        EmployeeId = emp.Id,
+                        ManagerEmployeeId = sup.Id,
+                        RelationshipType = "DottedLine",
+                        EffectiveFrom = emp.JoiningDate,
+                        IsPrimary = false,
+                        IsActive = true
+                    });
+                    changed = true;
+                }
+            }
+
+            if (changed) _db.Employees.Update(emp);
+        }
+        if (hierarchyLinked > 0 || hierarchyErrors.Count > 0)
+            await _db.SaveChangesAsync(ct);
+
+        var allErrors = errors.Concat(hierarchyErrors).Take(30).ToList();
+        return Ok(new { received = rows.Count, created, skipped, hierarchyLinked, errors = allErrors });
     }
 
     public record ImportEmployeesRequest(string CsvContent);
+
+    // ── Import preview (dry-run: validates without committing) ─────────────────
+
+    [HttpPost("import-preview")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> ImportPreview([FromBody] ImportEmployeesRequest req, CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        var rows = Csv.Parse(req.CsvContent ?? string.Empty);
+
+        var sub = await _db.TenantSubscriptions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+        int currentCount = await _db.Employees
+            .CountAsync(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted && e.Status == EmployeeStatuses.Active, ct);
+        int remaining = sub is not null && sub.MaxEmployees > 0 ? sub.MaxEmployees - currentCount : int.MaxValue;
+
+        var deptByCode = await _db.Departments.AsNoTracking().Where(d => d.TenantId == tenantId && d.IsActive)
+            .ToDictionaryAsync(d => d.Code.ToUpperInvariant(), ct);
+        var deptByName = await _db.Departments.AsNoTracking().Where(d => d.TenantId == tenantId && d.IsActive)
+            .ToDictionaryAsync(d => d.NameEn.ToUpperInvariant(), ct);
+        var desigByTitle = await _db.Designations.AsNoTracking().Where(d => d.TenantId == tenantId && d.IsActive)
+            .ToDictionaryAsync(d => d.TitleEn.ToUpperInvariant(), ct);
+        var existingCodesList = await _db.Employees
+            .Where(e => (e.TenantId == tenantId || e.TenantId == null) && !e.IsDeleted)
+            .Select(e => e.EmployeeCode.ToUpperInvariant())
+            .ToListAsync(ct);
+        var existingCodes = new HashSet<string>(existingCodesList);
+
+        // Pre-pass: collect all batch code→managerCode so circular detection works even when
+        // both employee and manager are new in the same import batch.
+        var batchManagerMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows)
+        {
+            var c = r.GetValueOrDefault("EmployeeCode", string.Empty).Trim().ToUpperInvariant();
+            var m = r.GetValueOrDefault("ManagerEmployeeCode", string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrEmpty(c) && !string.IsNullOrEmpty(m))
+                batchManagerMap[c] = m;
+        }
+
+        var previewRows = new List<object>();
+        var seen = new HashSet<string>();
+        int wouldCreate = 0, wouldSkip = 0;
+
+        int rowNum = 1;
+        foreach (var row in rows)
+        {
+            rowNum++;
+            var code = row.GetValueOrDefault("EmployeeCode", string.Empty).Trim();
+            var name = row.GetValueOrDefault("FullName", string.Empty).Trim();
+            var mgrCode = row.GetValueOrDefault("ManagerEmployeeCode", string.Empty).Trim();
+            var supCode = row.GetValueOrDefault("SupervisorEmployeeCode", string.Empty).Trim();
+
+            var rowWarnings = new List<string>();
+            var rowErrors = new List<string>();
+            string status;
+
+            if (string.IsNullOrEmpty(code)) { rowErrors.Add("EmployeeCode missing"); }
+            else if (existingCodes.Contains(code.ToUpperInvariant()) || seen.Contains(code.ToUpperInvariant()))
+            { rowErrors.Add($"Duplicate EmployeeCode '{code}'"); }
+
+            if (!string.IsNullOrEmpty(mgrCode))
+            {
+                var mgrUpper = mgrCode.ToUpperInvariant();
+                var codeUpper = code.ToUpperInvariant();
+
+                if (!string.IsNullOrEmpty(code) && mgrCode.Equals(code, StringComparison.OrdinalIgnoreCase))
+                {
+                    rowErrors.Add("Employee cannot be their own manager");
+                }
+                else
+                {
+                    bool mgrKnown = existingCodes.Contains(mgrUpper) || seen.Contains(mgrUpper) || batchManagerMap.ContainsKey(mgrUpper);
+                    if (!mgrKnown)
+                        rowWarnings.Add($"ManagerEmployeeCode '{mgrCode}' not found — hierarchy will be skipped");
+
+                    if (!string.IsNullOrEmpty(code))
+                    {
+                        // Circular check using the full batch map — detects A→B→A even when both are new
+                        var visited2 = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { codeUpper };
+                        var cursor2 = mgrUpper;
+                        bool circular2 = false;
+                        for (int d = 0; d < 50; d++)
+                        {
+                            if (!visited2.Add(cursor2)) { circular2 = true; break; }
+                            if (batchManagerMap.TryGetValue(cursor2, out var next)) cursor2 = next;
+                            else break;
+                        }
+                        if (circular2) rowErrors.Add($"Setting '{mgrCode}' as manager would create a circular hierarchy");
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(supCode) && !existingCodes.Contains(supCode.ToUpperInvariant()) && !seen.Contains(supCode.ToUpperInvariant()))
+                rowWarnings.Add($"SupervisorEmployeeCode '{supCode}' not found — will be skipped");
+
+            var deptColCode = row.GetValueOrDefault("DepartmentCode", string.Empty).Trim().ToUpperInvariant();
+            var deptColName = row.GetValueOrDefault("Department", string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrEmpty(deptColCode) && !deptByCode.ContainsKey(deptColCode))
+                rowWarnings.Add($"DepartmentCode '{deptColCode}' not found — will be unlinked");
+            else if (!string.IsNullOrEmpty(deptColName) && !deptByName.ContainsKey(deptColName) && string.IsNullOrEmpty(deptColCode))
+                rowWarnings.Add($"Department '{row.GetValueOrDefault("Department", "")}' not found — will be unlinked");
+
+            var desigCol = row.GetValueOrDefault("Designation", string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrEmpty(desigCol) && !desigByTitle.ContainsKey(desigCol))
+                rowWarnings.Add($"Designation '{row.GetValueOrDefault("Designation", "")}' not found — will be unlinked");
+
+            bool hasErrors = rowErrors.Count > 0;
+            if (!hasErrors)
+            {
+                if (wouldCreate >= remaining)
+                {
+                    rowErrors.Add($"Subscription limit reached ({sub?.MaxEmployees} employees)");
+                    hasErrors = true;
+                }
+            }
+
+            if (hasErrors) { status = "Error"; wouldSkip++; }
+            else { status = "WillCreate"; wouldCreate++; seen.Add(code.ToUpperInvariant()); }
+
+            previewRows.Add(new
+            {
+                row = rowNum,
+                employeeCode = code,
+                fullName = name,
+                status,
+                errors = rowErrors,
+                warnings = rowWarnings
+            });
+        }
+
+        return Ok(new
+        {
+            received = rows.Count,
+            wouldCreate,
+            wouldSkip,
+            rows = previewRows
+        });
+    }
+
+    // ── Org chart ─────────────────────────────────────────────────────────────
+
+    [HttpGet("org-chart")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Manager,Auditor")]
+    public async Task<IActionResult> OrgChart(
+        [FromServices] IHrmHierarchyService hierarchy,
+        [FromQuery] int? rootEmployeeId = null,
+        [FromQuery] int maxDepth = 5,
+        CancellationToken ct = default)
+    {
+        var tenantId = RequireTenant();
+        maxDepth = Math.Clamp(maxDepth, 1, 10);
+        var chart = await hierarchy.GetOrgChartAsync(tenantId, rootEmployeeId, maxDepth, ct);
+        return Ok(chart);
+    }
+
+    // ── Manager assignment ────────────────────────────────────────────────────
+
+    [HttpPut("{id:int}/manager")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> SetManager(
+        int id,
+        [FromBody] SetManagerRequest req,
+        [FromServices] IHrmHierarchyService hierarchy,
+        CancellationToken ct)
+    {
+        try
+        {
+            await hierarchy.SetManagerAsync(RequireTenant(), id, req.ManagerEmployeeId, Context(), ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    // ── Reporting lines ───────────────────────────────────────────────────────
+
+    [HttpGet("{id:int}/reporting-lines")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Auditor")]
+    public async Task<ActionResult<IReadOnlyList<ReportingLineDto>>> GetReportingLines(
+        int id,
+        [FromServices] IHrmHierarchyService hierarchy,
+        CancellationToken ct)
+    {
+        var tenantId = RequireTenant();
+        return Ok(await hierarchy.GetReportingLinesAsync(tenantId, id, ct));
+    }
+
+    [HttpPost("{id:int}/reporting-lines")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<ActionResult<ReportingLineDto>> AddReportingLine(
+        int id,
+        [FromBody] AddReportingLineRequest req,
+        [FromServices] IHrmHierarchyService hierarchy,
+        CancellationToken ct)
+    {
+        try
+        {
+            var line = await hierarchy.AddReportingLineAsync(RequireTenant(), id, req, Context(), ct);
+            return Created($"/api/employees/{id}/reporting-lines/{line.Id}", line);
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
+    }
+
+    [HttpDelete("{id:int}/reporting-lines/{lineId:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> RemoveReportingLine(
+        int id,
+        Guid lineId,
+        [FromServices] IHrmHierarchyService hierarchy,
+        CancellationToken ct)
+    {
+        return await hierarchy.RemoveReportingLineAsync(RequireTenant(), lineId, Context(), ct) ? NoContent() : NotFound();
+    }
+
+    public record SetManagerRequest(int? ManagerEmployeeId);
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<EmployeeDetailDto>> Get(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)

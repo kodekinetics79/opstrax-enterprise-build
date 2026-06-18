@@ -20,9 +20,15 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     [AllowAnonymous]
     [EnableRateLimiting("auth_login")]
-    public async Task<ActionResult<AuthResponse>> Login(LoginRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
-        try { return Ok(await _authService.LoginAsync(request, GetContext(), cancellationToken)); }
+        try
+        {
+            var result = await _authService.LoginAsync(request, GetContext(), cancellationToken);
+            if (result.RequiresMfa)
+                return Ok(new { mfaRequired = true, challengeToken = result.Challenge!.ChallengeToken, expiresInSeconds = result.Challenge.ExpiresInSeconds });
+            return Ok(result.Tokens);
+        }
         catch (UnauthorizedAccessException ex) { return Unauthorized(new { message = ex.Message }); }
     }
 

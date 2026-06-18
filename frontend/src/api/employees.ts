@@ -1,6 +1,29 @@
 import client from './client';
 import type { PagedResult } from './organization';
 
+export interface OrgChartNodeDto {
+  id: number;
+  employeeCode: string;
+  fullName: string;
+  designation: string;
+  department: string;
+  profilePhotoUrl?: string;
+  directReports: OrgChartNodeDto[];
+}
+
+export interface ReportingLineDto {
+  id: string;
+  employeeId: number;
+  employeeName: string;
+  managerEmployeeId: number;
+  managerName: string;
+  relationshipType: string;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  isPrimary: boolean;
+  isActive: boolean;
+}
+
 export interface EmployeeListItem {
   id: number;
   employeeCode: string;
@@ -270,4 +293,13 @@ export const employeesApi = {
     statusSummary: () =>
       client.get<{ statuses: EmployeeGroupCount[] }>('/api/employees/reports/status-summary').then((r) => r.data),
   },
+
+  orgChart: (rootEmployeeId?: number, maxDepth = 5) =>
+    client.get<OrgChartNodeDto[]>('/api/employees/org-chart', { params: { rootEmployeeId, maxDepth } }).then((r) => r.data),
+
+  setManager: (id: number, managerEmployeeId: number | null) =>
+    client.put(`/api/employees/${id}/manager`, { managerEmployeeId }).then((r) => r.data),
+
+  reportingLines: (id: number) =>
+    client.get<ReportingLineDto[]>(`/api/employees/${id}/reporting-lines`).then((r) => r.data),
 };

@@ -27,10 +27,36 @@ public class PlatformUser
     public string PasswordHash { get; set; } = null!;
     public string Role { get; set; } = PlatformRoles.Admin; // Owner, Admin, Finance, Support, Marketing, Auditor
     public bool IsActive { get; set; } = true;
+    public bool MfaEnabled { get; set; }
+    // Encrypted via IDataProtector — never returned in responses.
+    public string? MfaSecretEncrypted { get; set; }
+    public DateTime? MfaConfiguredAtUtc { get; set; }
     public DateTime? LastLoginAtUtc { get; set; }
     public string? LastLoginIp { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAtUtc { get; set; }
+}
+
+// ── MFA Challenge Token ───────────────────────────────────────────────────────
+
+/// <summary>Short-lived single-use token issued after password validates but before TOTP is checked.
+/// Stored as a SHA-256 hash. Raw value is returned to the client as the MFA challenge token.</summary>
+public class MfaChallengeToken
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Set for tenant users.</summary>
+    public Guid? UserId { get; set; }
+    /// <summary>Set for platform admins.</summary>
+    public Guid? PlatformUserId { get; set; }
+    /// <summary>TenantId of the user, null for platform admins.</summary>
+    public Guid? TenantId { get; set; }
+    public string TokenHash { get; set; } = string.Empty;
+    public DateTime ExpiresAtUtc { get; set; }
+    public string CreatedByIp { get; set; } = string.Empty;
+    /// <summary>Set when the token is consumed. Null = still valid.</summary>
+    public DateTime? UsedAtUtc { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public bool IsValid => UsedAtUtc is null && DateTime.UtcNow < ExpiresAtUtc;
 }
 
 // ── Subscription status constants ─────────────────────────────────────────────

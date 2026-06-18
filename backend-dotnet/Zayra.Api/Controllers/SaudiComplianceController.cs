@@ -21,6 +21,7 @@ namespace Zayra.Api.Controllers;
 public class SaudiComplianceController : ControllerBase
 {
     private readonly SaudiComplianceDashboardService _dashboard;
+    private readonly GosiReadinessReportService _readiness;
     private readonly ZayraDbContext _db;
 
     private static readonly string[] GatingFeatures =
@@ -28,9 +29,13 @@ public class SaudiComplianceController : ControllerBase
         FeatureKeys.QiwaIntegration, FeatureKeys.WpsExport, FeatureKeys.Payroll, FeatureKeys.Compliance
     };
 
-    public SaudiComplianceController(SaudiComplianceDashboardService dashboard, ZayraDbContext db)
+    public SaudiComplianceController(
+        SaudiComplianceDashboardService dashboard,
+        GosiReadinessReportService readiness,
+        ZayraDbContext db)
     {
         _dashboard = dashboard;
+        _readiness = readiness;
         _db = db;
     }
 
@@ -51,7 +56,7 @@ public class SaudiComplianceController : ControllerBase
         return Ok(await _dashboard.BuildAsync(tenantId, cancellationToken));
     }
 
-    /// <summary>GOSI readiness report with illustrative contribution estimates (Task 9).</summary>
+    /// <summary>GOSI readiness report using official contribution rules (PR-3 GosiCalculationService).</summary>
     [HttpGet("gosi-readiness")]
     public async Task<IActionResult> GetGosiReadiness(CancellationToken cancellationToken)
     {
@@ -61,66 +66,7 @@ public class SaudiComplianceController : ControllerBase
         if (!await HasAnyGatingFeatureAsync(tenantId, cancellationToken))
             return StatusCode(403, new { error = "feature_not_enabled" });
 
-        var company = await _db.Companies.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId, cancellationToken);
-        var companyGosiEmployerId = company?.GosiEmployerId ?? string.Empty;
-
-        var employees = await _db.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active")
-            .ToListAsync(cancellationToken);
-
-        var salaries = await _db.EmployeeSalaryStructures.AsNoTracking()
-            .Where(s => s.TenantId == tenantId)
-            .ToListAsync(cancellationToken);
-
-        var rows = new List<object>();
-        var readyCount = 0;
-        foreach (var e in employees)
-        {
-            var gaps = new List<string>();
-            if (string.IsNullOrWhiteSpace(e.GosiReference))        gaps.Add("gosi_reference");
-            if (string.IsNullOrWhiteSpace(companyGosiEmployerId))  gaps.Add("gosi_employer_id");
-            if (string.IsNullOrWhiteSpace(e.Nationality))          gaps.Add("nationality");
-
-            var basic = salaries
-                .Where(s => s.EmployeeId == e.Id)
-                .OrderByDescending(s => s.EffectiveDate)
-                .Select(s => s.BasicSalary)
-                .FirstOrDefault();
-            if (basic <= 0) gaps.Add("contract_salary");
-
-            // Illustrative GOSI contribution estimate.
-            var isSaudi = string.Equals(e.SaudiOrNonSaudi, "Saudi", StringComparison.OrdinalIgnoreCase)
-                          || string.Equals(e.Nationality, "Saudi", StringComparison.OrdinalIgnoreCase)
-                          || string.Equals(e.Nationality, "Saudi Arabian", StringComparison.OrdinalIgnoreCase);
-
-            var employeeRate = isSaudi ? 0.10m : 0.00m;   // 10% employee (Saudi only)
-            var employerRate = isSaudi ? 0.12m : 0.02m;   // 12% employer (Saudi) / 2% (Non-Saudi occupational hazard)
-
-            if (gaps.Count == 0) readyCount++;
-
-            rows.Add(new
-            {
-                employeeId = e.Id,
-                employeeCode = e.EmployeeCode,
-                fullName = e.FullName,
-                nationality = e.Nationality,
-                category = isSaudi ? "Saudi" : "NonSaudi",
-                basicSalary = basic,
-                estimatedEmployeeContribution = Math.Round(basic * employeeRate, 2),
-                estimatedEmployerContribution = Math.Round(basic * employerRate, 2),
-                gaps,
-                ready = gaps.Count == 0
-            });
-        }
-
-        return Ok(new
-        {
-            totalEmployees = employees.Count,
-            ready = readyCount,
-            employees = rows,
-            disclaimer = "GOSI contribution rates shown are illustrative. Verify current rates with GOSI portal."
-        });
+        return Ok(await _readiness.BuildAsync(tenantId, cancellationToken));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

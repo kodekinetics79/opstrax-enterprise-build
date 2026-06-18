@@ -117,12 +117,16 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<Zayra.Api.Infrastructure.Auth.TotpService>();
+builder.Services.AddScoped<IMfaService, Zayra.Api.Infrastructure.Auth.MfaService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccessManagementService, AccessManagementService>();
 builder.Services.AddScoped<IAttendanceService, AttendanceService>();
 builder.Services.AddScoped<IEmployeeManagementService, EmployeeManagementService>();
 builder.Services.AddScoped<IOrganizationSetupService, OrganizationSetupService>();
+builder.Services.AddScoped<IHrmHierarchyService, HrmHierarchyService>();
 builder.Services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IAuthSeeder, AuthSeeder>();
 builder.Services.AddScoped<IEmployeeModuleSchemaBootstrapper, EmployeeModuleSchemaBootstrapper>();
 builder.Services.AddScoped<IDocumentStorage, LocalDocumentStorage>();
@@ -145,6 +149,7 @@ builder.Services.AddScoped<IAiAdvisoryService, AiAdvisoryService>();
 builder.Services.AddScoped<IPolicyDocumentService, PolicyDocumentService>();
 builder.Services.AddScoped<IQiwaIntegrationService, QiwaIntegrationService>();
 builder.Services.AddScoped<Zayra.Api.Infrastructure.Compliance.SaudiComplianceDashboardService>();
+builder.Services.AddScoped<Zayra.Api.Infrastructure.Compliance.GosiReadinessReportService>();
 
 // Data protection — encrypts Qiwa client secrets at rest.
 builder.Services.AddDataProtection();

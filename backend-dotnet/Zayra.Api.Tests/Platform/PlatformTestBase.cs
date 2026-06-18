@@ -89,6 +89,7 @@ public abstract class PlatformTestBase
 
         var controller = new PlatformController(
             db, jwt, hasher, seeder, tokenSvc, email, config,
+            new NullPlatformMfaService(),
             NullLogger<PlatformController>.Instance);
 
         // Wire up a ClaimsPrincipal that passes the PlatformAdmin policy
@@ -126,6 +127,20 @@ internal sealed class FakePlatformEmailService : IEmailService
 
     public Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(false);
+}
+
+internal sealed class NullPlatformMfaService : IMfaService
+{
+    public Task<MfaSetupInitDto> InitiateSetupAsync(Guid userId, Guid tenantId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> VerifySetupAsync(Guid userId, Guid tenantId, MfaVerifySetupRequest req, CancellationToken ct) => throw new NotImplementedException();
+    public Task<string> CreateChallengeAsync(Guid userId, Guid tenantId, string ip, CancellationToken ct) => throw new NotImplementedException();
+    public Task<Zayra.Api.Domain.Entities.User?> VerifyChallengeAsync(string token, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> DisableAsync(Guid userId, Guid tenantId, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<MfaSetupInitDto> InitiatePlatformSetupAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> VerifyPlatformSetupAsync(Guid id, MfaVerifySetupRequest req, CancellationToken ct) => throw new NotImplementedException();
+    public Task<string> CreatePlatformChallengeAsync(Guid id, string ip, CancellationToken ct) => throw new NotImplementedException();
+    public Task<Zayra.Api.Models.PlatformUser?> VerifyPlatformChallengeAsync(string token, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> DisablePlatformAsync(Guid id, string code, CancellationToken ct) => throw new NotImplementedException();
 }
 
 internal sealed class FakeAuthSeeder : IAuthSeeder

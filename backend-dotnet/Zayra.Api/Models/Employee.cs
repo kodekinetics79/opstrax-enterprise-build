@@ -55,6 +55,8 @@ public class Employee
     public string Branch { get; set; } = string.Empty;
     public int? ManagerEmployeeId { get; set; }
     public int? SecondLevelManagerEmployeeId { get; set; }
+    public int? SupervisorEmployeeId { get; set; }
+    public int? HRBusinessPartnerEmployeeId { get; set; }
     public string Status { get; set; } = "Draft";
     public DateTime JoiningDate { get; set; }
     public DateOnly? ConfirmationDate { get; set; }

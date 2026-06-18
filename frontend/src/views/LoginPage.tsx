@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { authApi } from '../api/auth';
+import { Smartphone } from 'lucide-react';
 import { Logo } from '../components/Logo';
 
 function useCountUp(target: number, duration = 800, delay = 0): number {
@@ -54,10 +55,10 @@ const NAV_ICONS = [
   { icon: Settings,   active: false },
 ];
 
-type Mode = 'login' | 'forgot' | 'reset';
+type Mode = 'login' | 'forgot' | 'reset' | 'mfa';
 
 export function LoginPage() {
-  const { login }    = useAuth();
+  const { login, verifyMfaChallenge, mfaPending } = useAuth();
   const router       = useRouter();
   const searchParams = useSearchParams();
   const from         = searchParams?.get('from') ?? '/dashboard';
@@ -75,6 +76,7 @@ export function LoginPage() {
   const [resetToken,   setResetToken]   = useState('');
   const [newPw,        setNewPw]        = useState('');
   const [confirmPw,    setConfirmPw]    = useState('');
+  const [totpCode,     setTotpCode]     = useState('');
 
   useEffect(() => {
     const wsParam = searchParams?.get('workspace') ?? searchParams?.get('w');
@@ -87,10 +89,30 @@ export function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setError(''); setLoading(true);
-    try { await login(email, password, tenantSlug); router.replace(from); }
+    try {
+      await login(email, password, tenantSlug);
+      // If MFA is required, mfaPending is set in context; switch to MFA mode.
+      if (mfaPending) { setMode('mfa'); return; }
+      router.replace(from);
+    }
     catch { setError('Invalid credentials. Check your email, password, and workspace.'); }
     finally { setLoading(false); }
   };
+
+  const handleMfa = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      await verifyMfaChallenge(totpCode);
+      router.replace(from);
+    }
+    catch { setError('Invalid or expired code. Please try again.'); }
+    finally { setLoading(false); }
+  };
+
+  // Switch to MFA mode as soon as context signals a pending challenge.
+  useEffect(() => {
+    if (mfaPending && mode !== 'mfa') setMode('mfa');
+  }, [mfaPending, mode]);
 
   const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault(); setError(''); setLoading(true);
@@ -460,6 +482,49 @@ export function LoginPage() {
 
                 <button type="submit" disabled={loading} className="auth-btn mt-6 disabled:cursor-not-allowed disabled:opacity-60">
                   {loading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : 'Update password'}
+                </button>
+              </form>
+            )}
+
+            {/* ── MFA CHALLENGE ────────────────────────────────────────────── */}
+            {mode === 'mfa' && (
+              <form onSubmit={handleMfa} noValidate>
+                <button type="button" onClick={() => { setMode('login'); setTotpCode(''); }}
+                  className="mb-6 flex items-center gap-1.5 text-[13px] font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                  ← Back to sign in
+                </button>
+                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 ring-1 ring-blue-200/60 dark:bg-blue-500/10 dark:ring-blue-500/20">
+                  <Smartphone className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <h2 className="mb-1 text-[28px] font-black tracking-tight text-slate-900 dark:text-white">Two-factor auth</h2>
+                <p className="mb-8 text-[14px] text-slate-400 dark:text-slate-500">
+                  Enter the 6-digit code from your authenticator app.
+                </p>
+
+                <FormField label="Authentication Code">
+                  <input
+                    id="mfa-code"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    value={totpCode}
+                    onChange={e => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                    className="auth-input font-mono tracking-[0.3em] text-center text-xl"
+                    placeholder="000000"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    required
+                  />
+                </FormField>
+
+                <AuthFeedback error={error} info={info} />
+
+                <button type="submit" disabled={loading || totpCode.length !== 6}
+                  className="auth-btn mt-6 disabled:cursor-not-allowed disabled:opacity-60">
+                  {loading
+                    ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    : 'Verify'}
                 </button>
               </form>
             )}

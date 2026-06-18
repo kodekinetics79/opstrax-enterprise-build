@@ -124,6 +124,7 @@ export interface SecuritySetting {
   sessionTimeoutMinutes: number;
   refreshTokenExpiryDays: number;
   allowMultipleSessions: boolean;
+  mfaRequired: boolean;
   updatedAtUtc: string;
 }
 

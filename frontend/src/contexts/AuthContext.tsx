@@ -1,13 +1,23 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { authApi } from '../api/auth';
+import { authApi, isMfaChallenge } from '../api/auth';
 import type { AuthUser } from '../api/auth';
+
+// Returned when the backend requires a TOTP code before issuing full tokens.
+export interface MfaPendingState {
+  challengeToken: string;
+  expiresInSeconds: number;
+}
 
 interface AuthContextValue {
   user: AuthUser | null;
   isLoading: boolean;
+  mfaPending: MfaPendingState | null;
+  /** Normal credential login. Returns mfaPending state when TOTP is required. */
   login: (email: string, password: string, tenantSlug?: string) => Promise<void>;
+  /** Complete login after TOTP entry during challenge flow. */
+  verifyMfaChallenge: (totpCode: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasRole: (role: string) => boolean;
@@ -18,6 +28,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [mfaPending, setMfaPending] = useState<MfaPendingState | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('zayra_access_token');
@@ -37,10 +48,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string, tenantSlug = '') => {
     const res = await authApi.login(email, password, tenantSlug);
+    if (isMfaChallenge(res)) {
+      // Credentials verified; TOTP step required before tokens are issued.
+      setMfaPending({ challengeToken: res.challengeToken, expiresInSeconds: res.expiresInSeconds });
+      return;
+    }
     localStorage.setItem('zayra_access_token', res.accessToken);
     localStorage.setItem('zayra_refresh_token', res.refreshToken);
+    setMfaPending(null);
     setUser(res.user);
   }, []);
+
+  const verifyMfaChallenge = useCallback(async (totpCode: string) => {
+    if (!mfaPending) throw new Error('No MFA challenge in progress.');
+    const res = await authApi.mfaVerifyChallenge(mfaPending.challengeToken, totpCode);
+    localStorage.setItem('zayra_access_token', res.accessToken);
+    localStorage.setItem('zayra_refresh_token', res.refreshToken);
+    setMfaPending(null);
+    setUser(res.user);
+  }, [mfaPending]);
 
   const logout = useCallback(async () => {
     const refreshToken = localStorage.getItem('zayra_refresh_token') ?? '';
@@ -65,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, hasPermission, hasRole }}>
+    <AuthContext.Provider value={{ user, isLoading, mfaPending, login, verifyMfaChallenge, logout, hasPermission, hasRole }}>
       {children}
     </AuthContext.Provider>
   );

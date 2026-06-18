@@ -36,6 +36,8 @@ public class SecuritySetting
     public int SessionTimeoutMinutes { get; set; } = 480;
     public int RefreshTokenExpiryDays { get; set; } = 30;
     public bool AllowMultipleSessions { get; set; } = true;
+    // MFA policy — when true all tenant users must complete TOTP at login
+    public bool MfaRequired { get; set; }
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? UpdatedBy { get; set; }
 }

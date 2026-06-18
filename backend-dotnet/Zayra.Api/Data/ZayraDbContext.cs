@@ -227,6 +227,7 @@ public class ZayraDbContext : DbContext
     public DbSet<TenantFieldHelpText> TenantFieldHelpTexts => Set<TenantFieldHelpText>();
     public DbSet<PlatformSupportSession> PlatformSupportSessions => Set<PlatformSupportSession>();
     public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
+    public DbSet<MfaChallengeToken> MfaChallengeTokens => Set<MfaChallengeToken>();
     public DbSet<PlatformAnnouncement> PlatformAnnouncements => Set<PlatformAnnouncement>();
     public DbSet<PlatformLead> PlatformLeads => Set<PlatformLead>();
     // ── AI Intelligence ────────────────────────────────────────────────────────
@@ -278,6 +279,9 @@ public class ZayraDbContext : DbContext
     public DbSet<ApprovalWorkflowStep> ApprovalWorkflowSteps => Set<ApprovalWorkflowStep>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
     public DbSet<ApprovalDecision> ApprovalDecisions => Set<ApprovalDecision>();
+    public DbSet<ReportingLine> ReportingLines => Set<ReportingLine>();
+    public DbSet<ApprovalPolicy> ApprovalPolicies => Set<ApprovalPolicy>();
+    public DbSet<ApprovalPolicyStep> ApprovalPolicySteps => Set<ApprovalPolicyStep>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();
@@ -368,6 +372,8 @@ public class ZayraDbContext : DbContext
         modelBuilder.Entity<QiwaSyncLog>(entity =>
         {
             entity.Property(x => x.DeadLetterReason).HasMaxLength(500);
+            entity.Property(x => x.Status).HasMaxLength(20);
+            entity.HasIndex(x => new { x.TenantId, x.Status });
         });
 
         modelBuilder.Entity<GosiContributionRule>(entity =>
@@ -739,6 +745,35 @@ public class ZayraDbContext : DbContext
             entity.ToTable("approval_decisions");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.ApprovalRequestId, x.StepOrder });
+        });
+
+        modelBuilder.Entity<ReportingLine>(entity =>
+        {
+            entity.ToTable("reporting_lines");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RelationshipType).HasMaxLength(40).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.RelationshipType, x.IsActive });
+            entity.HasIndex(x => new { x.TenantId, x.ManagerEmployeeId, x.IsActive });
+        });
+
+        modelBuilder.Entity<ApprovalPolicy>(entity =>
+        {
+            entity.ToTable("approval_policies");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.WorkflowType).HasMaxLength(60).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(180).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkflowType, x.IsDefault, x.IsActive });
+            entity.HasIndex(x => new { x.TenantId, x.WorkflowType, x.DepartmentId, x.GradeId }).IsUnique();
+            entity.HasMany(x => x.Steps).WithOne().HasForeignKey(x => x.PolicyId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ApprovalPolicyStep>(entity =>
+        {
+            entity.ToTable("approval_policy_steps");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ApproverType).HasMaxLength(60).IsRequired();
+            entity.Property(x => x.StepName).HasMaxLength(180).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.PolicyId, x.StepOrder }).IsUnique();
         });
 
         modelBuilder.Entity<AttendanceRecord>(entity =>
@@ -1140,6 +1175,7 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.Timezone).HasMaxLength(80).HasDefaultValue("UTC");
             entity.Property(x => x.Status).HasMaxLength(40).HasDefaultValue("Active");
             entity.Property(x => x.AccessMode).HasMaxLength(40).HasDefaultValue("FullPortal");
+            entity.Property(x => x.MfaSecretEncrypted).HasMaxLength(1024);
             entity.HasIndex(x => new { x.TenantId, x.NormalizedEmail }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.Status });
             entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
@@ -1502,8 +1538,20 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.PasswordHash).HasMaxLength(512);
             entity.Property(x => x.Role).HasMaxLength(40);
             entity.Property(x => x.LastLoginIp).HasMaxLength(64);
+            entity.Property(x => x.MfaSecretEncrypted).HasMaxLength(1024);
             entity.HasIndex(x => x.Email).IsUnique();
             entity.Property(x => x.IsActive).HasDefaultValue(true);
+        });
+
+        modelBuilder.Entity<MfaChallengeToken>(entity =>
+        {
+            entity.ToTable("mfa_challenge_tokens");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.CreatedByIp).HasMaxLength(64);
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.Ignore(x => x.IsValid);
         });
 
         modelBuilder.Entity<PlatformAnnouncement>(entity =>

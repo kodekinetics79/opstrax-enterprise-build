@@ -40,6 +40,7 @@ public class AuthServiceTests
             new AuditService(db),
             new FakeEmailService(),
             jwt,
+            new NullMfaService(),
             NullLogger<AuthService>.Instance);
     }
 
@@ -104,14 +105,14 @@ public class AuthServiceTests
         var auth = BuildService(db);
 
         var login   = await auth.LoginAsync(new LoginRequest("admin@zayra.local", "CorrectPassword1!", "zayra"), TestCtx, CancellationToken.None);
-        var refresh = await auth.RefreshAsync(new RefreshTokenRequest(login.RefreshToken), TestCtx, CancellationToken.None);
+        var refresh = await auth.RefreshAsync(new RefreshTokenRequest(login.Tokens!.RefreshToken), TestCtx, CancellationToken.None);
 
-        Assert.False(string.IsNullOrWhiteSpace(login.AccessToken));
+        Assert.False(string.IsNullOrWhiteSpace(login.Tokens!.AccessToken));
         Assert.False(string.IsNullOrWhiteSpace(refresh.AccessToken));
-        Assert.NotEqual(login.RefreshToken, refresh.RefreshToken);
-        Assert.Equal("zayra", login.User.TenantSlug);
-        Assert.Contains("Admin", login.User.Roles);
-        Assert.Contains("dashboard.read", login.User.Permissions);
+        Assert.NotEqual(login.Tokens!.RefreshToken, refresh.RefreshToken);
+        Assert.Equal("zayra", login.Tokens!.User.TenantSlug);
+        Assert.Contains("Admin", login.Tokens!.User.Roles);
+        Assert.Contains("dashboard.read", login.Tokens!.User.Permissions);
         Assert.Equal(2, await db.RefreshTokens.CountAsync());
         Assert.Equal(1, await db.RefreshTokens.CountAsync(x => x.RevokedAtUtc != null));
         Assert.True(await db.AuditLogs.AnyAsync(x => x.Action == "auth.login"));
@@ -230,7 +231,7 @@ public class AuthServiceTests
         var response = await auth.LoginAsync(
             new LoginRequest("admin@zayra.local", "CorrectPassword1!", "zayra"), TestCtx, CancellationToken.None);
 
-        Assert.False(string.IsNullOrWhiteSpace(response.AccessToken));
+        Assert.False(string.IsNullOrWhiteSpace(response.Tokens!.AccessToken));
 
         // Lockout state must be cleared
         var cleared = await db.Users.FindAsync(user.Id);
@@ -280,6 +281,20 @@ public class AuthServiceTests
         var shouldSeed = string.Equals(simulatedEnvValue, "true", StringComparison.OrdinalIgnoreCase);
         Assert.True(shouldSeed, "Demo seeder must run when SEED_DEMO_DATA=true");
     }
+}
+
+file sealed class NullMfaService : IMfaService
+{
+    public Task<MfaSetupInitDto> InitiateSetupAsync(Guid userId, Guid tenantId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> VerifySetupAsync(Guid userId, Guid tenantId, MfaVerifySetupRequest req, CancellationToken ct) => throw new NotImplementedException();
+    public Task<string> CreateChallengeAsync(Guid userId, Guid tenantId, string ip, CancellationToken ct) => throw new NotImplementedException();
+    public Task<Zayra.Api.Domain.Entities.User?> VerifyChallengeAsync(string token, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> DisableAsync(Guid userId, Guid tenantId, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<MfaSetupInitDto> InitiatePlatformSetupAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> VerifyPlatformSetupAsync(Guid id, MfaVerifySetupRequest req, CancellationToken ct) => throw new NotImplementedException();
+    public Task<string> CreatePlatformChallengeAsync(Guid id, string ip, CancellationToken ct) => throw new NotImplementedException();
+    public Task<Zayra.Api.Models.PlatformUser?> VerifyPlatformChallengeAsync(string token, string code, CancellationToken ct) => throw new NotImplementedException();
+    public Task<bool> DisablePlatformAsync(Guid id, string code, CancellationToken ct) => throw new NotImplementedException();
 }
 
 file sealed class FakeEmailService : IEmailService

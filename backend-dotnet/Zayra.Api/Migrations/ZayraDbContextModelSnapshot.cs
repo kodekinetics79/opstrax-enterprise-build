@@ -519,6 +519,19 @@ namespace Zayra.Api.Migrations
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("m_f_a_enabled");
 
+                    b.Property<DateTime?>("MfaConfiguredAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("MfaFailedCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("MfaLastVerifiedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("MfaSecretEncrypted")
+                        .HasMaxLength(1024)
+                        .HasColumnType("varchar(1024)");
+
                     b.Property<bool>("MustChangePassword")
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("must_change_password");
@@ -14794,6 +14807,16 @@ namespace Zayra.Api.Migrations
                         .HasColumnType("varchar(64)")
                         .HasColumnName("last_login_ip");
 
+                    b.Property<DateTime?>("MfaConfiguredAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("MfaEnabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("MfaSecretEncrypted")
+                        .HasMaxLength(1024)
+                        .HasColumnType("varchar(1024)");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasMaxLength(512)
@@ -14816,6 +14839,50 @@ namespace Zayra.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("platform_users", (string)null);
+                });
+
+            modelBuilder.Entity("Zayra.Api.Models.MfaChallengeToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CreatedByIp")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid?>("PlatformUserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<DateTime?>("UsedAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("mfa_challenge_tokens", (string)null);
                 });
 
             modelBuilder.Entity("Zayra.Api.Models.ProbationReview", b =>
@@ -15326,7 +15393,8 @@ namespace Zayra.Api.Migrations
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasColumnType("longtext")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
                         .HasColumnName("status");
 
                     b.Property<Guid>("TenantId")
@@ -15343,6 +15411,8 @@ namespace Zayra.Api.Migrations
                         .HasColumnName("triggered_by");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Status");
 
                     b.ToTable("QiwaSyncLogs");
                 });
@@ -16095,6 +16165,9 @@ namespace Zayra.Api.Migrations
                     b.Property<bool>("AllowMultipleSessions")
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("allow_multiple_sessions");
+
+                    b.Property<bool>("MfaRequired")
+                        .HasColumnType("tinyint(1)");
 
                     b.Property<int>("LockoutDurationMinutes")
                         .HasColumnType("int")
