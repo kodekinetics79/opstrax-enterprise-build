@@ -347,6 +347,7 @@ public static class DemoDataSeeder
         {
             // Evostel: minimal org structure only
             await SeedMinimalOrgAsync(db, tenantId, company, branch, ct);
+            await SeedOperationalDataAsync(db, tenantId, logger, ct);
             logger.LogInformation("DemoDataSeeder: seeded minimal org for '{Slug}'.", slug);
             return;
         }
@@ -591,6 +592,7 @@ public static class DemoDataSeeder
         );
         await db.SaveChangesAsync(ct);
 
+        await SeedOperationalDataAsync(db, tenantId, logger, ct);
         logger.LogInformation("DemoDataSeeder: seeded full org structure for IntelliFlow ({Count} employees, including QA scenarios).", 19);
     }
 
@@ -629,6 +631,181 @@ public static class DemoDataSeeder
         db.ReportingLines.Add(new ReportingLine { TenantId = tenantId, EmployeeId = emp2.Id, ManagerEmployeeId = ceo.Id, RelationshipType = "SolidLine", EffectiveFrom = emp2.JoiningDate, IsPrimary = true, IsActive = true });
         await db.SaveChangesAsync(ct);
     }
+
+    // ── Shared operational data seed (leave + payroll + attendance) ──────────
+    // Called for both IntelliFlow and Evostel after org structure is seeded.
+    private static async Task SeedOperationalDataAsync(ZayraDbContext db, Guid tenantId, ILogger logger, CancellationToken ct)
+    {
+        var employees = await db.Employees
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted && (e.Status == "Active" || e.Status == "Confirmed" || e.Status == "Probation"))
+            .ToListAsync(ct);
+        if (employees.Count == 0) return;
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+
+        // ── Leave types ──────────────────────────────────────────────────────
+        var ltDefs = new (string Code, string En, string Ar, string Cat, bool Paid)[]
+        {
+            ("ANNUAL",    "Annual Leave",    "إجازة سنوية",      "Annual",    true),
+            ("SICK",      "Sick Leave",      "إجازة مرضية",      "Sick",      true),
+            ("CASUAL",    "Casual Leave",    "إجازة عارضة",      "Casual",    true),
+            ("MATERNITY", "Maternity Leave", "إجازة أمومة",      "Maternity", true),
+            ("PATERNITY", "Paternity Leave", "إجازة الأبوة",     "Paternity", true),
+            ("HAJJ",      "Hajj Leave",      "إجازة الحج",       "Religious", true),
+            ("UNPAID",    "Unpaid Leave",    "إجازة بدون راتب",  "Unpaid",    false),
+        };
+        var leaveTypes = new List<LeaveType>();
+        var ltSort = 0;
+        foreach (var lt in ltDefs)
+        {
+            var existing = await db.LeaveTypes.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Code == lt.Code, ct);
+            if (existing is null)
+            {
+                existing = new LeaveType { TenantId = tenantId, Code = lt.Code, NameEn = lt.En, NameAr = lt.Ar, Category = lt.Cat, IsPaid = lt.Paid, IsActive = true, SortOrder = ltSort };
+                db.LeaveTypes.Add(existing);
+            }
+            leaveTypes.Add(existing);
+            ltSort++;
+        }
+        await db.SaveChangesAsync(ct);
+
+        var annual = leaveTypes.First(x => x.Code == "ANNUAL");
+        var sick   = leaveTypes.First(x => x.Code == "SICK");
+        var casual = leaveTypes.First(x => x.Code == "CASUAL");
+        var unpaid = leaveTypes.First(x => x.Code == "UNPAID");
+
+        // ── Attendance (last 90 days, working days only) ─────────────────────
+        var seededEmpIds = await db.AttendanceRecords
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => x.EmployeeId).Distinct().ToListAsync(ct);
+        var attendTargets = employees.Where(e => !seededEmpIds.Contains(e.Id)).ToList();
+        if (attendTargets.Count > 0)
+        {
+            var rng = new Random(tenantId.GetHashCode() & 0x7fffffff);
+            var records = new List<AttendanceRecord>();
+            for (var d = today.AddDays(-90); d <= today; d = d.AddDays(1))
+            {
+                if (d.DayOfWeek is DayOfWeek.Friday or DayOfWeek.Saturday) continue;
+                foreach (var emp in attendTargets)
+                {
+                    var r = rng.Next(100);
+                    var status = r < 83 ? "Present" : r < 91 ? "Late" : r < 95 ? "Leave" : "Absent";
+                    records.Add(new AttendanceRecord
+                    {
+                        TenantId = tenantId, EmployeeId = emp.Id, WorkDate = d, Status = status,
+                        TimeIn  = status is "Present" ? new TimeOnly(8, 30) : status is "Late" ? new TimeOnly(9, 15) : null,
+                        TimeOut = status is "Present" or "Late" ? new TimeOnly(17, 30) : null,
+                        OvertimeHours = status == "Present" && rng.Next(100) < 18 ? rng.Next(1, 4) : 0,
+                        Notes = string.Empty,
+                    });
+                }
+            }
+            db.AttendanceRecords.AddRange(records);
+            await db.SaveChangesAsync(ct);
+        }
+
+        // ── Leave requests (sample data) ─────────────────────────────────────
+        if (!await db.LeaveRequests.AnyAsync(x => x.TenantId == tenantId, ct) && employees.Count >= 2)
+        {
+            var requests = new List<LeaveRequest>
+            {
+                new() { TenantId=tenantId, EmployeeId=employees[0].Id, EmployeeName=employees[0].FullName, DepartmentName=employees[0].Department, LeaveTypeId=annual.Id, LeaveTypeName=annual.NameEn, StartDate=today.AddDays(5),   EndDate=today.AddDays(9),   DayType="Full", Reason="Family vacation",   Status="Submitted",  SubmittedAtUtc=DateTime.UtcNow.AddDays(-1) },
+                new() { TenantId=tenantId, EmployeeId=employees[1].Id, EmployeeName=employees[1].FullName, DepartmentName=employees[1].Department, LeaveTypeId=sick.Id,   LeaveTypeName=sick.NameEn,   StartDate=today.AddDays(-2),  EndDate=today.AddDays(-1), DayType="Full", Reason="Flu",              Status="Approved",   SubmittedAtUtc=DateTime.UtcNow.AddDays(-3),  DecidedAtUtc=DateTime.UtcNow.AddDays(-2) },
+            };
+            if (employees.Count >= 5)
+            {
+                requests.AddRange(new[]
+                {
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[2].Id, EmployeeName=employees[2].FullName, DepartmentName=employees[2].Department, LeaveTypeId=annual.Id,  LeaveTypeName=annual.NameEn,  StartDate=today.AddDays(12),  EndDate=today.AddDays(14),  DayType="Full", Reason="Personal",         Status="Submitted",  SubmittedAtUtc=DateTime.UtcNow.AddHours(-6) },
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[3].Id, EmployeeName=employees[3].FullName, DepartmentName=employees[3].Department, LeaveTypeId=casual.Id, LeaveTypeName=casual.NameEn,  StartDate=today.AddDays(2),   EndDate=today.AddDays(2),   DayType="Full", Reason="Bank errand",      Status="Approved",   SubmittedAtUtc=DateTime.UtcNow.AddDays(-2),  DecidedAtUtc=DateTime.UtcNow.AddDays(-1) },
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[4].Id, EmployeeName=employees[4].FullName, DepartmentName=employees[4].Department, LeaveTypeId=sick.Id,   LeaveTypeName=sick.NameEn,    StartDate=today.AddDays(-5),  EndDate=today.AddDays(-4),  DayType="Full", Reason="Medical checkup",  Status="Approved",   SubmittedAtUtc=DateTime.UtcNow.AddDays(-6),  DecidedAtUtc=DateTime.UtcNow.AddDays(-5) },
+                });
+            }
+            if (employees.Count >= 10)
+            {
+                requests.AddRange(new[]
+                {
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[6].Id,  EmployeeName=employees[6].FullName,  DepartmentName=employees[6].Department,  LeaveTypeId=annual.Id,  LeaveTypeName=annual.NameEn,  StartDate=today.AddDays(20),  EndDate=today.AddDays(30),  DayType="Full", Reason="Summer holiday",   Status="Submitted",  SubmittedAtUtc=DateTime.UtcNow.AddHours(-3) },
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[8].Id,  EmployeeName=employees[8].FullName,  DepartmentName=employees[8].Department,  LeaveTypeId=sick.Id,   LeaveTypeName=sick.NameEn,    StartDate=today.AddDays(-1),  EndDate=today.AddDays(-1),  DayType="Full", Reason="Headache",         Status="Submitted",  SubmittedAtUtc=DateTime.UtcNow.AddHours(-10) },
+                    new LeaveRequest { TenantId=tenantId, EmployeeId=employees[9].Id,  EmployeeName=employees[9].FullName,  DepartmentName=employees[9].Department,  LeaveTypeId=unpaid.Id, LeaveTypeName=unpaid.NameEn,  StartDate=today.AddDays(-15), EndDate=today.AddDays(-11), DayType="Full", Reason="Emergency travel",  Status="Approved",   SubmittedAtUtc=DateTime.UtcNow.AddDays(-18), DecidedAtUtc=DateTime.UtcNow.AddDays(-17) },
+                });
+            }
+            db.LeaveRequests.AddRange(requests);
+            await db.SaveChangesAsync(ct);
+        }
+
+        // ── Leave balances (current year, for all employees) ─────────────────
+        if (!await db.EmployeeLeaveBalances.AnyAsync(x => x.TenantId == tenantId, ct))
+        {
+            var balTypes = new (LeaveType Type, decimal Entitled)[] { (annual, 30m), (sick, 15m), (casual, 5m) };
+            foreach (var (emp, i) in employees.Select((e, i) => (e, i)))
+            {
+                foreach (var (lt, entitled) in balTypes)
+                {
+                    var used = Math.Min(entitled, (i * 3 + (lt.Code == "SICK" ? 1 : 4)) % (int)entitled);
+                    db.EmployeeLeaveBalances.Add(new EmployeeLeaveBalance
+                    {
+                        TenantId = tenantId, EmployeeId = emp.Id, EmployeeName = emp.FullName,
+                        LeaveTypeId = lt.Id, LeaveTypeName = lt.NameEn, Year = today.Year,
+                        Entitled = entitled, Accrued = Math.Round(entitled * today.Month / 12m, 1),
+                        Used = used, Pending = i % 6 == 0 ? 2 : 0,
+                        CarriedForward = lt.Code == "ANNUAL" && i % 4 == 0 ? 5 : 0,
+                    });
+                }
+            }
+            await db.SaveChangesAsync(ct);
+        }
+
+        // ── Payroll runs: 6 completed months + 1 draft current month ────────
+        var rng2 = new Random(42);
+        for (var m = 6; m >= 0; m--)
+        {
+            var period = new DateOnly(today.Year, today.Month, 1).AddMonths(-m);
+            if (await db.PayrollRuns.AnyAsync(x => x.TenantId == tenantId && x.Year == period.Year && x.Month == period.Month, ct)) continue;
+            var isPending = m == 0;
+            var run = new PayrollRun
+            {
+                TenantId = tenantId, Year = period.Year, Month = period.Month,
+                Status = isPending ? "Draft" : "Completed",
+                CreatedAtUtc = DateTime.UtcNow.AddMonths(-m).AddDays(-8),
+                ProcessedAtUtc = isPending ? null : (DateTime?)DateTime.UtcNow.AddMonths(-m).AddDays(-5),
+            };
+            decimal tg = 0, td = 0, tn = 0;
+            var slips = new List<PayrollSlip>();
+            foreach (var emp in employees)
+            {
+                var basic = GetSalaryForEmployee(emp) * (1 + (rng2.Next(3) == 0 ? 0.05m : 0m));
+                var housing    = Math.Round(basic * 0.25m);
+                var transport  = 1_000m;
+                var gross      = basic + housing + transport;
+                var deductions = Math.Round(gross * 0.05m);
+                var net        = gross - deductions;
+                tg += gross; td += deductions; tn += net;
+                slips.Add(new PayrollSlip
+                {
+                    TenantId=tenantId, RunId=run.Id, EmployeeId=emp.Id, EmployeeCode=emp.EmployeeCode,
+                    EmployeeName=emp.FullName, Department=emp.Department ?? "",
+                    BasicSalary=Math.Round(basic), HousingAllowance=housing, TransportAllowance=transport, OtherAllowances=0,
+                    GrossSalary=gross, Deductions=deductions, NetSalary=net,
+                    Status=isPending ? "Draft" : "Paid",
+                });
+            }
+            run.TotalGrossSalary=tg; run.TotalDeductions=td; run.TotalNetSalary=tn; run.EmployeeCount=slips.Count;
+            db.PayrollRuns.Add(run);
+            db.PayrollSlips.AddRange(slips);
+            await db.SaveChangesAsync(ct);
+        }
+
+        logger.LogInformation("DemoDataSeeder: seeded operational data (leave + payroll + attendance) for tenant {TenantId}.", tenantId);
+    }
+
+    private static decimal GetSalaryForEmployee(Employee emp) => emp.Grade switch
+    {
+        "L7" => 35_000m, "L6" => 25_000m, "L5" => 18_000m,
+        "L3" => 14_000m, "L2" => 10_000m,
+        "M1" => 12_000m, "S2" =>  8_000m, "S1" =>  6_000m,
+        _    => 10_000m,
+    };
 
     private static Employee AddEmployee(
         ZayraDbContext db,

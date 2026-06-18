@@ -37,6 +37,8 @@ public class LeaveRequestsController : ControllerBase
         [FromQuery] DateOnly? fromDate,
         [FromQuery] DateOnly? toDate,
         [FromQuery] string? departmentName,
+        [FromQuery] Guid? companyId,
+        [FromQuery] Guid? branchId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
@@ -56,6 +58,14 @@ public class LeaveRequestsController : ControllerBase
         if (fromDate.HasValue) query = query.Where(r => r.EndDate >= fromDate.Value);
         if (toDate.HasValue) query = query.Where(r => r.StartDate <= toDate.Value);
         if (!string.IsNullOrWhiteSpace(departmentName)) query = query.Where(r => r.DepartmentName == departmentName);
+        if (companyId.HasValue || branchId.HasValue)
+        {
+            var empQ = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted);
+            if (companyId.HasValue) empQ = empQ.Where(e => e.CompanyId == companyId);
+            if (branchId.HasValue)  empQ = empQ.Where(e => e.BranchId  == branchId);
+            var ids = await empQ.Select(e => e.Id).ToListAsync(ct);
+            query = query.Where(r => ids.Contains(r.EmployeeId));
+        }
 
         var total = await query.CountAsync(ct);
         var items = await query

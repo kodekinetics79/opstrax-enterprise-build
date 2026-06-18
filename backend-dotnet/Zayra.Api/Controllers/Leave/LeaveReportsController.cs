@@ -22,7 +22,7 @@ public class LeaveReportsController : ControllerBase
     }
 
     [HttpGet("dashboard")]
-    public async Task<IActionResult> Dashboard(CancellationToken ct)
+    public async Task<IActionResult> Dashboard([FromQuery] Guid? companyId, [FromQuery] Guid? branchId, CancellationToken ct)
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
@@ -30,11 +30,21 @@ public class LeaveReportsController : ControllerBase
         var scope = await _scopeService.ResolveAsync(User, tenantId.Value, ct);
         var allowedIds = scope.IsUnrestricted ? null : scope.AllowedEmployeeIds!.ToList();
 
+        List<int>? companyFilterIds = null;
+        if (companyId.HasValue || branchId.HasValue)
+        {
+            var empQ = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted);
+            if (companyId.HasValue) empQ = empQ.Where(e => e.CompanyId == companyId);
+            if (branchId.HasValue)  empQ = empQ.Where(e => e.BranchId  == branchId);
+            companyFilterIds = await empQ.Select(e => e.Id).ToListAsync(ct);
+        }
+
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var pendingStatuses = new[] { "Submitted", "PendingManagerApproval", "PendingHRApproval" };
 
         var leaveQuery = _db.LeaveRequests.Where(r => r.TenantId == tenantId);
         if (allowedIds is not null) leaveQuery = leaveQuery.Where(r => allowedIds.Contains(r.EmployeeId));
+        if (companyFilterIds is not null) leaveQuery = leaveQuery.Where(r => companyFilterIds.Contains(r.EmployeeId));
 
         var onLeaveToday = await leaveQuery.CountAsync(r => r.Status == "Approved" && r.StartDate <= today && r.EndDate >= today, ct);
         var pendingApprovals = await leaveQuery.CountAsync(r => pendingStatuses.Contains(r.Status), ct);
@@ -43,18 +53,22 @@ public class LeaveReportsController : ControllerBase
 
         var encashQuery = _db.LeaveEncashmentRequests.Where(e => e.TenantId == tenantId);
         if (allowedIds is not null) encashQuery = encashQuery.Where(e => allowedIds.Contains(e.EmployeeId));
+        if (companyFilterIds is not null) encashQuery = encashQuery.Where(e => companyFilterIds.Contains(e.EmployeeId));
         var pendingEncashments = await encashQuery.CountAsync(e => e.Status == "Pending" || e.Status == "HRApproved", ct);
 
         var absenceQuery = _db.AbsenceRecords.Where(a => a.TenantId == tenantId);
         if (allowedIds is not null) absenceQuery = absenceQuery.Where(a => allowedIds.Contains(a.EmployeeId));
+        if (companyFilterIds is not null) absenceQuery = absenceQuery.Where(a => companyFilterIds.Contains(a.EmployeeId));
         var unauthorizedAbsences = await absenceQuery.CountAsync(a => !a.IsRegularized, ct);
 
         var compOffQuery = _db.CompOffCredits.Where(c => c.TenantId == tenantId);
         if (allowedIds is not null) compOffQuery = compOffQuery.Where(c => allowedIds.Contains(c.EmployeeId));
+        if (companyFilterIds is not null) compOffQuery = compOffQuery.Where(c => companyFilterIds.Contains(c.EmployeeId));
         var pendingCompOff = await compOffQuery.CountAsync(c => c.Status == "Pending", ct);
 
         var delegationQuery = _db.LeaveDelegations.Where(d => d.TenantId == tenantId);
         if (allowedIds is not null) delegationQuery = delegationQuery.Where(d => allowedIds.Contains(d.EmployeeId));
+        if (companyFilterIds is not null) delegationQuery = delegationQuery.Where(d => companyFilterIds.Contains(d.EmployeeId));
         var activeDelegations = await delegationQuery.CountAsync(d => d.Status == "Active", ct);
 
         return Ok(new

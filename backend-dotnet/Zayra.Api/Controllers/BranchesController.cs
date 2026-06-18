@@ -1,8 +1,13 @@
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Common.Import;
 using Zayra.Api.Application.Organization;
+using Zayra.Api.Data;
+using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
 
@@ -12,10 +17,15 @@ namespace Zayra.Api.Controllers;
 public class BranchesController : ControllerBase
 {
     private readonly IOrganizationSetupService _organization;
+    private readonly ZayraDbContext _db;
 
-    public BranchesController(IOrganizationSetupService organization)
+    private static readonly string[] CsvHeaders =
+        { "CompanyLegalName", "Code", "NameEn", "NameAr", "CountryCode", "City", "IsHeadOffice", "IsActive" };
+
+    public BranchesController(IOrganizationSetupService organization, ZayraDbContext db)
     {
         _organization = organization;
+        _db = db;
     }
 
     [HttpGet]
@@ -72,5 +82,154 @@ public class BranchesController : ControllerBase
         return await _organization.DeleteBranchAsync(tenantId.Value, id, Context(), cancellationToken) ? NoContent() : NotFound();
     }
 
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    [HttpGet("export")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> Export(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var branches = await _db.Branches.AsNoTracking()
+            .Where(b => b.TenantId == tenantId.Value && !b.IsDeleted)
+            .Join(_db.Companies.AsNoTracking(), b => b.CompanyId, c => c.Id, (b, c) => new { b, c })
+            .OrderBy(x => x.c.LegalNameEn).ThenBy(x => x.b.Code)
+            .ToListAsync(ct);
+        var rows = branches.Select(x => (IReadOnlyList<object?>)new object?[]
+        {
+            x.c.LegalNameEn, x.b.Code, x.b.NameEn, x.b.NameAr,
+            x.b.CountryCode, x.b.City, x.b.IsHeadOffice ? "true" : "false",
+            x.b.IsActive ? "true" : "false"
+        });
+        return File(Encoding.UTF8.GetBytes(Csv.Build(CsvHeaders, rows)), "text/csv", $"branches_{DateTime.UtcNow:yyyyMMdd}.csv");
+    }
+
+    // ── Import Template ───────────────────────────────────────────────────────
+
+    [HttpGet("import-template")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public IActionResult ImportTemplate()
+    {
+        var sb = new StringBuilder();
+        sb.Append(string.Join(",", CsvHeaders)).Append('\n');
+        sb.Append("IntelliFlow Systems LLC,HQ,Head Office,المقر الرئيسي,AE,Dubai,true,true\n");
+        sb.Append("IntelliFlow Systems LLC,RYD,Riyadh Office,,SA,Riyadh,false,true\n");
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv", "branches_import_template.csv");
+    }
+
+    // ── Import Preview ────────────────────────────────────────────────────────
+
+    [HttpPost("import-preview")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> ImportPreview([FromBody] BranchImportRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        return Ok(await RunPreviewAsync(tenantId.Value, req.Csv, ct));
+    }
+
+    // ── Import Commit ─────────────────────────────────────────────────────────
+
+    [HttpPost("import")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    public async Task<IActionResult> Import([FromBody] BranchImportRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        return Ok(await RunCommitAsync(tenantId.Value, req.Csv, ct));
+    }
+
+    private async Task<ImportPreviewResult> RunPreviewAsync(Guid tenantId, string csv, CancellationToken ct)
+    {
+        var rows = Csv.Parse(csv);
+        var companiesByName = await _db.Companies.AsNoTracking()
+            .Where(c => c.TenantId == tenantId && !c.IsDeleted)
+            .ToDictionaryAsync(c => c.LegalNameEn.ToUpperInvariant(), ct);
+        var existingByCode = await _db.Branches.AsNoTracking()
+            .Where(b => b.TenantId == tenantId && !b.IsDeleted)
+            .ToDictionaryAsync(b => b.Code.ToUpperInvariant(), ct);
+        var rowResults = new List<ImportRowResult>();
+        int wouldCreate = 0, wouldUpdate = 0, wouldSkip = 0;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i]; var rowNum = i + 2;
+            var companyName = row.GetValueOrDefault("CompanyLegalName", string.Empty).Trim();
+            var code = row.GetValueOrDefault("Code", string.Empty).Trim();
+            var nameEn = row.GetValueOrDefault("NameEn", string.Empty).Trim();
+            var errors = new List<string>();
+            if (string.IsNullOrWhiteSpace(companyName)) errors.Add("CompanyLegalName is required");
+            else if (!companiesByName.ContainsKey(companyName.ToUpperInvariant())) errors.Add($"Company '{companyName}' not found in this tenant");
+            if (string.IsNullOrWhiteSpace(code)) errors.Add("Code is required");
+            if (string.IsNullOrWhiteSpace(nameEn)) errors.Add("NameEn is required");
+            if (!string.IsNullOrWhiteSpace(code) && seen.Contains(code)) errors.Add($"Duplicate Code '{code}' in this batch");
+            if (errors.Count > 0) { wouldSkip++; rowResults.Add(new ImportRowResult(rowNum, code, nameEn, ImportRowStatus.Error, errors, new List<string>())); continue; }
+            seen.Add(code);
+            bool exists = existingByCode.ContainsKey(code.ToUpperInvariant());
+            if (exists) wouldUpdate++; else wouldCreate++;
+            rowResults.Add(new ImportRowResult(rowNum, code, nameEn, ImportRowStatus.Ok, errors, new List<string>()));
+        }
+        return new ImportPreviewResult(rows.Count, wouldCreate, wouldUpdate, wouldSkip, rowResults);
+    }
+
+    private async Task<ImportCommitResult> RunCommitAsync(Guid tenantId, string csv, CancellationToken ct)
+    {
+        var rows = Csv.Parse(csv);
+        var companiesByName = await _db.Companies.AsNoTracking()
+            .Where(c => c.TenantId == tenantId && !c.IsDeleted)
+            .ToDictionaryAsync(c => c.LegalNameEn.ToUpperInvariant(), ct);
+        var existingByCode = await _db.Branches
+            .Where(b => b.TenantId == tenantId && !b.IsDeleted)
+            .ToDictionaryAsync(b => b.Code.ToUpperInvariant(), ct);
+        var rowResults = new List<ImportRowResult>();
+        int created = 0, updated = 0, skipped = 0;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i]; var rowNum = i + 2;
+            var companyName = row.GetValueOrDefault("CompanyLegalName", string.Empty).Trim();
+            var code = row.GetValueOrDefault("Code", string.Empty).Trim();
+            var nameEn = row.GetValueOrDefault("NameEn", string.Empty).Trim();
+            var errors = new List<string>();
+            if (string.IsNullOrWhiteSpace(companyName)) errors.Add("CompanyLegalName is required");
+            if (!companiesByName.TryGetValue(companyName.ToUpperInvariant(), out var company)) { errors.Add($"Company '{companyName}' not found"); }
+            if (string.IsNullOrWhiteSpace(code)) errors.Add("Code is required");
+            if (string.IsNullOrWhiteSpace(nameEn)) errors.Add("NameEn is required");
+            if (!string.IsNullOrWhiteSpace(code) && seen.Contains(code)) errors.Add($"Duplicate Code '{code}' in this batch");
+            if (errors.Count > 0) { skipped++; rowResults.Add(new ImportRowResult(rowNum, code, nameEn, ImportRowStatus.Error, errors, new List<string>())); continue; }
+            seen.Add(code);
+            bool isHeadOffice = row.TryGetValue("IsHeadOffice", out var hov) && string.Equals(hov, "true", StringComparison.OrdinalIgnoreCase);
+            bool isActive = !row.TryGetValue("IsActive", out var av) || !string.Equals(av, "false", StringComparison.OrdinalIgnoreCase);
+            var country = row.GetValueOrDefault("CountryCode", string.Empty).Trim();
+            var city = row.GetValueOrDefault("City", string.Empty).Trim();
+
+            if (existingByCode.TryGetValue(code.ToUpperInvariant(), out var existing))
+            {
+                existing.NameEn = nameEn;
+                existing.NameAr = row.GetValueOrDefault("NameAr", existing.NameAr).Trim();
+                existing.CountryCode = country; existing.City = city;
+                existing.IsHeadOffice = isHeadOffice; existing.IsActive = isActive;
+                existing.UpdatedAtUtc = DateTime.UtcNow; updated++;
+            }
+            else
+            {
+                _db.Branches.Add(new Branch
+                {
+                    TenantId = tenantId, CompanyId = company!.Id, Code = code,
+                    NameEn = nameEn, NameAr = row.GetValueOrDefault("NameAr", string.Empty).Trim(),
+                    CountryCode = country, City = city, IsHeadOffice = isHeadOffice,
+                    IsActive = isActive, TimeZoneId = "Asia/Dubai",
+                }); created++;
+            }
+            rowResults.Add(new ImportRowResult(rowNum, code, nameEn, ImportRowStatus.Ok, errors, new List<string>()));
+        }
+        await _db.SaveChangesAsync(ct);
+        return new ImportCommitResult(rows.Count, created, updated, skipped, rowResults, Array.Empty<string>());
+    }
+
     private RequestContext Context() => new(HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), this.GetUserId(), this.GetTenantId());
 }
+
+public record BranchImportRequest(string Csv);

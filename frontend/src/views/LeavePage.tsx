@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  Activity, AlertTriangle, BarChart2, Calendar, CheckCircle,
-  ChevronRight, Clock, FileText, Plus, Settings, Star,
+  Activity, AlertTriangle, BarChart2, Building2, Calendar, CheckCircle,
+  ChevronRight, Clock, FileText, GitBranch, Plus, Settings, Star,
   TrendingUp, Users, X, Zap, Shield, RefreshCw,
 } from 'lucide-react';
 import {
@@ -22,6 +22,8 @@ import type {
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
 import { InfoTip } from '../components/InfoTip';
 import client from '../api/client';
+import { companiesApi, branchesApi } from '../api/organization';
+import type { CompanyDto, BranchDto } from '../api/organization';
 
 // ── Leave import/export helpers ───────────────────────────────────────────────
 
@@ -149,20 +151,95 @@ function LeaveColorDot({ color }: { color: string }) {
   return <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
 }
 
+// ── Group / Company Context ───────────────────────────────────────────────────
+
+export interface GroupFilter {
+  companyId?: string;
+  branchId?: string;
+}
+
+function GroupContextBar({
+  companies, companyId, onCompanyChange,
+  branches, branchId, onBranchChange,
+}: {
+  companies: CompanyDto[];
+  companyId: string;
+  onCompanyChange: (id: string) => void;
+  branches: BranchDto[];
+  branchId: string;
+  onBranchChange: (id: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sapphire/20 bg-sapphire/5 px-4 py-2.5 dark:border-cyanAccent/20 dark:bg-cyanAccent/5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-sapphire dark:text-cyanAccent">
+        <Building2 className="h-3.5 w-3.5" />
+        <span>Group</span>
+      </div>
+      <ChevronRight className="h-3.5 w-3.5 text-slate-300 dark:text-white/20" />
+      <select
+        title="Filter by company"
+        className={`${sel} w-52 !border-sapphire/30 !bg-white dark:!bg-white/10`}
+        value={companyId}
+        onChange={e => { onCompanyChange(e.target.value); onBranchChange(''); }}
+      >
+        <option value="">All Group Companies</option>
+        {companies.map(c => (
+          <option key={c.id} value={c.id}>{c.legalNameEn || c.tradeName}</option>
+        ))}
+      </select>
+      {companyId && branches.length > 0 && (
+        <>
+          <ChevronRight className="h-3.5 w-3.5 text-slate-300 dark:text-white/20" />
+          <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <GitBranch className="h-3.5 w-3.5" />
+          </div>
+          <select
+            title="Filter by branch"
+            className={`${sel} w-44 !border-sapphire/30 !bg-white dark:!bg-white/10`}
+            value={branchId}
+            onChange={e => onBranchChange(e.target.value)}
+          >
+            <option value="">All Branches</option>
+            {branches.map(b => (
+              <option key={b.id} value={b.id}>{b.nameEn}</option>
+            ))}
+          </select>
+        </>
+      )}
+      {(companyId || branchId) && (
+        <button
+          type="button"
+          className="ml-1 text-xs text-slate-400 underline hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+          onClick={() => { onCompanyChange(''); onBranchChange(''); }}
+        >
+          Clear
+        </button>
+      )}
+      <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
+        {companyId
+          ? (branchId
+            ? branches.find(b => b.id === branchId)?.nameEn ?? 'Branch'
+            : companies.find(c => c.id === companyId)?.legalNameEn ?? 'Company')
+          : `${companies.length} compan${companies.length !== 1 ? 'ies' : 'y'} in group`}
+      </span>
+    </div>
+  );
+}
+
 // ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
-function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+function DashboardTab({ onNavigate, groupFilter = {} }: { onNavigate: (tab: Tab) => void; groupFilter?: GroupFilter }) {
   const [dash, setDash] = useState<LeaveDashboard | null>(null);
   const [onLeave, setOnLeave] = useState<LeaveCalendarEntry[]>([]);
   const [pending, setPending] = useState<LeaveRequest[]>([]);
 
   useEffect(() => {
-    leaveReportsApi.dashboard().then(setDash).catch(() => {});
+    leaveReportsApi.dashboard(groupFilter).then(setDash).catch(() => {});
     leaveCalendarApi.today().then(data => setOnLeave(Array.isArray(data) ? data : [])).catch(() => {});
-    leaveRequestsApi.list({ status: 'PendingManagerApproval' })
+    leaveRequestsApi.list({ status: 'PendingManagerApproval', ...groupFilter })
       .then(r => setPending(Array.isArray(r?.items) ? r.items.slice(0, 6) : []))
       .catch(() => {});
-  }, []);
+  }, [groupFilter.companyId, groupFilter.branchId]);
 
   return (
     <div className="space-y-6">
@@ -246,7 +323,7 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
 // ── Balance Tab ───────────────────────────────────────────────────────────────
 
-function BalanceTab({ selfEmployeeId }: { selfEmployeeId?: number }) {
+function BalanceTab({ selfEmployeeId, groupFilter = {} }: { selfEmployeeId?: number; groupFilter?: GroupFilter }) {
   const [balances, setBalances] = useState<EmployeeLeaveBalance[]>([]);
   const [loading, setLoading] = useState(true);
   const [empId, setEmpId] = useState(selfEmployeeId ? String(selfEmployeeId) : '');
@@ -257,10 +334,10 @@ function BalanceTab({ selfEmployeeId }: { selfEmployeeId?: number }) {
 
   const load = () => {
     setLoading(true);
-    leaveBalancesApi.list({ employeeId: empId ? Number(empId) : undefined, year })
+    leaveBalancesApi.list({ employeeId: empId ? Number(empId) : undefined, year, ...groupFilter })
       .then(setBalances).catch(() => {}).finally(() => setLoading(false));
   };
-  useEffect(load, [year]);
+  useEffect(load, [year, groupFilter.companyId, groupFilter.branchId]);
 
   const adjust = async () => {
     if (!adjustModal || !adjReason) return;
@@ -593,7 +670,7 @@ function MyRequestsTab() {
 
 // ── Approvals Tab ─────────────────────────────────────────────────────────────
 
-function ApprovalsTab() {
+function ApprovalsTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectModal, setRejectModal] = useState<LeaveRequest | null>(null);
@@ -601,9 +678,9 @@ function ApprovalsTab() {
 
   const load = () => {
     setLoading(true);
-    leaveRequestsApi.list({ status: 'PendingManagerApproval' }).then(r => { setRequests(r.items); setLoading(false); }).catch(() => setLoading(false));
+    leaveRequestsApi.list({ status: 'PendingManagerApproval', ...groupFilter }).then(r => { setRequests(r.items); setLoading(false); }).catch(() => setLoading(false));
   };
-  useEffect(load, []);
+  useEffect(load, [groupFilter.companyId, groupFilter.branchId]);
 
   const approve = async (id: string) => { try { await leaveRequestsApi.approve(id); load(); } catch { alert('Approval failed.'); } };
   const reject = async () => {
@@ -666,7 +743,7 @@ function ApprovalsTab() {
 
 // ── Calendar Tab ──────────────────────────────────────────────────────────────
 
-function CalendarTab() {
+function CalendarTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const today = new Date();
   const [month, setMonth] = useState(today.getMonth());
   const [calYear, setCalYear] = useState(today.getFullYear());
@@ -679,8 +756,8 @@ function CalendarTab() {
   const toDate = lastDay.toISOString().split('T')[0];
 
   useEffect(() => {
-    leaveCalendarApi.entries({ fromDate, toDate, departmentName: dept || undefined }).then(setEntries).catch(() => {});
-  }, [month, calYear, dept]);
+    leaveCalendarApi.entries({ fromDate, toDate, departmentName: dept || undefined, ...groupFilter }).then(setEntries).catch(() => {});
+  }, [month, calYear, dept, groupFilter.companyId, groupFilter.branchId]);
 
   const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const startPad = firstDay.getDay();
@@ -1183,7 +1260,7 @@ function HolidayCalendarTab() {
 
 // ── Encashment Tab ────────────────────────────────────────────────────────────
 
-function EncashmentTab() {
+function EncashmentTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [requests, setRequests] = useState<LeaveEncashmentRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
@@ -1192,8 +1269,8 @@ function EncashmentTab() {
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof form, v: string | number) => setForm(f => ({ ...f, [k]: v }));
 
-  const load = () => { setLoading(true); encashmentApi.list().then(setRequests).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(() => { load(); leaveTypesApi.list().then(setLeaveTypes).catch(() => {}); }, []);
+  const load = () => { setLoading(true); encashmentApi.list(groupFilter).then(setRequests).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(() => { load(); leaveTypesApi.list().then(setLeaveTypes).catch(() => {}); }, [groupFilter.companyId, groupFilter.branchId]);
 
   const create = async () => {
     if (!form.employeeId || !form.leaveTypeId || !form.daysToEncash || !form.amountPerDay) return;
@@ -1275,7 +1352,7 @@ function EncashmentTab() {
 
 // ── Comp-Off Tab ──────────────────────────────────────────────────────────────
 
-function CompOffTab() {
+function CompOffTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [credits, setCredits] = useState<CompOffCredit[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -1283,8 +1360,8 @@ function CompOffTab() {
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
 
-  const load = () => { setLoading(true); compOffApi.list().then(setCredits).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(load, []);
+  const load = () => { setLoading(true); compOffApi.list(groupFilter).then(setCredits).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, [groupFilter.companyId, groupFilter.branchId]);
 
   const create = async () => {
     if (!form.employeeId || !form.workedDate || !form.daysEarned) return;
@@ -1354,14 +1431,14 @@ function CompOffTab() {
 
 // ── Absences Tab ──────────────────────────────────────────────────────────────
 
-function AbsencesTab() {
+function AbsencesTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [absences, setAbsences] = useState<AbsenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [regModal, setRegModal] = useState<AbsenceRecord | null>(null);
   const [regReason, setRegReason] = useState('');
 
-  const load = () => { setLoading(true); absenceApi.list().then(setAbsences).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(load, []);
+  const load = () => { setLoading(true); absenceApi.list(groupFilter).then(setAbsences).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, [groupFilter.companyId, groupFilter.branchId]);
 
   const regularize = async () => {
     if (!regModal || !regReason) return;
@@ -1417,15 +1494,15 @@ function AbsencesTab() {
 
 // ── Reports Tab ───────────────────────────────────────────────────────────────
 
-function ReportsTab() {
+function ReportsTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [view, setView] = useState<'onleave' | 'sick'>('onleave');
   const [onLeave, setOnLeave] = useState<LeaveRequest[]>([]);
   const [sickTrend, setSickTrend] = useState<{ month: string; count: number; totalDays: number }[]>([]);
 
   useEffect(() => {
-    leaveReportsApi.onLeaveToday().then(setOnLeave).catch(() => {});
-    leaveReportsApi.sickLeaveTrend().then(setSickTrend).catch(() => {});
-  }, []);
+    leaveReportsApi.onLeaveToday(groupFilter).then(setOnLeave).catch(() => {});
+    leaveReportsApi.sickLeaveTrend(groupFilter).then(setSickTrend).catch(() => {});
+  }, [groupFilter.companyId, groupFilter.branchId]);
 
   return (
     <div className="space-y-4">
@@ -1562,11 +1639,35 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
 export function LeavePage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [companies, setCompanies] = useState<CompanyDto[]>([]);
+  const [branches, setBranches] = useState<BranchDto[]>([]);
+  const [companyId, setCompanyId] = useState('');
+  const [branchId, setBranchId] = useState('');
 
   const isAdmin    = user?.roles.some(r => ['Admin', 'HR Manager', 'HR Officer'].includes(r)) ?? false;
   const isManager  = !isAdmin && (user?.roles.some(r => ['Manager', 'Supervisor'].includes(r)) ?? false);
   const isEmployee = !isAdmin && !isManager;
   const selfEmployeeId = user?.employeeId;
+
+  useEffect(() => {
+    if (isAdmin) {
+      companiesApi.list(1, 100).then(r => setCompanies(r.items)).catch(() => {});
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (companyId) {
+      branchesApi.list(companyId, 1, 100).then(r => setBranches(r.items)).catch(() => {});
+    } else {
+      setBranches([]);
+      setBranchId('');
+    }
+  }, [companyId]);
+
+  const groupFilter: GroupFilter = {
+    companyId: companyId || undefined,
+    branchId: branchId || undefined,
+  };
 
   const requestsLabel = isAdmin ? 'All Requests' : isManager ? 'Team Requests' : 'My Leave';
 
@@ -1582,7 +1683,7 @@ export function LeavePage() {
     });
 
   const subtitle = isAdmin
-    ? 'Manage leave across the organisation — policies, balances, workflows, encashment, comp-off, absence records, and AI insights.'
+    ? 'Manage leave across all group companies — policies, balances, workflows, encashment, comp-off, absence records, and AI insights.'
     : isManager
     ? 'Approve team leave requests, track your team\'s balances, and manage absences.'
     : 'Apply for leave, track your balance, and view your leave history.';
@@ -1603,6 +1704,17 @@ export function LeavePage() {
         </span>
       </div>
 
+      {isAdmin && companies.length > 0 && (
+        <GroupContextBar
+          companies={companies}
+          companyId={companyId}
+          onCompanyChange={setCompanyId}
+          branches={branches}
+          branchId={branchId}
+          onBranchChange={setBranchId}
+        />
+      )}
+
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'max-content' }}>
           {visibleTabs.map(t => (
@@ -1615,19 +1727,19 @@ export function LeavePage() {
         </div>
       </div>
 
-      {tab === 'dashboard'  && <DashboardTab onNavigate={setTab} />}
-      {tab === 'balance'    && <BalanceTab selfEmployeeId={isEmployee ? selfEmployeeId : undefined} />}
+      {tab === 'dashboard'  && <DashboardTab onNavigate={setTab} groupFilter={groupFilter} />}
+      {tab === 'balance'    && <BalanceTab selfEmployeeId={isEmployee ? selfEmployeeId : undefined} groupFilter={groupFilter} />}
       {tab === 'apply'      && <ApplyLeaveTab selfEmployeeId={isEmployee ? selfEmployeeId : undefined} isEmployee={isEmployee} />}
       {tab === 'requests'   && <MyRequestsTab />}
-      {tab === 'approvals'  && <ApprovalsTab />}
-      {tab === 'calendar'   && <CalendarTab />}
+      {tab === 'approvals'  && <ApprovalsTab groupFilter={groupFilter} />}
+      {tab === 'calendar'   && <CalendarTab groupFilter={groupFilter} />}
       {tab === 'types'      && <LeaveTypesTab />}
       {tab === 'policies'   && <PoliciesTab />}
       {tab === 'holidays'   && <HolidayCalendarTab />}
-      {tab === 'encashment' && <EncashmentTab />}
-      {tab === 'compoff'    && <CompOffTab />}
-      {tab === 'absences'   && <AbsencesTab />}
-      {tab === 'reports'    && <ReportsTab />}
+      {tab === 'encashment' && <EncashmentTab groupFilter={groupFilter} />}
+      {tab === 'compoff'    && <CompOffTab groupFilter={groupFilter} />}
+      {tab === 'absences'   && <AbsencesTab groupFilter={groupFilter} />}
+      {tab === 'reports'    && <ReportsTab groupFilter={groupFilter} />}
       {tab === 'ai-insights'&& <AIInsightsTab />}
     </div>
   );

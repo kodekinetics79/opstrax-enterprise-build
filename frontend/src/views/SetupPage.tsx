@@ -47,6 +47,7 @@ import type {
 } from '../api/setup';
 import { Modal } from '../components/Modal';
 import { useAutoTranslate } from '../hooks/useAutoTranslate';
+import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
 
 type Tab = 'companies' | 'branches' | 'departments' | 'designations' | 'grades' | 'costCenters'
   | 'masterData' | 'numberingRules' | 'systemSettings' | 'gccSettings'
@@ -130,6 +131,14 @@ function CompaniesTab() {
         loading={loading}
         empty={items.length === 0}
         emptyLabel="No companies yet"
+        actions={
+          <ImportExportToolbar
+            entityName="Companies"
+            onExport={async () => { const csv = await companiesApi.export(); downloadCsv(csv, 'companies.csv'); }}
+            onDownloadTemplate={async () => { const csv = await companiesApi.importTemplate(); downloadCsv(csv, 'companies-template.csv'); }}
+            onImport={async (csv) => { const r = await companiesApi.import(csv); load(); return { received: r.received, created: r.created, skipped: r.skipped, errors: r.errors }; }}
+          />
+        }
       >
         {items.map((c) => (
           <tr key={c.id} className="group hover:bg-slate-50 dark:hover:bg-white/[0.03]">
@@ -270,11 +279,19 @@ function BranchesTab({ companies }: { companies: CompanyDto[] }) {
         emptyLabel="No branches yet"
         filter={
           companies.length > 0 ? (
-            <select value={filterCompany} onChange={(e) => setFilterCompany(e.target.value)} className="select">
-              <option value="">All Companies</option>
+            <select value={filterCompany} onChange={(e) => setFilterCompany(e.target.value)} className="select" title="Filter by company">
+              <option value="">All Group Companies</option>
               {companies.map((c) => <option key={c.id} value={c.id}>{c.legalNameEn}</option>)}
             </select>
           ) : undefined
+        }
+        actions={
+          <ImportExportToolbar
+            entityName="Branches"
+            onExport={async () => { const csv = await branchesApi.export(); downloadCsv(csv, 'branches.csv'); }}
+            onDownloadTemplate={async () => { const csv = await branchesApi.importTemplate(); downloadCsv(csv, 'branches-template.csv'); }}
+            onImport={async (csv) => { const r = await branchesApi.import(csv); load(); return { received: r.received, created: r.created, skipped: r.skipped, errors: r.errors }; }}
+          />
         }
       >
         {items.map((b) => (
@@ -409,6 +426,14 @@ function DepartmentsTab({ costCenters }: { costCenters: CostCenterDto[] }) {
         loading={loading}
         empty={items.length === 0}
         emptyLabel="No departments yet"
+        actions={
+          <ImportExportToolbar
+            entityName="Departments"
+            onExport={async () => { const csv = await departmentsApi.export(); downloadCsv(csv, 'departments.csv'); }}
+            onDownloadTemplate={async () => { const csv = await departmentsApi.importTemplate(); downloadCsv(csv, 'departments-template.csv'); }}
+            onImport={async (csv) => { const r = await departmentsApi.import(csv); load(); return { received: r.received, created: r.created, skipped: r.skipped, errors: r.errors }; }}
+          />
+        }
       >
         {items.map((d) => (
           <tr key={d.id} className="group hover:bg-slate-50 dark:hover:bg-white/[0.03]">
@@ -525,6 +550,14 @@ function DesignationsTab({ grades }: { grades: GradeDto[] }) {
         loading={loading}
         empty={items.length === 0}
         emptyLabel="No designations yet"
+        actions={
+          <ImportExportToolbar
+            entityName="Designations"
+            onExport={async () => { const csv = await designationsApi.export(); downloadCsv(csv, 'designations.csv'); }}
+            onDownloadTemplate={async () => { const csv = await designationsApi.importTemplate(); downloadCsv(csv, 'designations-template.csv'); }}
+            onImport={async (csv) => { const r = await designationsApi.import(csv); load(); return { received: r.received, created: r.created, skipped: r.skipped, errors: r.errors }; }}
+          />
+        }
       >
         {items.map((d) => (
           <tr key={d.id} className="group hover:bg-slate-50 dark:hover:bg-white/[0.03]">
@@ -645,7 +678,16 @@ function GradesTab() {
 
   return (
     <>
-      <TableShell columns={['Code', 'Name', 'Band', 'Level', 'Status']} onAdd={openNew} addLabel="Add Grade" loading={loading} empty={items.length === 0} emptyLabel="No grades yet">
+      <TableShell columns={['Code', 'Name', 'Band', 'Level', 'Status']} onAdd={openNew} addLabel="Add Grade" loading={loading} empty={items.length === 0} emptyLabel="No grades yet"
+        actions={
+          <ImportExportToolbar
+            entityName="Grades"
+            onExport={async () => { const csv = await gradesApi.export(); downloadCsv(csv, 'grades.csv'); }}
+            onDownloadTemplate={async () => { const csv = await gradesApi.importTemplate(); downloadCsv(csv, 'grades-template.csv'); }}
+            onImport={async (csv) => { const r = await gradesApi.import(csv); load(); return { received: r.received, created: r.created, skipped: r.skipped, errors: r.errors }; }}
+          />
+        }
+      >
         {items.map((g) => (
           <tr key={g.id} className="group hover:bg-slate-50 dark:hover:bg-white/[0.03]">
             <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{g.code}</td>
@@ -1729,7 +1771,7 @@ function EmailConfigTab() {
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
 function TableShell({
-  columns, onAdd, addLabel, loading, empty, emptyLabel, filter, children,
+  columns, onAdd, addLabel, loading, empty, emptyLabel, filter, actions, children,
 }: {
   columns: string[];
   onAdd: () => void;
@@ -1738,16 +1780,20 @@ function TableShell({
   empty: boolean;
   emptyLabel: string;
   filter?: React.ReactNode;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">{filter}</div>
-        <button type="button" onClick={onAdd} className="btn-primary">
-          <Plus className="h-4 w-4" />
-          {addLabel}
-        </button>
+        <div className="flex items-center gap-2">
+          {actions}
+          <button type="button" onClick={onAdd} className="btn-primary">
+            <Plus className="h-4 w-4" />
+            {addLabel}
+          </button>
+        </div>
       </div>
       <div className="surface overflow-hidden">
         <div className="overflow-x-auto">

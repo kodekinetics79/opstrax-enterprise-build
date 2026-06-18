@@ -48,6 +48,9 @@ export const companiesApi = {
   update: (id: string, data: CompanyRequest) =>
     client.put<CompanyDto>(`/api/companies/${id}`, data).then((r) => r.data),
   remove: (id: string) => client.delete(`/api/companies/${id}`),
+  export: () => client.get<string>('/api/companies/export', { responseType: 'text' }).then((r) => r.data),
+  importTemplate: () => client.get<string>('/api/companies/import-template', { responseType: 'text' }).then((r) => r.data),
+  import: (csv: string) => client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>('/api/companies/import', { csv }).then((r) => r.data),
 };
 
 // ─── Branch ─────────────────────────────────────────────────────────────────
@@ -93,6 +96,9 @@ export const branchesApi = {
   update: (id: string, data: BranchRequest) =>
     client.put<BranchDto>(`/api/branches/${id}`, data).then((r) => r.data),
   remove: (id: string) => client.delete(`/api/branches/${id}`),
+  export: () => client.get<string>('/api/branches/export', { responseType: 'text' }).then((r) => r.data),
+  importTemplate: () => client.get<string>('/api/branches/import-template', { responseType: 'text' }).then((r) => r.data),
+  import: (csv: string) => client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>('/api/branches/import', { csv }).then((r) => r.data),
 };
 
 // ─── Department ──────────────────────────────────────────────────────────────
@@ -130,6 +136,9 @@ export const departmentsApi = {
   update: (id: string, data: DepartmentRequest) =>
     client.put<DepartmentDto>(`/api/departments/${id}`, data).then((r) => r.data),
   remove: (id: string) => client.delete(`/api/departments/${id}`),
+  export: () => client.get<string>('/api/departments/export', { responseType: 'text' }).then((r) => r.data),
+  importTemplate: () => client.get<string>('/api/departments/import-template', { responseType: 'text' }).then((r) => r.data),
+  import: (csv: string) => client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>('/api/departments/import', { csv }).then((r) => r.data),
 };
 
 // ─── Designation ─────────────────────────────────────────────────────────────
@@ -171,6 +180,9 @@ export const designationsApi = {
   update: (id: string, data: DesignationRequest) =>
     client.put<DesignationDto>(`/api/designations/${id}`, data).then((r) => r.data),
   remove: (id: string) => client.delete(`/api/designations/${id}`),
+  export: () => client.get<string>('/api/designations/export', { responseType: 'text' }).then((r) => r.data),
+  importTemplate: () => client.get<string>('/api/designations/import-template', { responseType: 'text' }).then((r) => r.data),
+  import: (csv: string) => client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>('/api/designations/import', { csv }).then((r) => r.data),
 };
 
 // ─── Grade ──────────────────────────────────────────────────────────────────
@@ -194,14 +206,17 @@ export interface GradeRequest {
 
 export const gradesApi = {
   list: (page = 1, pageSize = 100) =>
-    client.get<PagedResult<GradeDto>>('/api/organization/grades', { params: { page, pageSize } }).then((r) => r.data),
+    client.get<PagedResult<GradeDto>>('/api/grades', { params: { page, pageSize } }).then((r) => r.data),
   get: (id: string) =>
     client.get<GradeDto>(`/api/grades/${id}`).then((r) => r.data),
   create: (data: GradeRequest) =>
-    client.post<GradeDto>('/api/organization/grades', data).then((r) => r.data),
+    client.post<GradeDto>('/api/grades', data).then((r) => r.data),
   update: (id: string, data: GradeRequest) =>
     client.put<GradeDto>(`/api/grades/${id}`, data).then((r) => r.data),
   remove: (id: string) => client.delete(`/api/grades/${id}`),
+  export: () => client.get<string>('/api/grades/export', { responseType: 'text' }).then((r) => r.data),
+  importTemplate: () => client.get<string>('/api/grades/import-template', { responseType: 'text' }).then((r) => r.data),
+  import: (csv: string) => client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>('/api/grades/import', { csv }).then((r) => r.data),
 };
 
 // ─── Cost Center ────────────────────────────────────────────────────────────

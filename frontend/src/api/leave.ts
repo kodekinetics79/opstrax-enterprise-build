@@ -310,7 +310,7 @@ export const leavePoliciesApi = {
 };
 
 export const leaveBalancesApi = {
-  list: (params: { employeeId?: number; leaveTypeId?: string; year?: number } = {}) =>
+  list: (params: { employeeId?: number; leaveTypeId?: string; year?: number; companyId?: string; branchId?: string } = {}) =>
     client.get<PagedResult<EmployeeLeaveBalance>>('/api/leave/balances', { params }).then(r => r.data.items ?? []),
   forEmployee: (employeeId: number, year?: number) =>
     client.get<EmployeeLeaveBalance[]>(`/api/leave/balances/employee/${employeeId}`, { params: { year } }).then(r => r.data),
@@ -323,7 +323,7 @@ export const leaveBalancesApi = {
 };
 
 export const leaveRequestsApi = {
-  list: (params: { status?: string; employeeId?: number; leaveTypeId?: string; fromDate?: string; toDate?: string; departmentName?: string } = {}) =>
+  list: (params: { status?: string; employeeId?: number; leaveTypeId?: string; fromDate?: string; toDate?: string; departmentName?: string; companyId?: string; branchId?: string } = {}) =>
     client.get<{ items: LeaveRequest[]; total: number }>('/api/leave/requests', { params }).then(r => r.data),
   get: (id: string) =>
     client.get<LeaveRequest>(`/api/leave/requests/${id}`).then(r => r.data),
@@ -367,7 +367,7 @@ export const holidayCalendarApi = {
 };
 
 export const encashmentApi = {
-  list: (params: { status?: string; employeeId?: number } = {}) =>
+  list: (params: { status?: string; employeeId?: number; companyId?: string; branchId?: string } = {}) =>
     client.get<PagedResult<LeaveEncashmentRequest>>('/api/leave/encashment', { params }).then(r => r.data.items ?? []),
   create: (body: { employeeId: number; leaveTypeId: string; year: number; daysToEncash: number; amountPerDay: number; reason: string }) =>
     client.post<LeaveEncashmentRequest>('/api/leave/encashment', body).then(r => r.data),
@@ -380,7 +380,7 @@ export const encashmentApi = {
 };
 
 export const compOffApi = {
-  list: (params: { employeeId?: number; status?: string } = {}) =>
+  list: (params: { employeeId?: number; status?: string; companyId?: string; branchId?: string } = {}) =>
     client.get<PagedResult<CompOffCredit>>('/api/leave/compoff', { params }).then(r => r.data.items ?? []),
   create: (body: { employeeId: number; workedDate: string; workType: string; hoursWorked: number; daysEarned: number; expiryDate?: string }) =>
     client.post<CompOffCredit>('/api/leave/compoff', body).then(r => r.data),
@@ -391,7 +391,7 @@ export const compOffApi = {
 };
 
 export const absenceApi = {
-  list: (params: { employeeId?: number; from?: string; to?: string; type?: string } = {}) =>
+  list: (params: { employeeId?: number; from?: string; to?: string; type?: string; companyId?: string; branchId?: string } = {}) =>
     client.get<PagedResult<AbsenceRecord>>('/api/leave/absences', { params }).then(r => r.data.items ?? []),
   record: (body: { employeeId: number; absenceDate: string; absenceType: string; payrollImpact?: string }) =>
     client.post<AbsenceRecord>('/api/leave/absences', body).then(r => r.data),
@@ -417,7 +417,7 @@ export const delegationApi = {
 };
 
 export const leaveCalendarApi = {
-  entries: (params: { fromDate: string; toDate: string; departmentName?: string; employeeId?: number } = { fromDate: '', toDate: '' }) =>
+  entries: (params: { fromDate: string; toDate: string; departmentName?: string; employeeId?: number; companyId?: string; branchId?: string } = { fromDate: '', toDate: '' }) =>
     client.get<LeaveCalendarEntry[]>('/api/leave/calendar', { params }).then(r => r.data),
   team: (params: { fromDate: string; toDate: string } = { fromDate: '', toDate: '' }) =>
     client.get<Record<string, LeaveCalendarEntry[]>>('/api/leave/calendar/team', { params }).then(r => r.data),
@@ -430,20 +430,20 @@ export const leaveCalendarApi = {
 
 
 export const leaveReportsApi = {
-  balanceSummary: (year: number) =>
-    client.get<EmployeeLeaveBalance[]>('/api/leave/reports/balance-summary', { params: { year } }).then(r => r.data),
-  usage: (params: { from: string; to: string; departmentName?: string } = { from: '', to: '' }) =>
+  balanceSummary: (year: number, companyId?: string, branchId?: string) =>
+    client.get<EmployeeLeaveBalance[]>('/api/leave/reports/balance-summary', { params: { year, companyId, branchId } }).then(r => r.data),
+  usage: (params: { from: string; to: string; departmentName?: string; companyId?: string; branchId?: string } = { from: '', to: '' }) =>
     client.get<{ leaveTypeName: string; totalDays: number; count: number; departmentName: string }[]>('/api/leave/reports/usage', { params }).then(r => r.data),
-  onLeaveToday: () =>
-    client.get<{ employees: LeaveRequest[] }>('/api/leave/reports/on-leave-today').then(r => r.data.employees ?? []),
-  pendingApprovals: () =>
-    client.get<{ status: string; count: number }[]>('/api/leave/reports/pending-approvals').then(r => r.data),
-  sickLeaveTrend: () =>
-    client.get<{ month: string; count: number; totalDays: number }[]>('/api/leave/reports/sick-leave-trend').then(r => r.data),
-  liability: (year: number) =>
-    client.get<{ employeeName: string; leaveTypeName: string; balanceDays: number; dailySalary: number; liabilityAmount: number }[]>('/api/leave/reports/liability', { params: { year } }).then(r => r.data),
-  dashboard: () =>
-    client.get<LeaveDashboard>('/api/leave/reports/dashboard').then(r => r.data),
+  onLeaveToday: (params: { companyId?: string; branchId?: string } = {}) =>
+    client.get<{ employees: LeaveRequest[] }>('/api/leave/reports/on-leave-today', { params }).then(r => r.data.employees ?? []),
+  pendingApprovals: (params: { companyId?: string; branchId?: string } = {}) =>
+    client.get<{ status: string; count: number }[]>('/api/leave/reports/pending-approvals', { params }).then(r => r.data),
+  sickLeaveTrend: (params: { companyId?: string; branchId?: string } = {}) =>
+    client.get<{ month: string; count: number; totalDays: number }[]>('/api/leave/reports/sick-leave-trend', { params }).then(r => r.data),
+  liability: (year: number, companyId?: string, branchId?: string) =>
+    client.get<{ employeeName: string; leaveTypeName: string; balanceDays: number; dailySalary: number; liabilityAmount: number }[]>('/api/leave/reports/liability', { params: { year, companyId, branchId } }).then(r => r.data),
+  dashboard: (params: { companyId?: string; branchId?: string } = {}) =>
+    client.get<LeaveDashboard>('/api/leave/reports/dashboard', { params }).then(r => r.data),
 };
 
 export const leaveAIApi = {

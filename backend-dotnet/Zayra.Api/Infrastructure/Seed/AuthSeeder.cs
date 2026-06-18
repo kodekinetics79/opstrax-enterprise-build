@@ -433,7 +433,7 @@ public class AuthSeeder : IAuthSeeder
 
     private async Task EnsureFoundationSeedData(Guid tenantId, CancellationToken cancellationToken)
     {
-        var company = await _db.Companies.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.RegistrationNumber == "ZAYRA-DEMO", cancellationToken);
+        var company = await _db.Companies.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.RegistrationNumber == "KNX-DEMO", cancellationToken);
         if (company is null)
         {
             company = new Company
