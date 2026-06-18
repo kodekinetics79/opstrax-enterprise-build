@@ -91,6 +91,11 @@ public static class FeatureKeys
     public const string MobileApp        = "mobile_app";
     public const string WpsExport        = "wps_export";
     public const string QiwaIntegration  = "qiwa_integration";
+    public const string EosbCalc            = "eosb_calc";
+    public const string ResumeScreening     = "resume_screening";
+    public const string PayrollAiValidation = "payroll_ai_validation";
+    public const string RiskScores          = "risk_scores";
+    public const string HijriCalendar       = "hijri_calendar";
 }
 
 // ── Tenant Subscription ───────────────────────────────────────────────────────
@@ -251,11 +256,12 @@ public class TenantInvoice
 
 public static class InvoiceStatuses
 {
-    public const string Draft     = "Draft";
-    public const string Sent      = "Sent";
-    public const string Paid      = "Paid";
-    public const string Overdue   = "Overdue";
-    public const string Cancelled = "Cancelled";
+    public const string Draft         = "Draft";
+    public const string Sent          = "Sent";
+    public const string Paid          = "Paid";
+    public const string PartiallyPaid = "PartiallyPaid";
+    public const string Overdue       = "Overdue";
+    public const string Cancelled     = "Cancelled";
 }
 
 public static class AiPlanLimits
@@ -308,4 +314,83 @@ public class PlatformLead
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAtUtc { get; set; }
     public Guid? ConvertedToTenantId { get; set; }
+}
+
+// ── Invoice Line Items ────────────────────────────────────────────────────────
+
+public class TenantInvoiceLine
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid InvoiceId { get; set; }
+    public Guid TenantId { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public int Quantity { get; set; } = 1;
+    public decimal UnitPrice { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public decimal TaxRate { get; set; }
+    public decimal TaxAmount { get; set; }
+    public decimal LineTotal { get; set; }
+    public int SortOrder { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+// ── Tenant Payments ───────────────────────────────────────────────────────────
+
+public class TenantPayment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid? InvoiceId { get; set; }
+    public decimal Amount { get; set; }
+    public string CurrencyCode { get; set; } = "USD";
+    /// <summary>BankTransfer, Cheque, Online, Cash, etc.</summary>
+    public string Method { get; set; } = string.Empty;
+    public string? Reference { get; set; }
+    /// <summary>Pending, Completed, Failed, Refunded</summary>
+    public string Status { get; set; } = PaymentStatuses.Pending;
+    public DateTime? PaidAt { get; set; }
+    public Guid? ReceivedByPlatformUserId { get; set; }
+    public string? Notes { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+}
+
+public static class PaymentStatuses
+{
+    public const string Pending   = "Pending";
+    public const string Completed = "Completed";
+    public const string Failed    = "Failed";
+    public const string Refunded  = "Refunded";
+}
+
+// ── Login Activity ────────────────────────────────────────────────────────────
+
+public class LoginActivity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? TenantId { get; set; }
+    public Guid? UserId { get; set; }
+    /// <summary>Email used in the login attempt. NEVER store passwords or tokens.</summary>
+    public string? EmailAttempted { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public string? FailureReason { get; set; }
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
+    public DateTime OccurredAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public static class LoginEventTypes
+{
+    public const string LoginSuccess             = "login_success";
+    public const string LoginFailed              = "login_failed";
+    public const string LoginBlockedLockout      = "login_blocked_lockout";
+    public const string AccountLocked            = "account_locked";
+    public const string PasswordResetRequested   = "password_reset_requested";
+    public const string PasswordResetCompleted   = "password_reset_completed";
+    public const string MfaReset                 = "mfa_reset";
+    public const string SessionRevoked           = "session_revoked";
+    public const string PlatformLoginSuccess     = "platform_login_success";
+    public const string PlatformLoginFailed      = "platform_login_failed";
 }

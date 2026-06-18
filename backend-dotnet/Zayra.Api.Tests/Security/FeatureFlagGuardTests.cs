@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging.Abstractions;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Filters;
@@ -22,6 +23,8 @@ namespace Zayra.Api.Tests.Security;
 ///   3. Absent flags (no row in DB) default to ALLOWED (backwards compat).
 ///   4. Always-allowed prefixes (/api/auth, /api/employees, etc.) bypass the guard.
 ///   5. Platform admin requests (no tenant_id claim) bypass the guard.
+///   6. Cross-tenant flag isolation is enforced.
+///   7. New routes: /api/saudi-compliance, /api/gosi, /api/wps are correctly gated.
 /// </summary>
 public class FeatureFlagGuardTests
 {
@@ -33,24 +36,8 @@ public class FeatureFlagGuardTests
         return new ZayraDbContext(opts);
     }
 
-    private static (ActionExecutingContext ctx, IActionResult? captured) BuildContext(
-        string path,
-        Guid? tenantId = null)
-    {
-        var httpCtx = new DefaultHttpContext();
-        httpCtx.Request.Path = path;
-
-        if (tenantId.HasValue)
-        {
-            var claims = new[] { new Claim("tenant_id", tenantId.Value.ToString()) };
-            httpCtx.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"));
-        }
-
-        IActionResult? captured = null;
-        var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
-        var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
-        return (ctx, captured);
-    }
+    private static FeatureFlagGuardFilter MakeFilter(ZayraDbContext db)
+        => new(db, new MemoryCache(new MemoryCacheOptions()), NullLogger<FeatureFlagGuardFilter>.Instance);
 
     private static async Task<IActionResult?> RunFilter(
         ZayraDbContext db, string path, Guid tenantId, bool featureEnabled, string featureKey)
@@ -72,7 +59,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
+        var filter = MakeFilter(db);
         await filter.OnActionExecutionAsync(ctx, () =>
         {
             result = null;
@@ -108,7 +95,6 @@ public class FeatureFlagGuardTests
 
         var result = await RunFilter(db, "/api/ai-assistant/chat", tenantId, true, FeatureKeys.AiAssistant);
 
-        // null result means the next() delegate ran — guard did not block
         result.Should().BeNull();
     }
 
@@ -147,6 +133,90 @@ public class FeatureFlagGuardTests
             .Which.StatusCode.Should().Be(403);
     }
 
+    // ── Newly-mapped routes ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaudiCompliance_DisabledCompliance_Returns403()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/saudi-compliance/reports", tenantId, false, FeatureKeys.Compliance);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task SaudiCompliance_EnabledCompliance_PassesThrough()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/saudi-compliance/reports", tenantId, true, FeatureKeys.Compliance);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Gosi_DisabledQiwaIntegration_Returns403()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/gosi/contributions", tenantId, false, FeatureKeys.QiwaIntegration);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task Gosi_EnabledQiwaIntegration_PassesThrough()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/gosi/contributions", tenantId, true, FeatureKeys.QiwaIntegration);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Wps_DisabledWpsExport_Returns403()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/wps/export", tenantId, false, FeatureKeys.WpsExport);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task Wps_EnabledWpsExport_PassesThrough()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+
+        var result = await RunFilter(db, "/api/wps/export", tenantId, true, FeatureKeys.WpsExport);
+
+        result.Should().BeNull();
+    }
+
+    // ── New feature key constants compile and are usable ─────────────────────
+
+    [Theory]
+    [InlineData(FeatureKeys.EosbCalc,            "eosb_calc")]
+    [InlineData(FeatureKeys.ResumeScreening,     "resume_screening")]
+    [InlineData(FeatureKeys.PayrollAiValidation, "payroll_ai_validation")]
+    [InlineData(FeatureKeys.RiskScores,          "risk_scores")]
+    [InlineData(FeatureKeys.HijriCalendar,       "hijri_calendar")]
+    public void NewFeatureKeyConstants_HaveCorrectValues(string constant, string expected)
+    {
+        constant.Should().Be(expected);
+    }
+
     // ── Absent flag = allowed ─────────────────────────────────────────────────
 
     [Fact]
@@ -164,8 +234,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
-        IActionResult? blockResult = null;
+        var filter = MakeFilter(db);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -187,7 +256,6 @@ public class FeatureFlagGuardTests
         await using var db = CreateDb();
         var tenantId = Guid.NewGuid();
 
-        // Even if we disable AI, the always-allowed route should not be blocked
         db.TenantFeatureFlags.Add(new TenantFeatureFlag
         {
             TenantId = tenantId, FeatureKey = FeatureKeys.AiAssistant, IsEnabled = false
@@ -202,7 +270,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
+        var filter = MakeFilter(db);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -218,7 +286,6 @@ public class FeatureFlagGuardTests
 
         var httpCtx = new DefaultHttpContext();
         httpCtx.Request.Path = "/api/ai-assistant/chat";
-        // No tenant_id claim — simulates platform admin JWT
         httpCtx.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim("is_platform_admin", "true"),
@@ -227,7 +294,7 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
+        var filter = MakeFilter(db);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -243,19 +310,16 @@ public class FeatureFlagGuardTests
         var tenantA = Guid.NewGuid();
         var tenantB = Guid.NewGuid();
 
-        // Disable AI for Tenant A only
         db.TenantFeatureFlags.Add(new TenantFeatureFlag
         {
             TenantId = tenantA, FeatureKey = FeatureKeys.AiAssistant, IsEnabled = false
         });
-        // Tenant B has AI enabled
         db.TenantFeatureFlags.Add(new TenantFeatureFlag
         {
             TenantId = tenantB, FeatureKey = FeatureKeys.AiAssistant, IsEnabled = true
         });
         await db.SaveChangesAsync();
 
-        // Tenant B request must pass through
         var httpCtx = new DefaultHttpContext();
         httpCtx.Request.Path = "/api/ai-assistant/ask";
         var claims = new[] { new Claim("tenant_id", tenantB.ToString()) };
@@ -264,10 +328,44 @@ public class FeatureFlagGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new FeatureFlagGuardFilter(db, new MemoryCache(new MemoryCacheOptions()));
+        var filter = MakeFilter(db);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
         ctx.Result.Should().BeNull("TenantB has AI enabled; TenantA's disabled flag must not affect it");
+    }
+
+    [Fact]
+    public async Task CrossTenantBypass_NotPossible_TenantABlockedEvenIfBEnabled()
+    {
+        await using var db = CreateDb();
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+
+        db.TenantFeatureFlags.Add(new TenantFeatureFlag
+        {
+            TenantId = tenantA, FeatureKey = FeatureKeys.Payroll, IsEnabled = false
+        });
+        db.TenantFeatureFlags.Add(new TenantFeatureFlag
+        {
+            TenantId = tenantB, FeatureKey = FeatureKeys.Payroll, IsEnabled = true
+        });
+        await db.SaveChangesAsync();
+
+        // TenantA request — must still be blocked even though TenantB has it enabled
+        var httpCtx = new DefaultHttpContext();
+        httpCtx.Request.Path = "/api/payroll/runs";
+        var claims = new[] { new Claim("tenant_id", tenantA.ToString()) };
+        httpCtx.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"));
+
+        var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
+        var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
+
+        var filter = MakeFilter(db);
+        await filter.OnActionExecutionAsync(ctx, () =>
+            Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
+
+        ctx.Result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(403, "TenantA's payroll is disabled; TenantB's flag must not grant access to TenantA");
     }
 }

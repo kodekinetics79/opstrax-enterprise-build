@@ -90,7 +90,8 @@ public abstract class PlatformTestBase
         var controller = new PlatformController(
             db, jwt, hasher, seeder, tokenSvc, email, config,
             new NullPlatformMfaService(),
-            NullLogger<PlatformController>.Instance);
+            NullLogger<PlatformController>.Instance,
+            new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
 
         // Wire up a ClaimsPrincipal that passes the PlatformAdmin policy
         var claims = new[]

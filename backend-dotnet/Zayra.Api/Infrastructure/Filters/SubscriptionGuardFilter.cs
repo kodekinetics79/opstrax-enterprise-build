@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -13,12 +14,19 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
     {
         "/api/auth",
         "/api/platform",
-        "/api/tenant-admin/localization"
+        "/api/tenant-admin/localization",
+        "/api/health",
+        "/api/version",
     };
 
     private readonly ZayraDbContext _db;
+    private readonly ILogger<SubscriptionGuardFilter> _log;
 
-    public SubscriptionGuardFilter(ZayraDbContext db) => _db = db;
+    public SubscriptionGuardFilter(ZayraDbContext db, ILogger<SubscriptionGuardFilter> log)
+    {
+        _db = db;
+        _log = log;
+    }
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -53,6 +61,14 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
         // Suspended or Cancelled — full block.
         if (sub.Status is SubscriptionStatuses.Suspended or SubscriptionStatuses.Cancelled)
         {
+            _log.LogWarning(
+                "SubscriptionGuard blocked request — inactive. Tenant={TenantId} Status={Status} Path={Path} IP={IP} UserAgent={UserAgent}",
+                tenantId,
+                sub.Status,
+                path,
+                context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                context.HttpContext.Request.Headers.UserAgent.ToString());
+
             context.Result = new ObjectResult(new
             {
                 error = "subscription_inactive",
@@ -73,6 +89,15 @@ public class SubscriptionGuardFilter : IAsyncActionFilter
         // Expired (applies to Trial, Active, PastDue).
         if (sub.ExpiresAtUtc.HasValue && sub.ExpiresAtUtc.Value < DateTime.UtcNow)
         {
+            _log.LogWarning(
+                "SubscriptionGuard blocked request — expired. Tenant={TenantId} Status={Status} ExpiredAt={ExpiresAtUtc} Path={Path} IP={IP} UserAgent={UserAgent}",
+                tenantId,
+                sub.Status,
+                sub.ExpiresAtUtc,
+                path,
+                context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                context.HttpContext.Request.Headers.UserAgent.ToString());
+
             context.Result = new ObjectResult(new
             {
                 error = "subscription_expired",

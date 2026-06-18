@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -68,19 +69,24 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         ("/api/payroll",        FeatureKeys.Payroll),
         ("/api/shifts",         FeatureKeys.Shifts),
         ("/api/overtime",       FeatureKeys.Overtime),
-        ("/api/mobile",         FeatureKeys.MobileApp),
-        ("/api/qiwa",           FeatureKeys.QiwaIntegration),
+        ("/api/mobile",              FeatureKeys.MobileApp),
+        ("/api/qiwa",               FeatureKeys.QiwaIntegration),
+        ("/api/saudi-compliance",   FeatureKeys.Compliance),
+        ("/api/gosi",               FeatureKeys.QiwaIntegration),
+        ("/api/wps",                FeatureKeys.WpsExport),
     };
 
     private static readonly TimeSpan FlagCacheTtl = TimeSpan.FromMinutes(2);
 
     private readonly ZayraDbContext _db;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<FeatureFlagGuardFilter> _log;
 
-    public FeatureFlagGuardFilter(ZayraDbContext db, IMemoryCache cache)
+    public FeatureFlagGuardFilter(ZayraDbContext db, IMemoryCache cache, ILogger<FeatureFlagGuardFilter> log)
     {
         _db = db;
         _cache = cache;
+        _log = log;
     }
 
     /// <summary>
@@ -146,6 +152,14 @@ public class FeatureFlagGuardFilter : IAsyncActionFilter
         // Absent = allowed. Only block when the flag is explicitly set to false.
         if (isEnabled == false)
         {
+            _log.LogWarning(
+                "FeatureFlagGuard blocked request. Tenant={TenantId} Feature={FeatureKey} Path={Path} IP={IP} UserAgent={UserAgent}",
+                tenantId,
+                featureKey,
+                path,
+                context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                context.HttpContext.Request.Headers.UserAgent.ToString());
+
             context.Result = new ObjectResult(new
             {
                 error = "feature_not_enabled",

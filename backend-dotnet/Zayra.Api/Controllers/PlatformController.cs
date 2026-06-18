@@ -6,11 +6,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.Filters;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Auth;
 using Zayra.Api.Infrastructure.Email;
@@ -34,6 +36,7 @@ public class PlatformController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IMfaService _mfa;
     private readonly ILogger<PlatformController> _log;
+    private readonly IMemoryCache _cache;
 
     public PlatformController(
         ZayraDbContext db,
@@ -44,7 +47,8 @@ public class PlatformController : ControllerBase
         IEmailService emailService,
         IConfiguration config,
         IMfaService mfa,
-        ILogger<PlatformController> log)
+        ILogger<PlatformController> log,
+        IMemoryCache cache)
     {
         _db = db;
         _jwt = jwt.Value;
@@ -55,6 +59,7 @@ public class PlatformController : ControllerBase
         _config = config;
         _mfa = mfa;
         _log = log;
+        _cache = cache;
     }
 
     private string PlatformAdminEmail =>
@@ -81,7 +86,19 @@ public class PlatformController : ControllerBase
         if (dbUser is not null)
         {
             if (!_passwordHasher.Verify(req.Password, dbUser.PasswordHash))
+            {
+                _db.LoginActivities.Add(new LoginActivity
+                {
+                    UserId        = dbUser.Id,
+                    EmailAttempted = dbUser.Email,
+                    EventType     = LoginEventTypes.PlatformLoginFailed,
+                    FailureReason = "password_mismatch",
+                    IpAddress     = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    UserAgent     = HttpContext.Request.Headers.UserAgent.ToString(),
+                });
+                await _db.SaveChangesAsync(ct);
                 return Unauthorized(new { message = "Invalid platform admin credentials." });
+            }
 
             // MFA challenge: if the DB platform user has TOTP configured, issue a challenge
             // token instead of the full JWT. The client must complete /api/platform/auth/mfa/challenge/verify.
@@ -113,11 +130,33 @@ public class PlatformController : ControllerBase
 
             if (!string.Equals(req.Email, expectedEmail, StringComparison.OrdinalIgnoreCase) ||
                 req.Password != expectedPassword)
+            {
+                _db.LoginActivities.Add(new LoginActivity
+                {
+                    EmailAttempted = req.Email,
+                    EventType     = LoginEventTypes.PlatformLoginFailed,
+                    FailureReason = "invalid_credentials",
+                    IpAddress     = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    UserAgent     = HttpContext.Request.Headers.UserAgent.ToString(),
+                });
+                await _db.SaveChangesAsync(ct);
                 return Unauthorized(new { message = "Invalid platform admin credentials." });
+            }
 
             loginEmail = expectedEmail;
             loginRole = PlatformRoles.Owner;
         }
+
+        // Record successful platform login
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            UserId        = platformUserId,
+            EmailAttempted = loginEmail,
+            EventType     = LoginEventTypes.PlatformLoginSuccess,
+            IpAddress     = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            UserAgent     = HttpContext.Request.Headers.UserAgent.ToString(),
+        });
+        await _db.SaveChangesAsync(ct);
 
         var expiresAt = DateTime.UtcNow.AddHours(8);
         var claims = new List<Claim>
@@ -537,6 +576,7 @@ public class PlatformController : ControllerBase
         });
 
         await _db.SaveChangesAsync(ct);
+        FeatureFlagGuardFilter.InvalidateCache(_cache, tenantId, featureKey);
         return Ok(flag);
     }
 
@@ -1285,6 +1325,15 @@ public class PlatformController : ControllerBase
         user.MfaConfiguredAtUtc = null;
         user.UpdatedAtUtc = DateTime.UtcNow;
 
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            TenantId  = user.TenantId,
+            UserId    = user.Id,
+            EmailAttempted = user.Email,
+            EventType = LoginEventTypes.MfaReset,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            UserAgent = HttpContext.Request.Headers.UserAgent.ToString(),
+        });
         _db.AdminAuditLogs.Add(new AdminAuditLog
         {
             TenantId = user.TenantId,
@@ -1312,6 +1361,15 @@ public class PlatformController : ControllerBase
             .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), ct);
 
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            TenantId  = user.TenantId,
+            UserId    = user.Id,
+            EmailAttempted = user.Email,
+            EventType = LoginEventTypes.SessionRevoked,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            UserAgent = HttpContext.Request.Headers.UserAgent.ToString(),
+        });
         _db.AdminAuditLogs.Add(new AdminAuditLog
         {
             TenantId = user.TenantId,
@@ -1734,8 +1792,9 @@ public class PlatformController : ControllerBase
 
         var sub    = await _db.TenantSubscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
         var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        var lines  = await LoadInvoiceLinesAsync(invoice.Id, ct);
 
-        var data = BuildInvoiceData(invoice, tenant, sub);
+        var data = BuildInvoiceData(invoice, tenant, sub, lines);
         var pdfBytes = InvoicePdfService.Generate(data);
 
         return File(pdfBytes, "application/pdf", $"Invoice_{invoice.InvoiceNumber}.pdf");
@@ -1763,7 +1822,8 @@ public class PlatformController : ControllerBase
             });
 
         // Generate the PDF invoice
-        var data     = BuildInvoiceData(invoice, tenant, sub);
+        var lines    = await LoadInvoiceLinesAsync(invoice.Id, ct);
+        var data     = BuildInvoiceData(invoice, tenant, sub, lines);
         var pdfBytes = InvoicePdfService.Generate(data);
         var fileName = $"Invoice_{invoice.InvoiceNumber}.pdf";
 
@@ -1836,6 +1896,313 @@ public class PlatformController : ControllerBase
         });
         await _db.SaveChangesAsync(ct);
         return Ok(new { sent = true, billingEmail = toEmail, invoiceNumber = invoice.InvoiceNumber, pdfAttached = true });
+    }
+
+    // ── Invoice Line Items ────────────────────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/lines")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> ListInvoiceLines(Guid tenantId, Guid invoiceId, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        return Ok(await LoadInvoiceLinesAsync(invoiceId, ct));
+    }
+
+    [HttpPost("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/lines")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> AddInvoiceLine(Guid tenantId, Guid invoiceId, [FromBody] AddInvoiceLineRequest req, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        if (invoice.Status == InvoiceStatuses.Paid || invoice.Status == InvoiceStatuses.Cancelled)
+            return BadRequest(new { message = "Cannot add lines to a Paid or Cancelled invoice." });
+        if (string.IsNullOrWhiteSpace(req.Description))
+            return BadRequest(new { message = "Description is required." });
+        if (req.Quantity <= 0)
+            return BadRequest(new { message = "Quantity must be greater than 0." });
+        if (req.UnitPrice < 0 || req.DiscountAmount < 0 || req.TaxRate < 0)
+            return BadRequest(new { message = "Price, discount, and tax rate must be non-negative." });
+
+        var (taxAmount, lineTotal) = CalcLineTotals(req.UnitPrice, req.Quantity, req.DiscountAmount, req.TaxRate);
+        var line = new TenantInvoiceLine
+        {
+            InvoiceId      = invoiceId,
+            TenantId       = tenantId,
+            Description    = req.Description.Trim(),
+            Quantity       = req.Quantity,
+            UnitPrice      = Math.Round(req.UnitPrice, 2),
+            DiscountAmount = Math.Round(req.DiscountAmount, 2),
+            TaxRate        = Math.Round(req.TaxRate, 4),
+            TaxAmount      = taxAmount,
+            LineTotal      = lineTotal,
+            SortOrder      = req.SortOrder,
+        };
+        _db.TenantInvoiceLines.Add(line);
+        await RecalculateInvoiceTotalAsync(invoice, ct);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "InvoiceLine", EntityId = line.Id.ToString(),
+            Action = "LineAdded",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { invoiceId, req.Description, req.Quantity, req.UnitPrice, lineTotal }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        // Recalculate with fresh lines (total was set on unsaved entity before)
+        invoice.Amount = (await _db.TenantInvoiceLines.Where(l => l.InvoiceId == invoiceId).ToListAsync(ct)).Sum(l => l.LineTotal);
+        invoice.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(ListInvoiceLines), new { tenantId, invoiceId }, line);
+    }
+
+    [HttpPut("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/lines/{lineId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> UpdateInvoiceLine(Guid tenantId, Guid invoiceId, Guid lineId, [FromBody] UpdateInvoiceLineRequest req, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        if (invoice.Status == InvoiceStatuses.Paid || invoice.Status == InvoiceStatuses.Cancelled)
+            return BadRequest(new { message = "Cannot edit lines on a Paid or Cancelled invoice." });
+
+        var line = await _db.TenantInvoiceLines.FirstOrDefaultAsync(l => l.Id == lineId && l.InvoiceId == invoiceId, ct);
+        if (line is null) return NotFound();
+
+        if (req.Description is not null) line.Description    = req.Description.Trim();
+        if (req.Quantity    is not null) line.Quantity       = req.Quantity.Value;
+        if (req.UnitPrice   is not null) line.UnitPrice      = Math.Round(req.UnitPrice.Value, 2);
+        if (req.DiscountAmount is not null) line.DiscountAmount = Math.Round(req.DiscountAmount.Value, 2);
+        if (req.TaxRate     is not null) line.TaxRate        = Math.Round(req.TaxRate.Value, 4);
+        if (req.SortOrder   is not null) line.SortOrder      = req.SortOrder.Value;
+
+        var (taxAmount, lineTotal) = CalcLineTotals(line.UnitPrice, line.Quantity, line.DiscountAmount, line.TaxRate);
+        line.TaxAmount  = taxAmount;
+        line.LineTotal  = lineTotal;
+        line.UpdatedAtUtc = DateTime.UtcNow;
+
+        await RecalculateInvoiceTotalAsync(invoice, ct);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "InvoiceLine", EntityId = lineId.ToString(),
+            Action = "LineUpdated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { line.Description, line.Quantity, line.UnitPrice, line.LineTotal }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(line);
+    }
+
+    [HttpDelete("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/lines/{lineId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> DeleteInvoiceLine(Guid tenantId, Guid invoiceId, Guid lineId, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        if (invoice.Status == InvoiceStatuses.Paid || invoice.Status == InvoiceStatuses.Cancelled)
+            return BadRequest(new { message = "Cannot delete lines from a Paid or Cancelled invoice." });
+
+        var line = await _db.TenantInvoiceLines.FirstOrDefaultAsync(l => l.Id == lineId && l.InvoiceId == invoiceId, ct);
+        if (line is null) return NotFound();
+
+        _db.TenantInvoiceLines.Remove(line);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "InvoiceLine", EntityId = lineId.ToString(),
+            Action = "LineDeleted",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { line.Description, line.LineTotal }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        // Recalculate total after deletion
+        invoice.Amount = (await _db.TenantInvoiceLines.Where(l => l.InvoiceId == invoiceId).SumAsync(l => l.LineTotal, ct));
+        invoice.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return NoContent();
+    }
+
+    // ── Payments ──────────────────────────────────────────────────────────────
+
+    [HttpGet("tenants/{tenantId:guid}/payments")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> ListTenantPayments(Guid tenantId, CancellationToken ct)
+    {
+        if (!await _db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct)) return NotFound();
+        var payments = await _db.TenantPayments
+            .AsNoTracking()
+            .Where(p => p.TenantId == tenantId)
+            .OrderByDescending(p => p.CreatedAtUtc)
+            .ToListAsync(ct);
+        return Ok(payments);
+    }
+
+    [HttpGet("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/payments")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> ListInvoicePayments(Guid tenantId, Guid invoiceId, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        var payments = await _db.TenantPayments
+            .AsNoTracking()
+            .Where(p => p.InvoiceId == invoiceId)
+            .OrderByDescending(p => p.CreatedAtUtc)
+            .ToListAsync(ct);
+        return Ok(payments);
+    }
+
+    [HttpPost("tenants/{tenantId:guid}/invoices/{invoiceId:guid}/payments")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> CreatePayment(Guid tenantId, Guid invoiceId, [FromBody] CreatePaymentRequest req, CancellationToken ct)
+    {
+        var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId && i.TenantId == tenantId, ct);
+        if (invoice is null) return NotFound();
+        if (req.Amount <= 0)
+            return BadRequest(new { message = "Payment amount must be greater than 0." });
+
+        var receiverIdClaim = HttpContext.User.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
+        Guid.TryParse(receiverIdClaim, out var receiverId);
+
+        var payment = new TenantPayment
+        {
+            TenantId  = tenantId,
+            InvoiceId = invoiceId,
+            Amount    = Math.Round(req.Amount, 2),
+            CurrencyCode = string.IsNullOrWhiteSpace(req.CurrencyCode) ? invoice.CurrencyCode : req.CurrencyCode.Trim().ToUpperInvariant(),
+            Method    = req.Method.Trim(),
+            Reference = req.Reference?.Trim(),
+            Status    = req.Status ?? PaymentStatuses.Completed,
+            PaidAt    = req.PaidAt ?? (req.Status == PaymentStatuses.Completed ? DateTime.UtcNow : null),
+            ReceivedByPlatformUserId = receiverId == Guid.Empty ? null : receiverId,
+            Notes     = req.Notes?.Trim(),
+            CreatedBy = receiverId == Guid.Empty ? null : receiverId,
+        };
+        _db.TenantPayments.Add(payment);
+
+        // Derive invoice status from total payments
+        await RecalculateInvoiceStatusAsync(invoice, ct);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "Payment", EntityId = payment.Id.ToString(),
+            Action = "PaymentCreated",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { payment.Amount, payment.Method, payment.Status, payment.Reference }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        // Recalculate after save (new payment row is now in DB)
+        await RecalculateInvoiceStatusAsync(invoice, ct);
+        await _db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(ListInvoicePayments), new { tenantId, invoiceId }, payment);
+    }
+
+    [HttpPut("tenants/{tenantId:guid}/payments/{paymentId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> UpdatePayment(Guid tenantId, Guid paymentId, [FromBody] UpdatePaymentRequest req, CancellationToken ct)
+    {
+        var payment = await _db.TenantPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.TenantId == tenantId, ct);
+        if (payment is null) return NotFound();
+
+        var oldStatus = payment.Status;
+        if (req.Status    is not null) payment.Status    = req.Status;
+        if (req.Amount    is not null) payment.Amount    = Math.Round(req.Amount.Value, 2);
+        if (req.Reference is not null) payment.Reference = req.Reference.Trim();
+        if (req.PaidAt    is not null) payment.PaidAt    = req.PaidAt;
+        if (req.Notes     is not null) payment.Notes     = req.Notes.Trim();
+        payment.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "Payment", EntityId = paymentId.ToString(),
+            Action = "PaymentUpdated",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { status = oldStatus }),
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { payment.Status, payment.Amount, payment.Reference }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        if (payment.InvoiceId.HasValue)
+        {
+            var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == payment.InvoiceId.Value, ct);
+            if (invoice is not null)
+            {
+                await RecalculateInvoiceStatusAsync(invoice, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+
+        return Ok(payment);
+    }
+
+    [HttpDelete("tenants/{tenantId:guid}/payments/{paymentId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> DeletePayment(Guid tenantId, Guid paymentId, CancellationToken ct)
+    {
+        var payment = await _db.TenantPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.TenantId == tenantId, ct);
+        if (payment is null) return NotFound();
+
+        var invoiceId = payment.InvoiceId;
+        _db.TenantPayments.Remove(payment);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = tenantId, EntityType = "Payment", EntityId = paymentId.ToString(),
+            Action = "PaymentDeleted",
+            OldValuesJson = System.Text.Json.JsonSerializer.Serialize(new { payment.Amount, payment.Method, payment.Status }),
+            PerformedByName = "platform_admin", IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+
+        if (invoiceId.HasValue)
+        {
+            var invoice = await _db.TenantInvoices.FirstOrDefaultAsync(i => i.Id == invoiceId.Value, ct);
+            if (invoice is not null)
+            {
+                await RecalculateInvoiceStatusAsync(invoice, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+        return NoContent();
+    }
+
+    // ── Login Activity ─────────────────────────────────────────────────────────
+
+    [HttpGet("login-activity")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support, PlatformRoles.Auditor)]
+    public async Task<IActionResult> ListLoginActivity(
+        [FromQuery] Guid? tenantId,
+        [FromQuery] Guid? userId,
+        [FromQuery] string? eventType,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        page     = Math.Max(1, page);
+
+        var q = _db.LoginActivities.AsNoTracking().AsQueryable();
+
+        if (tenantId.HasValue)   q = q.Where(a => a.TenantId == tenantId.Value);
+        if (userId.HasValue)     q = q.Where(a => a.UserId == userId.Value);
+        if (!string.IsNullOrWhiteSpace(eventType))
+            q = q.Where(a => a.EventType == eventType);
+        if (from.HasValue) q = q.Where(a => a.OccurredAtUtc >= from.Value);
+        if (to.HasValue)   q = q.Where(a => a.OccurredAtUtc <= to.Value);
+
+        var total = await q.CountAsync(ct);
+        var items = await q
+            .OrderByDescending(a => a.OccurredAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return Ok(new { total, page, pageSize, items });
     }
 
     // ── Marketing / Announcements ─────────────────────────────────────────────
@@ -2351,16 +2718,42 @@ public class PlatformController : ControllerBase
         return NoContent();
     }
 
-    private static InvoiceData BuildInvoiceData(TenantInvoice invoice, Tenant? tenant, TenantSubscription? sub)
+    private static InvoiceData BuildInvoiceData(
+        TenantInvoice invoice,
+        Tenant? tenant,
+        TenantSubscription? sub,
+        IReadOnlyList<TenantInvoiceLine>? lines = null)
     {
-        var lineItems = new List<InvoiceLineItem>
+        List<InvoiceLineItem> lineItems;
+
+        if (lines is { Count: > 0 })
         {
-            new(
-                $"KynexOne Workforce Platform — {sub?.Plan ?? "Subscription"}" +
-                (invoice.PeriodDescription is { Length: > 0 } p ? $" ({p})" : string.Empty),
-                invoice.Amount
-            )
-        };
+            lineItems = lines
+                .OrderBy(l => l.SortOrder)
+                .Select(l => new InvoiceLineItem(
+                    l.Description,
+                    l.Quantity,
+                    l.UnitPrice,
+                    l.DiscountAmount,
+                    l.TaxAmount,
+                    l.LineTotal))
+                .ToList();
+        }
+        else
+        {
+            // Backward-compat fallback: legacy invoices with no line items
+            lineItems =
+            [
+                new(
+                    $"KynexOne Workforce Platform — {sub?.Plan ?? "Subscription"}" +
+                    (invoice.PeriodDescription is { Length: > 0 } p ? $" ({p})" : string.Empty),
+                    Quantity:       1,
+                    UnitPrice:      invoice.Amount,
+                    DiscountAmount: 0m,
+                    TaxAmount:      0m,
+                    LineTotal:      invoice.Amount)
+            ];
+        }
 
         return new InvoiceData(
             InvoiceNumber:     invoice.InvoiceNumber,
@@ -2375,6 +2768,56 @@ public class PlatformController : ControllerBase
             Notes:             invoice.Notes,
             LineItems:         lineItems
         );
+    }
+
+    private async Task<List<TenantInvoiceLine>> LoadInvoiceLinesAsync(Guid invoiceId, CancellationToken ct)
+        => await _db.TenantInvoiceLines
+            .AsNoTracking()
+            .Where(l => l.InvoiceId == invoiceId)
+            .OrderBy(l => l.SortOrder)
+            .ToListAsync(ct);
+
+    private async Task RecalculateInvoiceTotalAsync(TenantInvoice invoice, CancellationToken ct)
+    {
+        var lines = await _db.TenantInvoiceLines
+            .Where(l => l.InvoiceId == invoice.Id)
+            .ToListAsync(ct);
+        invoice.Amount = lines.Sum(l => l.LineTotal);
+        invoice.UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    private async Task RecalculateInvoiceStatusAsync(TenantInvoice invoice, CancellationToken ct)
+    {
+        if (invoice.Status is InvoiceStatuses.Draft or InvoiceStatuses.Cancelled)
+            return;
+
+        var totalPaid = await _db.TenantPayments
+            .Where(p => p.InvoiceId == invoice.Id && p.Status == PaymentStatuses.Completed)
+            .SumAsync(p => p.Amount, ct);
+
+        if (totalPaid >= invoice.Amount && invoice.Amount > 0)
+        {
+            invoice.Status = InvoiceStatuses.Paid;
+            invoice.PaidDate ??= DateOnly.FromDateTime(DateTime.UtcNow);
+        }
+        else if (totalPaid > 0)
+        {
+            invoice.Status = InvoiceStatuses.PartiallyPaid;
+        }
+        else if (invoice.Status == InvoiceStatuses.Paid || invoice.Status == InvoiceStatuses.PartiallyPaid)
+        {
+            invoice.Status = InvoiceStatuses.Sent;
+            invoice.PaidDate = null;
+        }
+        invoice.UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    private static (decimal taxAmount, decimal lineTotal) CalcLineTotals(
+        decimal unitPrice, int quantity, decimal discount, decimal taxRate)
+    {
+        var sub = unitPrice * quantity - discount;
+        var tax = sub * taxRate / 100m;
+        return (Math.Round(tax, 2), Math.Round(sub + tax, 2));
     }
 
     // ── Tenant AI Usage (platform view) ──────────────────────────────────────
@@ -2573,3 +3016,36 @@ public record UpdateSecurityPolicyRequest(
     int? SessionTimeoutMinutes,
     int? RefreshTokenExpiryDays,
     bool? AllowMultipleSessions);
+
+public record AddInvoiceLineRequest(
+    string Description,
+    int Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal TaxRate,
+    int SortOrder);
+
+public record UpdateInvoiceLineRequest(
+    string? Description,
+    int? Quantity,
+    decimal? UnitPrice,
+    decimal? DiscountAmount,
+    decimal? TaxRate,
+    int? SortOrder);
+
+public record CreatePaymentRequest(
+    decimal Amount,
+    string? CurrencyCode,
+    string Method,
+    string? Reference,
+    string? Status,
+    DateTime? PaidAt,
+    Guid? ReceivedByPlatformUserId,
+    string? Notes);
+
+public record UpdatePaymentRequest(
+    string? Status,
+    decimal? Amount,
+    string? Reference,
+    DateTime? PaidAt,
+    string? Notes);

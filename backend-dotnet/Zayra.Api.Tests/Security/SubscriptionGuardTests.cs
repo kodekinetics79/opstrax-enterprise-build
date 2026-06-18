@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Filters;
@@ -22,7 +23,7 @@ namespace Zayra.Api.Tests.Security;
 ///   4. PastDue (not yet expired) → passes through + X-Subscription-Status header
 ///   5. Active with no expiry → passes through
 ///   6. ManualContract → always passes through (no expiry enforcement)
-///   7. /api/auth/* and /api/platform/* bypass the guard
+///   7. /api/auth/*, /api/platform/*, /api/health, /api/version bypass the guard
 /// </summary>
 public class SubscriptionGuardTests
 {
@@ -46,7 +47,7 @@ public class SubscriptionGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new SubscriptionGuardFilter(db);
+        var filter = new SubscriptionGuardFilter(db, NullLogger<SubscriptionGuardFilter>.Instance);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 
@@ -179,6 +180,25 @@ public class SubscriptionGuardTests
         result.Should().BeNull();
     }
 
+    [Fact]
+    public async Task TrialSubscription_NotExpired_PassesThrough()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        db.TenantSubscriptions.Add(new TenantSubscription
+        {
+            TenantId     = tenantId,
+            Status       = SubscriptionStatuses.Trial,
+            Plan         = "Trial",
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(14),
+        });
+        await db.SaveChangesAsync();
+
+        var (result, _) = await RunGuard(db, "/api/employees", tenantId);
+
+        result.Should().BeNull("active trial subscription must not be blocked");
+    }
+
     // ── ManualContract bypasses expiry ────────────────────────────────────────
 
     [Fact]
@@ -206,6 +226,8 @@ public class SubscriptionGuardTests
     [InlineData("/api/auth/login")]
     [InlineData("/api/platform/stats")]
     [InlineData("/api/tenant-admin/localization")]
+    [InlineData("/api/health")]
+    [InlineData("/api/version")]
     public async Task SkippedPrefixes_BypassGuardEvenWhenSuspended(string path)
     {
         await using var db = CreateDb();
@@ -219,6 +241,47 @@ public class SubscriptionGuardTests
         var (result, _) = await RunGuard(db, path, tenantId);
 
         result.Should().BeNull($"'{path}' is in the skip list and must bypass the subscription guard");
+    }
+
+    // ── Suspended tenant cannot reach HR APIs ────────────────────────────────
+
+    [Theory]
+    [InlineData("/api/payroll/runs")]
+    [InlineData("/api/recruitment/jobs")]
+    [InlineData("/api/performance/reviews")]
+    public async Task SuspendedTenant_CannotReachBusinessApis(string path)
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        db.TenantSubscriptions.Add(new TenantSubscription
+        {
+            TenantId = tenantId, Status = SubscriptionStatuses.Suspended, Plan = "Starter"
+        });
+        await db.SaveChangesAsync();
+
+        var (result, _) = await RunGuard(db, path, tenantId);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(402);
+    }
+
+    [Theory]
+    [InlineData("/api/payroll/runs")]
+    [InlineData("/api/employees")]
+    public async Task CancelledTenant_CannotReachBusinessApis(string path)
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        db.TenantSubscriptions.Add(new TenantSubscription
+        {
+            TenantId = tenantId, Status = SubscriptionStatuses.Cancelled, Plan = "Growth"
+        });
+        await db.SaveChangesAsync();
+
+        var (result, _) = await RunGuard(db, path, tenantId);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(402);
     }
 
     // ── No subscription record ────────────────────────────────────────────────
@@ -251,7 +314,7 @@ public class SubscriptionGuardTests
         var actionCtx = new ActionContext(httpCtx, new RouteData(), new ActionDescriptor());
         var ctx = new ActionExecutingContext(actionCtx, [], new Dictionary<string, object?>(), null!);
 
-        var filter = new SubscriptionGuardFilter(db);
+        var filter = new SubscriptionGuardFilter(db, NullLogger<SubscriptionGuardFilter>.Instance);
         await filter.OnActionExecutionAsync(ctx, () =>
             Task.FromResult(new ActionExecutedContext(actionCtx, [], null!)));
 

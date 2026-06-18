@@ -47,6 +47,16 @@ public class AuthService : IAuthService
         if (failReason is not null)
         {
             _log.LogWarning("Login failed for {Email} / tenant={Slug}: {Reason}", request.Email, request.TenantSlug, failReason);
+            _db.LoginActivities.Add(new LoginActivity
+            {
+                TenantId      = user?.TenantId,
+                UserId        = user?.Id,
+                EmailAttempted = request.Email,
+                EventType     = LoginEventTypes.LoginFailed,
+                FailureReason = failReason,
+                IpAddress     = context.IpAddress,
+                UserAgent     = context.UserAgent,
+            });
             await _auditService.WriteAsync("auth.login_failed", "User", null, context,
                 $"{{\"email\":\"{request.Email}\",\"reason\":\"{failReason}\"}}", cancellationToken);
             throw new UnauthorizedAccessException("Invalid email, password, or tenant.");
@@ -63,6 +73,16 @@ public class AuthService : IAuthService
         if (user!.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow)
         {
             _log.LogWarning("Login blocked — lockout active until {LockoutEnd} for {Email}", user.LockoutEnd, request.Email);
+            _db.LoginActivities.Add(new LoginActivity
+            {
+                TenantId      = user.TenantId,
+                UserId        = user.Id,
+                EmailAttempted = request.Email,
+                EventType     = LoginEventTypes.LoginBlockedLockout,
+                FailureReason = "account_locked",
+                IpAddress     = context.IpAddress,
+                UserAgent     = context.UserAgent,
+            });
             await _auditService.WriteAsync("auth.login_blocked_lockout", "User", user.Id.ToString(),
                 context with { UserId = user.Id, TenantId = user.TenantId },
                 $"{{\"email\":\"{request.Email}\",\"lockoutEnd\":\"{user.LockoutEnd:O}\"}}", cancellationToken);
@@ -84,6 +104,16 @@ public class AuthService : IAuthService
                     request.Email, user.FailedLoginCount, user.LockoutEnd);
             }
 
+            _db.LoginActivities.Add(new LoginActivity
+            {
+                TenantId      = user.TenantId,
+                UserId        = user.Id,
+                EmailAttempted = request.Email,
+                EventType     = nowLocked ? LoginEventTypes.AccountLocked : LoginEventTypes.LoginFailed,
+                FailureReason = nowLocked ? "account_locked_after_repeated_failures" : "password_mismatch",
+                IpAddress     = context.IpAddress,
+                UserAgent     = context.UserAgent,
+            });
             await _db.SaveChangesAsync(cancellationToken);
             await _auditService.WriteAsync(
                 nowLocked ? "auth.account_locked" : "auth.login_failed",
@@ -113,6 +143,15 @@ public class AuthService : IAuthService
         user.LastLoginAtUtc   = DateTime.UtcNow;
         user.UpdatedAtUtc     = DateTime.UtcNow;
         var refreshToken = AddRefreshToken(user, context);
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            TenantId      = user.TenantId,
+            UserId        = user.Id,
+            EmailAttempted = user.Email,
+            EventType     = LoginEventTypes.LoginSuccess,
+            IpAddress     = context.IpAddress,
+            UserAgent     = context.UserAgent,
+        });
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("auth.login", "User", user.Id.ToString(),
             context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
@@ -171,6 +210,15 @@ public class AuthService : IAuthService
             ExpiresAtUtc = expiresAt,
             CreatedByIp = context.IpAddress
         });
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            TenantId      = user.TenantId,
+            UserId        = user.Id,
+            EmailAttempted = user.Email,
+            EventType     = LoginEventTypes.PasswordResetRequested,
+            IpAddress     = context.IpAddress,
+            UserAgent     = context.UserAgent,
+        });
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("auth.password_reset_requested", "User", user.Id.ToString(), context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
 
@@ -214,6 +262,15 @@ public class AuthService : IAuthService
         user.UpdatedAtUtc = DateTime.UtcNow;
         resetToken.UsedAtUtc = DateTime.UtcNow;
         await _db.RefreshTokens.Where(x => x.UserId == user.Id && x.RevokedAtUtc == null).ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), cancellationToken);
+        _db.LoginActivities.Add(new LoginActivity
+        {
+            TenantId      = user.TenantId,
+            UserId        = user.Id,
+            EmailAttempted = user.Email,
+            EventType     = LoginEventTypes.PasswordResetCompleted,
+            IpAddress     = context.IpAddress,
+            UserAgent     = context.UserAgent,
+        });
         await _db.SaveChangesAsync(cancellationToken);
         await _auditService.WriteAsync("auth.password_reset", "User", user.Id.ToString(), context with { UserId = user.Id, TenantId = user.TenantId }, null, cancellationToken);
     }

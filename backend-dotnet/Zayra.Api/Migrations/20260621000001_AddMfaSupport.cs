@@ -13,7 +13,7 @@ namespace Zayra.Api.Migrations
         {
             // ── users: TOTP fields ────────────────────────────────────────────
             migrationBuilder.AddColumn<string>(
-                name: "MfaSecretEncrypted",
+                name: "mfa_secret_encrypted",
                 table: "users",
                 type: "varchar(1024)",
                 maxLength: 1024,
@@ -21,27 +21,27 @@ namespace Zayra.Api.Migrations
                 .Annotation("MySql:CharSet", "utf8mb4");
 
             migrationBuilder.AddColumn<DateTime>(
-                name: "MfaConfiguredAtUtc",
+                name: "mfa_configured_at_utc",
                 table: "users",
                 type: "datetime(6)",
                 nullable: true);
 
             migrationBuilder.AddColumn<DateTime>(
-                name: "MfaLastVerifiedAtUtc",
+                name: "mfa_last_verified_at_utc",
                 table: "users",
                 type: "datetime(6)",
                 nullable: true);
 
             migrationBuilder.AddColumn<int>(
-                name: "MfaFailedCount",
+                name: "mfa_failed_count",
                 table: "users",
                 type: "int",
                 nullable: false,
                 defaultValue: 0);
 
-            // ── security_settings: MfaRequired policy ────────────────────────
+            // ── security_settings: mfa_required policy ────────────────────────
             migrationBuilder.AddColumn<bool>(
-                name: "MfaRequired",
+                name: "mfa_required",
                 table: "security_settings",
                 type: "tinyint(1)",
                 nullable: false,
@@ -49,14 +49,14 @@ namespace Zayra.Api.Migrations
 
             // ── platform_users: TOTP fields ───────────────────────────────────
             migrationBuilder.AddColumn<bool>(
-                name: "MfaEnabled",
+                name: "mfa_enabled",
                 table: "platform_users",
                 type: "tinyint(1)",
                 nullable: false,
                 defaultValue: false);
 
             migrationBuilder.AddColumn<string>(
-                name: "MfaSecretEncrypted",
+                name: "mfa_secret_encrypted",
                 table: "platform_users",
                 type: "varchar(1024)",
                 maxLength: 1024,
@@ -64,7 +64,7 @@ namespace Zayra.Api.Migrations
                 .Annotation("MySql:CharSet", "utf8mb4");
 
             migrationBuilder.AddColumn<DateTime>(
-                name: "MfaConfiguredAtUtc",
+                name: "mfa_configured_at_utc",
                 table: "platform_users",
                 type: "datetime(6)",
                 nullable: true);
@@ -74,34 +74,34 @@ namespace Zayra.Api.Migrations
                 name: "mfa_challenge_tokens",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
-                    UserId = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
-                    PlatformUserId = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
-                    TenantId = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
-                    TokenHash = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: false)
+                    id = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
+                    user_id = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
+                    platform_user_id = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
+                    tenant_id = table.Column<Guid>(type: "char(36)", nullable: true, collation: "ascii_general_ci"),
+                    token_hash = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
-                    ExpiresAtUtc = table.Column<DateTime>(type: "datetime(6)", nullable: false),
-                    CreatedByIp = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false)
+                    expires_at_utc = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    created_by_ip = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false)
                         .Annotation("MySql:CharSet", "utf8mb4"),
-                    UsedAtUtc = table.Column<DateTime>(type: "datetime(6)", nullable: true),
-                    CreatedAtUtc = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                    used_at_utc = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    created_at_utc = table.Column<DateTime>(type: "datetime(6)", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_mfa_challenge_tokens", x => x.Id);
+                    table.PrimaryKey("PK_mfa_challenge_tokens", x => x.id);
                 })
                 .Annotation("MySql:CharSet", "utf8mb4");
 
             migrationBuilder.CreateIndex(
-                name: "IX_mfa_challenge_tokens_TokenHash",
+                name: "IX_mfa_challenge_tokens_token_hash",
                 table: "mfa_challenge_tokens",
-                column: "TokenHash",
+                column: "token_hash",
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_mfa_challenge_tokens_ExpiresAtUtc",
+                name: "IX_mfa_challenge_tokens_expires_at_utc",
                 table: "mfa_challenge_tokens",
-                column: "ExpiresAtUtc");
+                column: "expires_at_utc");
         }
 
         /// <inheritdoc />
@@ -109,16 +109,16 @@ namespace Zayra.Api.Migrations
         {
             migrationBuilder.DropTable(name: "mfa_challenge_tokens");
 
-            migrationBuilder.DropColumn(name: "MfaRequired",     table: "security_settings");
+            migrationBuilder.DropColumn(name: "mfa_required",     table: "security_settings");
 
-            migrationBuilder.DropColumn(name: "MfaSecretEncrypted",  table: "users");
-            migrationBuilder.DropColumn(name: "MfaConfiguredAtUtc",  table: "users");
-            migrationBuilder.DropColumn(name: "MfaLastVerifiedAtUtc", table: "users");
-            migrationBuilder.DropColumn(name: "MfaFailedCount",       table: "users");
+            migrationBuilder.DropColumn(name: "mfa_secret_encrypted",   table: "users");
+            migrationBuilder.DropColumn(name: "mfa_configured_at_utc",  table: "users");
+            migrationBuilder.DropColumn(name: "mfa_last_verified_at_utc", table: "users");
+            migrationBuilder.DropColumn(name: "mfa_failed_count",        table: "users");
 
-            migrationBuilder.DropColumn(name: "MfaEnabled",          table: "platform_users");
-            migrationBuilder.DropColumn(name: "MfaSecretEncrypted",  table: "platform_users");
-            migrationBuilder.DropColumn(name: "MfaConfiguredAtUtc",  table: "platform_users");
+            migrationBuilder.DropColumn(name: "mfa_enabled",           table: "platform_users");
+            migrationBuilder.DropColumn(name: "mfa_secret_encrypted",  table: "platform_users");
+            migrationBuilder.DropColumn(name: "mfa_configured_at_utc", table: "platform_users");
         }
     }
 }

@@ -7,7 +7,7 @@ import {
   ArrowLeft, Plus, Download, Send, RefreshCw, X,
   Pencil, Trash2, CheckCircle, AlertCircle, Clock, Ban,
 } from 'lucide-react';
-import { platformApi, type TenantInvoice } from '@/src/api/platform';
+import { platformApi, type TenantInvoice, type TenantInvoiceLine, type TenantPayment } from '@/src/api/platform';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -16,22 +16,24 @@ const DUE30 = () => new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 
 const YM    = () => new Date().toISOString().slice(0, 7).replace('-', '');
 
 const STATUSES = ['Draft', 'Sent', 'Paid', 'Overdue', 'Cancelled'] as const;
-type Status = typeof STATUSES[number];
+type Status = typeof STATUSES[number] | 'PartiallyPaid';
 
-const STATUS_BADGE: Record<Status, string> = {
-  Draft:     'text-slate-400 bg-slate-700/50 border-slate-600',
-  Sent:      'text-blue-400 bg-blue-900/30 border-blue-700/30',
-  Paid:      'text-emerald-400 bg-emerald-900/30 border-emerald-700/30',
-  Overdue:   'text-rose-400 bg-rose-900/30 border-rose-700/30',
-  Cancelled: 'text-slate-600 bg-transparent border-slate-800',
+const STATUS_BADGE: Record<string, string> = {
+  Draft:         'text-slate-400 bg-slate-700/50 border-slate-600',
+  Sent:          'text-blue-400 bg-blue-900/30 border-blue-700/30',
+  Paid:          'text-emerald-400 bg-emerald-900/30 border-emerald-700/30',
+  PartiallyPaid: 'text-amber-400 bg-amber-900/30 border-amber-700/30',
+  Overdue:       'text-rose-400 bg-rose-900/30 border-rose-700/30',
+  Cancelled:     'text-slate-600 bg-transparent border-slate-800',
 };
 
-const STATUS_ICON: Record<Status, React.ElementType> = {
-  Draft:     Clock,
-  Sent:      Send,
-  Paid:      CheckCircle,
-  Overdue:   AlertCircle,
-  Cancelled: Ban,
+const STATUS_ICON: Record<string, React.ElementType> = {
+  Draft:         Clock,
+  Sent:          Send,
+  Paid:          CheckCircle,
+  PartiallyPaid: Clock,
+  Overdue:       AlertCircle,
+  Cancelled:     Ban,
 };
 
 const CURRENCIES = ['USD', 'SAR', 'AED', 'EUR', 'GBP', 'QAR', 'KWD', 'BHD', 'OMR'];
@@ -436,6 +438,131 @@ function DeleteDialog({ invoice, onClose, onDeleted }: {
   );
 }
 
+// ── Invoice Lines & Payments Panel ───────────────────────────────────────────
+
+function InvoiceDetailPanel({ tenantId, invoice, currency }: {
+  tenantId: string; invoice: TenantInvoice; currency: string;
+}) {
+  const [lines, setLines]       = useState<TenantInvoiceLine[] | null>(null);
+  const [payments, setPayments] = useState<TenantPayment[] | null>(null);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      platformApi.listInvoiceLines(tenantId, invoice.id),
+      platformApi.listInvoicePayments(tenantId, invoice.id),
+    ]).then(([l, p]) => { setLines(l); setPayments(p); })
+      .catch(() => { setLines([]); setPayments([]); })
+      .finally(() => setLoading(false));
+  }, [tenantId, invoice.id]);
+
+  const totalPaid    = (payments ?? []).filter(p => p.status === 'Completed').reduce((s, p) => s + p.amount, 0);
+  const balanceDue   = invoice.amount - totalPaid;
+
+  if (loading) return (
+    <tr><td colSpan={8} className="px-8 py-4">
+      <div className="h-3 w-3 animate-spin rounded-full border border-blue-500 border-t-transparent" />
+    </td></tr>
+  );
+
+  return (
+    <tr className="bg-[#0d1117] border-b border-white/[0.04]">
+      <td colSpan={8} className="px-6 pb-4 pt-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+          {/* Line Items */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">Line Items</p>
+            {lines && lines.length > 0 ? (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] text-slate-600 uppercase">
+                    <th className="text-left pb-1 font-medium">Description</th>
+                    <th className="text-right pb-1 font-medium pr-2">Qty</th>
+                    <th className="text-right pb-1 font-medium pr-2">Unit</th>
+                    <th className="text-right pb-1 font-medium pr-2">Disc</th>
+                    <th className="text-right pb-1 font-medium">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {lines.map(l => (
+                    <tr key={l.id}>
+                      <td className="py-1 text-slate-300">{l.description}</td>
+                      <td className="py-1 text-right pr-2 text-slate-500 tabular-nums">{l.quantity}</td>
+                      <td className="py-1 text-right pr-2 text-slate-400 tabular-nums">{fmtAmount(l.unitPrice, currency)}</td>
+                      <td className="py-1 text-right pr-2 text-slate-600 tabular-nums">{l.discountAmount > 0 ? `-${fmtAmount(l.discountAmount, currency)}` : '—'}</td>
+                      <td className="py-1 text-right text-white font-medium tabular-nums">{fmtAmount(l.lineTotal, currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t border-white/[0.06]">
+                  <tr>
+                    <td colSpan={4} className="pt-1.5 text-right text-slate-500 pr-2">Total</td>
+                    <td className="pt-1.5 text-right text-emerald-400 font-bold tabular-nums">{fmtAmount(invoice.amount, currency)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            ) : (
+              <p className="text-xs text-slate-700 italic">No line items — legacy flat invoice.</p>
+            )}
+          </div>
+
+          {/* Payment History */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">Payment History</p>
+            {payments && payments.length > 0 ? (
+              <>
+                <table className="w-full text-xs mb-2">
+                  <thead>
+                    <tr className="text-[10px] text-slate-600 uppercase">
+                      <th className="text-left pb-1 font-medium">Date</th>
+                      <th className="text-left pb-1 font-medium">Method</th>
+                      <th className="text-left pb-1 font-medium">Status</th>
+                      <th className="text-right pb-1 font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {payments.map(p => (
+                      <tr key={p.id}>
+                        <td className="py-1 text-slate-500">{p.paidAt ? fmtDate(p.paidAt) : '—'}</td>
+                        <td className="py-1 text-slate-400">{p.method}</td>
+                        <td className="py-1">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                            p.status === 'Completed' ? 'text-emerald-400 border-emerald-700/30 bg-emerald-900/20' :
+                            p.status === 'Failed'    ? 'text-rose-400 border-rose-700/30 bg-rose-900/20' :
+                            p.status === 'Refunded'  ? 'text-amber-400 border-amber-700/30 bg-amber-900/20' :
+                            'text-slate-400 border-slate-700/30 bg-slate-900/20'
+                          }`}>{p.status}</span>
+                        </td>
+                        <td className={`py-1 text-right tabular-nums font-medium ${p.status === 'Completed' ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {fmtAmount(p.amount, p.currencyCode)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="flex justify-between text-xs pt-1 border-t border-white/[0.06]">
+                  <span className="text-slate-500">Paid</span>
+                  <span className="text-emerald-400 font-semibold tabular-nums">{fmtAmount(totalPaid, currency)}</span>
+                </div>
+                {balanceDue > 0 && (
+                  <div className="flex justify-between text-xs pt-1">
+                    <span className="text-slate-500">Balance Due</span>
+                    <span className="text-rose-400 font-semibold tabular-nums">{fmtAmount(balanceDue, currency)}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-slate-700 italic">No payments recorded.</p>
+            )}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TenantBillingPage() {
@@ -450,6 +577,7 @@ export default function TenantBillingPage() {
   const [sending, setSending]         = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [toasts, setToasts]           = useState<Record<string, { text: string; ok: boolean }>>({});
+  const [expanded, setExpanded]       = useState<string | null>(null);
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
@@ -582,10 +710,14 @@ export default function TenantBillingPage() {
               </thead>
               <tbody>
                 {invoices.map(inv => {
-                  const Icon = STATUS_ICON[inv.status as Status] ?? Clock;
+                  const Icon = STATUS_ICON[inv.status] ?? Clock;
+                  const isExpanded = expanded === inv.id;
                   return (
                     <>
-                      <tr key={inv.id} className="border-b border-white/[0.04] hover:bg-white/[0.015] transition-colors">
+                      <tr key={inv.id}
+                        className={`border-b border-white/[0.04] hover:bg-white/[0.015] transition-colors cursor-pointer ${isExpanded ? 'bg-white/[0.02]' : ''}`}
+                        onClick={() => setExpanded(isExpanded ? null : inv.id)}
+                      >
                         {/* Invoice # */}
                         <td className="px-4 py-3">
                           <p className="text-sm text-white font-mono font-medium">{inv.invoiceNumber}</p>
@@ -609,7 +741,7 @@ export default function TenantBillingPage() {
 
                         {/* Status */}
                         <td className="px-3 py-3">
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${STATUS_BADGE[inv.status as Status] ?? ''}`}>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${STATUS_BADGE[inv.status] ?? ''}`}>
                             <Icon className="h-2.5 w-2.5" />
                             {inv.status}
                           </span>
@@ -640,7 +772,7 @@ export default function TenantBillingPage() {
                         </td>
 
                         {/* Actions */}
-                        <td className="px-3 py-3">
+                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center gap-1 flex-wrap">
                             {inv.status === 'Draft' && (
                               <button type="button" onClick={() => quickStatus(inv, 'Sent')}
@@ -702,6 +834,9 @@ export default function TenantBillingPage() {
                             <p className="text-[11px] text-slate-600 italic">Note: {inv.notes}</p>
                           </td>
                         </tr>
+                      )}
+                      {isExpanded && (
+                        <InvoiceDetailPanel key={`detail-${inv.id}`} tenantId={id} invoice={inv} currency={inv.currencyCode} />
                       )}
                     </>
                   );

@@ -16,6 +16,8 @@ public class RequirePlatformRoleAttribute : Attribute, IActionFilter
 {
     private readonly HashSet<string> _allowedRoles;
 
+    public IReadOnlySet<string> Roles => _allowedRoles;
+
     public RequirePlatformRoleAttribute(params string[] roles)
     {
         _allowedRoles = new HashSet<string>(roles, StringComparer.OrdinalIgnoreCase);

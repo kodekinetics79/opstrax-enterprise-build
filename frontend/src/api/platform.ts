@@ -206,7 +206,7 @@ export interface TenantInvoice {
   invoiceNumber: string;
   amount: number;
   currencyCode: string;
-  status: 'Draft' | 'Sent' | 'Paid' | 'Overdue' | 'Cancelled';
+  status: 'Draft' | 'Sent' | 'Paid' | 'PartiallyPaid' | 'Overdue' | 'Cancelled';
   paymentMethod: string | null;
   paymentReference: string | null;
   periodDescription: string | null;
@@ -216,6 +216,48 @@ export interface TenantInvoice {
   notes: string | null;
   recipientEmail: string | null;
   createdAtUtc: string;
+}
+
+export interface TenantInvoiceLine {
+  id: string;
+  invoiceId: string;
+  tenantId: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discountAmount: number;
+  taxRate: number;
+  taxAmount: number;
+  lineTotal: number;
+  sortOrder: number;
+  createdAtUtc: string;
+}
+
+export interface TenantPayment {
+  id: string;
+  tenantId: string;
+  invoiceId: string | null;
+  amount: number;
+  currencyCode: string;
+  method: string;
+  reference: string | null;
+  status: 'Pending' | 'Completed' | 'Failed' | 'Refunded';
+  paidAt: string | null;
+  receivedByPlatformUserId: string | null;
+  notes: string | null;
+  createdAtUtc: string;
+}
+
+export interface LoginActivity {
+  id: string;
+  tenantId: string | null;
+  userId: string | null;
+  emailAttempted: string | null;
+  eventType: string;
+  failureReason: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  occurredAtUtc: string;
 }
 
 export interface TenantAiUsage {
@@ -599,4 +641,53 @@ export const platformApi = {
 
   getTenantAiUsage: (tenantId: string, yearMonth?: number) =>
     platform.get<TenantAiUsage>(`/api/platform/tenants/${tenantId}/ai-usage`, { params: yearMonth ? { yearMonth } : {} }).then(r => r.data),
+
+  // ── Invoice Lines ──────────────────────────────────────────────────────────
+
+  listInvoiceLines: (tenantId: string, invoiceId: string) =>
+    platform.get<TenantInvoiceLine[]>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/lines`).then(r => r.data),
+
+  addInvoiceLine: (tenantId: string, invoiceId: string, body: {
+    description: string; quantity: number; unitPrice: number;
+    discountAmount?: number; taxRate?: number; sortOrder?: number;
+  }) =>
+    platform.post<TenantInvoiceLine>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/lines`, body).then(r => r.data),
+
+  updateInvoiceLine: (tenantId: string, invoiceId: string, lineId: string, body: {
+    description?: string; quantity?: number; unitPrice?: number;
+    discountAmount?: number; taxRate?: number; sortOrder?: number;
+  }) =>
+    platform.put<TenantInvoiceLine>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/lines/${lineId}`, body).then(r => r.data),
+
+  deleteInvoiceLine: (tenantId: string, invoiceId: string, lineId: string) =>
+    platform.delete(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/lines/${lineId}`).then(r => r.data),
+
+  // ── Payments ───────────────────────────────────────────────────────────────
+
+  listInvoicePayments: (tenantId: string, invoiceId: string) =>
+    platform.get<TenantPayment[]>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/payments`).then(r => r.data),
+
+  createPayment: (tenantId: string, invoiceId: string, body: {
+    amount: number; currencyCode?: string; method: string;
+    reference?: string; status?: string; paidAt?: string | null; notes?: string;
+  }) =>
+    platform.post<TenantPayment>(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}/payments`, body).then(r => r.data),
+
+  updatePayment: (tenantId: string, paymentId: string, body: {
+    status?: string; amount?: number; reference?: string; paidAt?: string | null; notes?: string;
+  }) =>
+    platform.put<TenantPayment>(`/api/platform/tenants/${tenantId}/payments/${paymentId}`, body).then(r => r.data),
+
+  deletePayment: (tenantId: string, paymentId: string) =>
+    platform.delete(`/api/platform/tenants/${tenantId}/payments/${paymentId}`).then(r => r.data),
+
+  // ── Login Activity ─────────────────────────────────────────────────────────
+
+  listLoginActivity: (params?: {
+    tenantId?: string; userId?: string; eventType?: string;
+    from?: string; to?: string; page?: number; pageSize?: number;
+  }) =>
+    platform.get<{ total: number; page: number; pageSize: number; items: LoginActivity[] }>(
+      '/api/platform/login-activity', { params }
+    ).then(r => r.data),
 };

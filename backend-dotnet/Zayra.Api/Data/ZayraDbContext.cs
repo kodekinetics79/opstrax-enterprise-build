@@ -238,6 +238,9 @@ public class ZayraDbContext : DbContext
     public DbSet<AIHRQueryCache> AIHRQueryCaches => Set<AIHRQueryCache>();
     public DbSet<TenantAiUsage> TenantAiUsages => Set<TenantAiUsage>();
     public DbSet<TenantInvoice> TenantInvoices => Set<TenantInvoice>();
+    public DbSet<TenantInvoiceLine> TenantInvoiceLines => Set<TenantInvoiceLine>();
+    public DbSet<TenantPayment> TenantPayments => Set<TenantPayment>();
+    public DbSet<LoginActivity> LoginActivities => Set<LoginActivity>();
     public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
     public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
     public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
@@ -1670,6 +1673,39 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.Amount).HasPrecision(12, 2);
             entity.HasIndex(x => new { x.TenantId, x.Status });
             entity.HasIndex(x => new { x.TenantId, x.InvoiceDate });
+        });
+
+        modelBuilder.Entity<TenantInvoiceLine>(entity =>
+        {
+            entity.ToTable("tenant_invoice_lines");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.UnitPrice).HasPrecision(12, 2);
+            entity.Property(x => x.DiscountAmount).HasPrecision(12, 2);
+            entity.Property(x => x.TaxRate).HasPrecision(6, 4);
+            entity.Property(x => x.TaxAmount).HasPrecision(12, 2);
+            entity.Property(x => x.LineTotal).HasPrecision(12, 2);
+            entity.HasIndex(x => new { x.InvoiceId, x.SortOrder });
+            entity.HasIndex(x => x.TenantId);
+        });
+
+        modelBuilder.Entity<TenantPayment>(entity =>
+        {
+            entity.ToTable("tenant_payments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Amount).HasPrecision(12, 2);
+            entity.HasIndex(x => x.TenantId);
+            entity.HasIndex(x => x.InvoiceId);
+            entity.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<LoginActivity>(entity =>
+        {
+            entity.ToTable("login_activity");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.TenantId);
+            entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.OccurredAtUtc);
+            entity.HasIndex(x => new { x.TenantId, x.EventType, x.OccurredAtUtc });
         });
 
         modelBuilder.Entity<ResumeParseResult>(entity =>
