@@ -55,6 +55,14 @@ public interface IQiwaIntegrationService
 
     /// <summary>Aggregate Qiwa compliance figures for the Saudi compliance dashboard.</summary>
     Task<QiwaComplianceSummary> GetComplianceSummaryAsync(Guid tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Enqueues all Qiwa-ready active employees for bulk sync in a single operation.
+    /// Employees already in Pending status are skipped (not double-queued).
+    /// Non-ready employees are silently omitted; callers should use
+    /// <see cref="GetReadinessSummaryAsync"/> first to surface blocked employees.
+    /// </summary>
+    Task<QiwaBulkSyncResult> EnqueueBulkSyncAsync(Guid tenantId, string triggerSource, Guid? triggeredBy, CancellationToken ct = default);
 }
 
 // ── Request / response DTOs ───────────────────────────────────────────────────
@@ -66,12 +74,21 @@ public record QiwaConnectionRequest(
     string Environment
 );
 
+/// <summary>
+/// Full readiness report for one employee.
+/// <para><c>IsReady</c> = all required fields present.</para>
+/// <para><c>IsEligibleForSync</c> = IsReady AND employee is in an active employment status.</para>
+/// </summary>
 public record QiwaReadinessReport(
     int EmployeeId,
     string EmployeeCode,
     string FullName,
     bool IsReady,
-    IReadOnlyList<string> MissingFields
+    bool IsEligibleForSync,
+    IReadOnlyList<string> MissingFields,
+    IReadOnlyList<string> BlockingReasons,
+    IReadOnlyList<string> Warnings,
+    DateTime CheckedAtUtc
 );
 
 public record QiwaReadinessSummary(
@@ -89,4 +106,12 @@ public record QiwaComplianceSummary(
     int EmployeesBlocked,
     int FailedSyncCount,
     DateTime? LastSuccessfulSync
+);
+
+/// <summary>Result of a bulk-sync enqueue request.</summary>
+public record QiwaBulkSyncResult(
+    int TotalReady,
+    int Enqueued,
+    int SkippedAlreadyPending,
+    IReadOnlyList<int> EnqueuedEmployeeIds
 );

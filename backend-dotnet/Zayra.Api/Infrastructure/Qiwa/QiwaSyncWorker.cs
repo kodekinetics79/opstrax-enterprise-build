@@ -101,6 +101,17 @@ public sealed class QiwaSyncWorker : BackgroundService
         {
             var tenantId = group.Key;
 
+            // Feature flag: absent row = enabled; explicit IsEnabled=false = skip.
+            var featureFlag = await db.TenantFeatureFlags.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.FeatureKey == FeatureKeys.QiwaIntegration, ct);
+            if (featureFlag is { IsEnabled: false })
+            {
+                _log.LogDebug(
+                    "QiwaSyncWorker: qiwa_integration disabled for tenant {TenantId} — skipping.",
+                    tenantId);
+                continue;
+            }
+
             var connection = await db.QiwaTenantConnections.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
             var credential = await db.QiwaApiCredentials.IgnoreQueryFilters()
@@ -193,6 +204,26 @@ public sealed class QiwaSyncWorker : BackgroundService
         if (token is null)
         {
             FailOrDeadLetter(db, log, employee, tenantId, "Could not acquire Qiwa access token (missing/invalid credentials).", "NO_TOKEN");
+            return;
+        }
+
+        // Pre-flight readiness check: dead-letter immediately if required fields are missing
+        // so we don't burn retries on a state that won't resolve without an HR data fix.
+        var readiness = QiwaIntegrationService.BuildReadinessReport(employee);
+        if (!readiness.IsReady)
+        {
+            var reason = "Employee not Qiwa-ready — missing required fields: " +
+                         string.Join("; ", readiness.BlockingReasons);
+            log.Status           = QiwaSyncLogStatuses.DeadLetter;
+            log.DeadLetterReason = reason.Length > 500 ? reason[..500] : reason;
+            log.ErrorMessage     = reason;
+            log.CompletedAtUtc   = DateTime.UtcNow;
+            employee.QiwaSyncStatus = QiwaSyncStatuses.Error;
+            Audit(db, tenantId, "qiwa.sync_not_ready", log.EmployeeId,
+                new { syncLogId = log.Id, missingFields = readiness.MissingFields });
+            _log.LogWarning(
+                "QiwaSyncWorker: employee {EmployeeId} not Qiwa-ready, dead-lettering sync log {SyncLogId}.",
+                log.EmployeeId, log.Id);
             return;
         }
 

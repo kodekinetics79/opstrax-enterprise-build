@@ -177,6 +177,31 @@ public class QiwaController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Enqueues all Qiwa-ready active employees for bulk sync.
+    /// Already-pending employees are skipped; non-ready employees are omitted silently.
+    /// Use GET /readiness-summary first to surface blocked employees.
+    /// </summary>
+    [HttpPost("sync/bulk")]
+    public async Task<IActionResult> EnqueueBulkSync(CancellationToken cancellationToken)
+    {
+        if (!HasPermission("qiwa.sync")) return Forbid();
+
+        var result = await _qiwa.EnqueueBulkSyncAsync(
+            RequireTenant(), "ManualBulk", GetUserId(), cancellationToken);
+
+        return Accepted(new
+        {
+            result.TotalReady,
+            result.Enqueued,
+            result.SkippedAlreadyPending,
+            result.EnqueuedEmployeeIds,
+            message = result.Enqueued == 0
+                ? "No new employees were enqueued. All ready employees may already be pending."
+                : $"{result.Enqueued} employee(s) enqueued for sync."
+        });
+    }
+
     /// <summary>Resets a dead-lettered sync log back to Pending for reprocessing.</summary>
     [HttpPost("sync-logs/{syncLogId:guid}/retry")]
     public async Task<IActionResult> RetryDeadLetter(Guid syncLogId, CancellationToken cancellationToken)

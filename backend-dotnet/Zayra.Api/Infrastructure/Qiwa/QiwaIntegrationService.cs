@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -105,12 +106,21 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
         Guid tenantId, int employeeId, string direction, string triggerSource, Guid? triggeredBy,
         CancellationToken cancellationToken = default)
     {
-        // Verify employee belongs to this tenant (cross-tenant guard).
-        var exists = await _db.Employees
-            .AnyAsync(e => e.TenantId == tenantId && e.Id == employeeId && !e.IsDeleted, cancellationToken);
+        // Cross-tenant guard: verify the employee belongs to this tenant.
+        var employee = await _db.Employees
+            .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == employeeId && !e.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException($"Employee {employeeId} not found in this tenant.");
 
-        if (!exists)
-            throw new InvalidOperationException($"Employee {employeeId} not found in this tenant.");
+        // Readiness gate for Push syncs: reject non-ready employees so the worker
+        // never wastes API quota or generates preventable FIELD_MISSING failures.
+        if (direction == "Push")
+        {
+            var missing = MissingQiwaFields(employee);
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"Employee {employeeId} is not Qiwa-ready. Missing fields: {string.Join(", ", missing)}. " +
+                    "Fix the employee record before queuing for sync.");
+        }
 
         var entry = new QiwaSyncLog
         {
@@ -118,13 +128,11 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
             EmployeeId    = employeeId,
             Direction     = direction,
             TriggerSource = triggerSource,
-            Status        = "Pending",
+            Status        = QiwaSyncLogStatuses.Pending,
             TriggeredBy   = triggeredBy,
         };
         _db.QiwaSyncLogs.Add(entry);
 
-        // Update the employee's sync status flag.
-        var employee = await _db.Employees.FirstAsync(e => e.TenantId == tenantId && e.Id == employeeId, cancellationToken);
         employee.QiwaSyncStatus = QiwaSyncStatuses.Pending;
 
         _db.AuditLogs.Add(new Domain.Entities.AuditLog
@@ -134,7 +142,7 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
             Action      = "qiwa.sync_enqueued",
             EntityName  = "Employee",
             EntityId    = employeeId.ToString(),
-            Metadata    = System.Text.Json.JsonSerializer.Serialize(new { direction, triggerSource, syncLogId = entry.Id }),
+            Metadata    = JsonSerializer.Serialize(new { direction, triggerSource, syncLogId = entry.Id }),
         });
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -161,6 +169,13 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
 
     // ── Readiness check ───────────────────────────────────────────────────────
 
+    /// <summary>Employment statuses that are eligible for Qiwa sync.</summary>
+    private static readonly IReadOnlySet<string> SyncEligibleStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        EmployeeStatuses.Active,
+        EmployeeStatuses.Invited,
+    };
+
     public async Task<QiwaReadinessReport> CheckEmployeeReadinessAsync(
         Guid tenantId, int employeeId, CancellationToken cancellationToken = default)
     {
@@ -168,17 +183,40 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
             .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == employeeId && !e.IsDeleted, cancellationToken)
             ?? throw new InvalidOperationException($"Employee {employeeId} not found in this tenant.");
 
-        var missing = MissingQiwaFields(emp);
-
-        return new QiwaReadinessReport(
-            emp.Id,
-            emp.EmployeeCode,
-            emp.FullName,
-            missing.Count == 0,
-            missing);
+        return BuildReadinessReport(emp);
     }
 
-    /// <summary>Returns the snake_case names of all Qiwa-required fields that are empty on an employee.</summary>
+    /// <summary>
+    /// Builds a full readiness report for an employee:
+    /// missing required fields, human-readable blocking reasons, non-blocking warnings,
+    /// and eligibility for sync (ready + active employment status).
+    /// </summary>
+    public static QiwaReadinessReport BuildReadinessReport(Employee emp)
+    {
+        var missing  = MissingQiwaFields(emp);
+        var blocking = MissingFieldsToReasons(missing);
+        var warnings = new List<string>();
+
+        // Employment-status eligibility: only Active/Invited employees should sync.
+        var isEligibleStatus = SyncEligibleStatuses.Contains(emp.Status);
+        if (!isEligibleStatus)
+            warnings.Add($"Employee status '{emp.Status}' is not eligible for Qiwa sync. Only Active or Invited employees are synced.");
+
+        // Non-blocking warnings (advisory only, do not block sync)
+        if (string.IsNullOrWhiteSpace(emp.WorkPermitReference) && string.Equals(emp.SaudiOrNonSaudi, "NonSaudi", StringComparison.OrdinalIgnoreCase))
+            warnings.Add("work_permit_reference is recommended for Non-Saudi employees (non-blocking).");
+
+        var isReady         = missing.Count == 0;
+        var isEligibleForSync = isReady && isEligibleStatus;
+
+        return new QiwaReadinessReport(
+            emp.Id, emp.EmployeeCode, emp.FullName,
+            isReady, isEligibleForSync,
+            missing, blocking, warnings,
+            DateTime.UtcNow);
+    }
+
+    /// <summary>Returns snake_case field names for all Qiwa-required fields that are empty on an employee.</summary>
     public static List<string> MissingQiwaFields(Employee emp)
     {
         var missing = new List<string>();
@@ -191,6 +229,25 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
         if (string.IsNullOrWhiteSpace(emp.WorkLocationId))     missing.Add("work_location_id");
         if (string.IsNullOrWhiteSpace(emp.ContractReference))  missing.Add("contract_reference");
         return missing;
+    }
+
+    private static List<string> MissingFieldsToReasons(IReadOnlyList<string> missingFields)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["saudi_or_non_saudi"] = "Saudi/Non-Saudi classification is required by Qiwa for all employees.",
+            ["id_type"]            = "Government ID type (NationalId, Iqama, Passport, etc.) must be specified.",
+            ["id_number"]          = "Government ID number matching the ID type must be provided.",
+            ["nationality"]        = "Employee nationality is required for Qiwa registration.",
+            ["occupation_code"]    = "ISCO-88 / Qiwa occupation code is required.",
+            ["establishment_id"]   = "MOL establishment ID is required — map the employee to a Saudi establishment.",
+            ["work_location_id"]   = "Qiwa work location ID within the establishment is required.",
+            ["contract_reference"] = "Qiwa labour contract reference number is required.",
+        };
+
+        return missingFields
+            .Select(f => map.TryGetValue(f, out var reason) ? reason : $"Field '{f}' is required.")
+            .ToList();
     }
 
     // ── Credentials (encrypted) ───────────────────────────────────────────────
@@ -239,22 +296,105 @@ public sealed class QiwaIntegrationService : IQiwaIntegrationService
     public async Task<QiwaReadinessSummary> GetReadinessSummaryAsync(Guid tenantId, CancellationToken ct = default)
     {
         var employees = await _db.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == "Active")
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == EmployeeStatuses.Active)
             .ToListAsync(ct);
 
         var blocked = new List<QiwaReadinessReport>();
         foreach (var e in employees)
         {
-            var missing = MissingQiwaFields(e);
-            if (missing.Count > 0)
-                blocked.Add(new QiwaReadinessReport(e.Id, e.EmployeeCode, e.FullName, false, missing));
+            var report = BuildReadinessReport(e);
+            if (!report.IsEligibleForSync)
+                blocked.Add(report);
         }
 
-        var total = employees.Count;
-        var ready = total - blocked.Count;
+        var total   = employees.Count;
+        var ready   = total - blocked.Count;
         var percent = total == 0 ? 0 : Math.Round(ready * 100.0 / total, 1);
 
         return new QiwaReadinessSummary(total, ready, blocked.Count, percent, blocked);
+    }
+
+    // ── Bulk sync ─────────────────────────────────────────────────────────────
+
+    public async Task<QiwaBulkSyncResult> EnqueueBulkSyncAsync(
+        Guid tenantId, string triggerSource, Guid? triggeredBy, CancellationToken ct = default)
+    {
+        var employees = await _db.Employees.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && !e.IsDeleted && e.Status == EmployeeStatuses.Active)
+            .ToListAsync(ct);
+
+        // Filter to only Qiwa-ready eligible employees.
+        var readyIds = employees
+            .Where(e => BuildReadinessReport(e).IsEligibleForSync)
+            .Select(e => e.Id)
+            .ToList();
+
+        if (readyIds.Count == 0)
+            return new QiwaBulkSyncResult(0, 0, 0, Array.Empty<int>());
+
+        // Skip employees that already have a Pending sync log to prevent duplicates.
+        var alreadyPending = await _db.QiwaSyncLogs
+            .Where(l => l.TenantId == tenantId && readyIds.Contains(l.EmployeeId)
+                        && l.Status == QiwaSyncLogStatuses.Pending && l.Direction == "Push")
+            .Select(l => l.EmployeeId)
+            .ToListAsync(ct);
+
+        var toEnqueue = readyIds.Except(alreadyPending).ToList();
+        var now = DateTime.UtcNow;
+
+        foreach (var empId in toEnqueue)
+        {
+            _db.QiwaSyncLogs.Add(new QiwaSyncLog
+            {
+                TenantId      = tenantId,
+                EmployeeId    = empId,
+                Direction     = "Push",
+                TriggerSource = triggerSource,
+                Status        = QiwaSyncLogStatuses.Pending,
+                TriggeredBy   = triggeredBy,
+                CreatedAtUtc  = now,
+            });
+            _db.AuditLogs.Add(new Domain.Entities.AuditLog
+            {
+                TenantId   = tenantId,
+                UserId     = triggeredBy,
+                Action     = "qiwa.sync_enqueued",
+                EntityName = "Employee",
+                EntityId   = empId.ToString(),
+                Metadata   = JsonSerializer.Serialize(new { direction = "Push", triggerSource, bulkSync = true }),
+            });
+        }
+
+        // Bulk-update QiwaSyncStatus on the enqueued employees.
+        var enqueueSet = new HashSet<int>(toEnqueue);
+        var empRows = await _db.Employees
+            .Where(e => e.TenantId == tenantId && toEnqueue.Contains(e.Id))
+            .ToListAsync(ct);
+        foreach (var e in empRows)
+            e.QiwaSyncStatus = QiwaSyncStatuses.Pending;
+
+        _db.AuditLogs.Add(new Domain.Entities.AuditLog
+        {
+            TenantId   = tenantId,
+            UserId     = triggeredBy,
+            Action     = "qiwa.bulk_sync_enqueued",
+            EntityName = "Tenant",
+            EntityId   = tenantId.ToString(),
+            Metadata   = JsonSerializer.Serialize(new
+            {
+                enqueued            = toEnqueue.Count,
+                totalReady          = readyIds.Count,
+                skippedAlreadyPending = alreadyPending.Count,
+                triggerSource,
+            }),
+        });
+
+        await _db.SaveChangesAsync(ct);
+        _log.LogInformation(
+            "Qiwa bulk sync enqueued {Count}/{Total} employees for tenant {TenantId}",
+            toEnqueue.Count, readyIds.Count, tenantId);
+
+        return new QiwaBulkSyncResult(readyIds.Count, toEnqueue.Count, alreadyPending.Count, toEnqueue);
     }
 
     // ── Dead-letter retry ─────────────────────────────────────────────────────
