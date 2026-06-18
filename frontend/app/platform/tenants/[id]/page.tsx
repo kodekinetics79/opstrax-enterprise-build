@@ -14,18 +14,27 @@ import {
   type TenantAdminUser,
 } from '@/src/api/platform';
 
-const FEATURE_FLAGS = [
-  { key: 'recruitment',       label: 'Recruitment' },
-  { key: 'performance',       label: 'Performance & Appraisals' },
-  { key: 'compliance',        label: 'Compliance' },
-  { key: 'ai_assistant',      label: 'AI Assistant' },
-  { key: 'finance',           label: 'Finance' },
-  { key: 'payroll',           label: 'Payroll' },
-  { key: 'shifts',            label: 'Shifts & Scheduling' },
-  { key: 'overtime',          label: 'Overtime Management' },
-  { key: 'mobile_app',        label: 'Mobile App' },
-  { key: 'wps_export',        label: 'WPS Export' },
-  { key: 'qiwa_integration',  label: 'Qiwa Integration' },
+const FEATURE_FLAGS: { key: string; label: string; description: string; category: string }[] = [
+  // ── Core Modules ────────────────────────────────────────────────────────────
+  { key: 'payroll',              label: 'Payroll',                  description: 'Payroll processing and payslip generation',                category: 'Core Modules' },
+  { key: 'recruitment',         label: 'Recruitment',              description: 'Job postings, applications and hiring pipeline',          category: 'Core Modules' },
+  { key: 'performance',         label: 'Performance & Appraisals', description: 'Goal setting, reviews and performance cycles',            category: 'Core Modules' },
+  { key: 'compliance',          label: 'Compliance',               description: 'Labour law compliance and regulatory reporting',          category: 'Core Modules' },
+  { key: 'finance',             label: 'Finance',                  description: 'Loans, advances and financial module access',             category: 'Core Modules' },
+  { key: 'shifts',              label: 'Shifts & Scheduling',      description: 'Shift rosters and workforce scheduling',                  category: 'Core Modules' },
+  { key: 'overtime',            label: 'Overtime Management',      description: 'Overtime requests, approvals and calculation',            category: 'Core Modules' },
+  // ── AI & Intelligence ───────────────────────────────────────────────────────
+  { key: 'ai_assistant',        label: 'AI HR Assistant',          description: 'Enable natural-language HR queries',                      category: 'AI & Intelligence' },
+  { key: 'resume_screening',    label: 'AI Resume Screening',      description: 'AI-powered CV analysis (advisory)',                       category: 'AI & Intelligence' },
+  { key: 'payroll_ai_validation', label: 'AI Payroll Validation',  description: 'AI variance detection for payroll',                       category: 'AI & Intelligence' },
+  { key: 'risk_scores',         label: 'Employee Risk Scores',     description: 'Churn and burnout risk indicators (advisory)',            category: 'AI & Intelligence' },
+  // ── GCC / Regional ──────────────────────────────────────────────────────────
+  { key: 'wps_export',          label: 'WPS/SIF Export',           description: 'GCC WPS payroll file generation',                        category: 'GCC / Regional' },
+  { key: 'eosb_calc',           label: 'EOSB Calculator',          description: 'End-of-service benefit computation',                     category: 'GCC / Regional' },
+  { key: 'qiwa_integration',    label: 'Qiwa Integration',         description: 'Saudi Arabia Qiwa platform sync',                        category: 'GCC / Regional' },
+  { key: 'hijri_calendar',      label: 'Hijri Calendar',           description: 'Show Hijri dates alongside Gregorian',                   category: 'GCC / Regional' },
+  // ── Platform & Access ────────────────────────────────────────────────────────
+  { key: 'mobile_app',          label: 'Mobile App',               description: 'Enable mobile API endpoints',                            category: 'Platform & Access' },
 ];
 
 const PLAN_BADGE: Record<string, string> = {
@@ -223,50 +232,60 @@ function OverviewTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
 
 function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
   const [toggling, setToggling] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const flagMap = Object.fromEntries(tenant.featureFlags.map(f => [f.featureKey, f.isEnabled]));
 
   async function toggle(key: string, current: boolean) {
     setToggling(key);
     try {
       await platformApi.setFeature(tenant.id, key, !current);
-      setMsg(`${key} ${!current ? 'enabled' : 'disabled'}.`);
+      const flag = FEATURE_FLAGS.find(f => f.key === key);
+      setMsg({ text: `${flag?.label ?? key} ${!current ? 'enabled' : 'disabled'}.`, ok: true });
       onRefresh();
-    } catch { setMsg(`Failed to update ${key}.`); }
+    } catch { setMsg({ text: `Failed to update ${key}.`, ok: false }); }
     finally { setToggling(null); }
   }
 
+  const categories = Array.from(new Set(FEATURE_FLAGS.map(f => f.category)));
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {msg && (
-        <div className="text-xs text-slate-300 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 flex items-center justify-between">
-          {msg}
-          <button type="button" onClick={() => setMsg(null)}><X className="h-3 w-3" /></button>
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm ${msg.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {msg.text}
+          <button type="button" title="Dismiss" onClick={() => setMsg(null)}><X className="h-3 w-3" /></button>
         </div>
       )}
-      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden divide-y divide-white/[0.04]">
-        {FEATURE_FLAGS.map(f => {
-          const enabled = flagMap[f.key] ?? false;
-          return (
-            <div key={f.key} className="flex items-center gap-4 px-5 py-3.5">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-white">{f.label}</p>
-                <p className="text-[11px] text-slate-600 font-mono">{f.key}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => toggle(f.key, enabled)}
-                disabled={toggling === f.key}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40
-                  ${enabled ? 'bg-sapphire' : 'bg-slate-700'}`}
-              >
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform
-                  ${enabled ? 'translate-x-4' : 'translate-x-1'}`} />
-              </button>
-            </div>
-          );
-        })}
-      </div>
+      {categories.map(cat => (
+        <div key={cat}>
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">{cat}</p>
+          <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden divide-y divide-white/[0.04]">
+            {FEATURE_FLAGS.filter(f => f.category === cat).map(f => {
+              const enabled = flagMap[f.key] ?? false;
+              return (
+                <div key={f.key} className="flex items-center gap-4 px-5 py-3.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white">{f.label}</p>
+                    <p className="text-[11px] text-slate-500">{f.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    title={`${enabled ? 'Disable' : 'Enable'} ${f.label}`}
+                    onClick={() => toggle(f.key, enabled)}
+                    disabled={toggling === f.key}
+                    aria-pressed={enabled ? 'true' : 'false'}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40
+                      ${enabled ? 'bg-sapphire' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform
+                      ${enabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
