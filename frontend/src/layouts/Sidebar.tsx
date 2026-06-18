@@ -8,6 +8,7 @@ import { Logo } from '../components/Logo';
 import { navigationGroups } from '../routes/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { useFeatureFlags } from '../contexts/FeatureFlagContext';
+import { useLocale } from '../contexts/LocaleContext';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
   const pathname = usePathname();
   const { user, logout, hasPermission } = useAuth();
   const { isFeatureEnabled } = useFeatureFlags();
+  const { t } = useLocale();
 
   // All groups expanded by default
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
@@ -148,7 +150,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                           : 'text-slate-400 group-hover/hdr:text-slate-600 dark:text-slate-600 dark:group-hover/hdr:text-slate-400'
                       }`}
                     >
-                      {group.label}
+                      {t(group.label)}
                     </span>
                     <ChevronDown
                       className={`h-3 w-3 shrink-0 transition-all duration-200 ${
@@ -180,7 +182,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                           <button
                             key={item.label}
                             type="button"
-                            title={isCollapsed ? item.label : undefined}
+                            title={isCollapsed ? t(item.label) : undefined}
                             onClick={() => handleNav(item.path)}
                             className={`nav-item group ${active ? 'nav-item-active' : 'nav-item-idle'} ${
                               isCollapsed ? 'justify-center' : ''
@@ -197,7 +199,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                             </span>
 
                             {!isCollapsed && (
-                              <span className="min-w-0 flex-1 truncate text-[13px]">{item.label}</span>
+                              <span className="min-w-0 flex-1 truncate text-[13px]">{t(item.label)}</span>
                             )}
 
                             {item.badge != null && !isCollapsed && (
@@ -241,7 +243,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
               </button>
               <button
                 type="button"
-                aria-label="Sign out"
+                aria-label={t('Sign out')}
                 onClick={handleLogout}
                 className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
               >
@@ -262,7 +264,7 @@ export function Sidebar({ isOpen, isCollapsed, onClose, onToggleCollapse }: Side
                 </div>
                 <button
                   type="button"
-                  aria-label="Sign out"
+                  aria-label={t('Sign out')}
                   onClick={handleLogout}
                   className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-slate-300 hover:bg-rose-50 hover:text-rose-500 dark:text-slate-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
                 >

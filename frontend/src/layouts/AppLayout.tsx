@@ -9,6 +9,7 @@ import { employeesApi } from '../api/employees';
 import { reportsApi } from '../api/reports';
 import { usersApi } from '../api/identity';
 import { useAuth } from '../contexts/AuthContext';
+import { LocaleProvider } from '../contexts/LocaleContext';
 import { navigationItems } from '../routes/navigation';
 import type { ThemeMode } from '../types/ui';
 
@@ -335,6 +336,7 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
   }, [activeIndex, commandOpen, paletteItems]);
 
   return (
+    <LocaleProvider>
     <div className="min-h-screen overflow-x-hidden bg-lightBg text-slate-950 dark:bg-midnight dark:text-white">
       <div className="flex min-h-screen">
         <Sidebar
@@ -540,5 +542,6 @@ export function AppLayout({ children, theme, onToggleTheme }: AppLayoutProps) {
         </div>
       )}
     </div>
+    </LocaleProvider>
   );
 }
