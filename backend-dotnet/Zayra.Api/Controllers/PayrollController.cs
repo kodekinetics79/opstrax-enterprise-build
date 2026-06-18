@@ -453,9 +453,15 @@ public class PayrollController : ControllerBase
         return Ok(await _db.Payslips.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).ToListAsync(cancellationToken));
     }
 
+    /// <summary>
+    /// Creates a WPS payment batch for a Locked payroll run.
+    /// Requires payroll.export permission (export role) and a fully locked run.
+    /// </summary>
     [HttpPost("runs/{id:guid}/payment-batches")]
     public async Task<IActionResult> CreatePaymentBatch(Guid id, PayrollPaymentBatchRequest req, CancellationToken cancellationToken)
     {
+        if (!HasPermission("payroll.export")) return Forbid();
+
         var tenantId = GetTenantId();
         var run = await _db.PayrollRuns.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (run is null) return NotFound();
@@ -465,10 +471,19 @@ public class PayrollController : ControllerBase
         // L2: prevent duplicate payment batches on the same run
         if (await _db.PayrollPaymentBatches.AnyAsync(x => x.TenantId == tenantId && x.PayrollRunId == id, cancellationToken))
             return Conflict(new { message = "A payment batch already exists for this payroll run." });
-        var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
+        var slips    = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
         var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
         var currency = req.Currency ?? await ResolveCurrencyAsync(tenantId, cancellationToken);
-        var batch = new PayrollPaymentBatch { TenantId = tenantId, PayrollRunId = id, BatchNumber = $"PAY-{run.Year}{run.Month:00}-{DateTime.UtcNow:HHmmss}", PaymentMethod = req.PaymentMethod ?? "WPS", TotalAmount = slips.Sum(x => x.NetSalary), Currency = currency, WpsStatus = WpsStatuses.Draft };
+        var batch    = new PayrollPaymentBatch
+        {
+            TenantId      = tenantId,
+            PayrollRunId  = id,
+            BatchNumber   = $"PAY-{run.Year}{run.Month:00}-{DateTime.UtcNow:HHmmss}",
+            PaymentMethod = req.PaymentMethod ?? "WPS",
+            TotalAmount   = slips.Sum(x => x.NetSalary),
+            Currency      = currency,
+            WpsStatus     = WpsStatuses.Draft,
+        };
         _db.PayrollPaymentBatches.Add(batch);
         foreach (var slip in slips)
         {
@@ -483,146 +498,249 @@ public class PayrollController : ControllerBase
     }
 
     /// <summary>
-    /// Pre-export WPS validation: returns the list of blocking issues (missing/invalid
-    /// IBANs, unapproved run) that must be cleared before a SIF file can be exported.
-    /// The same checks are enforced inside <see cref="GenerateWps"/> — the frontend is never trusted.
+    /// Pre-export WPS validation using the WpsSifValidator.
+    /// Returns blocking errors and warnings. The same checks are re-enforced inside
+    /// GenerateWps — the frontend result is advisory only.
+    /// Requires payroll.export permission.
     /// </summary>
     [HttpPost("runs/{id:guid}/wps-validation")]
     public async Task<IActionResult> WpsValidation(Guid id, CancellationToken cancellationToken)
     {
+        if (!HasPermission("payroll.export")) return Forbid();
+
         var tenantId = GetTenantId();
         var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (run is null) return NotFound();
 
-        var issues = new List<object>();
-        if (run.Status != "Locked" && run.Status != "Paid")
-            issues.Add(new { code = "RUN_NOT_LOCKED", message = "Payroll run must be approved and locked before WPS export." });
-
-        var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
+        var slips    = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).ToListAsync(cancellationToken);
         var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
+        var empIds   = slips.Select(s => s.EmployeeId).Distinct().ToList();
+        var employees = await _db.Employees.AsNoTracking().Where(e => e.TenantId == tenantId && empIds.Contains(e.Id)).ToListAsync(cancellationToken);
 
-        foreach (var slip in slips)
+        var result = Infrastructure.Payroll.WpsSifValidator.Validate(run, slips, profiles, employees);
+
+        return Ok(new
         {
-            var iban = profiles.FirstOrDefault(p => p.EmployeeId == slip.EmployeeId)?.Iban;
-            if (!Infrastructure.Payroll.IbanValidator.IsValid(iban))
-                issues.Add(new { code = "INVALID_IBAN", employeeId = slip.EmployeeId, employeeCode = slip.EmployeeCode, message = "Missing or invalid IBAN for WPS payment." });
-        }
-
-        return Ok(new { runId = id, canExport = issues.Count == 0, issueCount = issues.Count, issues });
+            runId        = id,
+            canExport    = result.CanExport,
+            errorCount   = result.ErrorCount,
+            warningCount = result.WarningCount,
+            blockingErrors = result.BlockingErrors,
+            warnings       = result.Warnings,
+        });
     }
 
+    /// <summary>
+    /// Generates the SIF file for a WPS payment batch using the isolated SifFileGenerator.
+    /// Stores metadata (hash, format version, employee count, total) on WPSFileBatch.
+    /// Blocks re-generation once a file has been created — use retry after Rejected if needed.
+    /// Requires payroll.export permission.
+    /// </summary>
     [HttpPost("payment-batches/{id:guid}/wps-file")]
     public async Task<IActionResult> GenerateWps(Guid id, CancellationToken cancellationToken)
     {
+        if (!HasPermission("payroll.export")) return Forbid();
+
         var tenantId = GetTenantId();
         var batch = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, cancellationToken);
         if (batch is null) return NotFound();
 
-        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batch.PayrollRunId, cancellationToken);
-        if (run is not null && run.Status != "Locked" && run.Status != "Paid")
-            return BadRequest(new { error = "run_not_locked", message = "Payroll run must be approved and locked before WPS export." });
-
-        var records = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
-
-        // Backend-enforced IBAN validation — never trust the frontend pre-check.
-        var employeeCodes = await _db.Employees.AsNoTracking()
-            .Where(e => e.TenantId == tenantId && records.Select(r => r.EmployeeId).Contains(e.Id))
-            .Select(e => new { e.Id, e.EmployeeCode })
-            .ToListAsync(cancellationToken);
-
-        var invalid = records
-            .Where(r => !Infrastructure.Payroll.IbanValidator.IsValid(r.Iban))
-            .Select(r => new
+        // Idempotency guard: block silent re-generation of an existing file.
+        if (await _db.WPSFileBatches.AnyAsync(x => x.TenantId == tenantId && x.PaymentBatchId == id, cancellationToken))
+            return Conflict(new
             {
-                employeeId = r.EmployeeId,
-                employeeCode = employeeCodes.FirstOrDefault(e => e.Id == r.EmployeeId)?.EmployeeCode ?? r.EmployeeId.ToString()
-            })
-            .ToList();
+                error   = "already_generated",
+                message = "A WPS file already exists for this batch. Download the existing file or update the batch status to Rejected to allow a new export.",
+            });
 
-        if (invalid.Count > 0)
-            return BadRequest(new { error = "invalid_ibans", message = "WPS export blocked: some payment records have missing or invalid IBANs.", employees = invalid });
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batch.PayrollRunId, cancellationToken);
 
-        // Persist WPS records
-        var wps = new WPSFileBatch { TenantId = tenantId, PaymentBatchId = id, SifFileName = $"SIF-{batch.BatchNumber}.txt" };
+        // Run-level eligibility check (backend-enforced, never trusts frontend).
+        if (run is null || (run.Status is not ("Approved" or "Locked" or "Paid")))
+            return BadRequest(new { error = "run_not_exportable", message = "Payroll run must be Approved (or Locked/Paid) before WPS export." });
+
+        var records  = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
+        var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
+        var empIds   = records.Select(r => r.EmployeeId).Distinct().ToList();
+        var employees = await _db.Employees.AsNoTracking().Where(e => e.TenantId == tenantId && empIds.Contains(e.Id)).ToListAsync(cancellationToken);
+
+        // Full validator: same rules as WpsValidation endpoint.
+        var slips = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == run.Id).ToListAsync(cancellationToken);
+        var validation = Infrastructure.Payroll.WpsSifValidator.Validate(run, slips, profiles, employees);
+        if (!validation.CanExport)
+            return BadRequest(new
+            {
+                error          = "validation_failed",
+                message        = "WPS export blocked by validation errors. Resolve all blocking issues and retry.",
+                errorCount     = validation.ErrorCount,
+                blockingErrors = validation.BlockingErrors,
+            });
+
+        // Build SIF records in DB.
+        var employeeCodeMap = employees.ToDictionary(e => e.Id, e => e.EmployeeCode);
+        var wps = new WPSFileBatch
+        {
+            TenantId           = tenantId,
+            PaymentBatchId     = id,
+            SifFileName        = $"SIF-{batch.BatchNumber}.txt",
+            GeneratedByUserId  = GetUserId(),
+            FormatVersion      = Infrastructure.Payroll.SifFileGenerator.FormatVersion,
+        };
         _db.WPSFileBatches.Add(wps);
+
+        var sifRows = new List<SIFFileRecord>();
         foreach (var record in records)
         {
-            var code = employeeCodes.FirstOrDefault(e => e.Id == record.EmployeeId)?.EmployeeCode ?? record.EmployeeId.ToString();
-            _db.SIFFileRecords.Add(new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, EmployeeCode = code, Iban = record.Iban, NetPay = record.Amount });
+            var code = employeeCodeMap.TryGetValue(record.EmployeeId, out var c) ? c : record.EmployeeId.ToString();
+            var row  = new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, EmployeeCode = code, Iban = record.Iban, NetPay = record.Amount };
+            _db.SIFFileRecords.Add(row);
+            sifRows.Add(row);
         }
-        batch.Status = "FileGenerated";
+
+        // Compute metadata for traceability (hash requires the actual file content).
+        var gcc         = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        var agentId     = gcc?.WpsAgentId ?? "0000000000";
+        var molCode     = gcc?.WpsMolCode ?? "0000000";
+        var currency    = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
+                            ? batch.Currency
+                            : await ResolveCurrencyAsync(tenantId, cancellationToken);
+        var paymentDate = new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month));
+        var genResult   = Infrastructure.Payroll.SifFileGenerator.Generate(batch, sifRows, agentId, molCode, currency, paymentDate);
+
+        wps.EmployeeCount     = genResult.EmployeeCount;
+        wps.TotalSalaryAmount = genResult.TotalSalaryAmount;
+        wps.FileHash          = genResult.FileHash;
+
+        batch.Status    = "FileGenerated";
         batch.WpsStatus = WpsStatuses.Generated;
-        await PayrollAudit("payroll.wps.generated", "WPSFileBatch", wps.Id.ToString(), null, cancellationToken);
+
+        await PayrollAudit("payroll.wps.generated", "WPSFileBatch", wps.Id.ToString(), new
+        {
+            batchId       = id,
+            employeeCount = genResult.EmployeeCount,
+            totalAmount   = genResult.TotalSalaryAmount,
+            fileHash      = genResult.FileHash,
+            formatVersion = genResult.FormatVersion,
+        }, cancellationToken);
+
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(wps);
+        return Ok(new
+        {
+            wps.Id,
+            wps.SifFileName,
+            wps.Status,
+            wps.FormatVersion,
+            wps.FileHash,
+            wps.EmployeeCount,
+            wps.TotalSalaryAmount,
+            wps.GeneratedByUserId,
+            wps.CreatedAtUtc,
+        });
     }
 
-    /// <summary>Updates the WPS submission status of a payment batch (Submitted/Accepted/Rejected/Reconciled).</summary>
+    /// <summary>
+    /// Updates the WPS submission status with lifecycle transition enforcement.
+    /// Only allowed transitions are accepted (e.g. Generated → Downloaded, Submitted → Accepted|Rejected).
+    /// Requires payroll.export permission.
+    /// </summary>
     [HttpPost("payment-batches/{batchId:guid}/wps-status")]
     public async Task<IActionResult> UpdateWpsStatus(Guid batchId, [FromBody] WpsStatusRequest req, CancellationToken cancellationToken)
     {
+        if (!HasPermission("payroll.export")) return Forbid();
+
         if (!WpsStatuses.All.Contains(req.Status))
             return BadRequest(new { error = "invalid_status", message = $"Status must be one of: {string.Join(", ", WpsStatuses.All)}." });
 
         var tenantId = GetTenantId();
-        var batch = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
+        var batch    = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
         if (batch is null) return NotFound();
 
-        var old = batch.WpsStatus;
+        var from = batch.WpsStatus;
+
+        // Enforce lifecycle: only allowed transitions are accepted.
+        if (!WpsTransitions.IsAllowed(from, req.Status))
+        {
+            var allowed = WpsTransitions.AllowedFrom(from);
+            return BadRequest(new
+            {
+                error   = "invalid_transition",
+                message = $"Cannot transition WPS status from '{from}' to '{req.Status}'.",
+                allowedTransitions = allowed,
+            });
+        }
+
         batch.WpsStatus = req.Status;
-        await PayrollAudit("payroll.wps.status_changed", "PayrollPaymentBatch", batchId.ToString(), new { from = old, to = req.Status, notes = req.Notes }, cancellationToken);
+        await PayrollAudit("payroll.wps.status_changed", "PayrollPaymentBatch", batchId.ToString(),
+            new { from, to = req.Status, notes = req.Notes }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { batchId, wpsStatus = batch.WpsStatus });
     }
 
-    /// <summary>Download the actual SIF text file for a WPS batch — per UAE CBUAE SIF v2 format.</summary>
+    /// <summary>
+    /// Downloads the SIF file using the isolated SifFileGenerator.
+    /// Output is deterministic — same input always produces the same bytes and hash.
+    /// Marks batch as Downloaded on first download.
+    /// Requires payroll.export permission.
+    /// </summary>
     [HttpGet("payment-batches/{batchId:guid}/wps-file/download")]
     public async Task<IActionResult> DownloadWpsFile(Guid batchId, CancellationToken cancellationToken)
     {
+        if (!HasPermission("payroll.export")) return Forbid();
+
         var tenantId = GetTenantId();
-        var batch = await _db.PayrollPaymentBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
+        var batch    = await _db.PayrollPaymentBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
         if (batch is null) return NotFound();
         var wpsFile = await _db.WPSFileBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.PaymentBatchId == batchId, cancellationToken);
         if (wpsFile is null) return BadRequest(new { message = "WPS file has not been generated for this batch yet." });
 
         var sifRecords = await _db.SIFFileRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.WPSFileBatchId == wpsFile.Id).ToListAsync(cancellationToken);
-        var gcc = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
-        var agentId = (gcc?.WpsAgentId ?? "0000000000").PadRight(10).Substring(0, 10);
-        var molCode = (gcc?.WpsMolCode ?? "0000000").PadRight(7).Substring(0, 7);
-        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batch.PayrollRunId, cancellationToken);
+        var gcc         = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        var agentId     = gcc?.WpsAgentId ?? "0000000000";
+        var molCode     = gcc?.WpsMolCode ?? "0000000";
+        var run         = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batch.PayrollRunId, cancellationToken);
         var paymentDate = run is not null
             ? new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month))
             : DateTime.UtcNow;
-
-        // Currency: batch currency, falling back to the tenant company default (SAR for Saudi).
         var currency = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
             ? batch.Currency
             : await ResolveCurrencyAsync(tenantId, cancellationToken);
 
-        // CBUAE SIF v2 format (adapted for Saudi context — currency is tenant-driven, defaulting to SAR)
-        // Header record: EDI_DC40 segment
-        var sb = new StringBuilder();
-        sb.AppendLine($"EDI_DC40+{agentId}+{molCode}+{paymentDate:yyyyMMdd}+{sifRecords.Count:D6}+{batch.TotalAmount:F2}+{currency}'");
-        foreach (var rec in sifRecords)
-        {
-            var iban = rec.Iban.Replace(" ", string.Empty).PadRight(34).Substring(0, 34);
-            // E1EDL20: employee salary record
-            sb.AppendLine($"E1EDL20+{rec.EmployeeCode.PadRight(10).Substring(0, 10)}+{iban}+{rec.NetPay:F2}+{currency}+{paymentDate:yyyyMMdd}+01'");
-        }
-        // Trailer
-        sb.AppendLine($"EOF+{sifRecords.Count:D6}+{sifRecords.Sum(r => r.NetPay):F2}'");
+        // Use the isolated SifFileGenerator — deterministic, versioned.
+        var genResult = Infrastructure.Payroll.SifFileGenerator.Generate(batch, sifRecords, agentId, molCode, currency, paymentDate);
 
-        // Mark the batch as downloaded (lifecycle tracking).
+        // Advance lifecycle from Generated → Downloaded on first download.
         var tracked = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
-        if (tracked is not null && tracked.WpsStatus is "Draft" or "Generated")
+        if (tracked is not null && WpsTransitions.IsAllowed(tracked.WpsStatus, WpsStatuses.Downloaded))
         {
             tracked.WpsStatus = WpsStatuses.Downloaded;
+            await PayrollAudit("payroll.wps.downloaded", "WPSFileBatch", wpsFile.Id.ToString(),
+                new { batchId, fileHash = genResult.FileHash }, cancellationToken);
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         Response.Headers["Content-Disposition"] = $"attachment; filename={wpsFile.SifFileName}";
-        return File(bytes, "text/plain", wpsFile.SifFileName);
+        return File(genResult.ContentBytes, "text/plain", wpsFile.SifFileName);
+    }
+
+    /// <summary>
+    /// Returns the WPS export history for a payment batch (all WPSFileBatch records).
+    /// Requires payroll.export permission.
+    /// </summary>
+    [HttpGet("payment-batches/{batchId:guid}/wps-export-history")]
+    public async Task<IActionResult> WpsExportHistory(Guid batchId, CancellationToken cancellationToken)
+    {
+        if (!HasPermission("payroll.export")) return Forbid();
+
+        var tenantId = GetTenantId();
+        if (!await _db.PayrollPaymentBatches.AnyAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken))
+            return NotFound();
+
+        var history = await _db.WPSFileBatches.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.PaymentBatchId == batchId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return Ok(new { batchId, exportCount = history.Count, history });
     }
 
     [HttpGet("employee-salary-structures")]
@@ -647,11 +765,26 @@ public class PayrollController : ControllerBase
         return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
     }
 
+    /// <summary>
+    /// Lists payment records for a batch.
+    /// Full IBAN is only returned to users with payroll.export permission;
+    /// others see a masked version (first 4 + last 4, middle asterisked).
+    /// </summary>
     [HttpGet("payment-batches/{id:guid}/records")]
     public async Task<IActionResult> PaymentRecords(Guid id, CancellationToken cancellationToken)
     {
-        var tenantId = GetTenantId();
-        return Ok(await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken));
+        var tenantId  = GetTenantId();
+        var records   = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
+        var canSeeIban = HasPermission("payroll.export");
+        return Ok(records.Select(r => new
+        {
+            r.Id,
+            r.EmployeeId,
+            r.Amount,
+            r.Status,
+            r.WpsReference,
+            Iban = canSeeIban ? r.Iban : Infrastructure.Payroll.SifFileGenerator.MaskIban(r.Iban),
+        }));
     }
 
     [HttpGet("runs/{id:guid}/payslips")]

@@ -444,6 +444,32 @@ public static class WpsStatuses
         { Draft, Generated, Downloaded, Submitted, Accepted, Rejected, Reconciled };
 }
 
+/// <summary>
+/// Enforces allowed WPS lifecycle transitions.
+/// Invalid transitions are rejected with 400 to prevent status corruption.
+/// </summary>
+public static class WpsTransitions
+{
+    private static readonly IReadOnlyDictionary<string, string[]> Allowed =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [WpsStatuses.Draft]      = new[] { WpsStatuses.Generated },
+            [WpsStatuses.Generated]  = new[] { WpsStatuses.Downloaded, WpsStatuses.Submitted },
+            [WpsStatuses.Downloaded] = new[] { WpsStatuses.Submitted },
+            [WpsStatuses.Submitted]  = new[] { WpsStatuses.Accepted, WpsStatuses.Rejected },
+            [WpsStatuses.Accepted]   = new[] { WpsStatuses.Reconciled },
+            // Rejected allows re-export: a new WPSFileBatch is created, then status reverts to Generated.
+            [WpsStatuses.Rejected]   = new[] { WpsStatuses.Generated },
+            [WpsStatuses.Reconciled] = Array.Empty<string>(),
+        };
+
+    public static bool IsAllowed(string from, string to)
+        => Allowed.TryGetValue(from, out var next) && next.Contains(to, StringComparer.OrdinalIgnoreCase);
+
+    public static string[] AllowedFrom(string from)
+        => Allowed.TryGetValue(from, out var next) ? next : Array.Empty<string>();
+}
+
 public class PayrollPaymentRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -474,6 +500,18 @@ public class WPSFileBatch
     public string SifFileName { get; set; } = string.Empty;
     public string Status { get; set; } = "Generated";
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+
+    // ── Export metadata (Track A PR-2) ────────────────────────────────────────
+    /// <summary>User who triggered the SIF file generation.</summary>
+    public Guid? GeneratedByUserId { get; set; }
+    /// <summary>Number of employee records in the generated file.</summary>
+    public int EmployeeCount { get; set; }
+    /// <summary>Sum of NetPay across all SIF records.</summary>
+    public decimal TotalSalaryAmount { get; set; }
+    /// <summary>SHA-256 hex digest of the generated file content for integrity verification.</summary>
+    public string FileHash { get; set; } = string.Empty;
+    /// <summary>Format version tag (e.g. SIF_SA_V1). Allows future format evolution.</summary>
+    public string FormatVersion { get; set; } = "SIF_SA_V1";
 }
 
 public class SIFFileRecord

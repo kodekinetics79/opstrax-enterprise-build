@@ -1,0 +1,117 @@
+using System.Security.Cryptography;
+using System.Text;
+using Zayra.Api.Models;
+
+namespace Zayra.Api.Infrastructure.Payroll;
+
+/// <summary>
+/// Generates Saudi WPS/SIF payment files from a confirmed, validated payment batch.
+///
+/// Format: Saudi SIF version 1 (SIF_SA_V1).
+///
+/// IMPORTANT — layout assumptions:
+///   This implementation follows the CBUAE SIF v2 segment structure (EDI_DC40 header,
+///   E1EDL20 detail, EOF trailer) adapted for SAR payments.  The exact official Saudi
+///   Mudad / SAMA production field widths, segment identifiers, and file encoding have
+///   NOT been independently confirmed against a live Mudad acceptance test.
+///   Before submitting to a production Mudad gateway, validate the generated file
+///   against the current "WPS Technical Specification" published by Saudi MHRSD/Mudad.
+///   See docs/compliance/saudi-track-a-wps-sif.md §"Known Assumptions".
+/// </summary>
+public static class SifFileGenerator
+{
+    /// <summary>Format version tag written into WPSFileBatch.FormatVersion for traceability.</summary>
+    public const string FormatVersion = "SIF_SA_V1";
+
+    /// <summary>
+    /// Generates a deterministic SIF file from an immutable snapshot of payment records.
+    /// The same input always produces the same bytes (and therefore the same SHA-256 hash).
+    /// </summary>
+    public static SifGenerationResult Generate(
+        PayrollPaymentBatch batch,
+        IReadOnlyList<SIFFileRecord> records,
+        string agentId,
+        string molCode,
+        string currency,
+        DateTime paymentDate)
+    {
+        // Sort records by EmployeeCode for determinism regardless of DB row order.
+        var sorted = records.OrderBy(r => r.EmployeeCode).ToList();
+
+        var sb = new StringBuilder();
+
+        // Header: EDI_DC40 segment
+        sb.AppendLine(
+            $"EDI_DC40+{Pad(agentId, 10)}+{Pad(molCode, 7)}+" +
+            $"{paymentDate:yyyyMMdd}+{sorted.Count:D6}+{batch.TotalAmount:F2}+{currency}'");
+
+        // Detail: one E1EDL20 segment per employee
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var rec  = sorted[i];
+            var iban = NormaliseIban(rec.Iban);
+            sb.AppendLine(
+                $"E1EDL20+{Pad(rec.EmployeeCode, 10)}+{iban}+{rec.NetPay:F2}+" +
+                $"{currency}+{paymentDate:yyyyMMdd}+{(i + 1):D2}'");
+        }
+
+        // Trailer
+        var trailerTotal = sorted.Sum(r => r.NetPay);
+        sb.AppendLine($"EOF+{sorted.Count:D6}+{trailerTotal:F2}'");
+
+        var content = sb.ToString();
+        var hash    = ComputeSha256Hex(content);
+
+        return new SifGenerationResult(
+            Content:           content,
+            ContentBytes:      Encoding.UTF8.GetBytes(content),
+            FileHash:          hash,
+            FormatVersion:     FormatVersion,
+            EmployeeCount:     sorted.Count,
+            TotalSalaryAmount: trailerTotal);
+    }
+
+    /// <summary>
+    /// Returns a masked IBAN suitable for display to users without <c>payroll.export</c>.
+    /// Format: first 4 chars + asterisks + last 4 chars (e.g. SA03 ********** 7519).
+    /// </summary>
+    public static string MaskIban(string? iban)
+    {
+        if (string.IsNullOrWhiteSpace(iban)) return "****";
+        var clean = iban.Replace(" ", "");
+        if (clean.Length < 8) return new string('*', clean.Length);
+        return clean[..4] + new string('*', clean.Length - 8) + clean[^4..];
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string ComputeSha256Hex(string content)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    /// <summary>Pads or truncates a string to exactly <paramref name="width"/> characters.</summary>
+    private static string Pad(string? value, int width)
+    {
+        var s = (value ?? string.Empty).PadRight(width);
+        return s.Length > width ? s[..width] : s;
+    }
+
+    /// <summary>Strips whitespace and pads IBAN to the fixed 34-char SIF field width.</summary>
+    private static string NormaliseIban(string? iban)
+    {
+        var clean = (iban ?? string.Empty).Replace(" ", "").PadRight(34);
+        return clean.Length > 34 ? clean[..34] : clean;
+    }
+}
+
+/// <summary>Result of a <see cref="SifFileGenerator.Generate"/> call.</summary>
+public record SifGenerationResult(
+    string   Content,
+    byte[]   ContentBytes,
+    string   FileHash,
+    string   FormatVersion,
+    int      EmployeeCount,
+    decimal  TotalSalaryAmount
+);
