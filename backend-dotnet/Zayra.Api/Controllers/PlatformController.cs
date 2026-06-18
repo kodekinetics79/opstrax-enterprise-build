@@ -853,6 +853,20 @@ public class PlatformController : ControllerBase
 
     // ── Tenant Users ──────────────────────────────────────────────────────────
 
+    [HttpGet("tenants/{tenantId:guid}/roles")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
+    public async Task<IActionResult> ListTenantRoles(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound();
+        var roles = await _db.Roles.AsNoTracking()
+            .Where(r => r.TenantId == tenantId && !r.IsDeleted && r.IsActive)
+            .OrderBy(r => r.AuthorityLevel)
+            .Select(r => new { r.Id, r.Name, r.Description, r.IsSystem })
+            .ToListAsync(ct);
+        return Ok(roles);
+    }
+
     [HttpGet("tenants/{tenantId:guid}/users")]
     [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
     public async Task<IActionResult> ListTenantUsers(Guid tenantId, [FromQuery] string? search, CancellationToken ct)
@@ -878,6 +892,10 @@ public class PlatformController : ControllerBase
                 u.Email,
                 u.FullName,
                 u.IsActive,
+                u.IsLocked,
+                u.LockoutEnd,
+                u.MFAEnabled,
+                u.MustChangePassword,
                 u.Status,
                 u.CreatedAtUtc,
                 Roles = u.UserRoles.Where(ur => ur.Role != null).Select(ur => ur.Role!.Name).ToList()
@@ -1019,6 +1037,163 @@ public class PlatformController : ControllerBase
 
         await _db.SaveChangesAsync(ct);
         return Ok(new { userId, userEmail = user.Email, mustChangePassword = true, sessionsRevoked = true });
+    }
+
+    [HttpPatch("users/{userId:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> EditUser(Guid userId, [FromBody] EditUserRequest req, CancellationToken ct)
+    {
+        var user = await _db.Users
+            .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        var changes = new System.Text.Json.Nodes.JsonObject();
+
+        if (!string.IsNullOrWhiteSpace(req.FullName) && req.FullName != user.FullName)
+        {
+            changes["fullName"] = new System.Text.Json.Nodes.JsonArray(user.FullName, req.FullName);
+            user.FullName = req.FullName.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(req.Email) && !req.Email.Equals(user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            var emailTaken = await _db.Users.AnyAsync(u => u.Email == req.Email.Trim() && u.Id != userId && !u.IsDeleted, ct);
+            if (emailTaken) return BadRequest(new { message = "Email address is already in use by another user." });
+            changes["email"] = new System.Text.Json.Nodes.JsonArray(user.Email, req.Email.Trim());
+            user.Email = req.Email.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(req.Status) && req.Status != user.Status)
+        {
+            var allowed = new HashSet<string> { "Active", "Suspended", "Deactivated", "Invited", "PendingPasswordSetup" };
+            if (!allowed.Contains(req.Status)) return BadRequest(new { message = $"Invalid status '{req.Status}'." });
+            changes["status"] = new System.Text.Json.Nodes.JsonArray(user.Status, req.Status);
+            user.Status = req.Status;
+            user.IsActive = req.Status == "Active";
+        }
+
+        if (req.IsActive.HasValue && req.IsActive.Value != user.IsActive)
+        {
+            changes["isActive"] = new System.Text.Json.Nodes.JsonArray(user.IsActive, req.IsActive.Value);
+            user.IsActive = req.IsActive.Value;
+            if (!req.IsActive.Value && user.Status == "Active") user.Status = "Suspended";
+            if (req.IsActive.Value && user.Status == "Suspended") user.Status = "Active";
+        }
+
+        if (!string.IsNullOrWhiteSpace(req.RoleName))
+        {
+            var role = await _db.Roles.FirstOrDefaultAsync(r => r.TenantId == user.TenantId && r.Name == req.RoleName && !r.IsDeleted, ct);
+            if (role is null) return BadRequest(new { message = $"Role '{req.RoleName}' not found for this tenant." });
+            var existing = user.UserRoles.Select(ur => ur.Role?.Name).ToList();
+            _db.UserRoles.RemoveRange(user.UserRoles);
+            _db.UserRoles.Add(new UserRole { UserId = userId, RoleId = role.Id });
+            changes["role"] = new System.Text.Json.Nodes.JsonArray(string.Join(",", existing), req.RoleName);
+        }
+
+        user.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "UserEdited",
+            OldValuesJson = "{}",
+            NewValuesJson = changes.ToJsonString(),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { userId, email = user.Email, fullName = user.FullName, status = user.Status, isActive = user.IsActive });
+    }
+
+    [HttpPost("users/{userId:guid}/unlock")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
+    public async Task<IActionResult> UnlockUser(Guid userId, CancellationToken ct)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase)) return Forbid();
+
+        user.IsLocked = false;
+        user.LockoutEnd = null;
+        user.FailedLoginCount = 0;
+        if (user.Status == "Locked") user.Status = "Active";
+        user.IsActive = true;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "UserUnlocked",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { userEmail = user.Email, initiatedBy = "platform_admin" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { userId, userEmail = user.Email, unlocked = true });
+    }
+
+    [HttpPost("users/{userId:guid}/disable-mfa")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> DisableMfa(Guid userId, CancellationToken ct)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase)) return Forbid();
+
+        user.MFAEnabled = false;
+        user.MfaSecretEncrypted = null;
+        user.MfaConfiguredAtUtc = null;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "MfaDisabled",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { userEmail = user.Email, initiatedBy = "platform_admin" }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { userId, userEmail = user.Email, mfaDisabled = true });
+    }
+
+    [HttpPost("users/{userId:guid}/revoke-sessions")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
+    public async Task<IActionResult> RevokeSessions(Guid userId, CancellationToken ct)
+    {
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null) return NotFound(new { message = "User not found." });
+        if (user.Email.Equals(PlatformAdminEmail, StringComparison.OrdinalIgnoreCase)) return Forbid();
+
+        var revoked = await _db.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAtUtc, DateTime.UtcNow), ct);
+
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId = user.TenantId,
+            EntityType = "User",
+            EntityId = userId.ToString(),
+            Action = "SessionsRevoked",
+            OldValuesJson = "{}",
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { userEmail = user.Email, initiatedBy = "platform_admin", sessionsRevoked = revoked }),
+            PerformedByName = "platform_admin",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { userId, userEmail = user.Email, sessionsRevoked = revoked });
     }
 
     // ── Platform Audit Logs ───────────────────────────────────────────────────
@@ -2206,6 +2381,7 @@ public record UpdateInvoiceRequest(
 public record UpdatePlanPriceRequest(decimal MonthlyPrice);
 public record CreatePlatformUserRequest(string Email, string? FullName, string Password, string? Role);
 public record UpdatePlatformUserRequest(string? Role, bool? IsActive, string? FullName);
+public record EditUserRequest(string? FullName, string? Email, string? Status, bool? IsActive, string? RoleName);
 
 // ── New endpoint request records ──────────────────────────────────────────────
 

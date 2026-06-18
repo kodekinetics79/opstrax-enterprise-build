@@ -83,9 +83,20 @@ export interface TenantUser {
   email: string;
   fullName: string;
   isActive: boolean;
+  isLocked: boolean;
+  lockoutEnd: string | null;
+  mFAEnabled: boolean;
+  mustChangePassword: boolean;
   status: string;
   createdAtUtc: string;
   roles: string[];
+}
+
+export interface TenantRole {
+  id: string;
+  name: string;
+  description: string;
+  isSystem: boolean;
 }
 
 export interface PlatformTenantSummary {
@@ -387,6 +398,21 @@ export const platformApi = {
 
   forcePasswordReset: (userId: string, tempPassword: string) =>
     platform.post(`/api/platform/users/${userId}/force-password-reset`, { tempPassword }).then(r => r.data),
+
+  editUser: (userId: string, body: { fullName?: string; email?: string; status?: string; isActive?: boolean; roleName?: string }) =>
+    platform.patch(`/api/platform/users/${userId}`, body).then(r => r.data),
+
+  unlockUser: (userId: string) =>
+    platform.post(`/api/platform/users/${userId}/unlock`).then(r => r.data),
+
+  disableMfa: (userId: string) =>
+    platform.post(`/api/platform/users/${userId}/disable-mfa`).then(r => r.data),
+
+  revokeSessions: (userId: string) =>
+    platform.post(`/api/platform/users/${userId}/revoke-sessions`).then(r => r.data),
+
+  listTenantRoles: (tenantId: string) =>
+    platform.get<TenantRole[]>(`/api/platform/tenants/${tenantId}/roles`).then(r => r.data),
 
   getAuditLogs: (tenantId?: string, page = 1, pageSize = 50) =>
     platform.get<{ total: number; page: number; pageSize: number; logs: PlatformAuditLog[] }>(
