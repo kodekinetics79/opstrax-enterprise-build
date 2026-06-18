@@ -219,6 +219,11 @@ public static class DemoDataSeeder
             }
             if (addedUsers) await db.SaveChangesAsync(ct);
 
+            // Backfill operational data (leave types, balances, payroll, attendance)
+            // for existing tenants that were seeded before this data was added.
+            if (spec.SeedOrgStructure)
+                await SeedOperationalDataAsync(db, existingTenant.Id, logger, ct);
+
             return;
         }
 
