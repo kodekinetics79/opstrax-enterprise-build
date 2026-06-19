@@ -172,6 +172,32 @@ builder.Services.AddHostedService<AiInsightEngine>();
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 
+// Country pack framework — default (no-op) pack wired as singleton fallbacks.
+// Real country packs register their strategies as KeyedService<T> entries;
+// the resolver prefers those over the defaults when a match is found.
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
+    Zayra.Api.Infrastructure.CountryPack.DefaultStatutoryDeductionCalculator>();
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+    Zayra.Api.Infrastructure.CountryPack.DefaultEndOfServiceCalculator>();
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
+    Zayra.Api.Infrastructure.CountryPack.DefaultWageProtectionExporter>();
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.INationalizationTracker,
+    Zayra.Api.Infrastructure.CountryPack.DefaultNationalizationTracker>();
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.ILocalizationProfile,
+    Zayra.Api.Infrastructure.CountryPack.DefaultLocalizationProfile>();
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.ICountryPackResolver>(sp =>
+    new Zayra.Api.Infrastructure.CountryPack.CountryPackResolver(
+        deductionCalcs: Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator>>(),
+        eosCalcs:       Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator>>(),
+        wpsExporters:   Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IWageProtectionExporter>>(),
+        natTrackers:    Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.INationalizationTracker>>(),
+        localeProfiles: Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.ILocalizationProfile>>(),
+        defaultDeduction: sp.GetRequiredService<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator>(),
+        defaultEos:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator>(),
+        defaultWps:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.IWageProtectionExporter>(),
+        defaultNat:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.INationalizationTracker>(),
+        defaultLocale:    sp.GetRequiredService<Zayra.Api.Application.CountryPack.ILocalizationProfile>()));
+
 // Rate limiting — brute-force protection on auth endpoints.
 // Limits are configurable via RateLimit:* in appsettings / env vars.
 // Default policy: login 10 req/60s per IP, refresh 30 req/60s per IP, platform login 5 req/60s per IP.
