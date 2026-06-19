@@ -42,6 +42,7 @@ const NAV_GROUPS = [
     items: [
       { href: '/platform/billing', label: 'Billing & Invoices', icon: CreditCard },
       { href: '/platform/plans',   label: 'Plans & Features',   icon: Zap },
+      { href: '/platform/pricing', label: 'Pricing & Quotes',   icon: CreditCard },
     ],
   },
   {

@@ -162,6 +162,7 @@ if (string.Equals(Environment.GetEnvironmentVariable("QIWA_USE_LIVE_ADAPTER"), "
 else
     builder.Services.AddSingleton<IQiwaApiAdapter, SandboxQiwaApiAdapter>();
 builder.Services.AddHostedService<QiwaSyncWorker>();
+builder.Services.AddHostedService<AiInsightEngine>();
 
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();

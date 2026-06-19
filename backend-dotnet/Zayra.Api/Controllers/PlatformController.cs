@@ -510,6 +510,8 @@ public class PlatformController : ControllerBase
         sub.Status = req.Status;
         sub.MaxEmployees = req.MaxEmployees;
         sub.MaxUsers = req.MaxUsers;
+        sub.MaxCompanies = req.MaxCompanies > 0 ? req.MaxCompanies : 1;
+        sub.MaxAdminUsers = req.MaxAdminUsers > 0 ? req.MaxAdminUsers : 10;
         sub.BillingEmail = req.BillingEmail;
         sub.BillingCycle = req.BillingCycle;
         sub.MonthlyAmount = req.MonthlyAmount;
@@ -803,6 +805,8 @@ public class PlatformController : ControllerBase
 
         var plan = string.IsNullOrWhiteSpace(req.Plan) ? "Trial" : req.Plan;
         var (defaultMaxUsers, defaultMaxEmployees) = SubscriptionTiers.GetDefaults(plan);
+        int defaultMaxCompanies = plan switch { "Enterprise" => 0, "Growth" => 3, _ => 1 };
+        int defaultMaxAdminUsers = plan switch { "Enterprise" => 0, "Growth" => 25, _ => 10 };
         _db.TenantSubscriptions.Add(new TenantSubscription
         {
             TenantId = tenant.Id,
@@ -810,6 +814,8 @@ public class PlatformController : ControllerBase
             Status = "Active",
             MaxUsers = req.MaxUsers ?? defaultMaxUsers,
             MaxEmployees = req.MaxEmployees ?? defaultMaxEmployees,
+            MaxCompanies = req.MaxCompanies ?? defaultMaxCompanies,
+            MaxAdminUsers = req.MaxAdminUsers ?? defaultMaxAdminUsers,
             BillingEmail = req.BillingEmail ?? req.AdminEmail.Trim().ToLowerInvariant(),
             BillingCycle = req.BillingCycle ?? "Monthly",
             MonthlyAmount = req.MonthlyAmount ?? 0,
@@ -2903,6 +2909,134 @@ public class PlatformController : ControllerBase
             }
         });
     }
+
+    // ── Pricing Config ────────────────────────────────────────────────────────
+
+    [HttpGet("pricing/config")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> GetPricingConfig(CancellationToken ct)
+    {
+        var configs = await _db.PricingConfigs.AsNoTracking().OrderBy(c => c.Group).ThenBy(c => c.Key).ToListAsync(ct);
+        return Ok(configs);
+    }
+
+    [HttpPut("pricing/config/{key}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> UpdatePricingConfig(string key, [FromBody] UpdatePricingConfigRequest req, CancellationToken ct)
+    {
+        var config = await _db.PricingConfigs.FirstOrDefaultAsync(c => c.Key == key, ct);
+        if (config is null) return NotFound(new { message = $"Config key '{key}' not found." });
+        config.Value = req.Value;
+        config.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(config);
+    }
+
+    [HttpGet("pricing/modules")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> GetPricingModules(CancellationToken ct)
+    {
+        var modules = await _db.PricingModuleConfigs.AsNoTracking().OrderBy(m => m.SortOrder).ToListAsync(ct);
+        return Ok(modules);
+    }
+
+    [HttpPut("pricing/modules/{moduleKey}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance)]
+    public async Task<IActionResult> UpdatePricingModule(string moduleKey, [FromBody] UpdatePricingModuleRequest req, CancellationToken ct)
+    {
+        var module = await _db.PricingModuleConfigs.FirstOrDefaultAsync(m => m.ModuleKey == moduleKey, ct);
+        if (module is null) return NotFound(new { message = $"Module '{moduleKey}' not found." });
+
+        if (req.IncludedInTrial.HasValue)    module.IncludedInTrial    = req.IncludedInTrial.Value;
+        if (req.IncludedInStarter.HasValue)  module.IncludedInStarter  = req.IncludedInStarter.Value;
+        if (req.IncludedInGrowth.HasValue)   module.IncludedInGrowth   = req.IncludedInGrowth.Value;
+        if (req.IncludedInEnterprise.HasValue) module.IncludedInEnterprise = req.IncludedInEnterprise.Value;
+        if (req.IsEnterpriseOnly.HasValue)   module.IsEnterpriseOnly   = req.IsEnterpriseOnly.Value;
+        if (req.AddonPriceMonthly.HasValue)  module.AddonPriceMonthly  = req.AddonPriceMonthly.Value;
+        module.UpdatedAtUtc = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(module);
+    }
+
+    // ── Pricing Quotes ────────────────────────────────────────────────────────
+
+    [HttpGet("quotes")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance, PlatformRoles.Support)]
+    public async Task<IActionResult> ListQuotes([FromQuery] string? status, [FromQuery] int page = 1, CancellationToken ct = default)
+    {
+        var q = _db.PricingQuotes.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc);
+        var filtered = string.IsNullOrWhiteSpace(status) ? q : q.Where(x => x.Status == status);
+        var total = await filtered.CountAsync(ct);
+        var items = await filtered.Skip((page - 1) * 25).Take(25).ToListAsync(ct);
+        return Ok(new { total, page, items });
+    }
+
+    [HttpGet("quotes/{id:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance, PlatformRoles.Support)]
+    public async Task<IActionResult> GetQuote(Guid id, CancellationToken ct)
+    {
+        var quote = await _db.PricingQuotes.AsNoTracking().FirstOrDefaultAsync(q => q.Id == id, ct);
+        if (quote is null) return NotFound();
+        return Ok(quote);
+    }
+
+    [HttpPatch("quotes/{id:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance, PlatformRoles.Support)]
+    public async Task<IActionResult> PatchQuote(Guid id, [FromBody] PatchQuoteRequest req, CancellationToken ct)
+    {
+        var quote = await _db.PricingQuotes.FirstOrDefaultAsync(q => q.Id == id, ct);
+        if (quote is null) return NotFound();
+        if (req.Status is not null) quote.Status = req.Status;
+        if (req.Notes is not null) quote.Notes = req.Notes;
+        quote.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(quote);
+    }
+
+    [HttpPost("quotes/{id:guid}/convert")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> ConvertQuoteToTenant(Guid id, [FromBody] ConvertQuoteRequest req, CancellationToken ct)
+    {
+        var quote = await _db.PricingQuotes.FirstOrDefaultAsync(q => q.Id == id, ct);
+        if (quote is null) return NotFound();
+        if (quote.Status == QuoteStatuses.Converted)
+            return BadRequest(new { error = "Quote is already converted." });
+
+        // Reuse existing tenant creation logic by delegating to CreateTenant
+        var createReq = new CreateTenantRequest(
+            Name: quote.CompanyName,
+            Slug: req.Slug,
+            AdminEmail: req.AdminEmail,
+            AdminFullName: req.AdminFullName,
+            AdminPassword: req.AdminPassword,
+            Plan: req.Plan ?? "Starter",
+            MaxUsers: req.MaxUsers,
+            MaxEmployees: req.MaxEmployees,
+            BillingEmail: quote.ContactEmail,
+            BillingCycle: req.BillingCycle ?? "Monthly",
+            MonthlyAmount: quote.EstimatedMonthlyAmount,
+            CurrencyCode: "USD",
+            ExpiresAtUtc: req.ExpiresAtUtc,
+            MaxCompanies: req.MaxCompanies,
+            MaxAdminUsers: req.MaxAdminUsers);
+
+        var createResult = await CreateTenant(createReq, ct);
+
+        if (createResult is OkObjectResult ok)
+        {
+            var tenantIdProp = ok.Value?.GetType().GetProperty("tenantId")?.GetValue(ok.Value);
+            if (tenantIdProp is Guid newTenantId)
+            {
+                quote.Status = QuoteStatuses.Converted;
+                quote.ConvertedToTenantId = newTenantId;
+                quote.UpdatedAtUtc = DateTime.UtcNow;
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+
+        return createResult;
+    }
 }
 
 public record PlatformLoginRequest(string Email, string Password);
@@ -2921,7 +3055,9 @@ public record CreateTenantRequest(
     string? BillingCycle,
     decimal? MonthlyAmount,
     string? CurrencyCode,
-    DateTime? ExpiresAtUtc);
+    DateTime? ExpiresAtUtc,
+    int? MaxCompanies  = null,
+    int? MaxAdminUsers = null);
 
 public record AddTenantAdminRequest(string Email, string? FullName, string Password);
 public record TenantActionRequest(string? Reason);
@@ -3049,3 +3185,28 @@ public record UpdatePaymentRequest(
     string? Reference,
     DateTime? PaidAt,
     string? Notes);
+
+public record UpdatePricingConfigRequest(decimal Value);
+
+public record UpdatePricingModuleRequest(
+    bool? IncludedInTrial,
+    bool? IncludedInStarter,
+    bool? IncludedInGrowth,
+    bool? IncludedInEnterprise,
+    bool? IsEnterpriseOnly,
+    decimal? AddonPriceMonthly);
+
+public record PatchQuoteRequest(string? Status, string? Notes);
+
+public record ConvertQuoteRequest(
+    string Slug,
+    string AdminEmail,
+    string? AdminFullName,
+    string AdminPassword,
+    string? Plan,
+    int? MaxUsers,
+    int? MaxEmployees,
+    int? MaxCompanies,
+    int? MaxAdminUsers,
+    string? BillingCycle,
+    DateTime? ExpiresAtUtc);

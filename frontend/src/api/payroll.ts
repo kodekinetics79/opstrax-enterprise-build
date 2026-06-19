@@ -220,12 +220,114 @@ export interface PayrollSummary {
   totalNetYtd: number;
 }
 
+// ── Command Center types ──────────────────────────────────────────────────────
+
+export interface PayrollCompany {
+  id: string;
+  name: string;
+  tradeName: string;
+  defaultCurrency: string;
+  wpsEmployerId: string;
+  gosiEmployerId: string;
+}
+
+export interface PayrollCompanySummary {
+  companyId: string;
+  companyName: string;
+  tradeName: string;
+  currency: string;
+  activeEmployees: number;
+  employeesWithSalary: number;
+  employeesMissingSalary: number;
+  salaryCoveragePercent: number;
+  payrollRunStatus: string | null;
+  grossPayroll: number;
+  totalDeductions: number;
+  netPayroll: number;
+  validationErrors: number;
+  validationWarnings: number;
+  pendingApprovals: number;
+  wpsEmployerId: string;
+  gosiEmployerId: string;
+  hasPayrollRun: boolean;
+}
+
+export interface PayrollOverview {
+  year: number;
+  month: number;
+  totalCompanies: number;
+  totalActiveEmployees: number;
+  totalGrossPayroll: number;
+  totalNetPayroll: number;
+  totalValidationErrors: number;
+  totalPendingApprovals: number;
+  companies: PayrollCompanySummary[];
+}
+
+export interface ReadinessStep {
+  step: number;
+  label: string;
+  complete: boolean;
+  detail: string;
+}
+
+export interface PayrollReadiness {
+  year: number;
+  month: number;
+  companyId: string | null;
+  completionPercent: number;
+  isReadyForProcessing: boolean;
+  totalActiveEmployees: number;
+  employeesWithSalary: number;
+  salaryCoveragePercent: number;
+  validationErrors: number;
+  payrollRunStatus: string | null;
+  steps: ReadinessStep[];
+}
+
+export interface EmployeeSalaryRow {
+  id: string;
+  employeeId: number;
+  employeeCode: string;
+  employeeName: string;
+  department: string;
+  companyId: string | null;
+  salaryStructureId: string;
+  basicSalary: number;
+  housingAllowance: number;
+  transportAllowance: number;
+  foodAllowance: number;
+  mobileAllowance: number;
+  otherAllowance: number;
+  fixedDeduction: number;
+  currency: string;
+  effectiveDate: string;
+  isActive: boolean;
+  createdAtUtc: string;
+}
+
+export interface AIInsight {
+  id: string;
+  tenantId: string;
+  module: string;
+  insightType: string;
+  severity: 'Info' | 'Warning' | 'Critical';
+  employeeId: number | null;
+  employeeName: string;
+  title: string;
+  summary: string;
+  dataJson: string;
+  generatedBy: string;
+  isAcknowledged: boolean;
+  createdAtUtc: string;
+}
+
 export const payrollApi = {
   listRuns: (params: { status?: string; page?: number; pageSize?: number } = {}) =>
     client.get<PagedResult<PayrollRun>>('/api/payroll/runs', { params }).then((r) => r.data),
 
-  createRun: (year: number, month: number) =>
-    client.post<PayrollRun>('/api/payroll/runs', { year, month }).then((r) => r.data),
+  createRun: (year: number, month: number, companyId?: string) =>
+    client.post<PayrollRun>('/api/payroll/runs', { year, month, companyId }).then((r) => r.data),
 
   processRun: (id: string) =>
     client.post<PayrollRun>(`/api/payroll/runs/${id}/process`).then((r) => r.data),
@@ -316,4 +418,36 @@ export const payrollApi = {
 
   downloadWpsFile: (batchId: string) =>
     `/api/payroll/payment-batches/${batchId}/wps-file/download`,
+
+  // ── Payroll Command Center ────────────────────────────────────────────────
+  listCompanies: () =>
+    client.get<PayrollCompany[]>('/api/payroll/companies').then((r) => r.data),
+
+  getOverview: (params: { companyId?: string; year?: number; month?: number } = {}) =>
+    client.get<PayrollOverview>('/api/payroll/overview', { params }).then((r) => r.data),
+
+  getReadiness: (params: { companyId?: string; year?: number; month?: number } = {}) =>
+    client.get<PayrollReadiness>('/api/payroll/readiness', { params }).then((r) => r.data),
+
+  // ── Employee Salary Import / Export ───────────────────────────────────────
+  listEmployeeSalaries: (params: { companyId?: string; departmentId?: string; activeOnly?: boolean } = {}) =>
+    client.get<EmployeeSalaryRow[]>('/api/payroll/employee-salaries', { params }).then((r) => r.data),
+
+  exportEmployeeSalaries: async (companyId?: string) => {
+    const res = await client.get<string>('/api/payroll/employee-salaries/export', {
+      responseType: 'text',
+      params: companyId ? { companyId } : undefined,
+    });
+    return res.data;
+  },
+
+  employeeSalariesTemplate: async () => {
+    const res = await client.get<string>('/api/payroll/employee-salaries/import-template', { responseType: 'text' });
+    return res.data;
+  },
+
+  importEmployeeSalaries: (csvContent: string) =>
+    client.post<{ received: number; created: number; updated: number; skipped: number; errors: string[] }>(
+      '/api/payroll/employee-salaries/import', { csvContent }
+    ).then((r) => r.data),
 };

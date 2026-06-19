@@ -30,6 +30,60 @@ public class TenantAdminController : ControllerBase
         return Ok(sub);
     }
 
+    [HttpGet("subscription/usage")]
+    public async Task<IActionResult> GetSubscriptionUsage(CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var sub = await _db.TenantSubscriptions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId, ct);
+
+        var activeEmployees = await _db.Employees.AsNoTracking()
+            .CountAsync(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted, ct);
+
+        var totalUsers = await _db.Users.AsNoTracking()
+            .CountAsync(u => u.TenantId == tenantId && u.IsActive, ct);
+
+        var totalCompanies = await _db.Companies.AsNoTracking()
+            .CountAsync(c => c.TenantId == tenantId, ct);
+
+        var featureFlags = await _db.TenantFeatureFlags.AsNoTracking()
+            .Where(f => f.TenantId == tenantId)
+            .Select(f => new { f.FeatureKey, f.IsEnabled })
+            .ToListAsync(ct);
+
+        // AI usage this month
+        var yearMonth = int.Parse(DateTime.UtcNow.ToString("yyyyMM"));
+        var aiUsage = await _db.TenantAiUsages.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.TenantId == tenantId && a.YearMonth == yearMonth, ct);
+
+        return Ok(new
+        {
+            plan           = sub?.Plan ?? "Trial",
+            status         = sub?.Status ?? "Active",
+            billingCycle   = sub?.BillingCycle ?? "Monthly",
+            monthlyAmount  = sub?.MonthlyAmount ?? 0,
+            currencyCode   = sub?.CurrencyCode ?? "USD",
+            expiresAtUtc   = sub?.ExpiresAtUtc,
+            limits = new
+            {
+                maxEmployees  = sub?.MaxEmployees ?? 50,
+                maxUsers      = sub?.MaxUsers ?? 10,
+                maxCompanies  = sub?.MaxCompanies ?? 1,
+                maxAdminUsers = sub?.MaxAdminUsers ?? 10,
+            },
+            usage = new
+            {
+                activeEmployees,
+                totalUsers,
+                totalCompanies,
+                aiTokensThisMonth = aiUsage?.TokensUsed ?? 0,
+            },
+            featureFlags = featureFlags.ToDictionary(f => f.FeatureKey, f => f.IsEnabled),
+        });
+    }
+
     [HttpPut("subscription")]
     public IActionResult UpsertSubscription()
     {
@@ -329,8 +383,10 @@ public class TenantAdminController : ControllerBase
 }
 
 public record UpsertSubscriptionRequest(
-    string Plan, string Status, int MaxEmployees, int MaxUsers, string BillingEmail,
-    string BillingCycle, decimal MonthlyAmount, string CurrencyCode, DateTime? ExpiresAtUtc);
+    string Plan, string Status, int MaxEmployees, int MaxUsers,
+    int MaxCompanies, int MaxAdminUsers,
+    string BillingEmail, string BillingCycle,
+    decimal MonthlyAmount, string CurrencyCode, DateTime? ExpiresAtUtc);
 
 public record SetFeatureFlagRequest(bool IsEnabled, string? ConfigJson);
 

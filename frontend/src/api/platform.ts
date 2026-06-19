@@ -52,6 +52,8 @@ export interface CreateTenantBody {
   plan?: string;
   maxUsers?: number | null;
   maxEmployees?: number | null;
+  maxCompanies?: number | null;
+  maxAdminUsers?: number | null;
   billingEmail?: string;
   billingCycle?: string;
   monthlyAmount?: number;
@@ -406,6 +408,50 @@ export interface TenantSecurityPolicy {
 export const PLATFORM_ROLES = ['Owner', 'Admin', 'Finance', 'Support', 'Marketing', 'Auditor'] as const;
 export type PlatformRole = typeof PLATFORM_ROLES[number];
 
+export interface PlatformPricingConfig {
+  key: string;
+  label: string;
+  group: string;
+  plan: string;
+  value: number;
+  updatedAtUtc: string;
+}
+
+export interface PlatformPricingModule {
+  moduleKey: string;
+  moduleName: string;
+  includedInTrial: boolean;
+  includedInStarter: boolean;
+  includedInGrowth: boolean;
+  includedInEnterprise: boolean;
+  isEnterpriseOnly: boolean;
+  addonPriceMonthly: number;
+  sortOrder: number;
+}
+
+export interface PlatformQuote {
+  id: string;
+  companyName: string;
+  contactName: string;
+  contactEmail: string;
+  phone?: string;
+  orgType: string;
+  numCompanies: number;
+  numBranches: number;
+  numEmployees: number;
+  numAdminUsers: number;
+  numCountries: number;
+  needsArabic: boolean;
+  selectedModulesJson: string;
+  estimatedMonthlyAmount: number;
+  estimatedAnnualAmount: number;
+  notes?: string;
+  status: string;
+  convertedToTenantId?: string;
+  createdAtUtc: string;
+  updatedAtUtc?: string;
+}
+
 export const platformApi = {
   login: (email: string, password: string) =>
     platform.post<{ token: string }>('/api/platform/auth/login', { email, password }).then(r => r.data),
@@ -427,6 +473,8 @@ export const platformApi = {
     status: string;
     maxUsers: number;
     maxEmployees: number;
+    maxCompanies: number;
+    maxAdminUsers: number;
     billingEmail: string;
     billingCycle: string;
     monthlyAmount: number;
@@ -690,4 +738,41 @@ export const platformApi = {
     platform.get<{ total: number; page: number; pageSize: number; items: LoginActivity[] }>(
       '/api/platform/login-activity', { params }
     ).then(r => r.data),
+
+  // ── Pricing Config ─────────────────────────────────────────────────────────
+
+  getPricingConfig: () =>
+    platform.get<PlatformPricingConfig[]>('/api/platform/pricing/config').then(r => r.data),
+
+  updatePricingConfig: (key: string, value: number) =>
+    platform.put<PlatformPricingConfig>(`/api/platform/pricing/config/${key}`, { value }).then(r => r.data),
+
+  getPricingModules: () =>
+    platform.get<PlatformPricingModule[]>('/api/platform/pricing/modules').then(r => r.data),
+
+  updatePricingModule: (moduleKey: string, body: Partial<{
+    includedInTrial: boolean; includedInStarter: boolean; includedInGrowth: boolean;
+    includedInEnterprise: boolean; isEnterpriseOnly: boolean; addonPriceMonthly: number;
+  }>) =>
+    platform.put<PlatformPricingModule>(`/api/platform/pricing/modules/${moduleKey}`, body).then(r => r.data),
+
+  // ── Quotes ────────────────────────────────────────────────────────────────
+
+  listQuotes: (status?: string, page = 1) =>
+    platform.get<{ total: number; page: number; items: PlatformQuote[] }>(
+      '/api/platform/quotes', { params: { status, page } }
+    ).then(r => r.data),
+
+  getQuote: (id: string) =>
+    platform.get<PlatformQuote>(`/api/platform/quotes/${id}`).then(r => r.data),
+
+  patchQuote: (id: string, body: { status?: string; notes?: string }) =>
+    platform.patch<PlatformQuote>(`/api/platform/quotes/${id}`, body).then(r => r.data),
+
+  convertQuote: (id: string, body: {
+    slug: string; adminEmail: string; adminFullName?: string; adminPassword: string;
+    plan?: string; maxUsers?: number; maxEmployees?: number; maxCompanies?: number;
+    maxAdminUsers?: number; billingCycle?: string; expiresAtUtc?: string | null;
+  }) =>
+    platform.post<{ tenantId: string }>(`/api/platform/quotes/${id}/convert`, body).then(r => r.data),
 };

@@ -110,6 +110,8 @@ public class TenantSubscription
     public DateTime? ExpiresAtUtc { get; set; }
     public int MaxEmployees { get; set; } = 50;
     public int MaxUsers { get; set; } = 10;
+    public int MaxCompanies { get; set; } = 1;
+    public int MaxAdminUsers { get; set; } = 10;
     public string BillingEmail { get; set; } = string.Empty;
     public string BillingCycle { get; set; } = "Monthly"; // Monthly, Annual
     public decimal MonthlyAmount { get; set; }

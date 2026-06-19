@@ -552,12 +552,13 @@ public class EmployeesController : ControllerBase
             {
                 var count = await _db.Employees.CountAsync(e => e.TenantId == tenantId && e.Status == "Active" && !e.IsDeleted, cancellationToken);
                 if (count >= sub.MaxEmployees)
-                    return UnprocessableEntity(new
+                    return StatusCode(402, new
                     {
-                        error = "employee_limit_reached",
-                        message = $"You have reached your employee limit ({count}/{sub.MaxEmployees}). Please upgrade your subscription.",
-                        current = count,
-                        limit = sub.MaxEmployees
+                        error           = "employee_limit_reached",
+                        currentCount    = count,
+                        maxAllowed      = sub.MaxEmployees,
+                        message         = $"Your plan allows up to {sub.MaxEmployees} active employees. You have {count}. Upgrade your plan to add more.",
+                        upgradeRequired = true,
                     });
             }
 

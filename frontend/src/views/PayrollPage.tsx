@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  AlertTriangle, BarChart2, Bot, BookOpen, Calculator,
-  CheckCircle2, ChevronRight, FileText, Landmark, Layers3,
+  AlertTriangle, BarChart2, Bot, BookOpen, Building2, Calculator,
+  CheckCircle2, ChevronDown, ChevronRight, FileText, Landmark, Layers3,
   Lock, Play, Plus, RefreshCw, RotateCcw,
   Settings, TrendingUp, Users, WalletCards, X,
-  Zap, Shield,
+  Zap, Shield, Sparkles, ArrowUpRight, Circle,
 } from 'lucide-react';
 import {
   payrollApi,
@@ -15,12 +15,14 @@ import {
   type PayrollPaymentBatch, type PayrollPaymentRecord,
   type PayrollApproval, type PayrollSummary,
   type PayrollGLJournal, type PayrollReconciliation, type FinalSettlementResult,
+  type PayrollCompany, type PayrollOverview, type PayrollReadiness,
+  type PayrollCompanySummary, type AIInsight,
 } from '../api/payroll';
+import client from '../api/client';
 import { ImportExportToolbar, downloadCsv } from '../components/ImportExportToolbar';
 import { InfoTip } from '../components/InfoTip';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenantSettings } from '../contexts/TenantSettingsContext';
-import client from '../api/client';
 
 // ── Payroll import/export helpers ───────────────────────────────────────────────
 
@@ -146,66 +148,378 @@ const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: s
   { key: 'ai-validation',    label: 'AI Validation',       icon: Bot },
 ];
 
-// ── Dashboard Tab ───────────────────────────────────────────────────────────────
+// ── Payroll Setup Wizard ───────────────────────────────────────────────────────
 
-function DashboardTab({ onNavigate }: { onNavigate: (t: Tab) => void }) {
-  const [summary, setSummary] = useState<PayrollSummary | null>(null);
-  const [runs, setRuns] = useState<PayrollRun[]>([]);
-
-  useEffect(() => {
-    payrollApi.reportSummary().then(setSummary).catch(() => {});
-    payrollApi.listRuns({ pageSize: 6 }).then(r => setRuns(r.items)).catch(() => {});
-  }, []);
+function PayrollSetupWizard({ readiness, onNavigate }: { readiness: PayrollReadiness; onNavigate: (t: Tab) => void }) {
+  const stepToTab: Record<number, Tab> = {
+    1: 'salary-structures',
+    2: 'salary-structures',
+    3: 'employee-salary',
+    4: 'runs',
+    5: 'validation',
+    6: 'approvals',
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="Total Payroll Runs" value={summary?.totalRuns ?? '—'} icon={FileText} color="bg-sapphire/10 text-sapphire dark:bg-sapphire/20" />
-        <KpiCard label="Locked Runs" value={summary?.lockedRuns ?? '—'} icon={Lock} color="bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" />
-        <KpiCard label="Gross YTD" value={summary?.totalGrossYtd != null ? fmtAmt(summary.totalGrossYtd) : '—'} icon={WalletCards} color="bg-cyan-100 text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-400" />
-        <KpiCard label="Net YTD" value={summary?.totalNetYtd != null ? fmtAmt(summary.totalNetYtd) : '—'} icon={TrendingUp} color="bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400" />
+    <div className="surface overflow-hidden">
+      <div className="border-b border-slate-100 bg-gradient-to-r from-sapphire/5 to-transparent px-6 py-4 dark:border-white/10 dark:from-cyanAccent/5">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-sapphire/10 dark:bg-cyanAccent/10">
+            <Settings className="h-5 w-5 text-sapphire dark:text-cyanAccent" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Payroll Setup Wizard</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Complete these steps before running payroll · {readiness.completionPercent}% done</p>
+          </div>
+          <div className="ml-auto">
+            <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
+              <div
+                className="h-full rounded-full bg-sapphire transition-all dark:bg-cyanAccent [width:var(--progress-w)]"
+                style={{ '--progress-w': `${readiness.completionPercent}%` } as React.CSSProperties}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-100 dark:divide-white/5">
+        {readiness.steps.map((s) => (
+          <div key={s.step} className="flex items-center gap-4 px-6 py-3.5">
+            <div className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold ${s.complete ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400'}`}>
+              {s.complete ? <CheckCircle2 className="h-4 w-4" /> : s.step}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className={`text-sm font-medium ${s.complete ? 'text-slate-500 line-through dark:text-slate-500' : 'text-slate-800 dark:text-white'}`}>{s.label}</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">{s.detail}</p>
+            </div>
+            {!s.complete && (
+              <button type="button" onClick={() => onNavigate(stepToTab[s.step] ?? 'salary-structures')}
+                className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-sapphire/10 px-3 py-1.5 text-xs font-medium text-sapphire hover:bg-sapphire/20 dark:bg-cyanAccent/10 dark:text-cyanAccent dark:hover:bg-cyanAccent/20">
+                Configure <ChevronRight className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Company Bird's-Eye Table ───────────────────────────────────────────────────
+
+function CompanyBirdsEyeTable({ overview, onDrillDown }: { overview: PayrollOverview; onDrillDown: (company: PayrollCompanySummary) => void }) {
+  return (
+    <div className="surface overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 dark:border-white/10">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+          All Group Companies — {MONTHS[overview.month - 1]} {overview.year}
+        </h3>
+        <span className="text-xs text-slate-400">{overview.totalCompanies} companies · {overview.totalActiveEmployees.toLocaleString()} employees</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 bg-slate-50 dark:border-white/5 dark:bg-white/3">
+              {['Company', 'Employees', 'Salary Coverage', 'Gross Payroll', 'Net Payroll', 'Errors', 'Pending Approvals', 'Status', ''].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left font-medium text-slate-500 dark:text-slate-400">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+            {overview.companies.map(c => (
+              <tr key={c.companyId} className="group hover:bg-slate-50 dark:hover:bg-white/3">
+                <td className="px-4 py-3">
+                  <p className="font-medium text-slate-800 dark:text-white">{c.companyName}</p>
+                  {c.tradeName && c.tradeName !== c.companyName && <p className="text-slate-400">{c.tradeName}</p>}
+                </td>
+                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{c.activeEmployees.toLocaleString()}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
+                      <div
+                        className={`h-full rounded-full transition-all [width:var(--cov-w)] ${c.salaryCoveragePercent >= 90 ? 'bg-emerald-500' : c.salaryCoveragePercent >= 70 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                        style={{ '--cov-w': `${c.salaryCoveragePercent}%` } as React.CSSProperties}
+                      />
+                    </div>
+                    <span className={c.salaryCoveragePercent < 70 ? 'font-semibold text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}>
+                      {c.salaryCoveragePercent.toFixed(0)}%
+                    </span>
+                  </div>
+                  {c.employeesMissingSalary > 0 && <p className="mt-0.5 text-rose-500">{c.employeesMissingSalary} missing</p>}
+                </td>
+                <td className="px-4 py-3 font-mono text-slate-700 dark:text-slate-300">{c.hasPayrollRun ? fmtAmt(c.grossPayroll, c.currency) : '—'}</td>
+                <td className="px-4 py-3 font-mono font-semibold text-slate-800 dark:text-white">{c.hasPayrollRun ? fmtAmt(c.netPayroll, c.currency) : '—'}</td>
+                <td className="px-4 py-3">
+                  {c.validationErrors > 0
+                    ? <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400"><AlertTriangle className="h-3 w-3" />{c.validationErrors}</span>
+                    : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                </td>
+                <td className="px-4 py-3">
+                  {c.pendingApprovals > 0
+                    ? <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400"><Circle className="h-2 w-2 fill-current" />{c.pendingApprovals}</span>
+                    : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                </td>
+                <td className="px-4 py-3">{c.payrollRunStatus ? <StatusBadge status={c.payrollRunStatus} /> : <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-white/10 dark:text-slate-400">Not started</span>}</td>
+                <td className="px-4 py-3">
+                  <button type="button" onClick={() => onDrillDown(c)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 opacity-0 transition-opacity hover:bg-slate-50 group-hover:opacity-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5">
+                    Drill down <ArrowUpRight className="h-3 w-3" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-slate-100 bg-slate-50 px-5 py-3 dark:border-white/5 dark:bg-white/3">
+        <div className="flex items-center gap-8 text-xs">
+          <span className="text-slate-500 dark:text-slate-400">Group totals:</span>
+          <span className="font-semibold text-slate-800 dark:text-white">Gross: {fmtAmt(overview.totalGrossPayroll)}</span>
+          <span className="font-semibold text-emerald-600 dark:text-emerald-400">Net: {fmtAmt(overview.totalNetPayroll)}</span>
+          {overview.totalValidationErrors > 0 && <span className="font-semibold text-rose-600 dark:text-rose-400">{overview.totalValidationErrors} errors</span>}
+          {overview.totalPendingApprovals > 0 && <span className="font-semibold text-amber-600 dark:text-amber-400">{overview.totalPendingApprovals} pending approvals</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI Insights Panel ─────────────────────────────────────────────────────────
+
+function AiInsightsPanel() {
+  const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    client.get<{ items: AIInsight[] }>('/api/ai/insights', { params: { acknowledged: false, pageSize: 5 } })
+      .then(r => setInsights(r.data.items))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const severityStyle: Record<string, string> = {
+    Critical: 'border-rose-200 bg-rose-50 dark:border-rose-500/20 dark:bg-rose-500/5',
+    Warning: 'border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/5',
+    Info: 'border-blue-200 bg-blue-50 dark:border-blue-500/20 dark:bg-blue-500/5',
+  };
+  const severityIcon: Record<string, string> = {
+    Critical: 'text-rose-600 dark:text-rose-400',
+    Warning: 'text-amber-600 dark:text-amber-400',
+    Info: 'text-blue-600 dark:text-blue-400',
+  };
+
+  if (loading) return null;
+  if (insights.length === 0) return (
+    <div className="surface flex items-center gap-3 p-5">
+      <Sparkles className="h-4 w-4 shrink-0 text-emerald-500" />
+      <p className="text-sm text-slate-500 dark:text-slate-400">AI engine has no active alerts — all payroll and HR signals look normal.</p>
+    </div>
+  );
+
+  return (
+    <div className="surface overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3.5 dark:border-white/10">
+        <Sparkles className="h-4 w-4 text-sapphire dark:text-cyanAccent" />
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">AI Insights</h3>
+        <span className="ml-auto rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-600 dark:bg-rose-500/20 dark:text-rose-400">{insights.length} active</span>
+      </div>
+      <div className="divide-y divide-slate-100 dark:divide-white/5">
+        {insights.map(ins => (
+          <div key={ins.id} className={`mx-4 my-2 rounded-xl border p-3.5 ${severityStyle[ins.severity] ?? severityStyle.Info}`}>
+            <div className="flex items-start gap-3">
+              <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${severityIcon[ins.severity] ?? severityIcon.Info}`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold text-slate-800 dark:text-white">{ins.title}</p>
+                  <span className="rounded-full bg-white/60 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-white/10 dark:text-slate-400">{ins.module}</span>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{ins.summary}</p>
+                <p className="mt-1.5 text-[10px] text-slate-400">{new Date(ins.createdAtUtc).toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Dashboard Tab (Command Center) ─────────────────────────────────────────────
+
+function DashboardTab({ onNavigate }: { onNavigate: (t: Tab) => void }) {
+  const now = new Date();
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [companies, setCompanies] = useState<PayrollCompany[]>([]);
+  const [overview, setOverview] = useState<PayrollOverview | null>(null);
+  const [readiness, setReadiness] = useState<PayrollReadiness | null>(null);
+  const [drillDown, setDrillDown] = useState<PayrollCompanySummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState<PayrollSummary | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    const params = {
+      companyId: selectedCompanyId !== 'all' ? selectedCompanyId : undefined,
+      year: selectedYear,
+      month: selectedMonth,
+    };
+    Promise.all([
+      payrollApi.listCompanies().then(setCompanies).catch(() => {}),
+      payrollApi.getOverview(params).then(setOverview).catch(() => {}),
+      payrollApi.getReadiness(params).then(setReadiness).catch(() => {}),
+      payrollApi.reportSummary().then(setSummary).catch(() => {}),
+    ]).finally(() => setLoading(false));
+  };
+
+  useEffect(load, [selectedCompanyId, selectedYear, selectedMonth]);
+
+  const isNotConfigured = !loading && readiness && readiness.completionPercent < 30;
+
+  const years = Array.from({ length: 3 }, (_, i) => now.getFullYear() - i);
+
+  return (
+    <div className="space-y-5">
+      {/* ── Scope Selector ── */}
+      <div className="surface flex flex-wrap items-center gap-3 p-3.5">
+        <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
+        <select
+          aria-label="Company scope"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-sapphire focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white"
+          value={selectedCompanyId}
+          onChange={e => { setSelectedCompanyId(e.target.value); setDrillDown(null); }}
+        >
+          <option value="all">All Group Companies</option>
+          {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select
+          aria-label="Month"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-sapphire focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white"
+          value={selectedMonth}
+          onChange={e => setSelectedMonth(Number(e.target.value))}
+        >
+          {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+        </select>
+        <select
+          aria-label="Year"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-sapphire focus:outline-none dark:border-white/10 dark:bg-white/5 dark:text-white"
+          value={selectedYear}
+          onChange={e => setSelectedYear(Number(e.target.value))}
+        >
+          {years.map(y => <option key={y}>{y}</option>)}
+        </select>
+        <button type="button" onClick={load} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5">
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="surface p-5 lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-white">Recent Payroll Runs</h3>
-            <button type="button" onClick={() => onNavigate('runs')} className="text-xs text-sapphire hover:underline dark:text-cyanAccent">View all</button>
+      {/* ── Setup Wizard (when payroll not yet configured) ── */}
+      {isNotConfigured && readiness && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-500/20 dark:bg-amber-500/5">
+          <div className="mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Payroll is not yet configured</p>
           </div>
-          {runs.length === 0 ? <p className="text-sm text-slate-400">No payroll runs yet.</p> : (
-            <div className="divide-y divide-slate-100 dark:divide-white/5">
-              {runs.map(r => (
-                <div key={r.id} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 dark:text-white">{MONTHS[r.month - 1]} {r.year}</p>
-                    <p className="text-xs text-slate-400">{r.employeeCount} employees · Net {fmtAmt(r.totalNetSalary)}</p>
-                  </div>
-                  <StatusBadge status={r.status} />
-                </div>
-              ))}
-            </div>
-          )}
+          <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
+            Complete the setup steps below to enable payroll processing. Once configured, this dashboard will show live payroll data.
+          </p>
+          <PayrollSetupWizard readiness={readiness} onNavigate={onNavigate} />
         </div>
+      )}
 
-        <div className="surface p-5">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Quick Actions</h3>
-          <div className="space-y-2">
-            {([
-              ['New Payroll Run', 'runs', Plus],
-              ['Salary Structures', 'salary-structures', Layers3],
-              ['Employee Salary Setup', 'employee-salary', Users],
-              ['Payroll Validation', 'validation', AlertTriangle],
-              ['Payroll Approvals', 'approvals', CheckCircle2],
-              ['AI Validation', 'ai-validation', Bot],
-            ] as [string, Tab, React.ComponentType<{ className?: string }>][]).map(([label, t, Icon]) => (
-              <button key={t} type="button" onClick={() => onNavigate(t)}
-                className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left hover:bg-slate-50 dark:hover:bg-white/5">
-                <Icon className="h-4 w-4 shrink-0 text-sapphire dark:text-cyanAccent" />
-                <span className="text-sm text-slate-700 dark:text-slate-300">{label}</span>
-                <ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-300" />
-              </button>
-            ))}
+      {/* ── Summary KPIs ── */}
+      {!loading && overview && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard label="Active Employees" value={overview.totalActiveEmployees.toLocaleString()} icon={Users} color="bg-sapphire/10 text-sapphire dark:bg-sapphire/20" />
+          <KpiCard label="Gross Payroll" value={overview.totalGrossPayroll > 0 ? fmtAmt(overview.totalGrossPayroll) : '—'} icon={WalletCards} color="bg-cyan-100 text-cyan-600 dark:bg-cyan-500/20 dark:text-cyan-400" />
+          <KpiCard label="Net Payroll" value={overview.totalNetPayroll > 0 ? fmtAmt(overview.totalNetPayroll) : '—'} icon={TrendingUp} color="bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" />
+          <KpiCard label="Locked Runs YTD" value={summary?.lockedRuns ?? '—'} icon={Lock} color="bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-400" />
+        </div>
+      )}
+
+      {loading && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map(i => <div key={i} className="surface h-20 animate-pulse rounded-xl" />)}
+        </div>
+      )}
+
+      {/* ── AI Insights Panel ── */}
+      <AiInsightsPanel />
+
+      {/* ── Drill-down panel (when a company row is clicked) ── */}
+      {drillDown && (
+        <div className="surface overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 dark:border-white/10">
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-sapphire dark:text-cyanAccent" />
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{drillDown.companyName} — Payroll Drill-Down</h3>
+            </div>
+            <button type="button" aria-label="Close drill-down" onClick={() => setDrillDown(null)} className="rounded-lg p-1 hover:bg-slate-100 dark:hover:bg-white/10">
+              <X className="h-4 w-4 text-slate-400" />
+            </button>
           </div>
+          <div className="grid grid-cols-2 gap-4 p-5 lg:grid-cols-4">
+            <div>
+              <p className="text-xs text-slate-400">Active Employees</p>
+              <p className="text-xl font-bold text-slate-800 dark:text-white">{drillDown.activeEmployees}</p>
+              {drillDown.employeesMissingSalary > 0 && <p className="text-xs text-rose-500">{drillDown.employeesMissingSalary} missing salary</p>}
+            </div>
+            <div>
+              <p className="text-xs text-slate-400">Gross Payroll</p>
+              <p className="text-xl font-bold text-slate-800 dark:text-white">{drillDown.hasPayrollRun ? fmtAmt(drillDown.grossPayroll, drillDown.currency) : '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400">Net Payroll</p>
+              <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{drillDown.hasPayrollRun ? fmtAmt(drillDown.netPayroll, drillDown.currency) : '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400">Run Status</p>
+              {drillDown.payrollRunStatus
+                ? <StatusBadge status={drillDown.payrollRunStatus} />
+                : <span className="text-sm text-slate-400">Not started</span>}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3.5 dark:border-white/10">
+            {drillDown.validationErrors > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-medium text-rose-600 dark:bg-rose-500/10 dark:text-rose-400"><AlertTriangle className="h-3 w-3" />{drillDown.validationErrors} validation error(s)</span>}
+            {drillDown.validationWarnings > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600 dark:bg-amber-500/10 dark:text-amber-400"><AlertTriangle className="h-3 w-3" />{drillDown.validationWarnings} warning(s)</span>}
+            {drillDown.pendingApprovals > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400"><CheckCircle2 className="h-3 w-3" />{drillDown.pendingApprovals} pending approval(s)</span>}
+            <button type="button" onClick={() => onNavigate('runs')} className="inline-flex items-center gap-1 rounded-full bg-sapphire/10 px-3 py-1 text-xs font-medium text-sapphire hover:bg-sapphire/20 dark:bg-cyanAccent/10 dark:text-cyanAccent">
+              Go to Payroll Runs <ChevronRight className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Company bird's-eye view (All Group Companies) ── */}
+      {!loading && overview && selectedCompanyId === 'all' && overview.companies.length > 0 && (
+        <CompanyBirdsEyeTable overview={overview} onDrillDown={setDrillDown} />
+      )}
+
+      {/* ── Readiness progress (when single company selected) ── */}
+      {!loading && readiness && selectedCompanyId !== 'all' && !isNotConfigured && (
+        <PayrollSetupWizard readiness={readiness} onNavigate={onNavigate} />
+      )}
+
+      {/* ── Quick actions ── */}
+      <div className="surface p-5">
+        <h3 className="mb-3 text-sm font-semibold text-slate-800 dark:text-white">Quick Actions</h3>
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+          {([
+            ['New Payroll Run', 'runs', Plus],
+            ['Salary Structures', 'salary-structures', Layers3],
+            ['Employee Salary', 'employee-salary', Users],
+            ['Validation', 'validation', AlertTriangle],
+            ['Approvals', 'approvals', CheckCircle2],
+            ['AI Validation', 'ai-validation', Bot],
+          ] as [string, Tab, React.ComponentType<{ className?: string }>][]).map(([label, t, Icon]) => (
+            <button key={t} type="button" onClick={() => onNavigate(t)}
+              className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-sapphire/40 hover:bg-sapphire/3 dark:border-white/10 dark:hover:border-cyanAccent/30 dark:hover:bg-cyanAccent/5">
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-sapphire/10 dark:bg-cyanAccent/10">
+                <Icon className="h-4 w-4 text-sapphire dark:text-cyanAccent" />
+              </div>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>

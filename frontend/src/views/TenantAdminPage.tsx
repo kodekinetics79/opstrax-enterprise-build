@@ -47,6 +47,18 @@ interface UsageData {
   storageUsedMb: number;
 }
 
+interface SubscriptionUsage {
+  plan: string;
+  status: string;
+  billingCycle: string;
+  monthlyAmount: number;
+  currencyCode: string;
+  expiresAtUtc?: string;
+  limits: { maxEmployees: number; maxUsers: number; maxCompanies: number; maxAdminUsers: number };
+  usage: { activeEmployees: number; totalUsers: number; totalCompanies: number; aiTokensThisMonth: number };
+  featureFlags: Record<string, boolean>;
+}
+
 interface SecuritySettings {
   passwordMinLength: number;
   passwordRequireUppercase: boolean;
@@ -144,6 +156,7 @@ export default function TenantAdminPage() {
 
   // Usage
   const [usage, setUsage] = useState<UsageData | null>(null);
+  const [subscriptionUsage, setSubscriptionUsage] = useState<SubscriptionUsage | null>(null);
 
   // Invoices
   const [invoices, setInvoices] = useState<TenantInvoiceSummary[]>([]);
@@ -166,7 +179,7 @@ export default function TenantAdminPage() {
   const [showAddRule, setShowAddRule] = useState(false);
 
   useEffect(() => {
-    if (tab === 'subscription') { loadSubscription(); loadUsage(); loadAiUsage(); }
+    if (tab === 'subscription') { loadSubscription(); loadUsage(); loadAiUsage(); loadSubscriptionUsage(); }
     if (tab === 'features') loadFlags();
     if (tab === 'invoices') loadInvoices();
     if (tab === 'localization') loadLocalization();
@@ -184,6 +197,13 @@ export default function TenantAdminPage() {
     try {
       const data = await client.get<UsageData>('/api/tenant-admin/usage').then(r => r.data);
       setUsage(data);
+    } catch {}
+  }
+
+  async function loadSubscriptionUsage() {
+    try {
+      const data = await client.get<SubscriptionUsage>('/api/tenant-admin/subscription/usage').then(r => r.data);
+      setSubscriptionUsage(data);
     } catch {}
   }
 
@@ -374,7 +394,9 @@ export default function TenantAdminPage() {
                   { label: 'Monthly Amount', value: `${subscription.currencyCode} ${subscription.monthlyAmount}` },
                   { label: 'Status', value: subscription.status },
                   { label: 'Billing Email', value: subscription.billingEmail },
-                  { label: 'Max Employees', value: subscription.maxEmployees },
+                  { label: 'Max Employees', value: subscription.maxEmployees === 0 ? 'Unlimited' : subscription.maxEmployees },
+                  { label: 'Max Companies', value: (subscription as { maxCompanies?: number }).maxCompanies === 0 ? 'Unlimited' : ((subscription as { maxCompanies?: number }).maxCompanies ?? 1) },
+                  { label: 'Max Admin Users', value: (subscription as { maxAdminUsers?: number }).maxAdminUsers === 0 ? 'Unlimited' : ((subscription as { maxAdminUsers?: number }).maxAdminUsers ?? 10) },
                   { label: 'Started', value: new Date(subscription.startedAtUtc).toLocaleDateString() },
                   { label: 'Billing Cycle', value: subscription.billingCycle },
                   { label: 'Expires', value: subscription.expiresAtUtc ? new Date(subscription.expiresAtUtc).toLocaleDateString() : 'Never' },
@@ -387,6 +409,56 @@ export default function TenantAdminPage() {
               </dl>
             )}
           </div>
+
+          {/* Comprehensive usage from new endpoint */}
+          {subscriptionUsage && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Plan Limits & Usage</h2>
+              <div className="space-y-4">
+                {[
+                  { label: 'Active Employees', current: subscriptionUsage.usage.activeEmployees, max: subscriptionUsage.limits.maxEmployees },
+                  { label: 'Total Users',      current: subscriptionUsage.usage.totalUsers,      max: subscriptionUsage.limits.maxUsers },
+                  { label: 'Legal Companies',  current: subscriptionUsage.usage.totalCompanies,  max: subscriptionUsage.limits.maxCompanies },
+                  { label: 'Admin Users',      current: subscriptionUsage.usage.totalUsers,      max: subscriptionUsage.limits.maxAdminUsers },
+                ].map(({ label, current, max }) => {
+                  const isUnlimited = max === 0;
+                  const pct = isUnlimited ? 0 : Math.min(100, (current / max) * 100);
+                  const isAtLimit = !isUnlimited && current >= max;
+                  const isWarn = !isUnlimited && pct >= 80;
+                  return (
+                    <div key={label}>
+                      <div className="flex items-center justify-between mb-1.5 text-sm">
+                        <span className="font-medium text-gray-700">{label}</span>
+                        <span className={isAtLimit ? 'text-red-600 font-semibold' : isWarn ? 'text-orange-500' : 'text-gray-500'}>
+                          {current.toLocaleString()} / {isUnlimited ? '∞' : max.toLocaleString()}
+                          {isAtLimit && ' — limit reached!'}
+                        </span>
+                      </div>
+                      {!isUnlimited && (
+                        <UsageProgressBar label={label} pct={pct} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-medium text-gray-500 mb-2">Enabled Modules</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(subscriptionUsage.featureFlags)
+                    .filter(([, v]) => v)
+                    .map(([k]) => (
+                      <span key={k} className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">{k}</span>
+                    ))}
+                  {Object.entries(subscriptionUsage.featureFlags).every(([, v]) => !v) && (
+                    <span className="text-xs text-gray-400">No optional modules enabled</span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3">
+                <UpgradeButton />
+              </div>
+            </div>
+          )}
 
           {/* Usage section */}
           {usage && (

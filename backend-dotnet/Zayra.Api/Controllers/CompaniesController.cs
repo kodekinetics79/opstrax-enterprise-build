@@ -53,6 +53,24 @@ public class CompaniesController : ControllerBase
         {
             var tenantId = this.GetTenantId();
             if (tenantId is null) return Unauthorized();
+
+            // ── Subscription limit check ───────────────────────────────────────
+            var sub = await _db.TenantSubscriptions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId, cancellationToken);
+            if (sub is not null && sub.MaxCompanies > 0)
+            {
+                var companyCount = await _db.Companies.CountAsync(c => c.TenantId == tenantId, cancellationToken);
+                if (companyCount >= sub.MaxCompanies)
+                    return StatusCode(402, new
+                    {
+                        error          = "company_limit_reached",
+                        currentCount   = companyCount,
+                        maxAllowed     = sub.MaxCompanies,
+                        message        = $"Your plan allows up to {sub.MaxCompanies} legal compan{(sub.MaxCompanies == 1 ? "y" : "ies")}. Upgrade your plan to add more.",
+                        upgradeRequired = true,
+                    });
+            }
+
             var company = await _organization.CreateCompanyAsync(tenantId.Value, request, Context(), cancellationToken);
             return CreatedAtAction(nameof(Get), new { id = company.Id }, company);
         }

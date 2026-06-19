@@ -69,7 +69,7 @@ const PLANS = ['Trial', 'Starter', 'Growth', 'Enterprise'];
 function NewTenantModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [form, setForm] = useState<CreateTenantBody>({
     name: '', slug: '', adminEmail: '', adminFullName: '', adminPassword: '',
-    plan: 'Starter', maxUsers: 20, maxEmployees: 50,
+    plan: 'Starter', maxUsers: 20, maxEmployees: 50, maxCompanies: 1, maxAdminUsers: 10,
     billingEmail: '', billingCycle: 'Monthly', monthlyAmount: 0, currencyCode: 'USD',
     expiresAtUtc: null,
   });
@@ -196,6 +196,18 @@ function NewTenantModal({ onClose, onCreated }: { onClose: () => void; onCreated
               <div>
                 <label className="block text-xs text-slate-400 mb-1">Max Employees</label>
                 <input type="number" min={1} value={form.maxEmployees ?? ''} onChange={e => change('maxEmployees', parseInt(e.target.value) || null)}
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Companies</label>
+                <input type="number" min={1} value={form.maxCompanies ?? ''} onChange={e => change('maxCompanies', parseInt(e.target.value) || null)}
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Max Admin Users</label>
+                <input type="number" min={1} value={form.maxAdminUsers ?? ''} onChange={e => change('maxAdminUsers', parseInt(e.target.value) || null)}
                   className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60" />
               </div>
             </div>

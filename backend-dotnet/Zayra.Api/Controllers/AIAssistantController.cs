@@ -109,7 +109,7 @@ public class AIAssistantController : ControllerBase
     // ── AI Insights ──────────────────────────────────────────────────────────
 
     [HttpGet("insights")]
-    [Authorize(Roles = "Admin,HR Manager,HR Officer")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Payroll Manager,Finance Controller,Finance Approver")]
     public async Task<IActionResult> ListInsights(
         [FromQuery] string? module,
         [FromQuery] string? severity,

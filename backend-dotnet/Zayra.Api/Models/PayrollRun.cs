@@ -4,6 +4,7 @@ public class PayrollRun
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
+    public Guid? CompanyId { get; set; }
     public int Year { get; set; }
     public int Month { get; set; }
     public string Status { get; set; } = "Draft";

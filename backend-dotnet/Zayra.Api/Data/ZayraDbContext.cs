@@ -241,6 +241,9 @@ public class ZayraDbContext : DbContext
     public DbSet<TenantInvoiceLine> TenantInvoiceLines => Set<TenantInvoiceLine>();
     public DbSet<TenantPayment> TenantPayments => Set<TenantPayment>();
     public DbSet<LoginActivity> LoginActivities => Set<LoginActivity>();
+    public DbSet<PricingConfig> PricingConfigs => Set<PricingConfig>();
+    public DbSet<PricingModuleConfig> PricingModuleConfigs => Set<PricingModuleConfig>();
+    public DbSet<PricingQuote> PricingQuotes => Set<PricingQuote>();
     public DbSet<ResumeParseResult> ResumeParseResults => Set<ResumeParseResult>();
     public DbSet<CandidateAIScore> CandidateAIScores => Set<CandidateAIScore>();
     public DbSet<PayrollAIValidationResult> PayrollAIValidationResults => Set<PayrollAIValidationResult>();
@@ -1023,7 +1026,7 @@ public class ZayraDbContext : DbContext
         modelBuilder.Entity<OvertimeCompOffConversion>(entity => { entity.ToTable("overtime_comp_off_conversions"); entity.HasKey(x => x.Id); entity.Property(x => x.OvertimeHours).HasPrecision(8,2); entity.Property(x => x.CompOffDays).HasPrecision(6,2); });
         modelBuilder.Entity<OvertimeAuditLog>(entity => { entity.ToTable("overtime_audit_logs"); entity.HasKey(x => x.Id); entity.Property(x => x.MetadataJson).HasColumnType("json"); entity.HasIndex(x => new { x.TenantId, x.EntityName, x.EntityId }); });
 
-        modelBuilder.Entity<SalaryStructure>(entity => { entity.ToTable("salary_structures"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); });
+        modelBuilder.Entity<SalaryStructure>(entity => { entity.ToTable("salary_structures"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); entity.HasIndex(x => new { x.TenantId, x.CompanyId }); });
         modelBuilder.Entity<SalaryComponent>(entity => { entity.ToTable("salary_components"); entity.HasKey(x => x.Id); entity.Property(x => x.Amount).HasPrecision(14,2); entity.Property(x => x.Percentage).HasPrecision(6,3); entity.HasIndex(x => new { x.TenantId, x.SalaryStructureId, x.Code }); });
         modelBuilder.Entity<EmployeeSalaryStructure>(entity => { entity.ToTable("employee_salary_structures"); entity.HasKey(x => x.Id); entity.Property(x => x.BasicSalary).HasPrecision(14,2); entity.Property(x => x.HousingAllowance).HasPrecision(14,2); entity.Property(x => x.TransportAllowance).HasPrecision(14,2); entity.Property(x => x.FoodAllowance).HasPrecision(14,2); entity.Property(x => x.MobileAllowance).HasPrecision(14,2); entity.Property(x => x.OtherAllowance).HasPrecision(14,2); entity.Property(x => x.FixedDeduction).HasPrecision(14,2); entity.HasIndex(x => new { x.TenantId, x.EmployeeId, x.IsActive }); });
         modelBuilder.Entity<PayrollGroup>(entity => { entity.ToTable("payroll_groups"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.TenantId, x.Code }).IsUnique(); });
@@ -1058,7 +1061,8 @@ public class ZayraDbContext : DbContext
             entity.Property(x => x.TotalGrossSalary).HasPrecision(14, 2);
             entity.Property(x => x.TotalDeductions).HasPrecision(14, 2);
             entity.Property(x => x.TotalNetSalary).HasPrecision(14, 2);
-            entity.HasIndex(x => new { x.TenantId, x.Year, x.Month }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.CompanyId, x.Year, x.Month });
+            entity.HasIndex(x => new { x.TenantId, x.CompanyId, x.Status });
         });
 
         modelBuilder.Entity<PayrollSlip>(entity =>
@@ -1706,6 +1710,44 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => x.UserId);
             entity.HasIndex(x => x.OccurredAtUtc);
             entity.HasIndex(x => new { x.TenantId, x.EventType, x.OccurredAtUtc });
+        });
+
+        // ── Pricing ───────────────────────────────────────────────────────────
+        modelBuilder.Entity<PricingConfig>(entity =>
+        {
+            entity.ToTable("pricing_config");
+            entity.HasKey(x => x.Key);
+            entity.Property(x => x.Key).HasMaxLength(80);
+            entity.Property(x => x.Label).HasMaxLength(200);
+            entity.Property(x => x.Group).HasMaxLength(50);
+            entity.Property(x => x.Plan).HasMaxLength(30);
+            entity.Property(x => x.Value).HasPrecision(12, 2);
+        });
+
+        modelBuilder.Entity<PricingModuleConfig>(entity =>
+        {
+            entity.ToTable("pricing_module_configs");
+            entity.HasKey(x => x.ModuleKey);
+            entity.Property(x => x.ModuleKey).HasMaxLength(60);
+            entity.Property(x => x.ModuleName).HasMaxLength(100);
+            entity.Property(x => x.AddonPriceMonthly).HasPrecision(10, 2);
+        });
+
+        modelBuilder.Entity<PricingQuote>(entity =>
+        {
+            entity.ToTable("pricing_quotes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CompanyName).HasMaxLength(200);
+            entity.Property(x => x.ContactName).HasMaxLength(180);
+            entity.Property(x => x.ContactEmail).HasMaxLength(256);
+            entity.Property(x => x.Phone).HasMaxLength(40);
+            entity.Property(x => x.OrgType).HasMaxLength(40);
+            entity.Property(x => x.SelectedModulesJson).HasColumnType("json");
+            entity.Property(x => x.EstimatedMonthlyAmount).HasPrecision(12, 2);
+            entity.Property(x => x.EstimatedAnnualAmount).HasPrecision(12, 2);
+            entity.Property(x => x.Status).HasMaxLength(20);
+            entity.HasIndex(x => x.Status);
+            entity.HasIndex(x => x.CreatedAtUtc);
         });
 
         modelBuilder.Entity<ResumeParseResult>(entity =>
