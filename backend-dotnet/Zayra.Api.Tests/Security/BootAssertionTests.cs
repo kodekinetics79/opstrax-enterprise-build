@@ -95,6 +95,23 @@ public class BootAssertionTests
     }
 
     [Fact]
+    public void ControllerEntityReturn_ThrowsForBareCollectionReturn()
+    {
+        // BareCollectionController returns Task<IReadOnlyCollection<Employee>> without opt-out.
+        // This pattern was the coverage gap: resolver previously returned null for collection interfaces.
+        var opts = new DbContextOptionsBuilder<ZayraDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new ZayraDbContext(opts);
+
+        var act = () => ControllerEntityReturnBootAssertion.Assert(db, typeof(BareCollectionController).Assembly);
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*BareCollectionController*")
+            .WithMessage("*Employee*");
+    }
+
+    [Fact]
     public void ControllerEntityReturn_AllowEntityReturnSuppressesViolation()
     {
         // Both BadEntityController and GoodEntityController are in this test assembly.
@@ -198,6 +215,19 @@ internal class BadEntityController : ControllerBase
 {
     [HttpGet("{id}")]
     public ActionResult<Employee> Get(int id) => Ok(new Employee());
+}
+
+/// <summary>
+/// Returns Task&lt;IReadOnlyCollection&lt;Employee&gt;&gt; — the bare-collection gap pattern.
+/// No [AllowEntityReturn]: must be caught by the generalized resolver.
+/// </summary>
+[ApiController]
+[Route("api/test-bare-collection")]
+internal class BareCollectionController : ControllerBase
+{
+    [HttpGet]
+    public Task<IReadOnlyCollection<Employee>> GetAll() =>
+        Task.FromResult<IReadOnlyCollection<Employee>>(new List<Employee>());
 }
 
 /// <summary>Returns a raw entity but opts out with [AllowEntityReturn].</summary>

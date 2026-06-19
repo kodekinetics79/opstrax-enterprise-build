@@ -8,19 +8,20 @@ namespace Zayra.Api.Infrastructure.Boot;
 
 /// <summary>
 /// Boot-time guard: no controller action may return a raw EF entity type (directly or as a
-/// generic argument of ActionResult&lt;T&gt;) unless it explicitly opts out with
-/// <see cref="AllowEntityReturnAttribute"/>.
+/// generic argument) unless it explicitly opts out with <see cref="AllowEntityReturnAttribute"/>.
 ///
 /// WHY: a raw entity serializes TenantId, IsDeleted, and any new field added to the entity
 /// model — including sensitive ones — without any masking gate. The fix is always a projected DTO
 /// (see EmployeeDetailDto.Project()). Opt-out is only acceptable for entities with NO sensitive
 /// PII (device config, sync logs, acknowledgement records).
 ///
-/// Resolved types checked:
-///   ActionResult&lt;T&gt;  → T
-///   Task&lt;ActionResult&lt;T&gt;&gt; → T
-///   Task&lt;T&gt; where T is an entity → T
-///   IActionResult returns are skipped (can't statically determine T at reflection time)
+/// ResolveActionType fully unwraps nested generics in any order:
+///   Task&lt;T&gt;, ValueTask&lt;T&gt;, ActionResult&lt;T&gt; → recurse on T
+///   IEnumerable&lt;T&gt;, IReadOnlyCollection&lt;T&gt;, IReadOnlyList&lt;T&gt;,
+///   ICollection&lt;T&gt;, IList&lt;T&gt;, List&lt;T&gt;, IAsyncEnumerable&lt;T&gt; → recurse on T
+///   T[] (arrays) → recurse on element type
+///   IActionResult, ActionResult (non-generic), void, Task → null (skip)
+///   Any remaining concrete type → returned for entity check
 ///   One level of DTO members is also checked to catch wrapper DTOs containing entity fields.
 /// </summary>
 public static class ControllerEntityReturnBootAssertion
@@ -77,28 +78,45 @@ public static class ControllerEntityReturnBootAssertion
                 "\n\nFix: project to a DTO (see EmployeeDetailDto.Project()), or add [AllowEntityReturn(\"reason\")] for entities without sensitive PII.");
     }
 
-    // Unwrap Task<T>, ActionResult<T>, Task<ActionResult<T>> → T
-    // Returns null if T cannot be determined (e.g. IActionResult, void)
-    private static Type? ResolveActionType(Type returnType)
+    // Transparent generic wrappers that should be peeled during type resolution.
+    // All of these carry a single T argument that is the actual payload type.
+    private static readonly HashSet<Type> TransparentWrappers = new()
     {
-        // Unwrap Task<>
-        if (returnType.IsGenericType && returnType.GetGenericTypeDefinition() == typeof(Task<>))
-            returnType = returnType.GetGenericArguments()[0];
+        typeof(Task<>), typeof(ValueTask<>), typeof(ActionResult<>),
+        typeof(IEnumerable<>), typeof(IReadOnlyCollection<>), typeof(IReadOnlyList<>),
+        typeof(ICollection<>), typeof(IList<>), typeof(List<>), typeof(IAsyncEnumerable<>)
+    };
 
-        // Unwrap ActionResult<T>
-        if (returnType.IsGenericType && returnType.GetGenericTypeDefinition() == typeof(ActionResult<>))
-            return returnType.GetGenericArguments()[0];
+    /// <summary>
+    /// Recursively unwraps transparent generic wrappers (Task, ValueTask, ActionResult,
+    /// collection interfaces/classes, arrays) until a concrete leaf type is reached.
+    /// Returns null for void, Task, IActionResult, ActionResult, and unknown interfaces.
+    /// </summary>
+    private static Type? ResolveActionType(Type type)
+    {
+        // Hard stops — no entity to check
+        if (type == typeof(void) || type == typeof(Task) ||
+            type == typeof(IActionResult) || type == typeof(ActionResult))
+            return null;
 
-        // If it's a concrete type (not IActionResult, not void) return it directly
-        if (returnType == typeof(void) || returnType == typeof(Task)) return null;
-        if (returnType == typeof(IActionResult)) return null;
-        if (returnType == typeof(ActionResult)) return null;
+        // Arrays — unwrap element type and recurse
+        if (type.IsArray)
+            return ResolveActionType(type.GetElementType()!);
 
-        // Plain Task<ConcreteType> where ConcreteType isn't ActionResult<T>
-        if (!returnType.IsInterface && returnType != typeof(object))
-            return returnType;
+        if (!type.IsGenericType)
+            // Non-generic concrete type — return for entity check; unknown interfaces → skip
+            return type.IsInterface ? null : type;
 
-        return null;
+        var def = type.GetGenericTypeDefinition();
+        var arg = type.GetGenericArguments()[0];
+
+        // All transparent single-argument wrappers — peel one layer and recurse
+        if (TransparentWrappers.Contains(def))
+            return ResolveActionType(arg);
+
+        // Other generic types (PagedResult<T>, custom DTOs) — return as-is;
+        // IsEntityOrContainsEntity will inspect their generic args and public properties
+        return type;
     }
 
     private static bool IsEntityOrContainsEntity(Type type, HashSet<Type> entityTypes, out Type? found)

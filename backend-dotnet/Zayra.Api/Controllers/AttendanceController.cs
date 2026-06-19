@@ -90,6 +90,7 @@ public class AttendanceController : ControllerBase
         await _attendance.SyncDeviceAsync(RequireTenant(), id, Context(), ct) is { } log ? Ok(log) : NotFound();
 
     [HttpGet("devices/{id:guid}/sync-logs")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: DeviceId, SyncMethod, Status, StartedAtUtc, CompletedAtUtc, RawEventsReceived, RawEventsProcessed, ErrorMessage. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<IReadOnlyCollection<AttendanceDeviceSyncLog>> SyncLogs(Guid id, CancellationToken ct) =>
         _attendance.GetSyncLogsAsync(RequireTenant(), id, ct);
 
@@ -305,6 +306,7 @@ public class AttendanceController : ControllerBase
         _attendance.DeviceSyncReportAsync(RequireTenant(), ct);
 
     [HttpGet("ai/insights")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: InsightType, Severity, Title, Summary (AI-generated analysis text), EmployeeId (int FK), DataJson, IsAcknowledged. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<IReadOnlyCollection<AttendanceAIInsight>> Insights(CancellationToken ct) =>
         _attendance.GenerateInsightsAsync(RequireTenant(), ct);
 
