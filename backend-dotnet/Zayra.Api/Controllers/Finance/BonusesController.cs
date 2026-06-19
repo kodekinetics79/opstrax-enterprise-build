@@ -59,6 +59,7 @@ public class BonusesController : ControllerBase
         {
             TenantId = tid, Code = req.Code, NameEn = req.NameEn, NameAr = req.NameAr ?? string.Empty,
             CalculationMethod = req.CalculationMethod,
+            DefaultCalculationValue = req.DefaultCalculationValue ?? 0,
             Frequency = req.Frequency ?? "OneTime",
             MinServiceMonths = req.MinServiceMonths ?? 0,
             ProRataEligibility = req.ProRataEligibility ?? false,
@@ -88,6 +89,7 @@ public class BonusesController : ControllerBase
             return Conflict("Bonus type code already exists.");
         t.Code = req.Code; t.NameEn = req.NameEn; t.NameAr = req.NameAr ?? string.Empty;
         t.CalculationMethod = req.CalculationMethod;
+        t.DefaultCalculationValue = req.DefaultCalculationValue ?? t.DefaultCalculationValue;
         t.Frequency = req.Frequency ?? t.Frequency;
         t.MinServiceMonths = req.MinServiceMonths ?? t.MinServiceMonths;
         t.ProRataEligibility = req.ProRataEligibility ?? t.ProRataEligibility;
@@ -498,8 +500,8 @@ public class BonusesController : ControllerBase
 }
 
 public record BonusTypeRequest(
-    string Code, string NameEn, string? NameAr, string CalculationMethod, bool IsTaxable,
-    string? Frequency, int? MinServiceMonths, bool? ProRataEligibility, bool? RequiresApproval,
+    string Code, string NameEn, string? NameAr, string CalculationMethod, decimal? DefaultCalculationValue,
+    bool IsTaxable, string? Frequency, int? MinServiceMonths, bool? ProRataEligibility, bool? RequiresApproval,
     bool? IsIncludedInEosb, bool? IsIncludedInGosiBase, bool? IsIncludedInWps,
     string? TaxRegion, decimal? TaxRate, string? Notes, bool? IsActive = null);
 public record CreateBatchRequest(Guid BonusTypeId, string BatchName, string PaymentPeriod, DateOnly PaymentDate, string? Notes);

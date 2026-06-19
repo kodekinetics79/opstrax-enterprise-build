@@ -753,7 +753,7 @@ function AdvancesTab() {
 // ── Bonus Types ───────────────────────────────────────────────────────────────
 
 const EMPTY_BONUS_TYPE_FORM = {
-  code: '', nameEn: '', nameAr: '', calculationMethod: 'Fixed',
+  code: '', nameEn: '', nameAr: '', calculationMethod: 'Fixed', defaultCalculationValue: 0,
   frequency: 'OneTime', minServiceMonths: 0, proRataEligibility: false,
   requiresApproval: true, isIncludedInEosb: false, isIncludedInGosiBase: false,
   isIncludedInWps: true, isTaxable: false, taxRegion: 'GCC', taxRate: 0, notes: '', isActive: true,
@@ -801,7 +801,8 @@ function BonusTypesTab() {
     setEditingId(t.id);
     setForm({
       code: t.code, nameEn: t.nameEn, nameAr: t.nameAr ?? '',
-      calculationMethod: t.calculationMethod, frequency: t.frequency ?? 'OneTime',
+      calculationMethod: t.calculationMethod, defaultCalculationValue: t.defaultCalculationValue ?? 0,
+      frequency: t.frequency ?? 'OneTime',
       minServiceMonths: t.minServiceMonths ?? 0, proRataEligibility: t.proRataEligibility ?? false,
       requiresApproval: t.requiresApproval ?? true, isIncludedInEosb: t.isIncludedInEosb ?? false,
       isIncludedInGosiBase: t.isIncludedInGosiBase ?? false, isIncludedInWps: t.isIncludedInWps ?? true,
@@ -858,16 +859,16 @@ function BonusTypesTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                {['Code', 'Name', 'Method', 'Frequency', 'Compliance', 'Tax Treatment', 'Status', ''].map((h) => (
+                {['Code', 'Name', 'Method', 'Default Value', 'Frequency', 'Compliance', 'Tax Treatment', 'Status', ''].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
               {loading ? (
-                <tr><td colSpan={8} className="py-12 text-center"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>
+                <tr><td colSpan={9} className="py-12 text-center"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={8} className="py-12 text-center text-slate-400">No bonus types yet</td></tr>
+                <tr><td colSpan={9} className="py-12 text-center text-slate-400">No bonus types yet</td></tr>
               ) : items.map((t) => (
                 <tr key={t.id} className={`hover:bg-slate-50 dark:hover:bg-white/[0.03] ${!t.isActive ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{t.code}</td>
@@ -876,6 +877,17 @@ function BonusTypesTab() {
                     {t.nameAr && <p className="text-xs text-slate-400 text-right" dir="rtl">{t.nameAr}</p>}
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{t.calculationMethod}</td>
+                  <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
+                    {t.calculationMethod === 'PerformanceBased' ? (
+                      <span className="text-xs text-slate-400 font-normal">Ad-hoc</span>
+                    ) : t.defaultCalculationValue > 0 ? (
+                      t.calculationMethod === 'PercentageSalary'
+                        ? <span>{t.defaultCalculationValue}%</span>
+                        : <span>AED {t.defaultCalculationValue.toLocaleString()}</span>
+                    ) : (
+                      <span className="text-xs text-slate-400 font-normal">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                     {t.frequency ?? 'OneTime'}
                     {(t.minServiceMonths ?? 0) > 0 && <span className="ml-1 text-xs text-slate-400">· {t.minServiceMonths}m min</span>}
@@ -912,13 +924,39 @@ function BonusTypesTab() {
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Code" required><input value={form.code} onChange={(e) => setForm(x => ({ ...x, code: e.target.value.toUpperCase() }))} className="input w-full font-mono" placeholder="ANNUAL_BONUS" /></FormField>
             <FormField label="Calculation Method">
-              <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
+              <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value, defaultCalculationValue: 0 }))} className="select w-full" title="Calculation Method">
                 <option value="Fixed">Fixed Amount</option>
                 <option value="PercentageSalary">% of Basic Salary</option>
                 <option value="PerformanceBased">Performance-Based</option>
               </select>
             </FormField>
           </div>
+          {form.calculationMethod !== 'PerformanceBased' && (
+            <FormField label={form.calculationMethod === 'PercentageSalary' ? 'Default Percentage (%)' : 'Default Amount'} required>
+              <div className="relative">
+                {form.calculationMethod === 'Fixed' && (
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 pointer-events-none">AED</span>
+                )}
+                <input
+                  type="number" min={0} step={form.calculationMethod === 'PercentageSalary' ? 0.01 : 1}
+                  max={form.calculationMethod === 'PercentageSalary' ? 100 : undefined}
+                  value={form.defaultCalculationValue}
+                  onChange={(e) => setForm(x => ({ ...x, defaultCalculationValue: parseFloat(e.target.value) || 0 }))}
+                  className={`input w-full ${form.calculationMethod === 'Fixed' ? 'pl-12' : ''}`}
+                  placeholder={form.calculationMethod === 'PercentageSalary' ? 'e.g. 10 = 10% of basic salary' : 'e.g. 5000'}
+                  title={form.calculationMethod === 'PercentageSalary' ? 'Default Percentage' : 'Default Amount'}
+                />
+                {form.calculationMethod === 'PercentageSalary' && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 pointer-events-none">%</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                {form.calculationMethod === 'PercentageSalary'
+                  ? 'Pre-filled when adding employees to a batch. Editable per employee.'
+                  : 'Pre-filled when adding employees to a batch. Editable per employee.'}
+              </p>
+            </FormField>
+          )}
           <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" title="Name (EN)" placeholder="e.g. Annual Performance Bonus" /></FormField>
           <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" placeholder={translatingBonusNameAr && !form.nameAr ? 'Translating…' : undefined} /></FormField>
 
@@ -1222,7 +1260,7 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
             {selected?.batch.status === 'Draft' && <button type="button" onClick={() => submitBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Submit for Approval</button>}
             {selected?.batch.status === 'PendingApproval' && <button type="button" onClick={() => approveBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Approve Batch</button>}
             {selected?.batch.status === 'Approved' && <button type="button" onClick={() => markPaidBatch(selected!.batch.id)} className="h-8 px-3 text-sm rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600">Mark Paid</button>}
-            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { setEmpForm({ basicSalary: 0, calculationMethod: bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.calculationMethod ?? 'Fixed', calculationValue: 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
+            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { const btype = bonusTypes.find(t => t.id === selected?.batch.bonusTypeId); setEmpForm({ basicSalary: 0, calculationMethod: btype?.calculationMethod ?? 'Fixed', calculationValue: btype?.defaultCalculationValue ?? 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
             <button type="button" onClick={() => setDetailModal(false)} className="btn-secondary ml-auto">Close</button>
           </div>
         }>

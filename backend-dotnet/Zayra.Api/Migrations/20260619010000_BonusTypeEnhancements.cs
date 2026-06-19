@@ -11,6 +11,13 @@ namespace Zayra.Api.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             // ── BonusTypes: eligibility, compliance flags, region-aware tax ────────
+            migrationBuilder.AddColumn<decimal>(
+                name: "DefaultCalculationValue",
+                table: "BonusTypes",
+                type: "decimal(18,4)",
+                nullable: false,
+                defaultValue: 0m);
+
             migrationBuilder.AddColumn<string>(
                 name: "Frequency",
                 table: "BonusTypes",
@@ -123,6 +130,7 @@ namespace Zayra.Api.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropColumn(name: "DefaultCalculationValue", table: "BonusTypes");
             migrationBuilder.DropColumn(name: "Frequency",           table: "BonusTypes");
             migrationBuilder.DropColumn(name: "MinServiceMonths",    table: "BonusTypes");
             migrationBuilder.DropColumn(name: "ProRataEligibility",  table: "BonusTypes");

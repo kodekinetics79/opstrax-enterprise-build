@@ -228,6 +228,7 @@ public class BonusType
     public string NameEn { get; set; } = string.Empty;
     public string NameAr { get; set; } = string.Empty;
     public string CalculationMethod { get; set; } = "Fixed"; // Fixed, PercentageSalary, PerformanceBased, Custom
+    public decimal DefaultCalculationValue { get; set; } = 0; // Fixed: AED amount; PercentageSalary: e.g. 10 = 10%; 0 = ad-hoc per batch
     // Eligibility
     public string Frequency { get; set; } = "OneTime"; // Annual, Quarterly, Monthly, OneTime, ProjectBased
     public int MinServiceMonths { get; set; } = 0;

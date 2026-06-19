@@ -116,6 +116,7 @@ export interface BonusType {
   nameEn: string;
   nameAr: string;
   calculationMethod: string;
+  defaultCalculationValue: number;
   // Eligibility
   frequency: string;
   minServiceMonths: number;
@@ -259,6 +260,7 @@ export interface BonusTypeRequest {
   nameEn: string;
   nameAr?: string;
   calculationMethod: string;
+  defaultCalculationValue?: number;
   isTaxable: boolean;
   frequency?: string;
   minServiceMonths?: number;
