@@ -19,6 +19,8 @@ using Zayra.Api.Infrastructure.Employees;
 using Zayra.Api.Infrastructure.Localization;
 using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Models;
+using EmployeeChangeRequest = Zayra.Api.Models.EmployeeChangeRequest;
+using EmployeeTransferRequest = Zayra.Api.Models.EmployeeTransferRequest;
 
 namespace Zayra.Api.Tests.Security;
 
@@ -142,13 +144,13 @@ public class SensitiveFieldMaskingTests
         var dto = await svc.GetAsync(tenantId, emp.Id, includeSensitive: true, TestContext(tenantId), CancellationToken.None);
 
         dto.Should().NotBeNull($"{role} should see the employee");
-        dto!.Employee.Salary.Should().Be(50_000m, $"{role} must see salary");
-        dto.Employee.BankIban.Should().Be("SA0000000000000000001234", $"{role} must see IBAN");
-        dto.Employee.PassportNumber.Should().Be("P99999999", $"{role} must see passport number");
-        dto.Employee.IqamaNumber.Should().Be("2000000001", $"{role} must see Iqama number");
-        dto.Employee.MedicalInformation.Should().NotBeEmpty($"{role} must see medical information");
-        dto.Employee.DisciplinaryRecords.Should().NotBeEmpty($"{role} must see disciplinary records");
-        dto.Employee.TerminationReason.Should().NotBeEmpty($"{role} must see termination reason");
+        dto!.Salary.Should().Be(50_000m, $"{role} must see salary");
+        dto.BankIban.Should().Be("SA0000000000000000001234", $"{role} must see IBAN");
+        dto.PassportNumber.Should().Be("P99999999", $"{role} must see passport number");
+        dto.IqamaNumber.Should().Be("2000000001", $"{role} must see Iqama number");
+        dto.MedicalInformation.Should().NotBeEmpty($"{role} must see medical information");
+        dto.DisciplinaryRecords.Should().NotBeEmpty($"{role} must see disciplinary records");
+        dto.TerminationReason.Should().NotBeEmpty($"{role} must see termination reason");
     }
 
     [Theory]
@@ -165,15 +167,15 @@ public class SensitiveFieldMaskingTests
         var dto = await svc.GetAsync(tenantId, emp.Id, includeSensitive: false, TestContext(tenantId), CancellationToken.None);
 
         dto.Should().NotBeNull($"{role} should see the employee record");
-        dto!.Employee.Salary.Should().BeNull($"{role} must NOT see salary");
-        dto.Employee.BankName.Should().BeEmpty($"{role} must NOT see bank name");
-        dto.Employee.BankIban.Should().BeEmpty($"{role} must NOT see IBAN");
-        dto.Employee.WpsBankDetails.Should().BeEmpty($"{role} must NOT see WPS details");
-        dto.Employee.PassportNumber.Should().BeEmpty($"{role} must NOT see passport number");
-        dto.Employee.IqamaNumber.Should().BeEmpty($"{role} must NOT see Iqama number");
-        dto.Employee.MedicalInformation.Should().BeEmpty($"{role} must NOT see medical information");
-        dto.Employee.DisciplinaryRecords.Should().BeEmpty($"{role} must NOT see disciplinary records");
-        dto.Employee.TerminationReason.Should().BeEmpty($"{role} must NOT see termination reason");
+        dto!.Salary.Should().BeNull($"{role} must NOT see salary");
+        dto.BankName.Should().BeEmpty($"{role} must NOT see bank name");
+        dto.BankIban.Should().BeEmpty($"{role} must NOT see IBAN");
+        dto.WpsBankDetails.Should().BeEmpty($"{role} must NOT see WPS details");
+        dto.PassportNumber.Should().BeEmpty($"{role} must NOT see passport number");
+        dto.IqamaNumber.Should().BeEmpty($"{role} must NOT see Iqama number");
+        dto.MedicalInformation.Should().BeEmpty($"{role} must NOT see medical information");
+        dto.DisciplinaryRecords.Should().BeEmpty($"{role} must NOT see disciplinary records");
+        dto.TerminationReason.Should().BeEmpty($"{role} must NOT see termination reason");
     }
 
     // ── ApproveDraft — response type and mask gate ─────────────────────────────────
@@ -212,10 +214,306 @@ public class SensitiveFieldMaskingTests
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
         var detail = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
 
-        detail.Employee.Salary.Should().Be(12_000m,
+        detail.Salary.Should().Be(12_000m,
             "Admin satisfies CanViewSensitive() — salary submitted in the draft must flow through unmasked");
-        detail.Employee.BankIban.Should().Be("AE000000000000001",
+        detail.BankIban.Should().Be("AE000000000000001",
             "Admin must see the IBAN from the draft");
+    }
+
+    // ── P2.1: EmployeeDetailDto has no raw Employee member ────────────────────────
+
+    [Fact]
+    public void EmployeeDetailDto_DoesNotExposeRawEntityField()
+    {
+        var entityField = typeof(EmployeeDetailDto)
+            .GetProperties()
+            .FirstOrDefault(p => p.PropertyType == typeof(Employee));
+
+        entityField.Should().BeNull(
+            "EmployeeDetailDto must not hold a raw Employee entity — any new EF field would auto-serialize without masking");
+    }
+
+    // ── P2.1: EssEmployeeProfileDto field exclusions ──────────────────────────────
+
+    [Fact]
+    public void EssEmployeeProfileDto_DoesNotHaveInternalHrNoteFields()
+    {
+        var type = typeof(EssEmployeeProfileDto);
+
+        type.GetProperty("DisciplinaryRecords").Should().BeNull(
+            "ESS profile must not expose internal disciplinary records to the employee");
+        type.GetProperty("MedicalInformation").Should().BeNull(
+            "ESS profile must not expose internal medical information to the employee");
+        type.GetProperty("TerminationReason").Should().BeNull(
+            "ESS profile must not expose termination reason to the employee");
+        type.GetProperty("WpsBankDetails").Should().BeNull(
+            "WpsBankDetails is a backend processing field — not needed by the employee");
+        type.GetProperty("TenantId").Should().BeNull("System field must not appear in any DTO");
+        type.GetProperty("IsDeleted").Should().BeNull("System field must not appear in any DTO");
+    }
+
+    [Fact]
+    public void EssEmployeeProfileDto_HasOwnFinancialAndIdentityFields()
+    {
+        var type = typeof(EssEmployeeProfileDto);
+
+        type.GetProperty("Salary").Should().NotBeNull("Employee can see own salary");
+        type.GetProperty("BankIban").Should().NotBeNull("Employee can see own IBAN");
+        type.GetProperty("PassportNumber").Should().NotBeNull("Employee can see own passport number");
+        type.GetProperty("IqamaNumber").Should().NotBeNull("Employee can see own Iqama number");
+    }
+
+    // ── P2.1: UpdateEmployee — mask gate on write response ────────────────────────
+
+    [Fact]
+    public async Task UpdateEmployee_AdminRole_ResponseIsEmployeeDetailDto_WithSensitiveData()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        var controller = CreateController(db, tenantId, "Admin");
+
+        var draftResult = await controller.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
+        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        await controller.SubmitDraft(draft.Id, CancellationToken.None);
+        var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
+        var created = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
+
+        // Update a non-sensitive field so the non-approval path is exercised
+        var updateRequest = new EmployeeUpdateRequest(
+            EffectiveDate: DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            Changes: new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["workLocation"] = System.Text.Json.JsonSerializer.SerializeToElement("New HQ")
+            });
+
+        var updateResult = await controller.UpdateEmployee(created.Id, updateRequest, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(updateResult).Value);
+        dto.Should().NotBeNull("UpdateEmployee must return EmployeeDetailDto");
+        dto.Salary.Should().Be(12_000m, "Admin sees salary unmasked in write response");
+        dto.BankIban.Should().Be("AE000000000000001", "Admin sees IBAN unmasked in write response");
+    }
+
+    [Fact]
+    public async Task UpdateEmployee_UnprivilegedRole_ResponseMasksSensitiveFields()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        // Seed employee directly — HR Officer cannot approve drafts so seed via Admin
+        var adminController = CreateController(db, tenantId, "Admin");
+        var draftResult = await adminController.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
+        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        await adminController.SubmitDraft(draft.Id, CancellationToken.None);
+        var approval = await adminController.ApproveDraft(draft.Id, CancellationToken.None);
+        var created = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
+
+        // HR Officer updates a non-sensitive field
+        var hrOfficer = CreateController(db, tenantId, "HR Officer");
+        var updateRequest = new EmployeeUpdateRequest(
+            EffectiveDate: DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            Changes: new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["workLocation"] = System.Text.Json.JsonSerializer.SerializeToElement("Annex")
+            });
+
+        var updateResult = await hrOfficer.UpdateEmployee(created.Id, updateRequest, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(updateResult).Value);
+        dto.Salary.Should().BeNull("HR Officer must NOT see salary in the update response");
+        dto.BankIban.Should().BeEmpty("HR Officer must NOT see IBAN in the update response");
+        dto.PassportNumber.Should().BeEmpty("HR Officer must NOT see passport in the update response");
+        dto.IqamaNumber.Should().BeEmpty("HR Officer must NOT see Iqama in the update response");
+    }
+
+    // ── P2.1: ApproveChange — mask gate on write response ────────────────────────
+
+    [Fact]
+    public async Task ApproveChange_AdminRole_ResponseIsEmployeeDetailDto_WithSensitiveData()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        var emp = SeedEmployee(db, tenantId);
+        var controller = CreateController(db, tenantId, "Admin");
+
+        var change = new EmployeeChangeRequest
+        {
+            TenantId = tenantId,
+            EmployeeId = emp.Id,
+            EffectiveDate = DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            SensitiveFields = "salary",
+            ProposedChangesJson = System.Text.Json.JsonSerializer.Serialize(
+                new Dictionary<string, System.Text.Json.JsonElement>
+                {
+                    ["salary"] = System.Text.Json.JsonSerializer.SerializeToElement(60_000m)
+                })
+        };
+        db.EmployeeChangeRequests.Add(change);
+        await db.SaveChangesAsync();
+
+        var result = await controller.ApproveChange(change.Id, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(result).Value);
+        dto.Should().NotBeNull("ApproveChange must return EmployeeDetailDto");
+        dto.Salary.Should().Be(60_000m, "Admin sees updated salary unmasked after approving change");
+        dto.IqamaNumber.Should().Be("2000000001", "Admin sees Iqama unmasked in approve response");
+    }
+
+    [Fact]
+    public async Task ApproveChange_UnprivilegedViewerForRead_ResponseMasksSensitiveFields()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        var emp = SeedEmployee(db, tenantId);
+
+        var change = new EmployeeChangeRequest
+        {
+            TenantId = tenantId,
+            EmployeeId = emp.Id,
+            EffectiveDate = DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            SensitiveFields = "salary",
+            ProposedChangesJson = System.Text.Json.JsonSerializer.Serialize(
+                new Dictionary<string, System.Text.Json.JsonElement>
+                {
+                    ["salary"] = System.Text.Json.JsonSerializer.SerializeToElement(60_000m)
+                })
+        };
+        db.EmployeeChangeRequests.Add(change);
+        await db.SaveChangesAsync();
+
+        // HR Manager can approve but does NOT satisfy CanViewSensitive (only Admin/HR Manager/Payroll Officer do)
+        // ApproveChange is limited to Admin,HR Manager — so test HR Manager seeing salary (they CAN)
+        // and separately confirm CanViewSensitive returns false for non-qualifying roles.
+        // Use Auditor role impersonation on the read side to verify mask in write response.
+        // The practical mask test: CanViewSensitive() in controller returns false when role != Admin/HR Manager/Payroll Officer.
+        // We test this with a role that passes [Authorize(Roles="Admin,HR Manager")] but doesn't satisfy CanViewSensitive.
+        // For this scenario we simply assert that a non-HR-Manager role calling the endpoint gets masked output.
+        // We create a controller with no roles to confirm that CanViewSensitive=false masks the response.
+        var noRoleController = CreateController(db, tenantId, "Auditor");
+        // Note: Auditor cannot call ApproveChange (filtered by Authorize attribute, but in unit tests attribute isn't enforced)
+        var result = await noRoleController.ApproveChange(change.Id, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(result).Value);
+        dto.Salary.Should().BeNull("Auditor-role caller must NOT see salary in ApproveChange write response");
+        dto.BankIban.Should().BeEmpty("Auditor-role caller must NOT see IBAN");
+    }
+
+    // ── P2.1: ApproveHrTransfer — mask gate on write response ────────────────────
+
+    [Fact]
+    public async Task ApproveHrTransfer_AdminRole_ResponseIsEmployeeDetailDto_WithSensitiveData()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        var emp = SeedEmployee(db, tenantId);
+        var controller = CreateController(db, tenantId, "Admin");
+
+        var transfer = new EmployeeTransferRequest
+        {
+            TenantId = tenantId,
+            EmployeeId = emp.Id,
+            CurrentDepartment = emp.Department,
+            CurrentBranch = emp.Branch,
+            NewDepartment = "Finance",
+            NewBranch = "Riyadh",
+            NewManagerEmployeeId = null,
+            EffectiveDate = DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            Status = "PendingHrApproval",
+        };
+        db.EmployeeTransferRequests.Add(transfer);
+        await db.SaveChangesAsync();
+
+        var result = await controller.ApproveHrTransfer(transfer.Id, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(result).Value);
+        dto.Should().NotBeNull("ApproveHrTransfer must return EmployeeDetailDto");
+        dto.Department.Should().Be("Finance", "Department must be updated to new department after transfer");
+        dto.Salary.Should().Be(50_000m, "Admin sees salary unmasked after transfer approval");
+        dto.IqamaNumber.Should().Be("2000000001", "Admin sees Iqama unmasked after transfer approval");
+    }
+
+    [Fact]
+    public async Task ApproveHrTransfer_UnprivilegedRole_ResponseMasksSensitiveFields()
+    {
+        await using var db = CreateDb();
+        var tenantId = await SeedTenantAsync(db);
+        var emp = SeedEmployee(db, tenantId);
+
+        var transfer = new EmployeeTransferRequest
+        {
+            TenantId = tenantId,
+            EmployeeId = emp.Id,
+            CurrentDepartment = emp.Department,
+            CurrentBranch = emp.Branch,
+            NewDepartment = "Legal",
+            NewBranch = "Jeddah",
+            EffectiveDate = DateOnly.FromDateTime(DateTime.UtcNow.Date),
+            Status = "PendingHrApproval",
+        };
+        db.EmployeeTransferRequests.Add(transfer);
+        await db.SaveChangesAsync();
+
+        var managerController = CreateController(db, tenantId, "Manager");
+        var result = await managerController.ApproveHrTransfer(transfer.Id, CancellationToken.None);
+
+        var dto = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(result).Value);
+        dto.Salary.Should().BeNull("Manager must NOT see salary in transfer approval response");
+        dto.BankIban.Should().BeEmpty("Manager must NOT see IBAN in transfer approval response");
+        dto.IqamaNumber.Should().BeEmpty("Manager must NOT see Iqama in transfer approval response");
+    }
+
+    // ── P2.1: ESS Profile — returns EssEmployeeProfileDto, not raw Employee ──────
+
+    [Fact]
+    public async Task EssProfile_ReturnType_IsEssEmployeeProfileDtoNotRawEntity()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        var emp = SeedEmployee(db, tenantId);
+
+        var essController = CreateEssController(db, tenantId, emp.Id);
+        var result = await essController.Profile(CancellationToken.None);
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        okResult.Value.Should().BeOfType<EssEmployeeProfileDto>(
+            "ESS profile endpoint must return EssEmployeeProfileDto, not the raw EF entity");
+    }
+
+    [Fact]
+    public async Task EssProfile_EmployeeSeesOwnFinancialData()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        var emp = SeedEmployee(db, tenantId);
+
+        var essController = CreateEssController(db, tenantId, emp.Id);
+        var result = await essController.Profile(CancellationToken.None);
+
+        var dto = Assert.IsType<EssEmployeeProfileDto>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        dto.Salary.Should().Be(50_000m, "Employee can see their own salary");
+        dto.BankIban.Should().Be("SA0000000000000000001234", "Employee can see their own IBAN");
+        dto.PassportNumber.Should().Be("P99999999", "Employee can see their own passport number");
+        dto.IqamaNumber.Should().Be("2000000001", "Employee can see their own Iqama number");
+    }
+
+    [Fact]
+    public async Task EssProfile_DoesNotExposeInternalHrNotes()
+    {
+        await using var db = CreateDb();
+        var tenantId = Guid.NewGuid();
+        var emp = SeedEmployee(db, tenantId);
+
+        var essController = CreateEssController(db, tenantId, emp.Id);
+        var result = await essController.Profile(CancellationToken.None);
+
+        var dto = Assert.IsType<EssEmployeeProfileDto>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        // These fields are internal HR notes — the employee has no right to see them
+        var dtoType = dto.GetType();
+        dtoType.GetProperty("DisciplinaryRecords").Should().BeNull(
+            "EssEmployeeProfileDto must not include disciplinary records");
+        dtoType.GetProperty("MedicalInformation").Should().BeNull(
+            "EssEmployeeProfileDto must not include internal medical information");
+        dtoType.GetProperty("TerminationReason").Should().BeNull(
+            "EssEmployeeProfileDto must not include termination reason");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -298,6 +596,20 @@ public class SensitiveFieldMaskingTests
     {
         public DateConversionDto FromGregorian(DateOnly date) =>
             new(date.ToString("yyyy-MM-dd"), "1447-01-01", 1447, 1, 1);
+    }
+
+    private static EmployeeSelfServiceController CreateEssController(ZayraDbContext db, Guid tenantId, int employeeId)
+    {
+        var controller = new EmployeeSelfServiceController(db, new FakeLetterService());
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId.ToString()),
+            new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
+            new Claim("employee_id", employeeId.ToString()),
+            new Claim("permission", "ess.read"),
+        }, "Test"));
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = user } };
+        return controller;
     }
 
     private sealed class FakeLetterService : ILetterService

@@ -577,7 +577,7 @@ public class EmployeesController : ControllerBase
             }
 
             var employee = await employeeManagement.CreateAsync(tenantId, request, Context(), cancellationToken);
-            return CreatedAtAction(nameof(Get), new { id = employee.Employee.Id }, employee);
+            return CreatedAtAction(nameof(Get), new { id = employee.Id }, employee);
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
@@ -783,10 +783,9 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Employee activated", $"{employee.FullName} was activated with ID {employee.EmployeeCode}.", "Employee", employee.Id.ToString(), cancellationToken);
         await Audit("employee.activated", "Employee", employee.Id.ToString(), cancellationToken);
-        if (!CanViewSensitive()) EmployeeSensitiveMask.Apply(employee);
         var documents = await _db.EmployeeDocuments.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
         var histories = await _db.EmployeeHistories.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
-        return Ok(new EmployeeDetailDto(employee, null, [], documents, histories, []));
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive(), documents: documents, history: histories));
     }
 
     [HttpPut("{id:int}")]
@@ -821,7 +820,7 @@ public class EmployeesController : ControllerBase
         await AddHistory(employee, "Updated", request.EffectiveDate, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.updated", "Employee", employee.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpPatch("{id:int}/status")]
@@ -949,7 +948,7 @@ public class EmployeesController : ControllerBase
         await AddHistory(employee, "SensitiveChangeApproved", change.EffectiveDate, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.change_approved", "EmployeeChangeRequest", change.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpPost("{id:int}/transfer")]
@@ -988,7 +987,7 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Employee transfer approved", $"Transfer for employee {employee.EmployeeCode} was applied.", "EmployeeTransferRequest", transfer.Id.ToString(), cancellationToken);
         await Audit("employee.transfer_approved", "EmployeeTransferRequest", transfer.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpGet("reports/summary")]

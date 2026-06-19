@@ -32,10 +32,10 @@ public class EmployeeModuleTests
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
 
         var profile = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
-        Assert.Equal("Active", profile.Employee.Status);
-        Assert.StartsWith("EMP-", profile.Employee.EmployeeCode);
-        Assert.NotNull(profile.Employee.UserAccountId);
-        Assert.True(await db.EmployeeHistories.AnyAsync(x => x.EmployeeId == profile.Employee.Id && x.EventType == "Activated"));
+        Assert.Equal("Active", profile.Status);
+        Assert.StartsWith("EMP-", profile.EmployeeCode);
+        Assert.NotNull(profile.UserAccountId);
+        Assert.True(await db.EmployeeHistories.AnyAsync(x => x.EmployeeId == profile.Id && x.EventType == "Activated"));
     }
 
     [Fact]

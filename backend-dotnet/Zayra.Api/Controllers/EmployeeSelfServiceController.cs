@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Employees;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Models;
@@ -171,14 +172,14 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("profile")]
-    public async Task<ActionResult<Employee>> Profile(CancellationToken cancellationToken)
+    public async Task<ActionResult<EssEmployeeProfileDto>> Profile(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
         if (!essOk) return BadRequest(new { message = ctxError });
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
         if (employee is null) return NotFound();
         await EssAudit(tenantId, employeeId, "ess.profile.viewed", "Employee", employeeId.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EssEmployeeProfileDto.Project(employee));
     }
 
     [HttpPut("profile-change-request")]
