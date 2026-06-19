@@ -973,14 +973,31 @@ function LeaveTypesTab() {
 
 // ── Policies Tab ──────────────────────────────────────────────────────────────
 
-function CreatePolicyModal({ leaveTypes, onClose, onSaved }: { leaveTypes: LeaveType[]; onClose: () => void; onSaved: () => void }) {
+function PolicyModal({ leaveTypes, existing, onClose, onSaved }: { leaveTypes: LeaveType[]; existing?: LeavePolicy; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!existing;
   const [form, setForm] = useState({
-    name: '', leaveTypeId: '', countryCode: 'UAE', departmentName: '', grade: '',
-    employmentType: '', contractType: '', gender: '', appliesOnProbation: false,
-    annualEntitlementDays: 21, accrualMethod: 'Monthly', carryForwardMax: 0,
-    carryForwardExpiry: 0, encashmentAllowed: false, encashmentMaxDays: 0,
-    minimumDaysPerRequest: 1, maximumDaysPerRequest: 0, noticeRequiredDays: 0,
-    weekendsIncluded: false, publicHolidaysIncluded: false, payrollImpact: 'Full', status: 'Draft',
+    name: existing?.name ?? '',
+    leaveTypeId: existing?.leaveTypeId ?? '',
+    countryCode: existing?.countryCode ?? 'UAE',
+    departmentName: existing?.departmentName ?? '',
+    grade: existing?.grade ?? '',
+    employmentType: existing?.employmentType ?? '',
+    contractType: existing?.contractType ?? '',
+    gender: existing?.gender ?? '',
+    appliesOnProbation: existing?.appliesOnProbation ?? false,
+    annualEntitlementDays: existing?.annualEntitlementDays ?? 21,
+    accrualMethod: existing?.accrualMethod ?? 'Monthly',
+    carryForwardMax: existing?.carryForwardMax ?? 0,
+    carryForwardExpiry: existing?.carryForwardExpiry ?? 0,
+    encashmentAllowed: existing?.encashmentAllowed ?? false,
+    encashmentMaxDays: existing?.encashmentMaxDays ?? 0,
+    minimumDaysPerRequest: existing?.minimumDaysPerRequest ?? 1,
+    maximumDaysPerRequest: existing?.maximumDaysPerRequest ?? 0,
+    noticeRequiredDays: existing?.noticeRequiredDays ?? 0,
+    weekendsIncluded: existing?.weekendsIncluded ?? false,
+    publicHolidaysIncluded: existing?.publicHolidaysIncluded ?? false,
+    payrollImpact: existing?.payrollImpact ?? 'Full',
+    status: existing?.status ?? 'Draft',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -989,11 +1006,18 @@ function CreatePolicyModal({ leaveTypes, onClose, onSaved }: { leaveTypes: Leave
   const save = async () => {
     if (!form.name || !form.leaveTypeId) { setError('Name and Leave Type are required.'); return; }
     setSaving(true); setError('');
-    try { await leavePoliciesApi.create(form); onSaved(); } catch { setError('Save failed.'); setSaving(false); }
+    try {
+      if (isEdit) {
+        await leavePoliciesApi.update(existing!.id, form);
+      } else {
+        await leavePoliciesApi.create(form);
+      }
+      onSaved();
+    } catch { setError('Save failed.'); setSaving(false); }
   };
 
   return (
-    <Modal title="New Leave Policy" onClose={onClose} wide>
+    <Modal title={isEdit ? 'Edit Leave Policy' : 'New Leave Policy'} onClose={onClose} wide>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Policy Name *"><input className={inp} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. UAE Annual Leave — Full-Time" /></Field>
@@ -1073,7 +1097,7 @@ function CreatePolicyModal({ leaveTypes, onClose, onSaved }: { leaveTypes: Leave
         {error && <p className="text-xs text-rose-500">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className={btn.ghost} onClick={onClose}>Cancel</button>
-          <button type="button" className={btn.primary} onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create Policy'}</button>
+          <button type="button" className={btn.primary} onClick={save} disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Policy'}</button>
         </div>
       </div>
     </Modal>
@@ -1086,6 +1110,7 @@ function PoliciesTab() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('Active');
   const [showCreate, setShowCreate] = useState(false);
+  const [editPolicy, setEditPolicy] = useState<LeavePolicy | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -1097,6 +1122,11 @@ function PoliciesTab() {
   useEffect(load, [statusFilter]);
 
   const typeName = (id: string) => leaveTypes.find(t => t.id === id)?.nameEn ?? id;
+
+  const archive = async (id: string, name: string) => {
+    if (!confirm(`Archive "${name}"? It will no longer be applied to new requests.`)) return;
+    try { await leavePoliciesApi.delete(id); load(); } catch { alert('Failed to archive policy.'); }
+  };
 
   return (
     <div className="space-y-4">
@@ -1118,27 +1148,38 @@ function PoliciesTab() {
       ) : (
         <div className="surface divide-y divide-slate-100 dark:divide-white/5">
           {policies.map(p => (
-            <div key={p.id} className="flex items-center justify-between px-5 py-4">
-              <div className="min-w-0">
+            <div key={p.id} className="flex items-start justify-between gap-4 px-5 py-4">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">{p.name}</p>
                 <p className="mt-0.5 text-xs text-slate-400">
                   {typeName(p.leaveTypeId)} · {p.countryCode} · {p.annualEntitlementDays}d/yr · {p.accrualMethod}
                   {p.departmentName ? ` · ${p.departmentName}` : ' · All depts'}
                   {p.grade ? ` · Grade ${p.grade}` : ''}
                 </p>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {p.encashmentAllowed && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">Encashment</span>}
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {p.encashmentAllowed && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">Encashment ✓</span>}
                   {p.weekendsIncluded && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-white/10">Wknd incl.</span>}
                   {p.publicHolidaysIncluded && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-white/10">PH incl.</span>}
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${p.payrollImpact === 'None' ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>Payroll: {p.payrollImpact}</span>
+                  <StatusBadge status={p.status} />
                 </div>
               </div>
-              <StatusBadge status={p.status} />
+              <div className="flex shrink-0 items-center gap-2">
+                <button type="button" className={btn.ghost} onClick={() => setEditPolicy(p)}>
+                  <Settings className="h-3.5 w-3.5" /> Edit
+                </button>
+                {p.status !== 'Archived' && (
+                  <button type="button" className={btn.danger} onClick={() => archive(p.id, p.name)}>
+                    <X className="h-3.5 w-3.5" /> Archive
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
-      {showCreate && <CreatePolicyModal leaveTypes={leaveTypes} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
+      {showCreate && <PolicyModal leaveTypes={leaveTypes} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
+      {editPolicy && <PolicyModal leaveTypes={leaveTypes} existing={editPolicy} onClose={() => setEditPolicy(null)} onSaved={() => { setEditPolicy(null); load(); }} />}
     </div>
   );
 }
