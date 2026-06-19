@@ -37,6 +37,7 @@ public class EmployeeSelfServiceController : ControllerBase
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
         if (employee is null) return NotFound(new { message = "Your user account is not linked to an employee record. Ask HR to invite you using the Invite Employee flow in User Management." });
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var now = DateTime.UtcNow;
         var attendance = await _db.AttendanceDailyRecords.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.WorkDate == today && !x.IsDeleted, cancellationToken);
         var leaveBalances = await _db.EmployeeLeaveBalances.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Year == DateTime.UtcNow.Year).ToListAsync(cancellationToken);
         var pendingRequests = await _db.HRRequests.CountAsync(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Status != "Closed", cancellationToken);
@@ -51,6 +52,106 @@ public class EmployeeSelfServiceController : ControllerBase
         var notifications = await _db.EmployeeNotifications.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && !x.IsRead).OrderByDescending(x => x.CreatedAtUtc).Take(5).ToListAsync(cancellationToken);
         var actionItems = await _db.EmployeeActionItems.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Status == "Open").OrderBy(x => x.DueAtUtc).Take(6).ToListAsync(cancellationToken);
 
+        // ── Enrichment: payroll snapshot ─────────────────────────────────────
+        ESSPayrollSnapshotDto? payrollSnapshot = null;
+        try
+        {
+            var lastSlip = await _db.PayrollSlips.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.Status == "Final")
+                .OrderByDescending(x => x.RunId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (lastSlip is not null)
+            {
+                var run = await _db.PayrollRuns.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == lastSlip.RunId, cancellationToken);
+                var salary = await _db.EmployeeSalaryStructures.AsNoTracking()
+                    .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.IsActive)
+                    .OrderByDescending(x => x.EffectiveDate)
+                    .FirstOrDefaultAsync(cancellationToken);
+                var currency = salary?.Currency ?? "AED";
+                var period = run is not null
+                    ? new DateTime(run.Year, run.Month, 1).ToString("MMM yyyy")
+                    : string.Empty;
+                var nextRunDate = new DateOnly(now.Year, now.Month, 1).AddMonths(1).AddDays(-1);
+                payrollSnapshot = new ESSPayrollSnapshotDto(lastSlip.NetSalary, currency, period, nextRunDate.ToString("yyyy-MM-dd"));
+            }
+        }
+        catch { /* non-critical — return null */ }
+
+        // ── Enrichment: loans summary ─────────────────────────────────────────
+        // EmployeeLoan.EmployeeId is a Guid not linked to the int employee.Id
+        // Return null gracefully until a FK relationship is established
+        ESSLoansSummaryDto? loansSummary = null;
+
+        // ── Enrichment: performance snapshot ─────────────────────────────────
+        ESSPerformanceSnapshotDto? performanceSnapshot = null;
+        try
+        {
+            var activeCycle = await _db.PerformanceCycles.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && (x.Status == "Active" || x.Status == "InReview"))
+                .OrderByDescending(x => x.ReviewPeriodStart)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (activeCycle is not null)
+            {
+                var goalsTotal = await _db.EmployeeGoals.CountAsync(
+                    x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.CycleId == activeCycle.Id && x.Status != "Cancelled", cancellationToken);
+                var goalsDone = await _db.EmployeeGoals.CountAsync(
+                    x => x.TenantId == tenantId && x.EmployeeId == employeeId && x.CycleId == activeCycle.Id && x.Status == "Completed", cancellationToken);
+                var lastReview = await _db.AppraisalReviews.AsNoTracking()
+                    .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId
+                             && (x.Status == "Published" || x.Status == "Acknowledged" || x.Status == "Closed"))
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .FirstOrDefaultAsync(cancellationToken);
+                // FinalScore is 0-100; convert to 0-5 star scale
+                decimal? lastRating = lastReview is not null ? Math.Round(lastReview.FinalScore / 20m, 1) : null;
+                performanceSnapshot = new ESSPerformanceSnapshotDto(activeCycle.Name, goalsDone, goalsTotal, lastRating);
+            }
+        }
+        catch { /* non-critical — return null */ }
+
+        // ── Enrichment: overtime hours this calendar month ────────────────────
+        var overtimeHoursThisMonth = 0;
+        try
+        {
+            var monthStart = new DateOnly(now.Year, now.Month, 1);
+            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+            var approvedMinutes = await _db.OvertimeRequests.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId
+                         && x.Status == "Approved"
+                         && x.WorkDate >= monthStart && x.WorkDate <= monthEnd)
+                .SumAsync(x => (int?)x.ApprovedMinutes, cancellationToken) ?? 0;
+            overtimeHoursThisMonth = approvedMinutes / 60;
+        }
+        catch { /* non-critical — return 0 */ }
+
+        // ── Enrichment: next approved leave ──────────────────────────────────
+        ESSNextLeaveDto? nextApprovedLeave = null;
+        try
+        {
+            var nextLeave = await _db.LeaveRequests.AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.EmployeeId == employeeId
+                         && x.Status == "Approved" && x.StartDate > today)
+                .OrderBy(x => x.StartDate)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (nextLeave is not null)
+                nextApprovedLeave = new ESSNextLeaveDto(
+                    nextLeave.LeaveTypeName,
+                    nextLeave.StartDate.ToString("yyyy-MM-dd"),
+                    nextLeave.EndDate.ToString("yyyy-MM-dd"),
+                    nextLeave.TotalDays);
+        }
+        catch { /* non-critical — return null */ }
+
+        // ── Enrichment: tenure in months ──────────────────────────────────────
+        var tenureMonths = 0;
+        try
+        {
+            var joining = employee.JoiningDate;
+            tenureMonths = ((now.Year - joining.Year) * 12) + (now.Month - joining.Month);
+            if (tenureMonths < 0) tenureMonths = 0;
+        }
+        catch { /* non-critical — return 0 */ }
+
         await EssAudit(tenantId, employeeId, "ess.dashboard.viewed", "Employee", employeeId.ToString(), cancellationToken);
         return Ok(new ESSDashboardDto(
             new ESSProfileSummaryDto(employee.Id, employee.EmployeeCode, employee.FullName, employee.JobTitle, employee.Department, employee.ProfilePhotoUrl, employee.ProfileCompletenessScore),
@@ -60,7 +161,13 @@ public class EmployeeSelfServiceController : ControllerBase
             documentAlerts,
             announcements.Select(ToAnnouncementDto).ToList(),
             notifications.Select(ToNotificationDto).ToList(),
-            actionItems.Select(x => new ESSActionItemDto(x.Id, x.Title, x.Category, x.DueAtUtc)).ToList()));
+            actionItems.Select(x => new ESSActionItemDto(x.Id, x.Title, x.Category, x.DueAtUtc)).ToList(),
+            payrollSnapshot,
+            loansSummary,
+            performanceSnapshot,
+            overtimeHoursThisMonth,
+            nextApprovedLeave,
+            tenureMonths));
     }
 
     [HttpGet("profile")]
@@ -458,7 +565,25 @@ public record ESSDocumentDto(Guid Id, string DocumentType, string FileName, Date
 public record ESSAnnouncementDto(Guid Id, string Title, string Body, string Audience, DateTime PublishedAtUtc);
 public record ESSNotificationDto(Guid Id, string Title, string Body, string NotificationType, bool IsRead, DateTime CreatedAtUtc);
 public record ESSActionItemDto(Guid Id, string Title, string Category, DateTime? DueAtUtc);
-public record ESSDashboardDto(ESSProfileSummaryDto Profile, AttendanceDailyRecord? AttendanceToday, IReadOnlyCollection<ESSLeaveBalanceDto> LeaveBalances, int PendingRequests, IReadOnlyCollection<ESSDocumentDto> DocumentAlerts, IReadOnlyCollection<ESSAnnouncementDto> Announcements, IReadOnlyCollection<ESSNotificationDto> Notifications, IReadOnlyCollection<ESSActionItemDto> ActionItems);
+public record ESSPayrollSnapshotDto(decimal NetSalary, string Currency, string Period, string? NextPayrollDate);
+public record ESSLoansSummaryDto(decimal TotalOutstanding, string Currency, int ActiveLoanCount, decimal? NextInstallmentAmount, string? NextInstallmentDate);
+public record ESSPerformanceSnapshotDto(string CycleName, int GoalsCompleted, int GoalsTotal, decimal? LastRating);
+public record ESSNextLeaveDto(string LeaveTypeName, string StartDate, string EndDate, decimal Days);
+public record ESSDashboardDto(
+    ESSProfileSummaryDto Profile,
+    AttendanceDailyRecord? AttendanceToday,
+    IReadOnlyCollection<ESSLeaveBalanceDto> LeaveBalances,
+    int PendingRequests,
+    IReadOnlyCollection<ESSDocumentDto> DocumentAlerts,
+    IReadOnlyCollection<ESSAnnouncementDto> Announcements,
+    IReadOnlyCollection<ESSNotificationDto> Notifications,
+    IReadOnlyCollection<ESSActionItemDto> ActionItems,
+    ESSPayrollSnapshotDto? PayrollSnapshot,
+    ESSLoansSummaryDto? LoansSummary,
+    ESSPerformanceSnapshotDto? PerformanceSnapshot,
+    int OvertimeHoursThisMonth,
+    ESSNextLeaveDto? NextApprovedLeave,
+    int TenureMonths);
 public record ProfileChangeRequestDto(Dictionary<string, object?> Changes, string? Reason);
 public record ESSAttendanceRegularizationDto(DateOnly WorkDate, string RequestType, DateTime? RequestedInUtc, DateTime? RequestedOutUtc, string Reason);
 public record ESSLeaveRequestDto(Guid LeaveTypeId, DateOnly StartDate, DateOnly EndDate, string? DayType, string Reason);

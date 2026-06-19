@@ -33,6 +33,33 @@ export interface EssDashboard {
   announcements: Array<{ id: string; title: string; body: string; audience: string; publishedAtUtc: string }>;
   notifications: EssNotification[];
   actionItems: Array<{ id: string; title: string; category: string; dueAtUtc?: string }>;
+  payrollSnapshot: {
+    netSalary: number;
+    currency: string;
+    period: string;
+    nextPayrollDate: string | null;
+  } | null;
+  loansSummary: {
+    totalOutstanding: number;
+    currency: string;
+    activeLoanCount: number;
+    nextInstallmentAmount: number | null;
+    nextInstallmentDate: string | null;
+  } | null;
+  performanceSnapshot: {
+    cycleName: string;
+    goalsCompleted: number;
+    goalsTotal: number;
+    lastRating: number | null;
+  } | null;
+  overtimeHoursThisMonth: number;
+  nextApprovedLeave: {
+    leaveTypeName: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+  } | null;
+  tenureMonths: number;
 }
 
 export interface EssDocument {
