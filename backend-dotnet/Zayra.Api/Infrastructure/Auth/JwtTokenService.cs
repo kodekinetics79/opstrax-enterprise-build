@@ -2,9 +2,11 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
 
@@ -13,13 +15,14 @@ namespace Zayra.Api.Infrastructure.Auth;
 public class JwtTokenService : ITokenService
 {
     private readonly JwtOptions _options;
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public JwtTokenService(IOptions<JwtOptions> options)
     {
         _options = options.Value;
     }
 
-    public string CreateAccessToken(User user, IReadOnlyCollection<string> roles, IReadOnlyCollection<string> permissions, Tenant tenant, out DateTime expiresAtUtc)
+    public string CreateAccessToken(User user, IReadOnlyCollection<string> roles, IReadOnlyCollection<string> permissions, Tenant tenant, IReadOnlyCollection<EntityAccessGrant> entityAccess, out DateTime expiresAtUtc)
     {
         expiresAtUtc = DateTime.UtcNow.AddMinutes(_options.AccessTokenMinutes);
         var claims = new List<Claim>
@@ -40,6 +43,11 @@ public class JwtTokenService : ITokenService
         }
         claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
         claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
+        foreach (var grant in entityAccess)
+        {
+            var json = JsonSerializer.Serialize(new { c = grant.CompanyId?.ToString(), r = grant.Role }, _jsonOptions);
+            claims.Add(new Claim("entity_access", json));
+        }
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

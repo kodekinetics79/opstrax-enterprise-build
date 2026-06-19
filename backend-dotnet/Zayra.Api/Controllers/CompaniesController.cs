@@ -33,6 +33,23 @@ public class CompaniesController : ControllerBase
     {
         var tenantId = this.GetTenantId();
         if (tenantId is null) return Unauthorized();
+        var scope = this.GetEntityScope();
+        if (!scope.IsGroupLevel)
+        {
+            // Company-scoped user: only return their accessible companies
+            var accessibleIds = scope.AccessibleCompanyIds;
+            if (accessibleIds.Count == 0)
+                return Ok(new PagedResult<CompanyDto>([], 0, page, pageSize));
+            var q = _db.Companies
+                .AsNoTracking()
+                .Where(c => c.TenantId == tenantId && !c.IsDeleted && accessibleIds.Contains(c.Id))
+                .OrderBy(c => c.LegalNameEn);
+            var total = await q.CountAsync(cancellationToken);
+            var items = await q.Skip((page - 1) * pageSize).Take(pageSize)
+                .Select(c => c.ToDto()).ToListAsync(cancellationToken);
+            return Ok(new PagedResult<CompanyDto>(items, total, page, pageSize));
+        }
+        // Group-level: use existing service
         return Ok(await _organization.GetCompaniesAsync(tenantId.Value, page, pageSize, cancellationToken));
     }
 

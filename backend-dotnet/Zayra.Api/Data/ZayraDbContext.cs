@@ -342,6 +342,7 @@ public class ZayraDbContext : DbContext
     // ── Identity & Security ────────────────────────────────────────────────────
     public DbSet<SecuritySetting> SecuritySettings => Set<SecuritySetting>();
     public DbSet<PermissionGrantorRecord> PermissionGrantorRecords => Set<PermissionGrantorRecord>();
+    public DbSet<UserEntityAccess> UserEntityAccesses => Set<UserEntityAccess>();
     // ── HR Workflow Configuration ──────────────────────────────────────────────
     public DbSet<TenantHrConfig> TenantHrConfigs => Set<TenantHrConfig>();
 
@@ -2274,6 +2275,17 @@ public class ZayraDbContext : DbContext
             entity.ToTable("document_chunks");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.DocumentId, x.ChunkIndex });
+        });
+
+        modelBuilder.Entity<UserEntityAccess>(entity =>
+        {
+            entity.ToTable("user_entity_accesses");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Role).HasMaxLength(80).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.UserId, x.IsActive });
+            entity.HasIndex(x => new { x.TenantId, x.UserId, x.CompanyId, x.Role }).IsUnique();
+            entity.HasOne(x => x.User).WithMany(x => x.EntityAccesses).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Company).WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
         });
 
         ApplyTenantQueryFilters(modelBuilder);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Email;
@@ -164,6 +165,7 @@ public class AuthService : IAuthService
         var storedToken = await _db.RefreshTokens
             .Include(x => x.User).ThenInclude(x => x!.Tenant)
             .Include(x => x.User).ThenInclude(x => x!.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x!.RolePermissions).ThenInclude(x => x.Permission)
+            .Include(x => x.User).ThenInclude(x => x!.EntityAccesses)
             .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
 
         if (storedToken?.User is null || storedToken.User.Tenant is null || !storedToken.IsActive || !storedToken.User.IsActive || !storedToken.User.Tenant.IsActive || IsNoLogin(storedToken.User))
@@ -341,6 +343,7 @@ public class AuthService : IAuthService
             .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x!.RolePermissions).ThenInclude(x => x.Permission)
             .Include(x => x.EmployeeUserAccounts)
             .Include(x => x.PermissionOverrides)
+            .Include(x => x.EntityAccesses)
             .Where(x => x.NormalizedEmail == normalizedEmail && !x.IsDeleted);
         if (!string.IsNullOrWhiteSpace(tenantSlug)) query = query.Where(x => x.Tenant!.Slug == tenantSlug.Trim().ToLowerInvariant());
         return await query.FirstOrDefaultAsync(cancellationToken);
@@ -353,6 +356,7 @@ public class AuthService : IAuthService
             .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x!.RolePermissions).ThenInclude(x => x.Permission)
             .Include(x => x.EmployeeUserAccounts)
             .Include(x => x.PermissionOverrides)
+            .Include(x => x.EntityAccesses)
             .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
     }
 
@@ -373,7 +377,11 @@ public class AuthService : IAuthService
     {
         var roles = GetRoles(user);
         var permissions = GetPermissions(user);
-        var accessToken = _tokenService.CreateAccessToken(user, roles, permissions, user.Tenant!, out var expiresAtUtc);
+        var entityAccess = user.EntityAccesses
+            .Where(e => e.IsActive)
+            .Select(e => new EntityAccessGrant(e.CompanyId, e.Role))
+            .ToList();
+        var accessToken = _tokenService.CreateAccessToken(user, roles, permissions, user.Tenant!, entityAccess, out var expiresAtUtc);
         return new AuthResponse(accessToken, refreshToken, expiresAtUtc, ToUserDto(user));
     }
 

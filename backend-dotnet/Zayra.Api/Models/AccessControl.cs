@@ -135,3 +135,23 @@ public class PermissionGrantorRecord
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }
 }
+
+/// <summary>
+/// SAP/Workday-style Legal Entity access grant.
+/// CompanyId null = group-level (all companies). CompanyId set = scoped to that company only.
+/// </summary>
+public class UserEntityAccess
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public User? User { get; set; }
+    public Guid? CompanyId { get; set; }
+    public Company? Company { get; set; }
+    public string Role { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? CreatedBy { get; set; }
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? UpdatedBy { get; set; }
+}

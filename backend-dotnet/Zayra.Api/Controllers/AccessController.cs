@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
+using Zayra.Api.Models;
 
 namespace Zayra.Api.Controllers;
 
@@ -496,4 +497,72 @@ public class AccessController : ControllerBase
         var value = User.FindFirstValue("tenant_id");
         return Guid.TryParse(value, out var id) ? id : null;
     }
+
+    // ── Entity Access (Legal Entity Grants) ──────────────────────────────────────
+
+    [HttpGet("entity-grants")]
+    public async Task<ActionResult<IReadOnlyCollection<EntityGrantDto>>> ListEntityGrants([FromQuery] Guid? userId, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var query = _db.UserEntityAccesses.AsNoTracking()
+            .Where(e => e.TenantId == tenantId && e.IsActive);
+        if (userId.HasValue) query = query.Where(e => e.UserId == userId.Value);
+        var results = await query
+            .OrderBy(e => e.UserId).ThenBy(e => e.CompanyId)
+            .Select(e => new EntityGrantDto(e.Id, e.UserId, e.CompanyId, e.Role, e.CreatedAtUtc))
+            .ToListAsync(cancellationToken);
+        return Ok(results);
+    }
+
+    [HttpPost("entity-grants")]
+    public async Task<ActionResult<EntityGrantDto>> CreateEntityGrant([FromBody] CreateEntityGrantRequest request, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        var actorId = GetUserId();
+        if (tenantId is null || actorId is null) return Unauthorized();
+
+        // Validate target user belongs to this tenant
+        if (!await _db.Users.AnyAsync(u => u.Id == request.UserId && u.TenantId == tenantId && !u.IsDeleted, cancellationToken))
+            return BadRequest(new { message = "User not found in this tenant." });
+
+        // Validate company if specified
+        if (request.CompanyId.HasValue && !await _db.Companies.AnyAsync(c => c.Id == request.CompanyId.Value && c.TenantId == tenantId && !c.IsDeleted, cancellationToken))
+            return BadRequest(new { message = "Company not found in this tenant." });
+
+        // Prevent duplicates
+        var existing = await _db.UserEntityAccesses.FirstOrDefaultAsync(
+            e => e.TenantId == tenantId && e.UserId == request.UserId && e.CompanyId == request.CompanyId && e.Role == request.Role && e.IsActive,
+            cancellationToken);
+        if (existing is not null)
+            return Conflict(new { message = "This entity grant already exists." });
+
+        var grant = new UserEntityAccess
+        {
+            TenantId = tenantId.Value,
+            UserId = request.UserId,
+            CompanyId = request.CompanyId,
+            Role = request.Role,
+            CreatedBy = actorId,
+        };
+        _db.UserEntityAccesses.Add(grant);
+        await _db.SaveChangesAsync(cancellationToken);
+        return CreatedAtAction(nameof(ListEntityGrants), new EntityGrantDto(grant.Id, grant.UserId, grant.CompanyId, grant.Role, grant.CreatedAtUtc));
+    }
+
+    [HttpDelete("entity-grants/{id:guid}")]
+    public async Task<IActionResult> DeleteEntityGrant(Guid id, CancellationToken cancellationToken)
+    {
+        var tenantId = GetTenantId();
+        if (tenantId is null) return Unauthorized();
+        var grant = await _db.UserEntityAccesses.FirstOrDefaultAsync(e => e.Id == id && e.TenantId == tenantId, cancellationToken);
+        if (grant is null) return NotFound();
+        grant.IsActive = false;
+        grant.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
 }
+
+public record EntityGrantDto(Guid Id, Guid UserId, Guid? CompanyId, string Role, DateTime CreatedAtUtc);
+public record CreateEntityGrantRequest(Guid UserId, Guid? CompanyId, string Role);

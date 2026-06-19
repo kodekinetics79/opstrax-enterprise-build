@@ -16,4 +16,7 @@ public static class ControllerTenantExtensions
         var value = controller.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? controller.User.FindFirstValue("sub");
         return Guid.TryParse(value, out var id) ? id : null;
     }
+
+    public static EntityScopeContext GetEntityScope(this ControllerBase controller)
+        => EntityScopeContext.FromClaims(controller.User);
 }

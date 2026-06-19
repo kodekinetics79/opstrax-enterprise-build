@@ -41,4 +41,5 @@ public class User
     public ICollection<PasswordResetToken> PasswordResetTokens { get; set; } = new List<PasswordResetToken>();
     public ICollection<Zayra.Api.Models.EmployeeUserAccount> EmployeeUserAccounts { get; set; } = new List<Zayra.Api.Models.EmployeeUserAccount>();
     public ICollection<Zayra.Api.Models.UserPermissionOverride> PermissionOverrides { get; set; } = new List<Zayra.Api.Models.UserPermissionOverride>();
+    public ICollection<Zayra.Api.Models.UserEntityAccess> EntityAccesses { get; set; } = new List<Zayra.Api.Models.UserEntityAccess>();
 }

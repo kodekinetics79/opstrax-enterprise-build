@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Common;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Infrastructure.Auth;
@@ -530,7 +531,7 @@ public class MfaTests
 
 file class FakeTokenService : ITokenService
 {
-    public string CreateAccessToken(Zayra.Api.Domain.Entities.User user, IReadOnlyCollection<string> roles, IReadOnlyCollection<string> permissions, Zayra.Api.Domain.Entities.Tenant tenant, out DateTime expiresAtUtc)
+    public string CreateAccessToken(Zayra.Api.Domain.Entities.User user, IReadOnlyCollection<string> roles, IReadOnlyCollection<string> permissions, Zayra.Api.Domain.Entities.Tenant tenant, IReadOnlyCollection<EntityAccessGrant> entityAccess, out DateTime expiresAtUtc)
     {
         expiresAtUtc = DateTime.UtcNow.AddHours(1);
         return $"fake-access-{user.Id}";

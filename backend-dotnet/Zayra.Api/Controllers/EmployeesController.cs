@@ -60,13 +60,21 @@ public class EmployeesController : ControllerBase
     public async Task<ActionResult<PagedResult<EmployeeListItemDto>>> Search([FromServices] IEmployeeManagementService employeeManagement, [FromQuery] string? search, [FromQuery] string? status, [FromQuery] string? department, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken cancellationToken = default)
     {
         var tenantId = RequireTenant();
+        var entityScope = this.GetEntityScope();
         var scope = await _scopeService.ResolveAsync(User, tenantId, cancellationToken);
-        if (scope.IsUnrestricted)
+
+        if (scope.IsUnrestricted && entityScope.IsGroupLevel)
             return Ok(await employeeManagement.SearchAsync(tenantId, search, status, department, page, pageSize, cancellationToken));
 
-        // Restricted scope: query directly and apply AllowedEmployeeIds filter
-        var query = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted
-            && scope.AllowedEmployeeIds!.Contains(e.Id));
+        // Restricted scope: query directly and apply AllowedEmployeeIds and/or entity scope filter
+        var query = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted);
+        if (!scope.IsUnrestricted)
+            query = query.Where(e => scope.AllowedEmployeeIds!.Contains(e.Id));
+        if (!entityScope.IsGroupLevel)
+        {
+            var accessibleIds = entityScope.AccessibleCompanyIds;
+            query = query.Where(e => e.CompanyId.HasValue && accessibleIds.Contains(e.CompanyId.Value));
+        }
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(e => e.FullName.Contains(search) || e.EmployeeCode.Contains(search) || (e.WorkEmail != null && e.WorkEmail.Contains(search)));
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(e => e.Status == status);
@@ -93,8 +101,14 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> Export(CancellationToken ct)
     {
         var tenantId = RequireTenant();
-        var emps = await _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted)
-            .OrderBy(e => e.EmployeeCode).ToListAsync(ct);
+        var entityScope = this.GetEntityScope();
+        var exportQuery = _db.Employees.Where(e => e.TenantId == tenantId && !e.IsDeleted);
+        if (!entityScope.IsGroupLevel)
+        {
+            var accessibleIds = entityScope.AccessibleCompanyIds;
+            exportQuery = exportQuery.Where(e => e.CompanyId.HasValue && accessibleIds.Contains(e.CompanyId.Value));
+        }
+        var emps = await exportQuery.OrderBy(e => e.EmployeeCode).ToListAsync(ct);
         var rows = emps.Select(e => (IReadOnlyList<object?>)new object?[]
         {
             e.EmployeeCode, e.FullName, e.ArabicName, e.WorkEmail, e.Phone, e.Gender, e.Nationality,
