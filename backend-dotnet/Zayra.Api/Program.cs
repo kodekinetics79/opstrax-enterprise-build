@@ -99,7 +99,7 @@ var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get
 var extraOrigins = (builder.Configuration["CORS_EXTRA_ORIGINS"] ?? string.Empty)
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 allowedOrigins = allowedOrigins.Concat(extraOrigins).Distinct().ToArray();
-builder.Services.AddCors(options => options.AddPolicy("zayra", policy => policy
+builder.Services.AddCors(options => options.AddPolicy("kynexone", policy => policy
     .WithOrigins(allowedOrigins)
     .AllowAnyMethod()
     .AllowAnyHeader()));
@@ -118,7 +118,7 @@ if (!string.IsNullOrEmpty(redisUrl))
     builder.Services.AddStackExchangeRedisCache(options =>
     {
         options.Configuration = redisUrl;
-        options.InstanceName = "zayra:";
+        options.InstanceName = "kynexone:";
     });
 else
     builder.Services.AddDistributedMemoryCache();
@@ -331,7 +331,7 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.UseCors("zayra");
+app.UseCors("kynexone");
 app.UseRateLimiter();
 if (app.Environment.IsDevelopment())
 {

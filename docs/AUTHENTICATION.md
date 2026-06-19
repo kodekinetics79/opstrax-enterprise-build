@@ -1,4 +1,4 @@
-# Zayra Authentication Service
+# KynexOne Authentication Service
 
 The .NET 8 API now includes an enterprise authentication slice using Clean Architecture folders inside the current API project:
 

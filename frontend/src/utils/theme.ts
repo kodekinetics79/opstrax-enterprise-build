@@ -1,6 +1,6 @@
 import type { ThemeMode } from '../types/ui';
 
-const STORAGE_KEY = 'zayra.theme';
+const STORAGE_KEY = 'kynexone.theme';
 
 export function getStoredTheme(): ThemeMode {
   if (typeof window === 'undefined') return 'light';

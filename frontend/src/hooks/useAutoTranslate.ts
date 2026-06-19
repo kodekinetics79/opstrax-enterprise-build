@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LocaleCode } from '../i18n/translations';
 
 const DEBOUNCE_MS = 600;
-const CACHE_PREFIX = 'zayra-tx-';
+const CACHE_PREFIX = 'kynexone-tx-';
 
 // MyMemory language pair codes
 const LANG_PAIR: Partial<Record<LocaleCode, string>> = {

@@ -10,7 +10,7 @@ export const LOCALES = Object.entries(LOCALE_METADATA).map(([code, meta]) => ({
   ...meta,
 }));
 
-const STORAGE_KEY = 'zayra-locale';
+const STORAGE_KEY = 'kynexone-locale';
 
 function readStoredLocale(): LocaleCode {
   if (typeof window === 'undefined') return 'en';
