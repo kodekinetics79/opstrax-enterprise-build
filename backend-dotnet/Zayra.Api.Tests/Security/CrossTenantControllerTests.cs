@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -7,8 +8,10 @@ using Zayra.Api.Application.Auth;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Application.Employees;
 using Zayra.Api.Controllers;
+using Zayra.Api.Controllers.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
+using Zayra.Api.Infrastructure.Attendance;
 using Zayra.Api.Infrastructure.Audit;
 using Zayra.Api.Infrastructure.Auth;
 using Zayra.Api.Infrastructure.Common;
@@ -197,6 +200,168 @@ public class CrossTenantControllerTests
             "GetAsync(tenantA, tenantBEmployee.Id) must return null — not leak salary/IBAN/passport/Iqama");
     }
 
+    private static LeaveController LeaveCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        var c = new LeaveController(db, new DataScopeService(db));
+        c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
+        return c;
+    }
+
+    private static OvertimeController OvertimeCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        var c = new OvertimeController(db, new DataScopeService(db));
+        c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
+        return c;
+    }
+
+    private static LoansController LoanCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        var c = new LoansController(db, new DataScopeService(db));
+        c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
+        return c;
+    }
+
+    private static AdvancesController AdvanceCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        var c = new AdvancesController(db, new DataScopeService(db));
+        c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
+        return c;
+    }
+
+    private static PayrollController PayrollCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        // IHttpContextAccessor used only for IP address logging (line 1124); null HttpContext is safe.
+        var c = new PayrollController(db, new DataScopeService(db), new HttpContextAccessor(), new StubNotificationService());
+        c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
+        return c;
+    }
+
+    // ── P4.1 Extended: data-driven coverage for all remaining tenant-scoped controllers ─
+
+    /// <summary>
+    /// Registry of all tenant-scoped controller/service endpoints under cross-tenant isolation test.
+    /// To cover a new controller: add an entry here and a corresponding case block in
+    /// <see cref="CrossTenant_ControllerOrService_BlocksCrossTenantAccess"/>.
+    /// </summary>
+    public static TheoryData<string> AllTenantIsolationCases { get; } = new()
+    {
+        "LeaveController.Approve",
+        "OvertimeController.Approve",
+        "LoansController.GetLoan",
+        "AdvancesController.Get",
+        "AttendanceService.GetDevice",
+        "PayrollController.Slips",
+    };
+
+    [Theory]
+    [MemberData(nameof(AllTenantIsolationCases))]
+    public async Task CrossTenant_ControllerOrService_BlocksCrossTenantAccess(string scenario)
+    {
+        await using var db = CreateDb();
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+
+        switch (scenario)
+        {
+            case "LeaveController.Approve":
+            {
+                var leave = new LeaveRequest
+                {
+                    TenantId = tenantB, EmployeeId = 99,
+                    StartDate = DateOnly.FromDateTime(DateTime.UtcNow),
+                    EndDate = DateOnly.FromDateTime(DateTime.UtcNow),
+                    TotalDays = 1, Status = "Submitted",
+                };
+                db.LeaveRequests.Add(leave);
+                await db.SaveChangesAsync();
+
+                var result = await LeaveCtrl(db, tenantA).Approve(leave.Id, CancellationToken.None);
+                result.Should().BeOfType<NotFoundResult>(
+                    "TenantA cannot approve TenantB's leave — WHERE l.TenantId == tenantId returns null");
+                break;
+            }
+
+            case "OvertimeController.Approve":
+            {
+                var ot = new OvertimeRequest
+                {
+                    TenantId = tenantB, EmployeeId = 99,
+                    WorkDate = DateOnly.FromDateTime(DateTime.UtcNow),
+                    StartTimeUtc = DateTime.UtcNow.AddHours(-2),
+                    EndTimeUtc = DateTime.UtcNow,
+                    RequestedMinutes = 120, Status = "PendingManager",
+                };
+                db.OvertimeRequests.Add(ot);
+                await db.SaveChangesAsync();
+
+                var result = await OvertimeCtrl(db, tenantA).Approve(ot.Id, new OvertimeDecisionRequest(120, null), CancellationToken.None);
+                result.Should().BeOfType<NotFoundResult>(
+                    "TenantA cannot approve TenantB's overtime — WHERE x.TenantId == tenantId returns null");
+                break;
+            }
+
+            case "LoansController.GetLoan":
+            {
+                var loan = new EmployeeLoan { TenantId = tenantB };
+                db.EmployeeLoans.Add(loan);
+                await db.SaveChangesAsync();
+
+                var result = await LoanCtrl(db, tenantA).GetLoan(loan.Id, CancellationToken.None);
+                result.Should().BeOfType<NotFoundResult>(
+                    "TenantA cannot read TenantB's employee loan — WHERE x.TenantId == tid returns null");
+                break;
+            }
+
+            case "AdvancesController.Get":
+            {
+                var adv = new SalaryAdvance { TenantId = tenantB };
+                db.SalaryAdvances.Add(adv);
+                await db.SaveChangesAsync();
+
+                var result = await AdvanceCtrl(db, tenantA).Get(adv.Id, CancellationToken.None);
+                result.Should().BeOfType<NotFoundResult>(
+                    "TenantA cannot read TenantB's salary advance — WHERE x.TenantId == tid returns null");
+                break;
+            }
+
+            case "AttendanceService.GetDevice":
+            {
+                var device = new AttendanceDevice { TenantId = tenantB };
+                db.AttendanceDevices.Add(device);
+                await db.SaveChangesAsync();
+
+                var svc = new AttendanceService(db, new StubNotificationService(), new StubHttpClientFactory());
+                var result = await svc.GetDeviceAsync(tenantA, device.Id, CancellationToken.None);
+                result.Should().BeNull(
+                    "GetDeviceAsync(tenantA, tenantBDeviceId) must return null — WHERE TenantId == tenantA excludes TenantB records");
+                break;
+            }
+
+            case "PayrollController.Slips":
+            {
+                var run = new PayrollRun { TenantId = tenantB, Year = 2026, Month = 6 };
+                db.PayrollRuns.Add(run);
+                db.PayrollSlips.Add(new PayrollSlip
+                {
+                    TenantId = tenantB, RunId = run.Id, EmployeeId = 99,
+                    EmployeeCode = "B-001", EmployeeName = "TenantB Employee",
+                    BasicSalary = 15_000m, NetSalary = 15_000m, Status = "Draft",
+                });
+                await db.SaveChangesAsync();
+
+                var result = await PayrollCtrl(db, tenantA).Slips(run.Id, 1, 50, CancellationToken.None);
+                var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+                var total = (int?)ok.Value!.GetType().GetProperty("Total")?.GetValue(ok.Value);
+                total.Should().Be(0,
+                    "TenantA must see zero payslips for a TenantB run — WHERE s.TenantId == tenantId filters them out");
+                break;
+            }
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(scenario), $"Unknown scenario '{scenario}'. Add a case block.");
+        }
+    }
+
     // ── P4.2 IDOR: ESS — Employee A cannot read Employee B's payslips ────────────
 
     [Fact]
@@ -324,6 +489,11 @@ public class CrossTenantControllerTests
     {
         public Task NotifyAsync(Guid t, Guid? u, string title, string msg, string entity, string? entityId, CancellationToken ct) => Task.CompletedTask;
         public Task SendEmailAsync(Guid t, string code, string to, string name, Dictionary<string, string> vars, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class StubHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
     }
 
     private sealed class StubHijriDateService : IHijriDateService
