@@ -9,7 +9,7 @@ import type { SelectedEmployee } from '../components/EmployeePicker';
 import {
   Activity, AlertTriangle, BarChart2, Building2, Calendar, CheckCircle,
   ChevronRight, Clock, FileText, GitBranch, Plus, Settings, Star,
-  TrendingUp, Users, X, Zap, Shield, RefreshCw,
+  Trash2, TrendingUp, Users, X, Zap, Shield, RefreshCw,
 } from 'lucide-react';
 import {
   leaveTypesApi, leavePoliciesApi, leaveBalancesApi, leaveRequestsApi,
@@ -1187,61 +1187,154 @@ function PoliciesTab() {
 
 // ── Holiday Calendar Tab ──────────────────────────────────────────────────────
 
+const BLANK_HOLIDAY_FORM = { nameEn: '', nameAr: '', date: '', hijriDate: '', holidayType: 'National', isRecurring: false, isOptional: false };
+const BLANK_CAL_FORM = { name: '', countryCode: 'UAE', calendarYear: new Date().getFullYear() };
+
 function HolidayCalendarTab() {
   const [calendars, setCalendars] = useState<PublicHolidayCalendar[]>([]);
   const [selected, setSelected] = useState<PublicHolidayCalendar | null>(null);
   const [holidays, setHolidays] = useState<PublicHoliday[]>([]);
   const [blackouts, setBlackouts] = useState<LeaveBlackoutDate[]>([]);
-  const [showAddHoliday, setShowAddHoliday] = useState(false);
-  const [showCreateCal, setShowCreateCal] = useState(false);
-  const [holidayForm, setHolidayForm] = useState({ nameEn: '', nameAr: '', date: '', hijriDate: '', holidayType: 'National', isRecurring: false, isOptional: false });
-  const [calForm, setCalForm] = useState({ name: '', countryCode: 'UAE', calendarYear: new Date().getFullYear() });
+
+  // Calendar modal
+  const [calModal, setCalModal] = useState<'none' | 'create' | 'edit'>('none');
+  const [calForm, setCalForm] = useState({ ...BLANK_CAL_FORM });
+
+  // Holiday modal
+  const [editingHoliday, setEditingHoliday] = useState<PublicHoliday | null>(null);
+  const [holidayModal, setHolidayModal] = useState<'none' | 'add' | 'edit'>('none');
+  const [holidayForm, setHolidayForm] = useState({ ...BLANK_HOLIDAY_FORM });
+
   const { translation: autoHolidayNameAr, isTranslating: translatingHolidayNameAr } = useAutoTranslate(holidayForm.nameEn);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoHolidayNameAr && !holidayForm.nameAr) setHolidayForm(f => ({ ...f, nameAr: autoHolidayNameAr })); }, [autoHolidayNameAr]);
 
+  const reloadCalendars = () => holidayCalendarApi.listCalendars().then(cs => {
+    setCalendars(cs);
+    // Keep selected in sync after rename
+    setSelected(prev => prev ? (cs.find(c => c.id === prev.id) ?? prev) : null);
+  }).catch(() => {});
+
+  const reloadHolidays = (cal: PublicHolidayCalendar) =>
+    holidayCalendarApi.listHolidays(cal.id).then(setHolidays).catch(() => {});
+
   useEffect(() => {
-    holidayCalendarApi.listCalendars().then(setCalendars).catch(() => {});
+    reloadCalendars();
     holidayCalendarApi.listBlackouts().then(setBlackouts).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!selected) return;
-    holidayCalendarApi.listHolidays(selected.id).then(setHolidays).catch(() => {});
+    reloadHolidays(selected);
   }, [selected]);
 
-  const createCal = async () => {
-    try { await holidayCalendarApi.createCalendar(calForm); setShowCreateCal(false); holidayCalendarApi.listCalendars().then(setCalendars).catch(() => {}); } catch { alert('Failed.'); }
+  // ── Calendar save (create or edit) ──
+  const saveCal = async () => {
+    try {
+      if (calModal === 'edit' && selected) {
+        const updated = await holidayCalendarApi.updateCalendar(selected.id, calForm);
+        setSelected(updated);
+        await reloadCalendars();
+      } else {
+        await holidayCalendarApi.createCalendar(calForm);
+        await reloadCalendars();
+      }
+      setCalModal('none');
+    } catch { alert('Failed.'); }
   };
 
-  const addHoliday = async () => {
+  const openEditCal = (c: PublicHolidayCalendar) => {
+    setCalForm({ name: c.name, countryCode: c.countryCode, calendarYear: c.calendarYear });
+    setCalModal('edit');
+  };
+
+  const delCal = async (c: PublicHolidayCalendar) => {
+    if (!confirm(`Delete calendar "${c.name}"? All ${holidays.length} holidays will be removed.`)) return;
+    try {
+      await holidayCalendarApi.deleteCalendar(c.id);
+      if (selected?.id === c.id) { setSelected(null); setHolidays([]); }
+      await reloadCalendars();
+    } catch { alert('Failed.'); }
+  };
+
+  // ── Holiday save (add or edit) ──
+  const saveHoliday = async () => {
     if (!selected || !holidayForm.nameEn || !holidayForm.date) return;
-    try { await holidayCalendarApi.addHoliday(selected.id, holidayForm); setShowAddHoliday(false); if (selected) holidayCalendarApi.listHolidays(selected.id).then(setHolidays).catch(() => {}); } catch { alert('Failed.'); }
+    try {
+      if (holidayModal === 'edit' && editingHoliday) {
+        await holidayCalendarApi.updateHoliday(editingHoliday.id, holidayForm);
+      } else {
+        await holidayCalendarApi.addHoliday(selected.id, holidayForm);
+      }
+      setHolidayModal('none');
+      setEditingHoliday(null);
+      await reloadHolidays(selected);
+    } catch { alert('Failed.'); }
   };
 
-  const delHoliday = async (id: string) => { try { await holidayCalendarApi.deleteHoliday(id); setHolidays(h => h.filter(x => x.id !== id)); } catch { alert('Failed.'); } };
+  const openEditHoliday = (h: PublicHoliday) => {
+    setEditingHoliday(h);
+    setHolidayForm({
+      nameEn: h.nameEn,
+      nameAr: h.nameAr ?? '',
+      date: typeof h.date === 'string' ? h.date : String(h.date),
+      hijriDate: h.hijriDate ?? '',
+      holidayType: h.holidayType ?? 'National',
+      isRecurring: h.isRecurring ?? false,
+      isOptional: h.isOptional ?? false,
+    });
+    setHolidayModal('edit');
+  };
+
+  const delHoliday = async (h: PublicHoliday) => {
+    if (!confirm(`Remove "${h.nameEn}"?`)) return;
+    try {
+      await holidayCalendarApi.deleteHoliday(h.id);
+      setHolidays(prev => prev.filter(x => x.id !== h.id));
+    } catch { alert('Failed.'); }
+  };
+
+  const openAddHoliday = () => {
+    setEditingHoliday(null);
+    setHolidayForm({ ...BLANK_HOLIDAY_FORM });
+    setHolidayModal('add');
+  };
 
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-3">
+        {/* ── Calendars list ── */}
         <div className="surface p-4">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-800 dark:text-white">Calendars</p>
-            <button type="button" className={btn.sm} onClick={() => setShowCreateCal(true)}><Plus className="h-3 w-3" /></button>
+            <button type="button" className={btn.sm} onClick={() => { setCalForm({ ...BLANK_CAL_FORM }); setCalModal('create'); }}>
+              <Plus className="h-3 w-3" />
+            </button>
           </div>
           {calendars.length === 0 ? <p className="text-xs text-slate-400">No calendars yet.</p> : (
             <div className="space-y-2">
               {calendars.map(c => (
-                <button key={c.id} type="button" onClick={() => setSelected(c)}
-                  className={`w-full rounded-lg p-3 text-left text-sm transition ${selected?.id === c.id ? 'bg-sapphire/10 text-sapphire dark:bg-sapphire/20 dark:text-cyanAccent' : 'hover:bg-slate-50 text-slate-700 dark:hover:bg-white/5 dark:text-slate-300'}`}>
-                  <p className="font-medium">{c.name}</p>
-                  <p className="text-xs text-slate-400">{c.countryCode} · {c.calendarYear}</p>
-                </button>
+                <div key={c.id}
+                  className={`group flex items-start justify-between rounded-lg p-3 transition ${selected?.id === c.id ? 'bg-sapphire/10 dark:bg-sapphire/20' : 'hover:bg-slate-50 dark:hover:bg-white/5'}`}>
+                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setSelected(c)}>
+                    <p className={`text-sm font-medium truncate ${selected?.id === c.id ? 'text-sapphire dark:text-cyanAccent' : 'text-slate-700 dark:text-slate-300'}`}>{c.name}</p>
+                    <p className="text-xs text-slate-400">{c.countryCode} · {c.calendarYear}</p>
+                  </button>
+                  <div className="ml-1 flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button type="button" title="Edit calendar" className="rounded p-1 text-slate-400 hover:text-sapphire dark:hover:text-cyanAccent" onClick={() => { setSelected(c); openEditCal(c); }}>
+                      <Settings className="h-3 w-3" />
+                    </button>
+                    <button type="button" title="Delete calendar" className="rounded p-1 text-slate-400 hover:text-rose-500" onClick={() => { setSelected(c); delCal(c); }}>
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}
         </div>
 
+        {/* ── Holidays panel ── */}
         <div className="surface col-span-2 p-4">
           {!selected ? (
             <div className="flex h-full min-h-[200px] items-center justify-center">
@@ -1251,11 +1344,11 @@ function HolidayCalendarTab() {
             <>
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-800 dark:text-white">{selected.name} — {holidays.length} holidays</p>
-                <button type="button" className={btn.primary} onClick={() => setShowAddHoliday(true)}><Plus className="h-4 w-4" /> Add Holiday</button>
+                <button type="button" className={btn.primary} onClick={openAddHoliday}><Plus className="h-4 w-4" /> Add Holiday</button>
               </div>
               <div className="divide-y divide-slate-100 dark:divide-white/5">
                 {holidays.map(h => (
-                  <div key={h.id} className="flex items-center justify-between py-3">
+                  <div key={h.id} className="group flex items-center justify-between py-3">
                     <div>
                       <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{h.nameEn}</p>
                       {h.nameAr && <p className="text-xs text-slate-400" dir="rtl">{h.nameAr}</p>}
@@ -1264,9 +1357,17 @@ function HolidayCalendarTab() {
                         {h.hijriDate && <span className="text-xs text-slate-400">({h.hijriDate} Hijri)</span>}
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-white/10">{h.holidayType}</span>
                         {h.isOptional && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">Optional</span>}
+                        {h.isRecurring && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">Recurring</span>}
                       </div>
                     </div>
-                    <button type="button" className={btn.sm} onClick={() => delHoliday(h.id)}>Remove</button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button type="button" className={btn.ghost} onClick={() => openEditHoliday(h)}>
+                        <Settings className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      <button type="button" className={btn.danger} onClick={() => delHoliday(h)}>
+                        <X className="h-3.5 w-3.5" /> Remove
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1292,49 +1393,75 @@ function HolidayCalendarTab() {
         </div>
       )}
 
-      {showCreateCal && (
-        <Modal title="New Holiday Calendar" onClose={() => setShowCreateCal(false)}>
+      {/* ── Calendar modal (create / edit) ── */}
+      {calModal !== 'none' && (
+        <Modal title={calModal === 'edit' ? 'Edit Calendar' : 'New Holiday Calendar'} onClose={() => setCalModal('none')}>
           <div className="space-y-4">
-            <Field label="Calendar Name *"><input className={inp} value={calForm.name} onChange={e => setCalForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. UAE Public Holidays 2026" /></Field>
+            <Field label="Calendar Name *">
+              <input className={inp} value={calForm.name} onChange={e => setCalForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. UAE Public Holidays 2026" />
+            </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Country">
                 <select className={sel} value={calForm.countryCode} onChange={e => setCalForm(f => ({ ...f, countryCode: e.target.value }))}>
                   {['UAE', 'KSA', 'QAT', 'KWT', 'BHR', 'OMN'].map(c => <option key={c}>{c}</option>)}
                 </select>
               </Field>
-              <Field label="Year"><input type="number" className={inp} value={calForm.calendarYear} onChange={e => setCalForm(f => ({ ...f, calendarYear: Number(e.target.value) }))} /></Field>
+              <Field label="Year">
+                <input type="number" className={inp} value={calForm.calendarYear} onChange={e => setCalForm(f => ({ ...f, calendarYear: Number(e.target.value) }))} title="Calendar year" placeholder="2026" />
+              </Field>
             </div>
             <div className="flex justify-end gap-2">
-              <button type="button" className={btn.ghost} onClick={() => setShowCreateCal(false)}>Cancel</button>
-              <button type="button" className={btn.primary} onClick={createCal}>Create</button>
+              <button type="button" className={btn.ghost} onClick={() => setCalModal('none')}>Cancel</button>
+              <button type="button" className={btn.primary} onClick={saveCal}>
+                {calModal === 'edit' ? 'Save Changes' : 'Create'}
+              </button>
             </div>
           </div>
         </Modal>
       )}
 
-      {showAddHoliday && (
-        <Modal title="Add Public Holiday" onClose={() => setShowAddHoliday(false)}>
+      {/* ── Holiday modal (add / edit) ── */}
+      {holidayModal !== 'none' && (
+        <Modal title={holidayModal === 'edit' ? 'Edit Holiday' : 'Add Public Holiday'} onClose={() => { setHolidayModal('none'); setEditingHoliday(null); }}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Name (English) *"><input className={inp} value={holidayForm.nameEn} onChange={e => setHolidayForm(f => ({ ...f, nameEn: e.target.value }))} /></Field>
-              <Field label="Name (Arabic)"><input className={inp} dir="rtl" value={holidayForm.nameAr} onChange={e => setHolidayForm(f => ({ ...f, nameAr: e.target.value }))} placeholder={translatingHolidayNameAr && !holidayForm.nameAr ? 'Translating…' : undefined} /></Field>
+              <Field label="Name (English) *">
+                <input className={inp} value={holidayForm.nameEn} onChange={e => setHolidayForm(f => ({ ...f, nameEn: e.target.value }))} placeholder="e.g. National Day" />
+              </Field>
+              <Field label="Name (Arabic)">
+                <input className={inp} dir="rtl" value={holidayForm.nameAr}
+                  onChange={e => setHolidayForm(f => ({ ...f, nameAr: e.target.value }))}
+                  placeholder={translatingHolidayNameAr && !holidayForm.nameAr ? 'Translating…' : undefined} />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Date *"><input type="date" className={inp} value={holidayForm.date} onChange={e => setHolidayForm(f => ({ ...f, date: e.target.value }))} /></Field>
-              <Field label="Hijri Date (optional)"><input className={inp} value={holidayForm.hijriDate} onChange={e => setHolidayForm(f => ({ ...f, hijriDate: e.target.value }))} placeholder="e.g. 1 Muharram 1448" /></Field>
+              <Field label="Date *">
+                <input type="date" className={inp} value={holidayForm.date} onChange={e => setHolidayForm(f => ({ ...f, date: e.target.value }))} title="Holiday date" />
+              </Field>
+              <Field label="Hijri Date (optional)">
+                <input className={inp} value={holidayForm.hijriDate} onChange={e => setHolidayForm(f => ({ ...f, hijriDate: e.target.value }))} placeholder="e.g. 1 Muharram 1448" />
+              </Field>
             </div>
             <Field label="Holiday Type">
               <select className={sel} value={holidayForm.holidayType} onChange={e => setHolidayForm(f => ({ ...f, holidayType: e.target.value }))}>
-                {['National', 'Religious', 'Eid', 'Company', 'Islamic'].map(t => <option key={t}>{t}</option>)}
+                {['National', 'Religious', 'Eid', 'Company', 'Islamic'].map(ht => <option key={ht}>{ht}</option>)}
               </select>
             </Field>
             <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={holidayForm.isRecurring} onChange={e => setHolidayForm(f => ({ ...f, isRecurring: e.target.checked }))} className="rounded" />Recurring</label>
-              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300"><input type="checkbox" checked={holidayForm.isOptional} onChange={e => setHolidayForm(f => ({ ...f, isOptional: e.target.checked }))} className="rounded" />Optional</label>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input type="checkbox" checked={holidayForm.isRecurring} onChange={e => setHolidayForm(f => ({ ...f, isRecurring: e.target.checked }))} className="rounded" />
+                Recurring
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <input type="checkbox" checked={holidayForm.isOptional} onChange={e => setHolidayForm(f => ({ ...f, isOptional: e.target.checked }))} className="rounded" />
+                Optional
+              </label>
             </div>
             <div className="flex justify-end gap-2">
-              <button type="button" className={btn.ghost} onClick={() => setShowAddHoliday(false)}>Cancel</button>
-              <button type="button" className={btn.primary} onClick={addHoliday}>Add Holiday</button>
+              <button type="button" className={btn.ghost} onClick={() => { setHolidayModal('none'); setEditingHoliday(null); }}>Cancel</button>
+              <button type="button" className={btn.primary} onClick={saveHoliday}>
+                {holidayModal === 'edit' ? 'Save Changes' : 'Add Holiday'}
+              </button>
             </div>
           </div>
         </Modal>

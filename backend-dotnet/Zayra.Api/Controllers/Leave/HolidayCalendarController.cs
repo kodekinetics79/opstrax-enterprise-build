@@ -104,6 +104,65 @@ public class HolidayCalendarController : ControllerBase
         return Created($"/api/leave/holidays/calendars/{id}/holidays", holiday);
     }
 
+    [HttpPut("calendars/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> UpdateCalendar(Guid id, [FromBody] CreateCalendarRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var calendar = await _db.PublicHolidayCalendars
+            .FirstOrDefaultAsync(c => c.Id == id && c.TenantId == tenantId, ct);
+        if (calendar is null) return NotFound();
+
+        calendar.Name = req.Name;
+        calendar.CountryCode = req.CountryCode;
+        calendar.CalendarYear = req.CalendarYear;
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(calendar);
+    }
+
+    [HttpDelete("calendars/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> DeleteCalendar(Guid id, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var calendar = await _db.PublicHolidayCalendars
+            .FirstOrDefaultAsync(c => c.Id == id && c.TenantId == tenantId, ct);
+        if (calendar is null) return NotFound();
+
+        _db.PublicHolidayCalendars.Remove(calendar);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpPut("holidays/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> UpdateHoliday(Guid id, [FromBody] AddHolidayRequest req, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId();
+        if (tenantId is null) return Unauthorized();
+
+        var holiday = await _db.PublicHolidays
+            .FirstOrDefaultAsync(h => h.Id == id && h.TenantId == tenantId, ct);
+        if (holiday is null) return NotFound();
+
+        holiday.NameEn = req.NameEn;
+        holiday.NameAr = req.NameAr ?? string.Empty;
+        holiday.Date = req.Date;
+        holiday.HijriDate = req.HijriDate ?? string.Empty;
+        holiday.IsRecurring = req.IsRecurring;
+        holiday.IsOptional = req.IsOptional;
+        holiday.HolidayType = req.HolidayType ?? holiday.HolidayType;
+        holiday.Notes = req.Notes ?? string.Empty;
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(holiday);
+    }
+
     [HttpDelete("holidays/{id:guid}")]
     [Authorize(Roles = "Admin,HR Manager")]
     public async Task<IActionResult> DeleteHoliday(Guid id, CancellationToken ct)
