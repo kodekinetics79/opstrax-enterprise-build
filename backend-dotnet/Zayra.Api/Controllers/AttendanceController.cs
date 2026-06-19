@@ -40,37 +40,36 @@ public class AttendanceController : ControllerBase
 
     [HttpGet("devices")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer,Auditor")]
-    [AllowEntityReturn("AttendanceDevice is hardware configuration (IP, MAC, firmware version) — no employee PII.")]
-    public Task<PagedResult<AttendanceDevice>> Devices([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default) =>
-        _attendance.GetDevicesAsync(RequireTenant(), page, pageSize, ct);
+    public async Task<PagedResult<AttendanceDeviceDto>> Devices([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
+    {
+        var result = await _attendance.GetDevicesAsync(RequireTenant(), page, pageSize, ct);
+        return new PagedResult<AttendanceDeviceDto>(result.Items.Select(AttendanceDeviceDto.Project).ToList(), result.Total, result.Page, result.PageSize);
+    }
 
     [HttpGet("devices/{id:guid}")]
-    [AllowEntityReturn("AttendanceDevice is hardware configuration (IP, MAC, firmware) — no employee PII. TenantId serialization is acceptable for admin consumers.")]
-    public async Task<ActionResult<AttendanceDevice>> Device(Guid id, CancellationToken ct) =>
-        await _attendance.GetDeviceAsync(RequireTenant(), id, ct) is { } device ? Ok(device) : NotFound();
+    public async Task<ActionResult<AttendanceDeviceDto>> Device(Guid id, CancellationToken ct) =>
+        await _attendance.GetDeviceAsync(RequireTenant(), id, ct) is { } device ? Ok(AttendanceDeviceDto.Project(device)) : NotFound();
 
     [HttpPost("devices")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    [AllowEntityReturn("AttendanceDevice is hardware configuration (IP, MAC, firmware) — no employee PII.")]
-    public async Task<ActionResult<AttendanceDevice>> CreateDevice(AttendanceDeviceRequest request, CancellationToken ct)
+    public async Task<ActionResult<AttendanceDeviceDto>> CreateDevice(AttendanceDeviceRequest request, CancellationToken ct)
     {
         try
         {
             var device = await _attendance.CreateDeviceAsync(RequireTenant(), request, Context(), ct);
-            return Created($"/api/attendance/devices/{device.Id}", device);
+            return Created($"/api/attendance/devices/{device.Id}", AttendanceDeviceDto.Project(device));
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpPut("devices/{id:guid}")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    [AllowEntityReturn("AttendanceDevice is hardware configuration (IP, MAC, firmware) — no employee PII.")]
-    public async Task<ActionResult<AttendanceDevice>> UpdateDevice(Guid id, AttendanceDeviceRequest request, CancellationToken ct)
+    public async Task<ActionResult<AttendanceDeviceDto>> UpdateDevice(Guid id, AttendanceDeviceRequest request, CancellationToken ct)
     {
         try
         {
             var device = await _attendance.UpdateDeviceAsync(RequireTenant(), id, request, Context(), ct);
-            return device is null ? NotFound() : Ok(device);
+            return device is null ? NotFound() : Ok(AttendanceDeviceDto.Project(device));
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
@@ -81,12 +80,12 @@ public class AttendanceController : ControllerBase
         await _attendance.DeleteDeviceAsync(RequireTenant(), id, Context(), ct) ? NoContent() : NotFound();
 
     [HttpPost("devices/{id:guid}/test-connection")]
-    [AllowEntityReturn("AttendanceDeviceSyncLog is a technical sync log (timestamps, record counts, error messages) — no employee PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: DeviceId, SyncMethod, Status, StartedAtUtc, CompletedAtUtc, RawEventsReceived, RawEventsProcessed, ErrorMessage. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceDeviceSyncLog>> TestConnection(Guid id, CancellationToken ct) =>
         await _attendance.TestConnectionAsync(RequireTenant(), id, Context(), ct) is { } log ? Ok(log) : NotFound();
 
     [HttpPost("devices/{id:guid}/sync")]
-    [AllowEntityReturn("AttendanceDeviceSyncLog is a technical sync log (timestamps, record counts, error messages) — no employee PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: DeviceId, SyncMethod, Status, StartedAtUtc, CompletedAtUtc, RawEventsReceived, RawEventsProcessed, ErrorMessage. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceDeviceSyncLog>> Sync(Guid id, CancellationToken ct) =>
         await _attendance.SyncDeviceAsync(RequireTenant(), id, Context(), ct) is { } log ? Ok(log) : NotFound();
 
@@ -116,7 +115,7 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpPost("events/push")]
-    [AllowEntityReturn("AttendanceRawEvent is a timestamp punch record (employee ID, timestamp, device, punch type) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields include GPS coordinates and IP address (operational punch verification data), PhotoReference (storage reference, not biometric data), and RawPayloadJson (device payload). No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceRawEvent>> PushEvent(AttendanceRawEventRequest request, CancellationToken ct)
     {
         try
@@ -129,12 +128,12 @@ public class AttendanceController : ControllerBase
 
     [HttpPost("events/import")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    [AllowEntityReturn("AttendanceImportBatch is an import job record (file metadata, record counts, status) — no employee PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: FileName, Source, Status, TotalRows, ImportedRows, FailedRows, CreatedAtUtc. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<AttendanceImportBatch> Import(ImportAttendanceRequest request, CancellationToken ct) =>
         _attendance.ImportCsvAsync(RequireTenant(), request, Context(), ct);
 
     [HttpGet("events/raw")]
-    [AllowEntityReturn("AttendanceRawEvent list: timestamp punch records scoped to tenant — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields include GPS coordinates and IP address (operational punch verification data), PhotoReference (storage reference, not biometric data), and RawPayloadJson (device payload). No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<PagedResult<AttendanceRawEvent>> Raw([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, [FromQuery] int? employeeId, [FromQuery] bool? processed, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default) =>
         _attendance.GetRawEventsAsync(RequireTenant(), from, to, employeeId, processed, page, pageSize, ct);
 
@@ -164,17 +163,17 @@ public class AttendanceController : ControllerBase
         _attendance.ProcessAsync(RequireTenant(), request, Context(), ct);
 
     [HttpPost("punch/web")]
-    [AllowEntityReturn("AttendanceRawEvent: punch record (employee ID, timestamp, location) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields include GPS coordinates and IP address (punch verification data), PhotoReference (storage reference, not biometric data), and RawPayloadJson (device payload). No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<AttendanceRawEvent> WebPunch(WebPunchRequest request, CancellationToken ct) =>
         _attendance.PunchAsync(RequireTenant(), request, "Web punch", Context(), ct);
 
     [HttpPost("punch/mobile")]
-    [AllowEntityReturn("AttendanceRawEvent: punch record (employee ID, timestamp, location) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields include GPS coordinates and IP address (punch verification data), PhotoReference (storage reference, not biometric data), and RawPayloadJson (device payload). No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<AttendanceRawEvent> MobilePunch(WebPunchRequest request, CancellationToken ct) =>
         _attendance.PunchAsync(RequireTenant(), request, "Mobile app punch", Context(), ct);
 
     [HttpPost("punch/kiosk")]
-    [AllowEntityReturn("AttendanceRawEvent: punch record (employee ID, timestamp, location) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields include GPS coordinates and IP address (punch verification data), PhotoReference (storage reference, not biometric data), and RawPayloadJson (device payload). No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public Task<AttendanceRawEvent> KioskPunch(WebPunchRequest request, CancellationToken ct) =>
         _attendance.PunchAsync(RequireTenant(), request, "Tablet/kiosk punch", Context(), ct);
 
@@ -199,7 +198,7 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpGet("regularization/my")]
-    [AllowEntityReturn("AttendanceRegularizationRequest: attendance correction data (dates, reason, status) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<PagedResult<AttendanceRegularizationRequest>> MyRegularization([FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
@@ -209,7 +208,7 @@ public class AttendanceController : ControllerBase
 
     [HttpGet("regularization/pending-approval")]
     [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
-    [AllowEntityReturn("AttendanceRegularizationRequest: attendance correction data (dates, reason, status) — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<PagedResult<AttendanceRegularizationRequest>> PendingRegularization([FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
@@ -219,7 +218,7 @@ public class AttendanceController : ControllerBase
 
     [HttpPost("regularization/{id:guid}/approve")]
     [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
-    [AllowEntityReturn("AttendanceRegularizationRequest: attendance correction — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> ApproveRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct)
     {
         // Scope guard: managers can only approve corrections for employees in their scope.
@@ -238,7 +237,7 @@ public class AttendanceController : ControllerBase
 
     [HttpPost("regularization/{id:guid}/reject")]
     [Authorize(Roles = "Admin,HR Director,HR Manager,Manager,Supervisor")]
-    [AllowEntityReturn("AttendanceRegularizationRequest: attendance correction — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> RejectRegularization(Guid id, RegularizationDecisionRequest request, CancellationToken ct)
     {
         var scope = await _scopeService.ResolveAsync(User, RequireTenant(), ct);
@@ -255,7 +254,7 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpPost("regularization/{id:guid}/cancel")]
-    [AllowEntityReturn("AttendanceRegularizationRequest: attendance correction — no salary/bank/health PII.")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> CancelRegularization(Guid id, CancelRegularizationRequest request, CancellationToken ct)
     {
         var empId = await GetRegularizationEmployeeId(RequireTenant(), id, ct);
