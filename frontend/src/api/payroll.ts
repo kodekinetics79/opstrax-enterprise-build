@@ -70,6 +70,11 @@ export interface PayrollSlip {
   deductions: number;
   netSalary: number;
   status: string;
+  // Compliance fields (populated during payroll processing)
+  loanDeductions: number;
+  ytdGross: number;
+  ytdDeductions: number;
+  ytdNet: number;
 }
 
 export interface PayrollValidationResult {

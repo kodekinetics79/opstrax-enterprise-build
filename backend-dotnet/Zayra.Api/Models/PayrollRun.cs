@@ -35,4 +35,10 @@ public class PayrollSlip
     public decimal Deductions { get; set; }
     public decimal NetSalary { get; set; }
     public string Status { get; set; } = "Draft";
+    // Compliance: YTD accumulators (populated during Process, from all prior locked runs in same year)
+    public decimal YtdGross { get; set; }
+    public decimal YtdDeductions { get; set; }
+    public decimal YtdNet { get; set; }
+    // Compliance: loan/advance deductions this period (for payslip line-item)
+    public decimal LoanDeductions { get; set; }
 }

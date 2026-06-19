@@ -46,13 +46,17 @@ public static class SifFileGenerator
             $"{paymentDate:yyyyMMdd}+{sorted.Count:D6}+{batch.TotalAmount:F2}+{currency}'");
 
         // Detail: one E1EDL20 segment per employee
+        // Fields per CBUAE SIF v2 / Saudi Mudad spec:
+        //   EmployeeCode (10) | IBAN (34) | NetPay | Currency | PaymentDate | SeqNo | MolId (15) | RoutingCode (11)
         for (int i = 0; i < sorted.Count; i++)
         {
-            var rec  = sorted[i];
-            var iban = NormaliseIban(rec.Iban);
+            var rec        = sorted[i];
+            var iban       = NormaliseIban(rec.Iban);
+            var molId      = Pad(rec.MolId, 15);
+            var routing    = Pad(rec.RoutingCode, 11);
             sb.AppendLine(
                 $"E1EDL20+{Pad(rec.EmployeeCode, 10)}+{iban}+{rec.NetPay:F2}+" +
-                $"{currency}+{paymentDate:yyyyMMdd}+{(i + 1):D2}'");
+                $"{currency}+{paymentDate:yyyyMMdd}+{(i + 1):D2}+{molId}+{routing}'");
         }
 
         // Trailer

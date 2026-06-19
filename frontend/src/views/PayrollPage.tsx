@@ -881,13 +881,13 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
                   <table className="w-full min-w-[560px] text-sm">
                     <thead>
                       <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                        {['Employee', 'Dept', 'Basic', 'Gross', 'Deductions', 'Net'].map(h => (
+                        {['Employee', 'Dept', 'Basic', 'Gross', 'Loans', 'Deductions', 'Net', 'YTD Gross', 'YTD Net'].map(h => (
                           <th key={h} className="px-3 py-3 text-left text-xs font-bold uppercase text-slate-400">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
-                      {slips.length === 0 && <tr><td colSpan={6} className="py-10 text-center text-sm text-slate-400">No slips. Click Process to generate.</td></tr>}
+                      {slips.length === 0 && <tr><td colSpan={9} className="py-10 text-center text-sm text-slate-400">No slips. Click Process to generate.</td></tr>}
                       {slips.map(s => (
                         <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                           <td className="px-3 py-2.5">
@@ -897,8 +897,11 @@ function RunsTab({ onSelectRun }: { onSelectRun: (run: PayrollRun, tab: Tab) => 
                           <td className="px-3 py-2.5 text-xs text-slate-500">{s.department || '—'}</td>
                           <td className="px-3 py-2.5 text-right text-slate-700 dark:text-slate-300">{fmt(s.basicSalary)}</td>
                           <td className="px-3 py-2.5 text-right font-semibold text-slate-900 dark:text-white">{fmt(s.grossSalary)}</td>
+                          <td className="px-3 py-2.5 text-right text-amber-600 dark:text-amber-400">{s.loanDeductions > 0 ? `(${fmt(s.loanDeductions)})` : '—'}</td>
                           <td className="px-3 py-2.5 text-right text-rose-500">({fmt(s.deductions)})</td>
                           <td className="px-3 py-2.5 text-right font-bold text-emerald-600 dark:text-emerald-400">{fmt(s.netSalary)}</td>
+                          <td className="px-3 py-2.5 text-right text-xs text-slate-500">{fmt(s.ytdGross)}</td>
+                          <td className="px-3 py-2.5 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">{fmt(s.ytdNet)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1492,7 +1495,7 @@ function ReportsTab() {
               <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                    {['Code', 'Employee', 'Department', 'Basic', 'Housing', 'Transport', 'Other', 'Gross', 'Deductions', 'Net'].map(h => (
+                    {['Code', 'Employee', 'Department', 'Basic', 'Housing', 'Transport', 'Other', 'Gross', 'Loans', 'Deductions', 'Net', 'YTD Gross', 'YTD Net'].map(h => (
                       <th key={h} className="px-3 py-2 text-left text-xs font-bold uppercase text-slate-400">{h}</th>
                     ))}
                   </tr>
@@ -1508,8 +1511,11 @@ function ReportsTab() {
                       <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{fmt(s.transportAllowance)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{fmt(s.otherAllowances)}</td>
                       <td className="px-3 py-2 text-right font-semibold text-slate-900 dark:text-white">{fmt(s.grossSalary)}</td>
+                      <td className="px-3 py-2 text-right text-amber-600 dark:text-amber-400">{s.loanDeductions > 0 ? `(${fmt(s.loanDeductions)})` : '—'}</td>
                       <td className="px-3 py-2 text-right text-rose-500">({fmt(s.deductions)})</td>
                       <td className="px-3 py-2 text-right font-bold text-emerald-600 dark:text-emerald-400">{fmt(s.netSalary)}</td>
+                      <td className="px-3 py-2 text-right text-xs text-slate-500">{fmt(s.ytdGross)}</td>
+                      <td className="px-3 py-2 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">{fmt(s.ytdNet)}</td>
                     </tr>
                   ))}
                 </tbody>

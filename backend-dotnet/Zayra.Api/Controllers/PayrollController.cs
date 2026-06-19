@@ -156,6 +156,26 @@ public class PayrollController : ControllerBase
         var attendanceImpacts = await _db.AttendancePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.WorkDate >= periodStart && x.WorkDate <= periodEnd && x.Status != "Processed").ToListAsync(cancellationToken);
         var leaveImpacts = await _db.LeavePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayPeriod == $"{run.Year}-{run.Month:00}" && x.Status != "Processed").ToListAsync(cancellationToken);
 
+        // COMPLIANCE: Load active loans and salary advances per employee for EMI deduction
+        var activeLoans = await _db.EmployeeLoans.AsNoTracking()
+            .Where(l => l.TenantId == tenantId && l.Status == "Active" && l.EmployeeIntId != null && l.OutstandingBalance > 0)
+            .ToListAsync(cancellationToken);
+        var activeAdvances = await _db.SalaryAdvances.AsNoTracking()
+            .Where(a => a.TenantId == tenantId && a.Status == "Active" && a.EmployeeIntId != null && a.OutstandingBalance > 0)
+            .ToListAsync(cancellationToken);
+
+        // COMPLIANCE: YTD — sum of all locked runs in the same year (before this month)
+        var ytdSlips = await _db.PayrollSlips.AsNoTracking()
+            .Where(s => s.TenantId == tenantId)
+            .Join(_db.PayrollRuns.AsNoTracking().Where(r => r.TenantId == tenantId && r.Year == run.Year && r.Month < run.Month && r.Status == "Locked"),
+                  s => s.RunId, r => r.Id, (s, r) => s)
+            .ToListAsync(cancellationToken);
+
+        // COMPLIANCE: Load payroll profiles for MolId / RoutingCode (keyed by Employee.Id)
+        var payrollProfiles = await _db.EmployeePayrollProfiles.AsNoTracking()
+            .Where(p => p.TenantId == tenantId && !p.IsDeleted)
+            .ToDictionaryAsync(p => p.EmployeeId, cancellationToken);
+
         // C4: filter overtime impacts to the current pay period only (via WorkDate on the originating request)
         var periodOvertimeRequestIds = await _db.OvertimeRequests.AsNoTracking()
             .Where(r => r.TenantId == tenantId && r.WorkDate >= periodStart && r.WorkDate <= periodEnd)
@@ -202,11 +222,26 @@ public class PayrollController : ControllerBase
 
             var gosiContrib       = GosiCalculationService.Calculate(e.Nationality, basic, gosiRules, gosiPeriodDate, tenantId);
             var gosiEmployeeTotal = gosiContrib.EmployeeTotal;
-            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiEmployeeTotal;
+
+            // COMPLIANCE: Loan & advance EMI deduction
+            var empLoans   = activeLoans.Where(l => l.EmployeeIntId == e.Id).ToList();
+            var empAdv     = activeAdvances.Where(a => a.EmployeeIntId == e.Id).ToList();
+            var loanEmi    = empLoans.Sum(l => Math.Min(l.InstallmentAmount, l.OutstandingBalance));
+            var advEmi     = empAdv.Sum(a => Math.Min(a.InstallmentAmount, a.OutstandingBalance));
+            var totalLoanDeduction = Math.Round(loanEmi + advEmi, 2);
+
+            var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiEmployeeTotal + totalLoanDeduction;
             // C3: net salary cannot be negative (GCC labour law)
             var netSalary = Math.Max(0m, gross + overtimePay - deductions);
             if (gross + overtimePay - deductions < 0)
                 _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Error", Code = "NEGATIVE_NET", Message = "Calculated net salary is negative. Deductions exceed gross pay. Run blocked for this employee." });
+
+            // COMPLIANCE: YTD — sum all locked slips for this employee earlier in the same year
+            var empYtdSlips = ytdSlips.Where(s => s.EmployeeId == e.Id).ToList();
+            var ytdGross    = empYtdSlips.Sum(s => s.GrossSalary);
+            var ytdDeduct   = empYtdSlips.Sum(s => s.Deductions);
+            var ytdNet      = empYtdSlips.Sum(s => s.NetSalary);
+
             var slip = new PayrollSlip
             {
                 TenantId = tenantId,
@@ -222,6 +257,10 @@ public class PayrollController : ControllerBase
                 GrossSalary = gross + overtimePay,
                 Deductions = deductions,
                 NetSalary = netSalary,
+                LoanDeductions = totalLoanDeduction,
+                YtdGross = ytdGross + gross + overtimePay,
+                YtdDeductions = ytdDeduct + deductions,
+                YtdNet = ytdNet + netSalary,
                 Status = "Draft",
             };
             slips.Add(slip);
@@ -236,6 +275,8 @@ public class PayrollController : ControllerBase
             if (attendanceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ATTENDANCE", "Late/early attendance deduction", attendanceDeduction, "Attendance");
             if (absenceDeduction > 0) AddDeduction(tenantId, id, e.Id, "ABSENCE", "Absence deduction", absenceDeduction, "Attendance");
             if (leaveDeduction > 0) AddDeduction(tenantId, id, e.Id, "LEAVE", "Leave deduction", leaveDeduction, "Leave");
+            if (loanEmi > 0) AddDeduction(tenantId, id, e.Id, "LOAN_EMI", "Loan instalment", loanEmi, "Loan");
+            if (advEmi > 0) AddDeduction(tenantId, id, e.Id, "ADVANCE_EMI", "Salary advance repayment", advEmi, "Loan");
             // Per-branch GOSI deduction records — employee contributions reduce net pay
             foreach (var line in gosiContrib.Lines.Where(l => l.Payer == GosiPayers.Employee && l.Amount > 0))
                 AddDeduction(tenantId, id, e.Id,
@@ -263,6 +304,36 @@ public class PayrollController : ControllerBase
         await _db.OvertimePayrollImpacts
             .Where(x => x.TenantId == tenantId && x.Status != "Processed" && periodOvertimeRequestIds.Contains(x.OvertimeRequestId))
             .ExecuteUpdateAsync(x => x.SetProperty(p => p.Status, "Processed").SetProperty(p => p.PayrollRunId, id).SetProperty(p => p.ProcessedAtUtc, DateTime.UtcNow), cancellationToken);
+
+        // COMPLIANCE: Update loan/advance outstanding balances after payroll deduction.
+        // Re-load mutable copies for update (AsNoTracking above was read-only).
+        await _db.SaveChangesAsync(cancellationToken); // flush slips first so run Id is persisted
+
+        var activeLoansMutable = await _db.EmployeeLoans
+            .Where(l => l.TenantId == tenantId && l.Status == "Active" && l.EmployeeIntId != null && l.OutstandingBalance > 0)
+            .ToListAsync(cancellationToken);
+        var activeAdvMutable = await _db.SalaryAdvances
+            .Where(a => a.TenantId == tenantId && a.Status == "Active" && a.EmployeeIntId != null && a.OutstandingBalance > 0)
+            .ToListAsync(cancellationToken);
+
+        foreach (var loan in activeLoansMutable)
+        {
+            var deducted = Math.Min(loan.InstallmentAmount, loan.OutstandingBalance);
+            if (deducted <= 0) continue;
+            loan.OutstandingBalance -= deducted;
+            if (loan.OutstandingBalance <= 0) loan.Status = "Closed";
+            // Record the paid installment
+            var inst = await _db.LoanInstallments.FirstOrDefaultAsync(i => i.LoanId == loan.Id && i.Status == "Pending", cancellationToken);
+            if (inst is not null) { inst.Status = "Paid"; inst.PaidDate = DateOnly.FromDateTime(DateTime.UtcNow); inst.PayrollRunId = id; inst.AmountPaid = deducted; }
+        }
+        foreach (var adv in activeAdvMutable)
+        {
+            var deducted = Math.Min(adv.InstallmentAmount, adv.OutstandingBalance);
+            if (deducted <= 0) continue;
+            adv.OutstandingBalance -= deducted;
+            if (adv.OutstandingBalance <= 0) adv.Status = "Closed";
+        }
+
         await PayrollAudit("payroll.run.processed", "PayrollRun", run.Id.ToString(), new { employeeCount = slips.Count, totalNet = run.TotalNetSalary }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(run);
@@ -612,11 +683,25 @@ public class PayrollController : ControllerBase
         };
         _db.WPSFileBatches.Add(wps);
 
+        // Build payroll profile lookup keyed by Employee.Id for MolId / RoutingCode lookup
+        var profileByEmpId = profiles.ToDictionary(p => p.EmployeeId);
+
         var sifRows = new List<SIFFileRecord>();
         foreach (var record in records)
         {
-            var code = employeeCodeMap.TryGetValue(record.EmployeeId, out var c) ? c : record.EmployeeId.ToString();
-            var row  = new SIFFileRecord { TenantId = tenantId, WPSFileBatchId = wps.Id, EmployeeId = record.EmployeeId, EmployeeCode = code, Iban = record.Iban, NetPay = record.Amount };
+            var code   = employeeCodeMap.TryGetValue(record.EmployeeId, out var c) ? c : record.EmployeeId.ToString();
+            var ppf    = profileByEmpId.TryGetValue(record.EmployeeId, out var pr) ? pr : null;
+            var row    = new SIFFileRecord
+            {
+                TenantId       = tenantId,
+                WPSFileBatchId = wps.Id,
+                EmployeeId     = record.EmployeeId,
+                EmployeeCode   = code,
+                Iban           = record.Iban,
+                NetPay         = record.Amount,
+                MolId          = ppf?.MolId ?? string.Empty,
+                RoutingCode    = ppf?.BankRoutingCode ?? string.Empty,
+            };
             _db.SIFFileRecords.Add(row);
             sifRows.Add(row);
         }
@@ -927,16 +1012,49 @@ public class PayrollController : ControllerBase
         if (totalYears < minYears)
             return Ok(new { employeeId = req.EmployeeId, employeeName = employee.FullName, eligibleSalary, totalYears, eosbAmount = 0m, message = $"Employee has {totalYears:F1} years of service. Minimum required: {minYears} year(s)." });
 
-        // UAE Gratuity: 21 days per year for first 5 years, 30 days per year thereafter
-        var rate1 = gcc.EosbYears1To5Rate > 0 ? gcc.EosbYears1To5Rate : 21m;  // days per year
-        var rate2 = gcc.EosbYearsAbove5Rate > 0 ? gcc.EosbYearsAbove5Rate : 30m; // days per year
         var dailySalary = eligibleSalary * 12 / 365m;
+        var monthlySalary = eligibleSalary;
 
         decimal eosbAmount;
-        if (totalYears <= 5)
-            eosbAmount = dailySalary * rate1 * (decimal)totalYears;
+        string eosbFormula;
+
+        // COMPLIANCE: KSA rule — Saudi Labor Law Art. 84 (month-fraction, not day-based).
+        // Applies when GCCComplianceSetting.CountryCode is "SA" and rates are at UAE defaults (i.e. not explicitly overridden for KSA).
+        // KSA: ≤5 yrs → (1/3 month × years), 5-10 yrs → (2/3 month × years), 10+ yrs → (1 month × years)
+        bool isKsa = string.Equals(gcc.CountryCode, "SA", StringComparison.OrdinalIgnoreCase);
+        bool uaeRatesUnchanged = (gcc.EosbYears1To5Rate is <= 0 or 21m) && (gcc.EosbYearsAbove5Rate is <= 0 or 30m);
+
+        if (isKsa && uaeRatesUnchanged)
+        {
+            // KSA: 1/3 month per year (≤5 yrs), 2/3 month per year (5-10 yrs), 1 full month per year (10+ yrs)
+            // Saudi rule is applied on TOTAL years (no marginal stacking between brackets)
+            if (totalYears <= 5)
+            {
+                eosbAmount = monthlySalary * (1m / 3m) * (decimal)totalYears;
+                eosbFormula = "KSA_ART84_LT5";
+            }
+            else if (totalYears <= 10)
+            {
+                eosbAmount = monthlySalary * (2m / 3m) * (decimal)totalYears;
+                eosbFormula = "KSA_ART84_5TO10";
+            }
+            else
+            {
+                eosbAmount = monthlySalary * 1m * (decimal)totalYears;
+                eosbFormula = "KSA_ART84_ABOVE10";
+            }
+        }
         else
-            eosbAmount = dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5);
+        {
+            // UAE / configurable day-based: 21 days/yr (≤5) then 30 days/yr (>5), marginal stacking
+            var rate1 = gcc.EosbYears1To5Rate > 0 ? gcc.EosbYears1To5Rate : 21m;
+            var rate2 = gcc.EosbYearsAbove5Rate > 0 ? gcc.EosbYearsAbove5Rate : 30m;
+            if (totalYears <= 5)
+                eosbAmount = dailySalary * rate1 * (decimal)totalYears;
+            else
+                eosbAmount = dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5);
+            eosbFormula = isKsa ? "KSA_CUSTOM" : "UAE_DEFAULT";
+        }
 
         eosbAmount = Math.Round(eosbAmount, 2);
 
@@ -947,7 +1065,7 @@ public class PayrollController : ControllerBase
             existing.CalculationDate = DateOnly.FromDateTime(calcDate);
             existing.EligibleSalary = eligibleSalary;
             existing.CalculatedAmount = eosbAmount;
-            existing.RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { rate1, rate2, totalYears, dailySalary });
+            existing.RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { formula = eosbFormula, totalYears, dailySalary, monthlySalary, countryCode = gcc.CountryCode });
         }
         else
         {
@@ -955,7 +1073,7 @@ public class PayrollController : ControllerBase
             {
                 TenantId = tenantId, EmployeeId = req.EmployeeId, CalculationDate = DateOnly.FromDateTime(calcDate),
                 EligibleSalary = eligibleSalary, CalculatedAmount = eosbAmount,
-                RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { rate1, rate2, totalYears, dailySalary })
+                RulesSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { formula = eosbFormula, totalYears, dailySalary, monthlySalary, countryCode = gcc.CountryCode })
             });
         }
         await _db.SaveChangesAsync(cancellationToken);
@@ -969,8 +1087,7 @@ public class PayrollController : ControllerBase
             totalYears = Math.Round(totalYears, 2),
             eligibleSalary,
             dailySalary = Math.Round(dailySalary, 4),
-            rate1To5Years = rate1,
-            rateAbove5Years = rate2,
+            formula = eosbFormula,
             eosbAmount,
             currency = salary?.Currency ?? "USD",
             message = $"Calculated EOSB/Gratuity for {employee.FullName}: {salary?.Currency ?? "USD"} {eosbAmount:N2}"
@@ -1220,19 +1337,35 @@ public class PayrollController : ControllerBase
         var dailyGross     = grossSalary / daysInMonth;
         var proRataSalary  = Math.Round(dailyGross * lastDay.Day, 2);
 
-        // EOSB / Gratuity (reuse GCC compliance settings)
+        // EOSB / Gratuity (reuse GCC compliance settings — KSA/UAE formula auto-selected)
         var gcc = await _db.GCCComplianceSettings.AsNoTracking().Where(x => x.TenantId == tenantId).FirstOrDefaultAsync(cancellationToken);
         var calcDate    = lastDay.ToDateTime(TimeOnly.MinValue);
         var totalYears  = (calcDate - employee.JoiningDate).Days / 365.0;
         var minYears    = gcc?.EosbMinYears > 0 ? gcc!.EosbMinYears : 1;
-        var rate1       = gcc?.EosbYears1To5Rate > 0 ? gcc!.EosbYears1To5Rate : 21m;
-        var rate2       = gcc?.EosbYearsAbove5Rate > 0 ? gcc!.EosbYearsAbove5Rate : 30m;
         var dailySalary = basicSalary * 12 / 365m;
         decimal eosbAmount = 0m;
         if (totalYears >= minYears)
-            eosbAmount = totalYears <= 5
-                ? Math.Round(dailySalary * rate1 * (decimal)totalYears, 2)
-                : Math.Round(dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5), 2);
+        {
+            bool settIsKsa = string.Equals(gcc?.CountryCode, "SA", StringComparison.OrdinalIgnoreCase);
+            bool settUaeDefault = (gcc?.EosbYears1To5Rate is null or <= 0 or 21m) && (gcc?.EosbYearsAbove5Rate is null or <= 0 or 30m);
+            if (settIsKsa && settUaeDefault)
+            {
+                // KSA Art. 84: fraction-of-month × total-years, tiered on total service
+                eosbAmount = totalYears <= 5
+                    ? Math.Round(basicSalary * (1m / 3m) * (decimal)totalYears, 2)
+                    : totalYears <= 10
+                        ? Math.Round(basicSalary * (2m / 3m) * (decimal)totalYears, 2)
+                        : Math.Round(basicSalary * 1m * (decimal)totalYears, 2);
+            }
+            else
+            {
+                var rate1 = gcc?.EosbYears1To5Rate > 0 ? gcc!.EosbYears1To5Rate : 21m;
+                var rate2 = gcc?.EosbYearsAbove5Rate > 0 ? gcc!.EosbYearsAbove5Rate : 30m;
+                eosbAmount = totalYears <= 5
+                    ? Math.Round(dailySalary * rate1 * (decimal)totalYears, 2)
+                    : Math.Round(dailySalary * rate1 * 5 + dailySalary * rate2 * (decimal)(totalYears - 5), 2);
+            }
+        }
 
         // Leave encashment: remaining balance × daily gross (30-day basis)
         var leaveBalances = await _db.EmployeeLeaveBalances.AsNoTracking()

@@ -44,6 +44,8 @@ public class EmployeeLoan
     public Guid TenantId { get; set; }
     public Guid EmployeeId { get; set; }
     public string EmployeeName { get; set; } = string.Empty;
+    /// <summary>Int FK to Employee.Id — enables payroll run to deduct EMI without Guid/int mismatch.</summary>
+    public int? EmployeeIntId { get; set; }
     public Guid LoanTypeId { get; set; }
     public string LoanTypeName { get; set; } = string.Empty;
     public string LoanNumber { get; set; } = string.Empty;  // auto-generated e.g. LN-2026-00001
@@ -151,6 +153,8 @@ public class SalaryAdvance
     public Guid TenantId { get; set; }
     public Guid EmployeeId { get; set; }
     public string EmployeeName { get; set; } = string.Empty;
+    /// <summary>Int FK to Employee.Id — enables payroll run to deduct advance repayment.</summary>
+    public int? EmployeeIntId { get; set; }
     public string AdvanceNumber { get; set; } = string.Empty; // e.g. ADV-2026-00001
     public decimal RequestedAmount { get; set; }
     public decimal ApprovedAmount { get; set; }

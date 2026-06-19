@@ -147,6 +147,7 @@ public class LoansController : ControllerBase
         var loan = new EmployeeLoan
         {
             TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName,
+            EmployeeIntId = req.EmployeeIntId,
             LoanTypeId = req.LoanTypeId, LoanTypeName = loanType.NameEn, LoanNumber = loanNumber,
             RequestedAmount = req.RequestedAmount, RequestedInstallments = req.RequestedInstallments,
             RepaymentFrequency = loanType.RepaymentFrequency, Notes = req.Notes ?? string.Empty,
@@ -391,7 +392,7 @@ public class LoansController : ControllerBase
 }
 
 public record LoanTypeRequest(string Code, string NameEn, string? NameAr, decimal MaxAmount, int MaxInstallments, string RepaymentFrequency, bool IsInterestFree, decimal InterestRate, int MinServiceMonths, bool RequiresApproval);
-public record CreateLoanRequest(Guid EmployeeId, string EmployeeName, Guid LoanTypeId, decimal RequestedAmount, int RequestedInstallments, string? Notes);
+public record CreateLoanRequest(Guid EmployeeId, string EmployeeName, Guid LoanTypeId, decimal RequestedAmount, int RequestedInstallments, string? Notes, int? EmployeeIntId = null);
 public record LoanApprovalRequest(int StepOrder, string ApproverRole);
 public record ApprovalDecisionRequest(string Decision, string? Comments, decimal? ApprovedAmount, int? ApprovedInstallments, DateOnly? RepaymentStartDate);
 public record LoanSettlementRequest(string SettlementType, decimal SettlementAmount, DateOnly SettlementDate, string? Notes);

@@ -51,6 +51,8 @@ export interface EmployeePayrollProfileRequest {
   wpsEligible: boolean;
   eosbEligible: boolean;
   socialInsuranceReference?: string;
+  molId?: string;
+  bankRoutingCode?: string;
 }
 
 export interface EmployeeComplianceRecordRequest {
