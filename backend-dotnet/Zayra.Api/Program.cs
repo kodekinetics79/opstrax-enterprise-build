@@ -104,14 +104,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtOptions.Issuer,
-            ValidAudience = jwtOptions.Audience,
+            ValidAudiences = new[] { jwtOptions.TenantAudience, jwtOptions.PlatformAudience },
             IssuerSigningKey = signingKey,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("PlatformAdmin", policy => policy.RequireClaim("is_platform_admin", "true"));
+    // PlatformAdmin: must carry both the platform-admin claim AND the platform audience.
+    // This means a tenant-audience token is rejected even if it somehow carried
+    // is_platform_admin (defence-in-depth beyond the claim-only check that existed before).
+    options.AddPolicy("PlatformAdmin", policy => policy
+        .RequireClaim("is_platform_admin", "true")
+        .RequireClaim("aud", jwtOptions.PlatformAudience));
 });
 
 builder.Services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();

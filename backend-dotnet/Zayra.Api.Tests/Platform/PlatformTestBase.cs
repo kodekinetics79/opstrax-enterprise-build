@@ -29,9 +29,10 @@ public abstract class PlatformTestBase
     protected const string AdminEmail    = "admin@platform.local";
     protected const string AdminPassword = "YourPassword123!";
 
-    protected const string JwtSigningKey = "TEST_PLATFORM_SIGNING_KEY_MUST_BE_64_CHARS_FOR_TESTS___PADDED";
-    protected const string JwtIssuer    = "Zayra.Tests";
-    protected const string JwtAudience  = "Zayra.Tests";
+    protected const string JwtSigningKey       = "TEST_PLATFORM_SIGNING_KEY_MUST_BE_64_CHARS_FOR_TESTS___PADDED";
+    protected const string JwtIssuer           = "Zayra.Tests";
+    protected const string JwtTenantAudience   = "kynexone-tenant-test";
+    protected const string JwtPlatformAudience = "kynexone-platform-test";
 
     // ── DB ─────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,8 @@ public abstract class PlatformTestBase
     protected static JwtOptions GetJwtOptions() => new()
     {
         Issuer           = JwtIssuer,
-        Audience         = JwtAudience,
+        TenantAudience   = JwtTenantAudience,
+        PlatformAudience = JwtPlatformAudience,
         SigningKey        = JwtSigningKey,
         AccessTokenMinutes = 30,
         RefreshTokenDays   = 7
@@ -71,7 +73,7 @@ public abstract class PlatformTestBase
             new Claim("platform_role",               role),
             new Claim(JwtRegisteredClaimNames.Jti,   Guid.NewGuid().ToString()),
         };
-        var token = new JwtSecurityToken(JwtIssuer, JwtAudience, claims,
+        var token = new JwtSecurityToken(JwtIssuer, JwtPlatformAudience, claims,
             expires: DateTime.UtcNow.AddHours(1), signingCredentials: credentials);
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

@@ -27,9 +27,10 @@ public class AuthServiceTests
     {
         var jwt = Options.Create(new JwtOptions
         {
-            Issuer             = "Zayra.Tests",
-            Audience           = "Zayra.Tests",
-            SigningKey          = "TEST_SIGNING_KEY_WITH_MORE_THAN_64_CHARACTERS_FOR_AUTH_TESTS",
+            Issuer           = "Zayra.Tests",
+            TenantAudience   = "kynexone-tenant-test",
+            PlatformAudience = "kynexone-platform-test",
+            SigningKey        = "TEST_SIGNING_KEY_WITH_MORE_THAN_64_CHARACTERS_FOR_AUTH_TESTS",
             AccessTokenMinutes = 30,
             RefreshTokenDays   = 7
         });

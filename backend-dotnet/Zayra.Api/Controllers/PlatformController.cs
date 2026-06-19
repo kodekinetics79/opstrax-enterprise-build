@@ -171,7 +171,7 @@ public class PlatformController : ControllerBase
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var token = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        var token = new JwtSecurityToken(_jwt.Issuer, _jwt.PlatformAudience, claims, expires: expiresAt, signingCredentials: credentials);
         var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
 
         return Ok(new { token = tokenString, expiresAt, role = loginRole });
@@ -224,7 +224,7 @@ public class PlatformController : ControllerBase
         };
         var key         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var token       = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        var token       = new JwtSecurityToken(_jwt.Issuer, _jwt.PlatformAudience, claims, expires: expiresAt, signingCredentials: credentials);
         return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token), expiresAt, role = pu.Role });
     }
 
@@ -747,7 +747,8 @@ public class PlatformController : ControllerBase
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var token = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        // Impersonation tokens grant access to tenant-scoped endpoints, so they use TenantAudience.
+        var token = new JwtSecurityToken(_jwt.Issuer, _jwt.TenantAudience, claims, expires: expiresAt, signingCredentials: credentials);
         var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
 
         return Ok(new
@@ -1541,7 +1542,8 @@ public class PlatformController : ControllerBase
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var jwtToken = new JwtSecurityToken(_jwt.Issuer, _jwt.Audience, claims, expires: expiresAt, signingCredentials: credentials);
+        // Support session tokens grant access to tenant-scoped endpoints, so they use TenantAudience.
+        var jwtToken = new JwtSecurityToken(_jwt.Issuer, _jwt.TenantAudience, claims, expires: expiresAt, signingCredentials: credentials);
         var tokenString = new JwtSecurityTokenHandler().WriteToken(jwtToken);
 
         // Hash the token so we can identify this session when ending it
