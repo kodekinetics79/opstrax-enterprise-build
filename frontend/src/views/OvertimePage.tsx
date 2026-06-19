@@ -2,6 +2,8 @@
 
 import { InfoTip } from '../components/InfoTip';
 import { useAuth } from '../contexts/AuthContext';
+import { EmployeePicker } from '../components/EmployeePicker';
+import type { SelectedEmployee } from '../components/EmployeePicker';
 import { useTenantSettings } from '../contexts/TenantSettingsContext';
 import { useEffect, useState } from 'react';
 import {
@@ -187,6 +189,7 @@ function DashboardTab({ onNavigate }: { onNavigate: (t: Tab) => void }) {
 
 function SubmitOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; isEmployee?: boolean }) {
   const [policies, setPolicies] = useState<OvertimePolicy[]>([]);
+  const [otPickedEmp, setOtPickedEmp] = useState<SelectedEmployee | null>(null);
   const [form, setForm] = useState({
     employeeId: selfEmployeeId ? String(selfEmployeeId) : '', workDate: today, startTime: '18:00', endTime: '20:00',
     reason: '', source: 'Manual', policyId: '', typeId: '',
@@ -195,6 +198,10 @@ function SubmitOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; 
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (otPickedEmp) setForm(f => ({ ...f, employeeId: String(otPickedEmp.id) }));
+  }, [otPickedEmp]);
 
   useEffect(() => { overtimeApi.policies().then(setPolicies).catch(() => {}); }, []);
 
@@ -244,20 +251,23 @@ function SubmitOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; 
     <div className="max-w-xl space-y-5">
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee & Date</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *" info="The numeric ID of the employee who worked the overtime (see their profile in the People module)." infoKey="overtime.employee_id">
-            <input type="number" aria-label="Employee ID" className={`${inp}${isEmployee ? ' cursor-not-allowed opacity-75' : ''}`} value={form.employeeId} readOnly={isEmployee} onChange={e => !isEmployee && set('employeeId', e.target.value)} />
-            {isEmployee && <p className="mt-1 text-[11px] text-slate-400">Your employee ID is pre-filled automatically.</p>}
-          </Field>
-          <Field label="Work Date *" info="The day the overtime was actually worked — not the date you submit the request." infoKey="overtime.work_date"><input type="date" aria-label="Work date" className={inp} value={form.workDate} onChange={e => set('workDate', e.target.value)} /></Field>
-          <Field label="Start Time *" info="When the overtime began, in 24-hour time (e.g. 18:00 = 6pm)." infoKey="overtime.start_time"><input type="time" aria-label="Start time" className={inp} value={form.startTime} onChange={e => set('startTime', e.target.value)} /></Field>
-          <Field label="End Time *"><input type="time" aria-label="End time" className={inp} value={form.endTime} onChange={e => set('endTime', e.target.value)} /></Field>
-        </div>
-        {mins > 0 && (
-          <div className="mt-3 rounded-lg bg-sapphire/5 px-4 py-2.5 dark:bg-sapphire/10">
-            <p className="text-sm text-sapphire dark:text-cyanAccent">Duration: <strong>{fmtMins(mins)}</strong> ({Math.round(mins / 60 * 100) / 100} hours)</p>
+        <div className="space-y-3">
+          {isEmployee ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">Submitting overtime for: <span className="font-medium text-slate-800 dark:text-white">Employee #{form.employeeId}</span></p>
+          ) : (
+            <EmployeePicker label="Employee *" required value={otPickedEmp} onChange={setOtPickedEmp} placeholder="Search by name or employee code…" />
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Work Date *" info="The day the overtime was actually worked — not the date you submit the request." infoKey="overtime.work_date"><input type="date" aria-label="Work date" className={inp} value={form.workDate} onChange={e => set('workDate', e.target.value)} /></Field>
+            <Field label="Start Time *" info="When the overtime began, in 24-hour time (e.g. 18:00 = 6pm)." infoKey="overtime.start_time"><input type="time" aria-label="Start time" className={inp} value={form.startTime} onChange={e => set('startTime', e.target.value)} /></Field>
+            <Field label="End Time *"><input type="time" aria-label="End time" className={inp} value={form.endTime} onChange={e => set('endTime', e.target.value)} /></Field>
           </div>
-        )}
+          {mins > 0 && (
+            <div className="rounded-lg bg-sapphire/5 px-4 py-2.5 dark:bg-sapphire/10">
+              <p className="text-sm text-sapphire dark:text-cyanAccent">Duration: <strong>{fmtMins(mins)}</strong> ({Math.round(mins / 60 * 100) / 100} hours)</p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="surface p-5">
@@ -346,7 +356,10 @@ function MyOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; isEm
   const [requests, setRequests] = useState<OvertimeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [empId, setEmpId] = useState(selfEmployeeId ? String(selfEmployeeId) : '');
+  const [myOtFilterEmp, setMyOtFilterEmp] = useState<SelectedEmployee | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
+
+  useEffect(() => { if (myOtFilterEmp) setEmpId(String(myOtFilterEmp.id)); }, [myOtFilterEmp]);
 
   const load = () => {
     setLoading(true);
@@ -360,7 +373,7 @@ function MyOTTab({ selfEmployeeId, isEmployee }: { selfEmployeeId?: number; isEm
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        {!isEmployee && <input type="number" aria-label="Employee ID" placeholder="Employee ID" className={`${inp} w-40`} value={empId} onChange={e => setEmpId(e.target.value)} />}
+        {!isEmployee && <div className="w-60"><EmployeePicker value={myOtFilterEmp} onChange={emp => { setMyOtFilterEmp(emp); if (!emp) setEmpId(''); }} placeholder="Filter by employee…" /></div>}
         <select aria-label="Filter by status" className={`${sel} w-48`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
           {['PendingManager', 'PendingHR', 'Approved', 'Rejected'].map(s => <option key={s} value={s}>{s.replace(/([A-Z])/g, ' $1').trim()}</option>)}
@@ -721,7 +734,10 @@ function PoliciesTab() {
 function CalcPreviewTab() {
   const [calculations, setCalculations] = useState<OvertimeCalculation[]>([]);
   const [empId, setEmpId] = useState('');
+  const [calcPickedEmp, setCalcPickedEmp] = useState<SelectedEmployee | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => { if (calcPickedEmp) setEmpId(String(calcPickedEmp.id)); }, [calcPickedEmp]);
 
   const search = () => {
     setLoading(true);
@@ -734,7 +750,7 @@ function CalcPreviewTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <input type="number" aria-label="Employee ID" placeholder="Employee ID (optional)" className={`${inp} w-48`} value={empId} onChange={e => setEmpId(e.target.value)} />
+        <div className="w-64"><EmployeePicker value={calcPickedEmp} onChange={emp => { setCalcPickedEmp(emp); if (!emp) setEmpId(''); }} placeholder="Filter by employee (optional)…" /></div>
         <button type="button" className={btn.primary} onClick={search}>Search</button>
       </div>
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : calculations.length === 0 ? (

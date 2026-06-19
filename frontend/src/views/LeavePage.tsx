@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import { useAuth } from '../contexts/AuthContext';
+import { EmployeePicker } from '../components/EmployeePicker';
+import type { SelectedEmployee } from '../components/EmployeePicker';
 import {
   Activity, AlertTriangle, BarChart2, Building2, Calendar, CheckCircle,
   ChevronRight, Clock, FileText, GitBranch, Plus, Settings, Star,
@@ -327,7 +329,12 @@ function BalanceTab({ selfEmployeeId, groupFilter = {} }: { selfEmployeeId?: num
   const [balances, setBalances] = useState<EmployeeLeaveBalance[]>([]);
   const [loading, setLoading] = useState(true);
   const [empId, setEmpId] = useState(selfEmployeeId ? String(selfEmployeeId) : '');
+  const [balancePickedEmp, setBalancePickedEmp] = useState<SelectedEmployee | null>(null);
   const [year, setYear] = useState(new Date().getFullYear());
+
+  useEffect(() => {
+    if (balancePickedEmp) setEmpId(String(balancePickedEmp.id));
+  }, [balancePickedEmp]);
   const [adjustModal, setAdjustModal] = useState<EmployeeLeaveBalance | null>(null);
   const [adjAmount, setAdjAmount] = useState('');
   const [adjReason, setAdjReason] = useState('');
@@ -351,7 +358,9 @@ function BalanceTab({ selfEmployeeId, groupFilter = {} }: { selfEmployeeId?: num
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         {!selfEmployeeId && (
-          <input type="number" className={`${inp} w-40`} placeholder="Employee ID" value={empId} onChange={e => setEmpId(e.target.value)} />
+          <div className="w-64">
+            <EmployeePicker value={balancePickedEmp} onChange={emp => { setBalancePickedEmp(emp); if (emp) setEmpId(String(emp.id)); }} placeholder="Search employee…" />
+          </div>
         )}
         <select className={`${sel} w-32`} value={year} onChange={e => setYear(Number(e.target.value))}>
           {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
@@ -427,12 +436,33 @@ function BalanceTab({ selfEmployeeId, groupFilter = {} }: { selfEmployeeId?: num
 
 function ApplyLeaveTab({ selfEmployeeId, isEmployee = false }: { selfEmployeeId?: number; isEmployee?: boolean }) {
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+  const [pickedEmployee, setPickedEmployee] = useState<SelectedEmployee | null>(null);
+  const [delegatePicked, setDelegatePicked] = useState<SelectedEmployee | null>(null);
   const [form, setForm] = useState({
     employeeId: selfEmployeeId ? String(selfEmployeeId) : '', employeeName: '', departmentName: '', designationTitle: '',
     leaveTypeId: '', startDate: '', endDate: '', dayType: 'Full',
     hoursRequested: '', reason: '', isEmergency: false,
     delegateEmployeeId: '', delegateEmployeeName: '',
   });
+
+  // Sync picker selection into form fields
+  useEffect(() => {
+    if (pickedEmployee) {
+      setForm(f => ({
+        ...f,
+        employeeId: String(pickedEmployee.id),
+        employeeName: pickedEmployee.fullName,
+        departmentName: pickedEmployee.department,
+        designationTitle: pickedEmployee.designation,
+      }));
+    }
+  }, [pickedEmployee]);
+
+  useEffect(() => {
+    if (delegatePicked) {
+      setForm(f => ({ ...f, delegateEmployeeId: String(delegatePicked.id), delegateEmployeeName: delegatePicked.fullName }));
+    }
+  }, [delegatePicked]);
   const [balance, setBalance] = useState<EmployeeLeaveBalance | null>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -487,16 +517,27 @@ function ApplyLeaveTab({ selfEmployeeId, isEmployee = false }: { selfEmployeeId?
     <div className="max-w-2xl space-y-5">
       <div className="surface p-5">
         <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-white">Employee</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *">
-            <input type="number" className={`${inp} ${isEmployee ? 'bg-slate-50 dark:bg-white/[0.02] cursor-not-allowed' : ''}`}
-              value={form.employeeId} onChange={e => set('employeeId', e.target.value)} readOnly={isEmployee} />
-            {isEmployee && <p className="mt-1 text-[11px] text-slate-400">Your employee ID — applying on your own behalf.</p>}
-          </Field>
-          <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-          <Field label="Department"><input className={inp} value={form.departmentName} onChange={e => set('departmentName', e.target.value)} /></Field>
-          <Field label="Designation"><input className={inp} value={form.designationTitle} onChange={e => set('designationTitle', e.target.value)} /></Field>
-        </div>
+        {isEmployee ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Applying on behalf of: <span className="font-medium text-slate-800 dark:text-white">{form.employeeName || `Employee #${form.employeeId}`}</span>
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <EmployeePicker
+              label="Employee *"
+              required
+              value={pickedEmployee}
+              onChange={setPickedEmployee}
+              placeholder="Search by name or employee code…"
+            />
+            {pickedEmployee && (
+              <div className="grid grid-cols-2 gap-3 text-xs text-slate-500 dark:text-slate-400">
+                <div><span className="font-medium">Department:</span> {pickedEmployee.department || '—'}</div>
+                <div><span className="font-medium">Designation:</span> {pickedEmployee.designation || '—'}</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="surface p-5">
@@ -564,7 +605,9 @@ function ApplyLeaveTab({ selfEmployeeId, isEmployee = false }: { selfEmployeeId?
         <p className="mb-1 text-sm font-semibold text-slate-800 dark:text-white">Delegation (optional)</p>
         <p className="mb-3 text-xs text-slate-400">Assign a colleague to handle responsibilities during your absence.</p>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Delegate Employee ID"><input type="number" className={inp} value={form.delegateEmployeeId} onChange={e => set('delegateEmployeeId', e.target.value)} /></Field>
+          <Field label="Delegate Employee">
+            <EmployeePicker value={delegatePicked} onChange={setDelegatePicked} placeholder="Search delegate employee…" />
+          </Field>
           <Field label="Delegate Name"><input className={inp} value={form.delegateEmployeeName} onChange={e => set('delegateEmployeeName', e.target.value)} /></Field>
         </div>
       </div>
@@ -1265,9 +1308,14 @@ function EncashmentTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [loading, setLoading] = useState(true);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [encashPickedEmp, setEncashPickedEmp] = useState<SelectedEmployee | null>(null);
   const [form, setForm] = useState({ employeeId: '', employeeName: '', leaveTypeId: '', year: new Date().getFullYear(), daysToEncash: '', amountPerDay: '', reason: '' });
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof form, v: string | number) => setForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (encashPickedEmp) setForm(f => ({ ...f, employeeId: String(encashPickedEmp.id), employeeName: encashPickedEmp.fullName }));
+  }, [encashPickedEmp]);
 
   const load = () => { setLoading(true); encashmentApi.list(groupFilter).then(setRequests).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(() => { load(); leaveTypesApi.list().then(setLeaveTypes).catch(() => {}); }, [groupFilter.companyId, groupFilter.branchId]);
@@ -1318,10 +1366,7 @@ function EncashmentTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
       {showCreate && (
         <Modal title="Leave Encashment Request" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required." infoKey="leave.employee_id"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-              <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-            </div>
+            <EmployeePicker label="Employee *" required value={encashPickedEmp} onChange={setEncashPickedEmp} placeholder="Search employee…" />
             <Field label="Leave Type *" info="The category of leave (annual, sick, etc.). Determines the balance used, whether a reason or attachment is required, and the approval flow." infoKey="leave.leave_type">
               <select className={sel} value={form.leaveTypeId} onChange={e => set('leaveTypeId', e.target.value)}>
                 <option value="">Select…</option>
@@ -1356,9 +1401,14 @@ function CompOffTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
   const [credits, setCredits] = useState<CompOffCredit[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [compOffPickedEmp, setCompOffPickedEmp] = useState<SelectedEmployee | null>(null);
   const [form, setForm] = useState({ employeeId: '', employeeName: '', workedDate: '', workType: 'HolidayWork', hoursWorked: '', daysEarned: '', expiryDate: '' });
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (compOffPickedEmp) setForm(f => ({ ...f, employeeId: String(compOffPickedEmp.id), employeeName: compOffPickedEmp.fullName }));
+  }, [compOffPickedEmp]);
 
   const load = () => { setLoading(true); compOffApi.list(groupFilter).then(setCredits).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, [groupFilter.companyId, groupFilter.branchId]);
@@ -1401,10 +1451,7 @@ function CompOffTab({ groupFilter = {} }: { groupFilter?: GroupFilter }) {
       {showCreate && (
         <Modal title="Create Comp-Off Credit" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee ID *" info="The numeric ID of the employee (shown on their profile in the People module). Required." infoKey="leave.employee_id"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-              <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-            </div>
+            <EmployeePicker label="Employee *" required value={compOffPickedEmp} onChange={setCompOffPickedEmp} placeholder="Search employee…" />
             <div className="grid grid-cols-2 gap-3">
               <Field label="Worked Date *"><input type="date" className={inp} value={form.workedDate} onChange={e => set('workedDate', e.target.value)} /></Field>
               <Field label="Work Type">
