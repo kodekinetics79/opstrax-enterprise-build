@@ -116,8 +116,23 @@ export interface BonusType {
   nameEn: string;
   nameAr: string;
   calculationMethod: string;
+  // Eligibility
+  frequency: string;
+  minServiceMonths: number;
+  proRataEligibility: boolean;
+  requiresApproval: boolean;
+  // Compliance flags
+  isIncludedInEosb: boolean;
+  isIncludedInGosiBase: boolean;
+  isIncludedInWps: boolean;
+  // Tax
   isTaxable: boolean;
+  taxRegion: string;
+  taxRate: number;
+  notes: string;
   isActive: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string;
 }
 
 export interface BonusBatch {
@@ -146,7 +161,10 @@ export interface EmployeeBonus {
   basicSalary: number;
   calculationMethod: string;
   calculationValue: number;
-  bonusAmount: number;
+  grossBonusAmount: number;
+  taxWithheld: number;
+  bonusAmount: number;  // net after tax
+  taxRegion: string;
   paymentPeriod: string;
   status: string;
   notes: string;
@@ -236,11 +254,34 @@ export const advancesApi = {
     client.get<{ totalAdvances: number; activeAdvances: number; settledAdvances: number; pendingAdvances: number; totalDisbursed: number; totalOutstanding: number; totalRepaid: number; reconciliation: { advanceNumber: string; employeeName: string; status: string; approvedAmount: number; totalRepaid: number; outstandingBalance: number; isReconciled: boolean }[] }>('/api/finance/advances/audit').then(r => r.data),
 };
 
+export interface BonusTypeRequest {
+  code: string;
+  nameEn: string;
+  nameAr?: string;
+  calculationMethod: string;
+  isTaxable: boolean;
+  frequency?: string;
+  minServiceMonths?: number;
+  proRataEligibility?: boolean;
+  requiresApproval?: boolean;
+  isIncludedInEosb?: boolean;
+  isIncludedInGosiBase?: boolean;
+  isIncludedInWps?: boolean;
+  taxRegion?: string;
+  taxRate?: number;
+  notes?: string;
+  isActive?: boolean;
+}
+
 export const bonusTypesApi = {
-  list: () =>
-    client.get<BonusType[]>('/api/finance/bonuses/types').then(r => r.data),
-  create: (body: { code: string; nameEn: string; nameAr?: string; calculationMethod: string; isTaxable: boolean }) =>
+  list: (includeInactive = false) =>
+    client.get<BonusType[]>('/api/finance/bonuses/types', { params: { includeInactive } }).then(r => r.data),
+  create: (body: BonusTypeRequest) =>
     client.post<BonusType>('/api/finance/bonuses/types', body).then(r => r.data),
+  update: (id: string, body: BonusTypeRequest) =>
+    client.put<BonusType>(`/api/finance/bonuses/types/${id}`, body).then(r => r.data),
+  delete: (id: string) =>
+    client.delete<{ deleted: boolean }>(`/api/finance/bonuses/types/${id}`).then(r => r.data),
 };
 
 export const bonusBatchesApi = {
@@ -253,8 +294,17 @@ export const bonusBatchesApi = {
   create: (body: { bonusTypeId: string; batchName: string; paymentPeriod: string; paymentDate: string; notes?: string }) =>
     client.post<BonusBatch>('/api/finance/bonuses/batches', body).then(r => r.data),
 
+  update: (id: string, body: { batchName?: string; paymentPeriod?: string; paymentDate?: string; notes?: string }) =>
+    client.put<BonusBatch>(`/api/finance/bonuses/batches/${id}`, body).then(r => r.data),
+
+  delete: (id: string) =>
+    client.delete<{ deleted: boolean }>(`/api/finance/bonuses/batches/${id}`).then(r => r.data),
+
   addEmployee: (batchId: string, body: { employeeId: string; employeeName: string; department?: string; basicSalary: number; calculationMethod: string; calculationValue: number; notes?: string }) =>
     client.post<{ bonus: EmployeeBonus; grossBonusAmount: number; taxWithheld: number; netBonusAmount: number }>(`/api/finance/bonuses/batches/${batchId}/employees`, body).then(r => r.data),
+
+  updateEmployee: (batchId: string, bonusId: string, body: { calculationMethod?: string; calculationValue?: number; basicSalary?: number; notes?: string }) =>
+    client.put<{ bonus: EmployeeBonus; grossBonusAmount: number; taxWithheld: number; netBonusAmount: number }>(`/api/finance/bonuses/batches/${batchId}/employees/${bonusId}`, body).then(r => r.data),
 
   removeEmployee: (batchId: string, bonusId: string) =>
     client.delete(`/api/finance/bonuses/batches/${batchId}/employees/${bonusId}`),

@@ -752,66 +752,150 @@ function AdvancesTab() {
 
 // ── Bonus Types ───────────────────────────────────────────────────────────────
 
+const EMPTY_BONUS_TYPE_FORM = {
+  code: '', nameEn: '', nameAr: '', calculationMethod: 'Fixed',
+  frequency: 'OneTime', minServiceMonths: 0, proRataEligibility: false,
+  requiresApproval: true, isIncludedInEosb: false, isIncludedInGosiBase: false,
+  isIncludedInWps: true, isTaxable: false, taxRegion: 'GCC', taxRate: 0, notes: '', isActive: true,
+};
+
+const TAX_REGION_LABELS: Record<string, string> = {
+  GCC: 'GCC (0% — no personal income tax)',
+  US:  'US (22% federal supplemental withholding)',
+  UK:  'UK (PAYE — 20% basic rate default)',
+  Custom: 'Custom rate',
+};
+
+const TAX_REGION_DESCRIPTIONS: Record<string, string> = {
+  GCC: 'UAE, Saudi Arabia, Qatar, Kuwait, Bahrain, Oman — no income tax on bonuses. GOSI/social insurance applies separately per country.',
+  US:  '22% flat federal supplemental withholding on bonus payments. State tax and FICA apply at payroll run time.',
+  UK:  'PAYE at employee\'s marginal rate. Default 20% basic rate; override with Custom rate for higher-rate employees.',
+  Custom: 'Apply a custom fixed percentage. Enter the rate below.',
+};
+
 function BonusTypesTab() {
   const [items, setItems] = useState<BonusType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [includeInactive, setIncludeInactive] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState({ code: '', nameEn: '', nameAr: '', calculationMethod: 'Fixed', isTaxable: true });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ ...EMPTY_BONUS_TYPE_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setItems(await bonusTypesApi.list()); } catch { /**/ }
+    try { setItems(await bonusTypesApi.list(includeInactive)); } catch { /**/ }
     finally { setLoading(false); }
-  }, []);
+  }, [includeInactive]);
   useEffect(() => { load(); }, [load]);
 
   const { translation: autoBonusNameAr, isTranslating: translatingBonusNameAr } = useAutoTranslate(form.nameEn);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoBonusNameAr && !form.nameAr) setForm(x => ({ ...x, nameAr: autoBonusNameAr })); }, [autoBonusNameAr]);
 
+  const openCreate = () => { setEditingId(null); setForm({ ...EMPTY_BONUS_TYPE_FORM }); setError(''); setModalOpen(true); };
+  const openEdit = (t: BonusType) => {
+    setEditingId(t.id);
+    setForm({
+      code: t.code, nameEn: t.nameEn, nameAr: t.nameAr ?? '',
+      calculationMethod: t.calculationMethod, frequency: t.frequency ?? 'OneTime',
+      minServiceMonths: t.minServiceMonths ?? 0, proRataEligibility: t.proRataEligibility ?? false,
+      requiresApproval: t.requiresApproval ?? true, isIncludedInEosb: t.isIncludedInEosb ?? false,
+      isIncludedInGosiBase: t.isIncludedInGosiBase ?? false, isIncludedInWps: t.isIncludedInWps ?? true,
+      isTaxable: t.isTaxable, taxRegion: t.taxRegion ?? 'GCC', taxRate: t.taxRate ?? 0,
+      notes: t.notes ?? '', isActive: t.isActive,
+    });
+    setError(''); setModalOpen(true);
+  };
+
   const save = async () => {
     if (!form.code.trim() || !form.nameEn.trim()) { setError('Code and name are required'); return; }
     setSaving(true); setError('');
-    try { await bonusTypesApi.create(form); setModalOpen(false); load(); }
-    catch { setError('Failed to save.'); }
-    finally { setSaving(false); }
+    try {
+      if (editingId) await bonusTypesApi.update(editingId, form);
+      else await bonusTypesApi.create(form);
+      setModalOpen(false); load();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: string } })?.response?.data;
+      setError(typeof msg === 'string' ? msg : 'Failed to save bonus type.');
+    } finally { setSaving(false); }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try { await bonusTypesApi.delete(deleteId); setDeleteId(null); load(); }
+    catch (e: unknown) {
+      const msg = (e as { response?: { data?: string } })?.response?.data;
+      alert(typeof msg === 'string' ? msg : 'Cannot delete — the bonus type may have active batches. Deactivate it instead.');
+    } finally { setDeleting(false); }
+  };
+
+  const taxLabel = (t: BonusType) => {
+    if (!t.isTaxable) return <span className="text-xs text-emerald-600 font-semibold dark:text-emerald-400">Tax-Exempt</span>;
+    const region = t.taxRegion ?? 'GCC';
+    if (region === 'GCC') return <span className="text-xs text-emerald-600 font-semibold dark:text-emerald-400">Tax-Exempt (GCC)</span>;
+    if (region === 'US') return <span className="text-xs text-amber-600 font-semibold dark:text-amber-400">Taxable — US 22%</span>;
+    if (region === 'UK') return <span className="text-xs text-amber-600 font-semibold dark:text-amber-400">Taxable — UK PAYE {t.taxRate > 0 ? `${t.taxRate}%` : '20%'}</span>;
+    return <span className="text-xs text-amber-600 font-semibold dark:text-amber-400">Taxable — {t.taxRate}%</span>;
   };
 
   return (
     <>
       <div className="space-y-4">
-        <div className="flex justify-end">
-          <button type="button" onClick={() => { setForm({ code: '', nameEn: '', nameAr: '', calculationMethod: 'Fixed', isTaxable: true }); setError(''); setModalOpen(true); }} className="btn-primary">
-            <Plus className="h-4 w-4" /> New Bonus Type
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+            <input type="checkbox" checked={includeInactive} onChange={(e) => setIncludeInactive(e.target.checked)} className="h-4 w-4 accent-sapphire" />
+            Show inactive
+          </label>
+          <button type="button" onClick={openCreate} className="btn-primary"><Plus className="h-4 w-4" /> New Bonus Type</button>
         </div>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
-          <p className="font-semibold text-amber-700 dark:text-amber-400">Tax Notice (US)</p>
-          <p className="text-amber-600 dark:text-amber-300 text-xs mt-0.5">Taxable bonuses are subject to 22% federal supplemental withholding rate. Net amount = Gross − 22% federal withholding. State/FICA taxes calculated separately at payroll time.</p>
-        </div>
+
         <div className="surface overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                {['Code', 'Name', 'Calculation Method', 'Tax Treatment', 'Status'].map((h) => (
+                {['Code', 'Name', 'Method', 'Frequency', 'Compliance', 'Tax Treatment', 'Status', ''].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
               {loading ? (
-                <tr><td colSpan={5} className="py-12 text-center"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>
+                <tr><td colSpan={8} className="py-12 text-center"><div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-sapphire border-t-transparent" /></td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={5} className="py-12 text-center text-slate-400">No bonus types yet</td></tr>
+                <tr><td colSpan={8} className="py-12 text-center text-slate-400">No bonus types yet</td></tr>
               ) : items.map((t) => (
-                <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                <tr key={t.id} className={`hover:bg-slate-50 dark:hover:bg-white/[0.03] ${!t.isActive ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{t.code}</td>
-                  <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{t.nameEn}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-slate-900 dark:text-white">{t.nameEn}</p>
+                    {t.nameAr && <p className="text-xs text-slate-400 text-right" dir="rtl">{t.nameAr}</p>}
+                  </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{t.calculationMethod}</td>
-                  <td className="px-4 py-3">{t.isTaxable ? <span className="text-xs text-amber-600 font-semibold">Taxable (22% federal withholding)</span> : <span className="text-xs text-emerald-600 font-semibold">Tax-Exempt</span>}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                    {t.frequency ?? 'OneTime'}
+                    {(t.minServiceMonths ?? 0) > 0 && <span className="ml-1 text-xs text-slate-400">· {t.minServiceMonths}m min</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {t.isIncludedInEosb && <span className="text-[10px] font-medium rounded px-1 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">EOSB</span>}
+                      {t.isIncludedInGosiBase && <span className="text-[10px] font-medium rounded px-1 py-0.5 bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">GOSI</span>}
+                      {t.isIncludedInWps && <span className="text-[10px] font-medium rounded px-1 py-0.5 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">WPS</span>}
+                      {t.proRataEligibility && <span className="text-[10px] font-medium rounded px-1 py-0.5 bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-400">Pro-rata</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{taxLabel(t)}</td>
                   <td className="px-4 py-3"><StatusBadge status={t.isActive ? 'Active' : 'Closed'} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1">
+                      <button type="button" onClick={() => openEdit(t)} className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10">Edit</button>
+                      <button type="button" onClick={() => setDeleteId(t.id)} className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">Delete</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -819,23 +903,111 @@ function BonusTypesTab() {
         </div>
       </div>
 
-      <Modal isOpen={modalOpen} title="New Bonus Type" onClose={() => setModalOpen(false)}
+      {/* Create / Edit modal */}
+      <Modal isOpen={modalOpen} title={editingId ? 'Edit Bonus Type' : 'New Bonus Type'} onClose={() => setModalOpen(false)}
         footer={<><button type="button" onClick={() => setModalOpen(false)} className="btn-secondary">Cancel</button><button type="button" onClick={save} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button></>}>
         <FormError error={error} />
-        <div className="space-y-3">
-          <FormField label="Code" required><input value={form.code} onChange={(e) => setForm(x => ({ ...x, code: e.target.value }))} className="input w-full" placeholder="ANNUAL_BONUS" /></FormField>
-          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" title="Name (EN)" /></FormField>
-          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" title="Name (AR)" placeholder={translatingBonusNameAr && !form.nameAr ? 'Translating…' : undefined} /></FormField>
-          <FormField label="Calculation Method">
-            <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
-              {['Fixed', 'PercentageSalary'].map((v) => <option key={v}>{v}</option>)}
-            </select>
-          </FormField>
+        <div className="space-y-4">
+          {/* Identity */}
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Code" required><input value={form.code} onChange={(e) => setForm(x => ({ ...x, code: e.target.value.toUpperCase() }))} className="input w-full font-mono" placeholder="ANNUAL_BONUS" /></FormField>
+            <FormField label="Calculation Method">
+              <select value={form.calculationMethod} onChange={(e) => setForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">
+                <option value="Fixed">Fixed Amount</option>
+                <option value="PercentageSalary">% of Basic Salary</option>
+                <option value="PerformanceBased">Performance-Based</option>
+              </select>
+            </FormField>
+          </div>
+          <FormField label="Name (EN)" required><input value={form.nameEn} onChange={(e) => setForm(x => ({ ...x, nameEn: e.target.value }))} className="input w-full" title="Name (EN)" placeholder="e.g. Annual Performance Bonus" /></FormField>
+          <FormField label="Name (AR)"><input value={form.nameAr} onChange={(e) => setForm(x => ({ ...x, nameAr: e.target.value }))} className="input w-full" dir="rtl" placeholder={translatingBonusNameAr && !form.nameAr ? 'Translating…' : undefined} /></FormField>
+
+          {/* Eligibility */}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 pt-1">Eligibility</p>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Frequency">
+              <select value={form.frequency} onChange={(e) => setForm(x => ({ ...x, frequency: e.target.value }))} className="select w-full" title="Frequency">
+                <option value="OneTime">One-Time</option>
+                <option value="Annual">Annual</option>
+                <option value="Quarterly">Quarterly</option>
+                <option value="Monthly">Monthly</option>
+                <option value="ProjectBased">Project-Based</option>
+              </select>
+            </FormField>
+            <FormField label="Min. Service (months)">
+              <input type="number" min={0} value={form.minServiceMonths} onChange={(e) => setForm(x => ({ ...x, minServiceMonths: parseInt(e.target.value) || 0 }))} className="input w-full" title="Minimum service months" placeholder="0" />
+            </FormField>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.proRataEligibility} onChange={(e) => setForm(x => ({ ...x, proRataEligibility: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Pro-rata for partial period
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.requiresApproval} onChange={(e) => setForm(x => ({ ...x, requiresApproval: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Requires approval workflow
+            </label>
+          </div>
+
+          {/* Compliance */}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 pt-1">Compliance Flags</p>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.isIncludedInEosb} onChange={(e) => setForm(x => ({ ...x, isIncludedInEosb: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Include in EOSB/Gratuity base
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.isIncludedInGosiBase} onChange={(e) => setForm(x => ({ ...x, isIncludedInGosiBase: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Include in GOSI/Social insurance base
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.isIncludedInWps} onChange={(e) => setForm(x => ({ ...x, isIncludedInWps: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Include in WPS SIF file
+            </label>
+          </div>
+
+          {/* Tax */}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 pt-1">Tax Treatment</p>
           <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <input type="checkbox" checked={form.isTaxable} onChange={(e) => setForm(x => ({ ...x, isTaxable: e.target.checked }))} className="h-4 w-4 accent-sapphire" title="Taxable" />
-            Taxable (applies 22% federal supplemental withholding)
+            <input type="checkbox" checked={form.isTaxable} onChange={(e) => setForm(x => ({ ...x, isTaxable: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+            This bonus type is subject to income tax / withholding
           </label>
+          {form.isTaxable && (
+            <div className="space-y-2">
+              <FormField label="Tax Region">
+                <select value={form.taxRegion} onChange={(e) => setForm(x => ({ ...x, taxRegion: e.target.value }))} className="select w-full" title="Tax Region">
+                  {Object.entries(TAX_REGION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </FormField>
+              {form.taxRegion in TAX_REGION_DESCRIPTIONS && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">{TAX_REGION_DESCRIPTIONS[form.taxRegion]}</p>
+              )}
+              {(form.taxRegion === 'Custom' || form.taxRegion === 'UK') && (
+                <FormField label={form.taxRegion === 'Custom' ? 'Tax Rate (%)' : 'PAYE Override Rate (%)'}>
+                  <input type="number" min={0} max={100} step={0.01} value={form.taxRate} onChange={(e) => setForm(x => ({ ...x, taxRate: parseFloat(e.target.value) || 0 }))} className="input w-full" placeholder="0.00" />
+                </FormField>
+              )}
+            </div>
+          )}
+
+          {/* Notes */}
+          <FormField label="Policy Notes">
+            <textarea value={form.notes} onChange={(e) => setForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} placeholder="Internal policy notes (e.g. granted at board discretion, linked to performance rating)" />
+          </FormField>
+
+          {editingId && (
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm(x => ({ ...x, isActive: e.target.checked }))} className="h-4 w-4 accent-sapphire" />
+              Active (visible in new batches)
+            </label>
+          )}
         </div>
+      </Modal>
+
+      {/* Delete confirm */}
+      <Modal isOpen={!!deleteId} title="Delete Bonus Type" onClose={() => setDeleteId(null)}
+        footer={<><button type="button" onClick={() => setDeleteId(null)} className="btn-secondary">Cancel</button><button type="button" onClick={confirmDelete} disabled={deleting} className="bg-red-600 text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-red-700 disabled:opacity-60">{deleting ? 'Deleting…' : 'Delete'}</button></>}>
+        <p className="text-sm text-slate-700 dark:text-slate-300">This will soft-delete the bonus type. It cannot be deleted if it has active or approved batches — deactivate it instead.</p>
       </Modal>
     </>
   );
@@ -864,6 +1036,11 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [detailTab, setDetailTab] = useState<'employees' | 'gl' | 'audit'>('employees');
+  const [editBatchModal, setEditBatchModal] = useState(false);
+  const [editBatchId, setEditBatchId] = useState<string | null>(null);
+  const [editBatchForm, setEditBatchForm] = useState({ batchName: '', paymentPeriod: '', paymentDate: '', notes: '' });
+  const [deleteBatchId, setDeleteBatchId] = useState<string | null>(null);
+  const [deletingBatch, setDeletingBatch] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -915,6 +1092,31 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
     try { await bonusBatchesApi.markPaid(id); load(); if (selected?.batch.id === id) { const d = await bonusBatchesApi.get(id); setSelected(d); } } catch { /**/ }
   };
 
+  const openEditBatch = (b: BonusBatch, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditBatchId(b.id);
+    setEditBatchForm({ batchName: b.batchName, paymentPeriod: b.paymentPeriod, paymentDate: b.paymentDate, notes: b.notes ?? '' });
+    setError(''); setEditBatchModal(true);
+  };
+
+  const saveEditBatch = async () => {
+    if (!editBatchId) return;
+    setSaving(true); setError('');
+    try { await bonusBatchesApi.update(editBatchId, editBatchForm); setEditBatchModal(false); load(); }
+    catch { setError('Failed to update batch.'); }
+    finally { setSaving(false); }
+  };
+
+  const confirmDeleteBatch = async () => {
+    if (!deleteBatchId) return;
+    setDeletingBatch(true);
+    try { await bonusBatchesApi.delete(deleteBatchId); setDeleteBatchId(null); load(); }
+    catch (e: unknown) {
+      const msg = (e as { response?: { data?: string } })?.response?.data;
+      alert(typeof msg === 'string' ? msg : 'Cannot delete batch.');
+    } finally { setDeletingBatch(false); }
+  };
+
   return (
     <>
       <div className="space-y-4">
@@ -951,7 +1153,15 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{b.employeeCount}</td>
                   <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{fmt(b.totalAmount)}</td>
                   <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                  <td className="px-4 py-3 text-sapphire text-xs">View →</td>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => openDetail(b)} className="rounded px-2 py-1 text-xs text-sapphire hover:bg-sapphire/10">View</button>
+                      {b.status === 'Draft' && <>
+                        <button type="button" onClick={(e) => openEditBatch(b, e)} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10">Edit</button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setDeleteBatchId(b.id); }} className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">Delete</button>
+                      </>}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -985,6 +1195,24 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
           <FormField label="Payment Date" required><input type="date" value={createForm.paymentDate} onChange={(e) => setCreateForm(x => ({ ...x, paymentDate: e.target.value }))} className="input w-full" title="Payment Date" /></FormField>
           <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
         </div>
+      </Modal>
+
+      {/* Edit Batch Modal */}
+      <Modal isOpen={editBatchModal} title="Edit Batch" onClose={() => setEditBatchModal(false)}
+        footer={<><button type="button" onClick={() => setEditBatchModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={saveEditBatch} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button></>}>
+        <FormError error={error} />
+        <div className="space-y-3">
+          <FormField label="Batch Name" required><input value={editBatchForm.batchName} onChange={(e) => setEditBatchForm(x => ({ ...x, batchName: e.target.value }))} className="input w-full" title="Batch Name" /></FormField>
+          <FormField label="Payment Period"><input value={editBatchForm.paymentPeriod} onChange={(e) => setEditBatchForm(x => ({ ...x, paymentPeriod: e.target.value }))} className="input w-full" placeholder="2026-12" title="Payment Period" /></FormField>
+          <FormField label="Payment Date"><input type="date" value={editBatchForm.paymentDate} onChange={(e) => setEditBatchForm(x => ({ ...x, paymentDate: e.target.value }))} className="input w-full" title="Payment Date" /></FormField>
+          <FormField label="Notes"><textarea value={editBatchForm.notes} onChange={(e) => setEditBatchForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
+        </div>
+      </Modal>
+
+      {/* Delete Batch Confirm */}
+      <Modal isOpen={!!deleteBatchId} title="Delete Batch" onClose={() => setDeleteBatchId(null)}
+        footer={<><button type="button" onClick={() => setDeleteBatchId(null)} className="btn-secondary">Cancel</button><button type="button" onClick={confirmDeleteBatch} disabled={deletingBatch} className="bg-red-600 text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-red-700 disabled:opacity-60">{deletingBatch ? 'Deleting…' : 'Delete Batch'}</button></>}>
+        <p className="text-sm text-slate-700 dark:text-slate-300">This will permanently delete this Draft batch and all employee entries in it. This cannot be undone.</p>
       </Modal>
 
       {/* Detail Modal */}
@@ -1252,7 +1480,7 @@ export function LoansPage() {
 
   useEffect(() => {
     loanTypesApi.list().then(setLoanTypes).catch(() => {});
-    bonusTypesApi.list().then(setBonusTypes).catch(() => {});
+    bonusTypesApi.list(true).then(setBonusTypes).catch(() => {});
     Promise.all([loansApi.audit(), advancesApi.audit()]).then(([la, aa]) => {
       setSummary({
         activeLoans: (la.activeLoans ?? 0) + (aa.activeAdvances ?? 0),

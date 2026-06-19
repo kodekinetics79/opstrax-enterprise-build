@@ -228,11 +228,26 @@ public class BonusType
     public string NameEn { get; set; } = string.Empty;
     public string NameAr { get; set; } = string.Empty;
     public string CalculationMethod { get; set; } = "Fixed"; // Fixed, PercentageSalary, PerformanceBased, Custom
+    // Eligibility
+    public string Frequency { get; set; } = "OneTime"; // Annual, Quarterly, Monthly, OneTime, ProjectBased
+    public int MinServiceMonths { get; set; } = 0;
+    public bool ProRataEligibility { get; set; } = false; // pro-rate if joining date is mid-period
+    public bool RequiresApproval { get; set; } = true;
+    // Compliance flags
+    public bool IsIncludedInEosb { get; set; } = false; // add bonus to EOSB/gratuity base salary
+    public bool IsIncludedInGosiBase { get; set; } = false; // add bonus to GOSI/social insurance base (KSA/GCC)
+    public bool IsIncludedInWps { get; set; } = true; // include in WPS SIF payment file
+    // Tax treatment — region-aware
     public bool IsTaxable { get; set; }
+    public string TaxRegion { get; set; } = "GCC"; // GCC, US, UK, EU, Custom
+    public decimal TaxRate { get; set; } = 0; // used when TaxRegion = Custom or UK (override)
+    public string Notes { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public bool IsDeleted { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public Guid? CreatedBy { get; set; }
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? UpdatedBy { get; set; }
 }
 
 public class BonusBatch
@@ -270,7 +285,10 @@ public class EmployeeBonus
     public decimal BasicSalary { get; set; }
     public string CalculationMethod { get; set; } = "Fixed";
     public decimal CalculationValue { get; set; }           // fixed amount or percentage
-    public decimal BonusAmount { get; set; }
+    public decimal GrossBonusAmount { get; set; }
+    public decimal TaxWithheld { get; set; }
+    public decimal BonusAmount { get; set; }                 // net (after tax)
+    public string TaxRegion { get; set; } = "GCC";
     public string PaymentPeriod { get; set; } = string.Empty;
     public string Status { get; set; } = "Draft";           // Draft, Approved, PaidInPayroll, Cancelled
     public string Notes { get; set; } = string.Empty;

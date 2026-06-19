@@ -16,8 +16,14 @@ public class BonusesController : ControllerBase
     private readonly ZayraDbContext _db;
     private readonly IDataScopeService _scopeService;
 
-    // Federal supplemental withholding rate used when isTaxable = true
-    private const decimal FederalSupplementalRate = 0.22m;
+    // Tax rates by region (used when IsTaxable = true)
+    private static decimal ResolveTaxRate(BonusType bonusType) => bonusType.TaxRegion switch
+    {
+        "US"     => 0.22m,                                                    // US: 22% federal supplemental withholding
+        "UK"     => bonusType.TaxRate > 0 ? bonusType.TaxRate / 100m : 0.20m, // UK: PAYE basic rate (overrideable)
+        "Custom" => bonusType.TaxRate / 100m,
+        _        => 0m, // GCC (UAE/KSA/Qatar/Bahrain/Oman/Kuwait) — no personal income tax
+    };
 
     public BonusesController(ZayraDbContext db, IDataScopeService scopeService)
     {
@@ -34,11 +40,12 @@ public class BonusesController : ControllerBase
     // ── Bonus Types ───────────────────────────────────────────────────────────
 
     [HttpGet("types")]
-    public async Task<IActionResult> ListBonusTypes(CancellationToken ct)
+    public async Task<IActionResult> ListBonusTypes([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {
         var tid = GetTenantId();
-        return Ok(await _db.BonusTypes.Where(x => x.TenantId == tid && !x.IsDeleted && x.IsActive)
-            .OrderBy(x => x.NameEn).ToListAsync(ct));
+        var q = _db.BonusTypes.Where(x => x.TenantId == tid && !x.IsDeleted);
+        if (!includeInactive) q = q.Where(x => x.IsActive);
+        return Ok(await q.OrderBy(x => x.NameEn).ToListAsync(ct));
     }
 
     [HttpPost("types")]
@@ -51,11 +58,66 @@ public class BonusesController : ControllerBase
         var t = new BonusType
         {
             TenantId = tid, Code = req.Code, NameEn = req.NameEn, NameAr = req.NameAr ?? string.Empty,
-            CalculationMethod = req.CalculationMethod, IsTaxable = req.IsTaxable, CreatedBy = GetUserId(),
+            CalculationMethod = req.CalculationMethod,
+            Frequency = req.Frequency ?? "OneTime",
+            MinServiceMonths = req.MinServiceMonths ?? 0,
+            ProRataEligibility = req.ProRataEligibility ?? false,
+            RequiresApproval = req.RequiresApproval ?? true,
+            IsIncludedInEosb = req.IsIncludedInEosb ?? false,
+            IsIncludedInGosiBase = req.IsIncludedInGosiBase ?? false,
+            IsIncludedInWps = req.IsIncludedInWps ?? true,
+            IsTaxable = req.IsTaxable,
+            TaxRegion = req.TaxRegion ?? "GCC",
+            TaxRate = req.TaxRate ?? 0,
+            Notes = req.Notes ?? string.Empty,
+            CreatedBy = GetUserId(),
         };
         _db.BonusTypes.Add(t);
         await _db.SaveChangesAsync(ct);
         return Ok(t);
+    }
+
+    [HttpPut("types/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> UpdateBonusType(Guid id, [FromBody] BonusTypeRequest req, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var t = await _db.BonusTypes.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (t == null) return NotFound();
+        if (t.Code != req.Code && await _db.BonusTypes.AnyAsync(x => x.TenantId == tid && x.Code == req.Code && x.Id != id && !x.IsDeleted, ct))
+            return Conflict("Bonus type code already exists.");
+        t.Code = req.Code; t.NameEn = req.NameEn; t.NameAr = req.NameAr ?? string.Empty;
+        t.CalculationMethod = req.CalculationMethod;
+        t.Frequency = req.Frequency ?? t.Frequency;
+        t.MinServiceMonths = req.MinServiceMonths ?? t.MinServiceMonths;
+        t.ProRataEligibility = req.ProRataEligibility ?? t.ProRataEligibility;
+        t.RequiresApproval = req.RequiresApproval ?? t.RequiresApproval;
+        t.IsIncludedInEosb = req.IsIncludedInEosb ?? t.IsIncludedInEosb;
+        t.IsIncludedInGosiBase = req.IsIncludedInGosiBase ?? t.IsIncludedInGosiBase;
+        t.IsIncludedInWps = req.IsIncludedInWps ?? t.IsIncludedInWps;
+        t.IsTaxable = req.IsTaxable;
+        t.TaxRegion = req.TaxRegion ?? t.TaxRegion;
+        t.TaxRate = req.TaxRate ?? t.TaxRate;
+        t.Notes = req.Notes ?? string.Empty;
+        t.IsActive = req.IsActive ?? t.IsActive;
+        t.UpdatedAtUtc = DateTime.UtcNow; t.UpdatedBy = GetUserId();
+        await _db.SaveChangesAsync(ct);
+        return Ok(t);
+    }
+
+    [HttpDelete("types/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager")]
+    public async Task<IActionResult> DeleteBonusType(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId();
+        var t = await _db.BonusTypes.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (t == null) return NotFound();
+        if (await _db.BonusBatches.AnyAsync(x => x.BonusTypeId == id && !x.IsDeleted && x.Status != "Cancelled", ct))
+            return BadRequest("Cannot delete a bonus type that has active or approved batches. Deactivate it instead.");
+        t.IsDeleted = true; t.IsActive = false;
+        t.UpdatedAtUtc = DateTime.UtcNow; t.UpdatedBy = GetUserId();
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { deleted = true });
     }
 
     // ── Bonus Batches ─────────────────────────────────────────────────────────
@@ -124,6 +186,40 @@ public class BonusesController : ControllerBase
         return Ok(batch);
     }
 
+    [HttpPut("batches/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,Finance")]
+    public async Task<IActionResult> UpdateBatch(Guid id, [FromBody] UpdateBatchRequest req, CancellationToken ct)
+    {
+        var tid = GetTenantId(); var uid = GetUserId();
+        var batch = await _db.BonusBatches.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (batch == null) return NotFound();
+        if (batch.Status != "Draft") return BadRequest("Only Draft batches can be edited.");
+        batch.BatchName = req.BatchName ?? batch.BatchName;
+        if (req.PaymentPeriod != null) batch.PaymentPeriod = req.PaymentPeriod;
+        if (req.PaymentDate.HasValue) batch.PaymentDate = req.PaymentDate.Value;
+        batch.Notes = req.Notes ?? batch.Notes;
+        batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
+        await _db.SaveChangesAsync(ct);
+        return Ok(batch);
+    }
+
+    [HttpDelete("batches/{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,Finance")]
+    public async Task<IActionResult> DeleteBatch(Guid id, CancellationToken ct)
+    {
+        var tid = GetTenantId(); var uid = GetUserId();
+        var batch = await _db.BonusBatches.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
+        if (batch == null) return NotFound();
+        if (batch.Status is not ("Draft" or "Cancelled"))
+            return BadRequest("Only Draft or Cancelled batches can be deleted. Reject the batch first.");
+        batch.IsDeleted = true; batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
+        // Soft-delete child bonuses
+        await _db.EmployeeBonuses.Where(b => b.BonusBatchId == id && !b.IsDeleted)
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.IsDeleted, true), ct);
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { deleted = true });
+    }
+
     // ── Employee Bonuses ──────────────────────────────────────────────────────
 
     [HttpPost("batches/{batchId:guid}/employees")]
@@ -140,12 +236,14 @@ public class BonusesController : ControllerBase
 
         decimal grossBonusAmount = req.CalculationMethod switch
         {
-            "PercentageSalary" => req.BasicSalary * (req.CalculationValue / 100m),
+            "PercentageSalary" => Math.Round(req.BasicSalary * (req.CalculationValue / 100m), 2),
             _ => req.CalculationValue,
         };
 
-        // Federal supplemental withholding on taxable bonuses (22% flat rate for supplemental wages)
-        decimal taxWithheld = (bonusType?.IsTaxable == true) ? Math.Round(grossBonusAmount * FederalSupplementalRate, 2) : 0m;
+        // Region-aware tax calculation — GCC countries have zero personal income tax on bonuses
+        decimal taxWithheld = (bonusType?.IsTaxable == true)
+            ? Math.Round(grossBonusAmount * ResolveTaxRate(bonusType!), 2)
+            : 0m;
         decimal netBonusAmount = grossBonusAmount - taxWithheld;
 
         var eb = new EmployeeBonus
@@ -154,18 +252,50 @@ public class BonusesController : ControllerBase
             EmployeeName = req.EmployeeName, Department = req.Department ?? string.Empty,
             BonusTypeId = batch.BonusTypeId, BonusTypeName = batch.BonusTypeName,
             BasicSalary = req.BasicSalary, CalculationMethod = req.CalculationMethod,
-            CalculationValue = req.CalculationValue, BonusAmount = grossBonusAmount,
+            CalculationValue = req.CalculationValue,
+            GrossBonusAmount = grossBonusAmount, TaxWithheld = taxWithheld, BonusAmount = netBonusAmount,
+            TaxRegion = bonusType?.TaxRegion ?? "GCC",
             PaymentPeriod = batch.PaymentPeriod, Status = "Draft", Notes = req.Notes ?? string.Empty,
             CreatedBy = uid,
         };
         _db.EmployeeBonuses.Add(eb);
 
-        batch.TotalAmount += grossBonusAmount;
+        // Track net (post-tax) amount in batch totals
+        batch.TotalAmount += netBonusAmount;
         batch.EmployeeCount++;
         batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
 
         await _db.SaveChangesAsync(ct);
         return Ok(new { bonus = eb, grossBonusAmount, taxWithheld, netBonusAmount });
+    }
+
+    [HttpPut("batches/{batchId:guid}/employees/{bonusId:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,Finance")]
+    public async Task<IActionResult> UpdateEmployeeBonus(Guid batchId, Guid bonusId, [FromBody] UpdateEmployeeBonusRequest req, CancellationToken ct)
+    {
+        var tid = GetTenantId(); var uid = GetUserId();
+        var eb = await _db.EmployeeBonuses.FirstOrDefaultAsync(x => x.Id == bonusId && x.BonusBatchId == batchId && x.TenantId == tid && !x.IsDeleted, ct);
+        if (eb == null) return NotFound();
+        var batch = await _db.BonusBatches.FirstAsync(x => x.Id == batchId && x.TenantId == tid, ct);
+        if (batch.Status != "Draft") return BadRequest("Can only edit employee bonuses in Draft batches.");
+        var bonusType = await _db.BonusTypes.FirstOrDefaultAsync(x => x.Id == eb.BonusTypeId && x.TenantId == tid, ct);
+
+        var oldNet = eb.BonusAmount;
+        var method = req.CalculationMethod ?? eb.CalculationMethod;
+        var value  = req.CalculationValue ?? eb.CalculationValue;
+        var salary = req.BasicSalary ?? eb.BasicSalary;
+        decimal gross = method == "PercentageSalary" ? Math.Round(salary * (value / 100m), 2) : value;
+        decimal tax   = (bonusType?.IsTaxable == true) ? Math.Round(gross * ResolveTaxRate(bonusType!), 2) : 0m;
+        decimal net   = gross - tax;
+
+        eb.CalculationMethod = method; eb.CalculationValue = value; eb.BasicSalary = salary;
+        eb.GrossBonusAmount = gross; eb.TaxWithheld = tax; eb.BonusAmount = net;
+        eb.Notes = req.Notes ?? eb.Notes; eb.UpdatedAtUtc = DateTime.UtcNow; eb.UpdatedBy = uid;
+
+        batch.TotalAmount = batch.TotalAmount - oldNet + net;
+        batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { bonus = eb, grossBonusAmount = gross, taxWithheld = tax, netBonusAmount = net });
     }
 
     [HttpDelete("batches/{batchId:guid}/employees/{bonusId:guid}")]
@@ -367,8 +497,14 @@ public class BonusesController : ControllerBase
     }
 }
 
-public record BonusTypeRequest(string Code, string NameEn, string? NameAr, string CalculationMethod, bool IsTaxable);
+public record BonusTypeRequest(
+    string Code, string NameEn, string? NameAr, string CalculationMethod, bool IsTaxable,
+    string? Frequency, int? MinServiceMonths, bool? ProRataEligibility, bool? RequiresApproval,
+    bool? IsIncludedInEosb, bool? IsIncludedInGosiBase, bool? IsIncludedInWps,
+    string? TaxRegion, decimal? TaxRate, string? Notes, bool? IsActive = null);
 public record CreateBatchRequest(Guid BonusTypeId, string BatchName, string PaymentPeriod, DateOnly PaymentDate, string? Notes);
+public record UpdateBatchRequest(string? BatchName, string? PaymentPeriod, DateOnly? PaymentDate, string? Notes);
 public record AddEmployeeBonusRequest(Guid EmployeeId, string EmployeeName, string? Department, decimal BasicSalary, string CalculationMethod, decimal CalculationValue, string? Notes);
+public record UpdateEmployeeBonusRequest(string? CalculationMethod, decimal? CalculationValue, decimal? BasicSalary, string? Notes);
 public record BatchApproveRequest(string? Comments);
 public record MarkBatchPaidRequest(Guid? PayrollRunId);
