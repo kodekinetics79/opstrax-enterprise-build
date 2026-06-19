@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Workforce Plan ─────────────────────────────────────────────────────────────
 
-public class WorkforcePlan
+public class WorkforcePlan : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -29,7 +30,7 @@ public class WorkforcePlan
 
 // ── Candidate Document ─────────────────────────────────────────────────────────
 
-public class CandidateDocument
+public class CandidateDocument : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -47,7 +48,7 @@ public class CandidateDocument
 
 // ── Interview Feedback ─────────────────────────────────────────────────────────
 
-public class InterviewFeedback
+public class InterviewFeedback : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -71,7 +72,7 @@ public class InterviewFeedback
 
 // ── Assessment Template ────────────────────────────────────────────────────────
 
-public class AssessmentTemplate
+public class AssessmentTemplate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -92,7 +93,7 @@ public class AssessmentTemplate
 
 // ── Assessment Question ────────────────────────────────────────────────────────
 
-public class AssessmentQuestion
+public class AssessmentQuestion : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -109,7 +110,7 @@ public class AssessmentQuestion
 
 // ── Candidate Assessment (sent to candidate) ──────────────────────────────────
 
-public class CandidateAssessment
+public class CandidateAssessment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -134,7 +135,7 @@ public class CandidateAssessment
 
 // ── Offer Approval ─────────────────────────────────────────────────────────────
 
-public class OfferApproval
+public class OfferApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -152,7 +153,7 @@ public class OfferApproval
 
 // ── Onboarding Checklist (Template) ───────────────────────────────────────────
 
-public class OnboardingChecklist
+public class OnboardingChecklist : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -169,7 +170,7 @@ public class OnboardingChecklist
 
 // ── Onboarding Task (instance) ────────────────────────────────────────────────
 
-public class OnboardingTask
+public class OnboardingTask : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -193,7 +194,7 @@ public class OnboardingTask
 
 // ── Recruitment Audit Log ──────────────────────────────────────────────────────
 
-public class RecruitmentAuditLog
+public class RecruitmentAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

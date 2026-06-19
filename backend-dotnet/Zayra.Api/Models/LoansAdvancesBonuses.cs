@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Loan Module ───────────────────────────────────────────────────────────────
 
-public class LoanType
+public class LoanType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -22,7 +23,7 @@ public class LoanType
     public Guid? CreatedBy { get; set; }
 }
 
-public class LoanPolicy
+public class LoanPolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -38,7 +39,7 @@ public class LoanPolicy
     public Guid? CreatedBy { get; set; }
 }
 
-public class EmployeeLoan
+public class EmployeeLoan : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -70,7 +71,7 @@ public class EmployeeLoan
     public Guid? UpdatedBy { get; set; }
 }
 
-public class LoanApproval
+public class LoanApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -85,7 +86,7 @@ public class LoanApproval
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LoanInstallment
+public class LoanInstallment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -100,7 +101,7 @@ public class LoanInstallment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LoanSettlement
+public class LoanSettlement : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -115,7 +116,7 @@ public class LoanSettlement
     public Guid? CreatedBy { get; set; }
 }
 
-public class LoanAuditLog
+public class LoanAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -130,7 +131,7 @@ public class LoanAuditLog
 
 // ── Salary Advance Module ─────────────────────────────────────────────────────
 
-public class AdvancePolicy
+public class AdvancePolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -147,7 +148,7 @@ public class AdvancePolicy
     public Guid? CreatedBy { get; set; }
 }
 
-public class SalaryAdvance
+public class SalaryAdvance : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -175,7 +176,7 @@ public class SalaryAdvance
     public Guid? UpdatedBy { get; set; }
 }
 
-public class AdvanceApproval
+public class AdvanceApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -190,7 +191,7 @@ public class AdvanceApproval
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AdvanceInstallment
+public class AdvanceInstallment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -205,7 +206,7 @@ public class AdvanceInstallment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AdvanceAuditLog
+public class AdvanceAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -220,7 +221,7 @@ public class AdvanceAuditLog
 
 // ── Bonus Module ──────────────────────────────────────────────────────────────
 
-public class BonusType
+public class BonusType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -251,7 +252,7 @@ public class BonusType
     public Guid? UpdatedBy { get; set; }
 }
 
-public class BonusBatch
+public class BonusBatch : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -273,7 +274,7 @@ public class BonusBatch
     public Guid? UpdatedBy { get; set; }
 }
 
-public class EmployeeBonus
+public class EmployeeBonus : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -301,7 +302,7 @@ public class EmployeeBonus
     public Guid? UpdatedBy { get; set; }
 }
 
-public class BonusApproval
+public class BonusApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -316,7 +317,7 @@ public class BonusApproval
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class BonusAuditLog
+public class BonusAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -333,7 +334,7 @@ public class BonusAuditLog
 
 // ── Finance GL Entry (audit-ready journal entries) ────────────────────────────
 
-public class FinanceGlEntry
+public class FinanceGlEntry : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

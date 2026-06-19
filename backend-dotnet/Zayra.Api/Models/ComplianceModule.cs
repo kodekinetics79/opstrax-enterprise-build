@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Document Type (configurable per tenant) ────────────────────────────────────
 
-public class DocType
+public class DocType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -21,7 +22,7 @@ public class DocType
 
 // ── Contract Template ──────────────────────────────────────────────────────────
 
-public class ContractTemplate
+public class ContractTemplate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -43,7 +44,7 @@ public class ContractTemplate
 
 // ── Employee Contract ──────────────────────────────────────────────────────────
 
-public class EmployeeContract
+public class EmployeeContract : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -76,7 +77,7 @@ public class EmployeeContract
 
 // ── Compliance Requirement ─────────────────────────────────────────────────────
 
-public class ComplianceRequirement
+public class ComplianceRequirement : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -93,7 +94,7 @@ public class ComplianceRequirement
 
 // ── Compliance Renewal ─────────────────────────────────────────────────────────
 
-public class ComplianceRenewal
+public class ComplianceRenewal : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -114,7 +115,7 @@ public class ComplianceRenewal
 
 // ── Compliance Reminder ────────────────────────────────────────────────────────
 
-public class ComplianceReminder
+public class ComplianceReminder : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -133,7 +134,7 @@ public class ComplianceReminder
 
 // ── Visa Record ────────────────────────────────────────────────────────────────
 
-public class VisaRecord
+public class VisaRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -157,7 +158,7 @@ public class VisaRecord
 
 // ── Passport Record ────────────────────────────────────────────────────────────
 
-public class PassportRecord
+public class PassportRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -182,7 +183,7 @@ public class PassportRecord
 
 // ── Work Permit Record ─────────────────────────────────────────────────────────
 
-public class WorkPermitRecord
+public class WorkPermitRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -204,7 +205,7 @@ public class WorkPermitRecord
 
 // ── Compliance Audit Log ───────────────────────────────────────────────────────
 
-public class ComplianceAuditLog
+public class ComplianceAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -220,7 +221,7 @@ public class ComplianceAuditLog
 
 // ── Compliance AI Insight ──────────────────────────────────────────────────────
 
-public class ComplianceAIInsight
+public class ComplianceAIInsight : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

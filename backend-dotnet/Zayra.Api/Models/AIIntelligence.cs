@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── AI Model Configuration ────────────────────────────────────────────────────
 
-public class AIModelConfig
+public class AIModelConfig : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -17,7 +18,7 @@ public class AIModelConfig
 
 // ── AI Insight (generic cross-module) ────────────────────────────────────────
 
-public class AIInsight
+public class AIInsight : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -38,7 +39,7 @@ public class AIInsight
 
 // ── AI Recommendation ─────────────────────────────────────────────────────────
 
-public class AIRecommendation
+public class AIRecommendation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -59,7 +60,7 @@ public class AIRecommendation
 
 // ── AI HR Assistant Query Log ─────────────────────────────────────────────────
 
-public class AIHRQueryLog
+public class AIHRQueryLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -89,7 +90,7 @@ public class AIHRQueryLog
 
 // ── AI HR Assistant Query Cache ───────────────────────────────────────────────
 
-public class AIHRQueryCache
+public class AIHRQueryCache : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -119,7 +120,7 @@ public class AIHRQueryCache
 
 // ── Resume Screening ──────────────────────────────────────────────────────────
 
-public class ResumeParseResult
+public class ResumeParseResult : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -135,7 +136,7 @@ public class ResumeParseResult
     public DateTime? ParsedAtUtc { get; set; }
 }
 
-public class CandidateAIScore
+public class CandidateAIScore : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -158,7 +159,7 @@ public class CandidateAIScore
 
 // ── Payroll AI Validation ─────────────────────────────────────────────────────
 
-public class PayrollAIValidationResult
+public class PayrollAIValidationResult : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -179,7 +180,7 @@ public class PayrollAIValidationResult
 
 // ── Employee Risk Intelligence ────────────────────────────────────────────────
 
-public class EmployeeRiskScore
+public class EmployeeRiskScore : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -198,7 +199,7 @@ public class EmployeeRiskScore
     public Guid? AcknowledgedBy { get; set; }
 }
 
-public class EmployeeChurnPrediction
+public class EmployeeChurnPrediction : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -212,7 +213,7 @@ public class EmployeeChurnPrediction
     public DateTime ComputedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class BurnoutRiskSignal
+public class BurnoutRiskSignal : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

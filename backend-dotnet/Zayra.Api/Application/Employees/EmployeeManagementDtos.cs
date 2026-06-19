@@ -207,12 +207,12 @@ public record EmployeeDetailDto
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? UpdatedAtUtc { get; init; }
     public DateTime? ActivatedAtUtc { get; init; }
-    // ── Subordinate collections (EF entity types — no sensitive employee PII) ─────
-    public EmployeePayrollProfile? PayrollProfile { get; init; }
+    // ── Subordinate collections (projected to DTOs — no raw EF entities) ─────────
+    public EmployeePayrollProfileDto? PayrollProfile { get; init; }
     public IReadOnlyCollection<EmployeeComplianceRecord> ComplianceRecords { get; init; } = [];
-    public IReadOnlyCollection<EmployeeDocument> Documents { get; init; } = [];
-    public IReadOnlyCollection<EmployeeHistory> History { get; init; } = [];
-    public IReadOnlyCollection<EmployeeTransferRequest> Transfers { get; init; } = [];
+    public IReadOnlyCollection<EmployeeDocumentDto> Documents { get; init; } = [];
+    public IReadOnlyCollection<EmployeeHistoryDto> History { get; init; } = [];
+    public IReadOnlyCollection<EmployeeTransferDto> Transfers { get; init; } = [];
 
     /// <summary>
     /// Projects a raw Employee entity to this DTO, applying the canonical sensitive-field
@@ -226,7 +226,8 @@ public record EmployeeDetailDto
         IReadOnlyCollection<EmployeeComplianceRecord>? complianceRecords = null,
         IReadOnlyCollection<EmployeeDocument>? documents = null,
         IReadOnlyCollection<EmployeeHistory>? history = null,
-        IReadOnlyCollection<EmployeeTransferRequest>? transfers = null) =>
+        IReadOnlyCollection<EmployeeTransferRequest>? transfers = null,
+        IReadOnlyCollection<EmployeeDocumentDto>? documentDtos = null) =>
         new()
         {
             Id                            = e.Id,
@@ -321,12 +322,12 @@ public record EmployeeDetailDto
             CreatedAtUtc                  = e.CreatedAtUtc,
             UpdatedAtUtc                  = e.UpdatedAtUtc,
             ActivatedAtUtc                = e.ActivatedAtUtc,
-            // Collections
-            PayrollProfile                = payrollProfile,
+            // Collections — projected to DTOs; raw entity collections accepted for backward compat
+            PayrollProfile                = payrollProfile is not null ? EmployeePayrollProfileDto.Project(payrollProfile, includeSensitive) : null,
             ComplianceRecords             = complianceRecords ?? [],
-            Documents                     = documents ?? [],
-            History                       = history ?? [],
-            Transfers                     = transfers ?? [],
+            Documents                     = documentDtos ?? documents?.Select(EmployeeDocumentDto.Project).ToList() ?? [],
+            History                       = history?.Select(EmployeeHistoryDto.Project).ToList() ?? [],
+            Transfers                     = transfers?.Select(EmployeeTransferDto.Project).ToList() ?? [],
         };
 }
 
@@ -427,6 +428,322 @@ public record EssEmployeeProfileDto
         EmiratesId               = e.EmiratesId,
         ProfileCompletenessScore = e.ProfileCompletenessScore,
         ActivatedAtUtc           = e.ActivatedAtUtc,
+    };
+}
+
+/// <summary>
+/// Safe projection of <see cref="Zayra.Api.Models.EmployeeDraft"/> for API responses.
+/// Sensitive fields (salary, bank, passport, Iqama) are gated by the caller's
+/// CanViewSensitive() result, exactly like EmployeeDetailDto.
+/// Does NOT include TenantId, IsDeleted, or CreatedByUserId (internal system fields).
+/// </summary>
+public record EmployeeDraftDto
+{
+    public Guid Id { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public string CurrentStep { get; init; } = string.Empty;
+    public string EnglishName { get; init; } = string.Empty;
+    public string ArabicName { get; init; } = string.Empty;
+    public string PersonalEmail { get; init; } = string.Empty;
+    public string WorkEmail { get; init; } = string.Empty;
+    public string Phone { get; init; } = string.Empty;
+    public string Gender { get; init; } = string.Empty;
+    public DateOnly? DateOfBirth { get; init; }
+    public string MaritalStatus { get; init; } = string.Empty;
+    public string EmergencyContactName { get; init; } = string.Empty;
+    public string EmergencyContactPhone { get; init; } = string.Empty;
+    public string Nationality { get; init; } = string.Empty;
+    public string CountryCode { get; init; } = string.Empty;
+    public string Department { get; init; } = string.Empty;
+    public string Designation { get; init; } = string.Empty;
+    public string Branch { get; init; } = string.Empty;
+    public string WorkLocation { get; init; } = string.Empty;
+    public int? ManagerEmployeeId { get; init; }
+    public DateTime? JoiningDate { get; init; }
+    public string ContractType { get; init; } = string.Empty;
+    public string Grade { get; init; } = string.Empty;
+    public string CostCenter { get; init; } = string.Empty;
+    public DateOnly? ContractStartDate { get; init; }
+    public DateOnly? ContractEndDate { get; init; }
+    public DateOnly? ProbationEndDate { get; init; }
+    public string PayrollProfileCode { get; init; } = string.Empty;
+    public string ShiftPolicyCode { get; init; } = string.Empty;
+    public string LeavePolicyCode { get; init; } = string.Empty;
+    public string SponsorName { get; init; } = string.Empty;
+    // Compliance dates (not sensitive)
+    public DateOnly? PassportIssueDate { get; init; }
+    public DateOnly? PassportExpiryDate { get; init; }
+    public DateOnly? VisaIssueDate { get; init; }
+    public DateOnly? VisaExpiryDate { get; init; }
+    public DateOnly? ResidencyIssueDate { get; init; }
+    public DateOnly? WorkPermitIssueDate { get; init; }
+    // Sensitive — gated by CanViewSensitive()
+    public decimal? Salary { get; init; }
+    public string BankName { get; init; } = string.Empty;
+    public string BankIban { get; init; } = string.Empty;
+    public string WpsBankDetails { get; init; } = string.Empty;
+    public string PassportNumber { get; init; } = string.Empty;
+    public string VisaNumber { get; init; } = string.Empty;
+    public string VisaFileNumber { get; init; } = string.Empty;
+    public string IqamaNumber { get; init; } = string.Empty;
+    public string MuqeemNumber { get; init; } = string.Empty;
+    public string GosiReference { get; init; } = string.Empty;
+    public string QiwaContractNumber { get; init; } = string.Empty;
+    public string EmiratesId { get; init; } = string.Empty;
+    public string LaborCardNumber { get; init; } = string.Empty;
+    public string Qid { get; init; } = string.Empty;
+    public string WorkPermitNumber { get; init; } = string.Empty;
+    public string CivilId { get; init; } = string.Empty;
+    public string ResidencyNumber { get; init; } = string.Empty;
+    public decimal ProfileCompletenessScore { get; init; }
+    public DateTime CreatedAtUtc { get; init; }
+    public DateTime? SubmittedAtUtc { get; init; }
+    public DateTime? ApprovedAtUtc { get; init; }
+
+    public static EmployeeDraftDto Project(EmployeeDraft d, bool includeSensitive) => new()
+    {
+        Id                       = d.Id,
+        Status                   = d.Status,
+        CurrentStep              = d.CurrentStep,
+        EnglishName              = d.EnglishName,
+        ArabicName               = d.ArabicName,
+        PersonalEmail            = d.PersonalEmail,
+        WorkEmail                = d.WorkEmail,
+        Phone                    = d.Phone,
+        Gender                   = d.Gender,
+        DateOfBirth              = d.DateOfBirth,
+        MaritalStatus            = d.MaritalStatus,
+        EmergencyContactName     = d.EmergencyContactName,
+        EmergencyContactPhone    = d.EmergencyContactPhone,
+        Nationality              = d.Nationality,
+        CountryCode              = d.CountryCode,
+        Department               = d.Department,
+        Designation              = d.Designation,
+        Branch                   = d.Branch,
+        WorkLocation             = d.WorkLocation,
+        ManagerEmployeeId        = d.ManagerEmployeeId,
+        JoiningDate              = d.JoiningDate,
+        ContractType             = d.ContractType,
+        Grade                    = d.Grade,
+        CostCenter               = d.CostCenter,
+        ContractStartDate        = d.ContractStartDate,
+        ContractEndDate          = d.ContractEndDate,
+        ProbationEndDate         = d.ProbationEndDate,
+        PayrollProfileCode       = d.PayrollProfileCode,
+        ShiftPolicyCode          = d.ShiftPolicyCode,
+        LeavePolicyCode          = d.LeavePolicyCode,
+        SponsorName              = d.SponsorName,
+        PassportIssueDate        = d.PassportIssueDate,
+        PassportExpiryDate       = d.PassportExpiryDate,
+        VisaIssueDate            = d.VisaIssueDate,
+        VisaExpiryDate           = d.VisaExpiryDate,
+        ResidencyIssueDate       = d.ResidencyIssueDate,
+        WorkPermitIssueDate      = d.WorkPermitIssueDate,
+        // Sensitive
+        Salary                   = includeSensitive ? d.Salary : null,
+        BankName                 = includeSensitive ? d.BankName : string.Empty,
+        BankIban                 = includeSensitive ? d.BankIban : string.Empty,
+        WpsBankDetails           = includeSensitive ? d.WpsBankDetails : string.Empty,
+        PassportNumber           = includeSensitive ? d.PassportNumber : string.Empty,
+        VisaNumber               = includeSensitive ? d.VisaNumber : string.Empty,
+        VisaFileNumber           = includeSensitive ? d.VisaFileNumber : string.Empty,
+        IqamaNumber              = includeSensitive ? d.IqamaNumber : string.Empty,
+        MuqeemNumber             = includeSensitive ? d.MuqeemNumber : string.Empty,
+        GosiReference            = includeSensitive ? d.GosiReference : string.Empty,
+        QiwaContractNumber       = includeSensitive ? d.QiwaContractNumber : string.Empty,
+        EmiratesId               = includeSensitive ? d.EmiratesId : string.Empty,
+        LaborCardNumber          = includeSensitive ? d.LaborCardNumber : string.Empty,
+        Qid                      = includeSensitive ? d.Qid : string.Empty,
+        WorkPermitNumber         = includeSensitive ? d.WorkPermitNumber : string.Empty,
+        CivilId                  = includeSensitive ? d.CivilId : string.Empty,
+        ResidencyNumber          = includeSensitive ? d.ResidencyNumber : string.Empty,
+        ProfileCompletenessScore = d.ProfileCompletenessScore,
+        CreatedAtUtc             = d.CreatedAtUtc,
+        SubmittedAtUtc           = d.SubmittedAtUtc,
+        ApprovedAtUtc            = d.ApprovedAtUtc,
+    };
+}
+
+/// <summary>
+/// Safe projection of <see cref="Zayra.Api.Models.EmployeeDocument"/> for API responses.
+/// Excludes TenantId, IsDeleted, DeletedAtUtc, DeletedBy (internal/soft-delete system fields).
+/// </summary>
+public record EmployeeDocumentDto
+{
+    public Guid Id { get; init; }
+    public int? EmployeeId { get; init; }
+    public Guid? DraftId { get; init; }
+    public string DocumentType { get; init; } = string.Empty;
+    public string DocumentCategory { get; init; } = string.Empty;
+    public string FileName { get; init; } = string.Empty;
+    public string ContentType { get; init; } = string.Empty;
+    public string StorageUrl { get; init; } = string.Empty;
+    public bool IsRequired { get; init; }
+    public DateOnly? IssueDate { get; init; }
+    public DateOnly? ExpiryDate { get; init; }
+    public DateOnly? RenewalReminderDate { get; init; }
+    public string ApprovalStatus { get; init; } = string.Empty;
+    public int VersionNumber { get; init; }
+    public Guid? UploadedBy { get; init; }
+    public DateTime UploadedAtUtc { get; init; }
+    public DateTime? VerifiedAtUtc { get; init; }
+    public Guid? VerifiedBy { get; init; }
+    public string Notes { get; init; } = string.Empty;
+
+    public static EmployeeDocumentDto Project(EmployeeDocument d) => new()
+    {
+        Id                   = d.Id,
+        EmployeeId           = d.EmployeeId,
+        DraftId              = d.DraftId,
+        DocumentType         = d.DocumentType,
+        DocumentCategory     = d.DocumentCategory,
+        FileName             = d.FileName,
+        ContentType          = d.ContentType,
+        StorageUrl           = d.StorageUrl,
+        IsRequired           = d.IsRequired,
+        IssueDate            = d.IssueDate,
+        ExpiryDate           = d.ExpiryDate,
+        RenewalReminderDate  = d.RenewalReminderDate,
+        ApprovalStatus       = d.ApprovalStatus,
+        VersionNumber        = d.VersionNumber,
+        UploadedBy           = d.UploadedBy,
+        UploadedAtUtc        = d.UploadedAtUtc,
+        VerifiedAtUtc        = d.VerifiedAtUtc,
+        VerifiedBy           = d.VerifiedBy,
+        Notes                = d.Notes,
+    };
+}
+
+/// <summary>
+/// Safe projection of <see cref="Zayra.Api.Models.EmployeePayrollProfile"/> for API responses.
+/// Bank IBAN, account number, routing code, and MolId are gated by <paramref name="includeSensitive"/>.
+/// Excludes IsDeleted, DeletedAtUtc, DeletedBy.
+/// </summary>
+public record EmployeePayrollProfileDto
+{
+    public Guid Id { get; init; }
+    public int EmployeeId { get; init; }
+    public string BankName { get; init; } = string.Empty;
+    public string Iban { get; init; } = string.Empty;
+    public string AccountNumber { get; init; } = string.Empty;
+    public string PaymentMethod { get; init; } = string.Empty;
+    public string SalaryCurrency { get; init; } = string.Empty;
+    public string PayrollGroup { get; init; } = string.Empty;
+    public string SalaryStructureReference { get; init; } = string.Empty;
+    public bool WpsEligible { get; init; }
+    public bool EosbEligible { get; init; }
+    public string SocialInsuranceReference { get; init; } = string.Empty;
+    public string MolId { get; init; } = string.Empty;
+    public string BankRoutingCode { get; init; } = string.Empty;
+    public DateTime CreatedAtUtc { get; init; }
+    public DateTime? UpdatedAtUtc { get; init; }
+
+    public static EmployeePayrollProfileDto Project(EmployeePayrollProfile p, bool includeSensitive) => new()
+    {
+        Id                       = p.Id,
+        EmployeeId               = p.EmployeeId,
+        BankName                 = p.BankName,
+        Iban                     = includeSensitive ? p.Iban : string.Empty,
+        AccountNumber            = includeSensitive ? p.AccountNumber : string.Empty,
+        PaymentMethod            = p.PaymentMethod,
+        SalaryCurrency           = p.SalaryCurrency,
+        PayrollGroup             = p.PayrollGroup,
+        SalaryStructureReference = p.SalaryStructureReference,
+        WpsEligible              = p.WpsEligible,
+        EosbEligible             = p.EosbEligible,
+        SocialInsuranceReference = p.SocialInsuranceReference,
+        MolId                    = includeSensitive ? p.MolId : string.Empty,
+        BankRoutingCode          = includeSensitive ? p.BankRoutingCode : string.Empty,
+        CreatedAtUtc             = p.CreatedAtUtc,
+        UpdatedAtUtc             = p.UpdatedAtUtc,
+    };
+}
+
+/// <summary>
+/// Safe projection of <see cref="Zayra.Api.Models.EmployeeHistory"/> for API responses.
+/// Excludes TenantId. SnapshotJson may contain a full employee snapshot and is only included
+/// when the caller has HR/Admin access (admin module endpoints require at least HR Manager role).
+/// </summary>
+public record EmployeeHistoryDto
+{
+    public Guid Id { get; init; }
+    public int EmployeeId { get; init; }
+    public string EventType { get; init; } = string.Empty;
+    public string FieldName { get; init; } = string.Empty;
+    public string OldValue { get; init; } = string.Empty;
+    public string NewValue { get; init; } = string.Empty;
+    public DateOnly EffectiveDate { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public Guid? ApprovedByUserId { get; init; }
+    public Guid? SupportingDocumentId { get; init; }
+    public string SnapshotJson { get; init; } = "{}";
+    public Guid? CreatedByUserId { get; init; }
+    public DateTime CreatedAtUtc { get; init; }
+
+    public static EmployeeHistoryDto Project(EmployeeHistory h) => new()
+    {
+        Id                  = h.Id,
+        EmployeeId          = h.EmployeeId,
+        EventType           = h.EventType,
+        FieldName           = h.FieldName,
+        OldValue            = h.OldValue,
+        NewValue            = h.NewValue,
+        EffectiveDate       = h.EffectiveDate,
+        Reason              = h.Reason,
+        ApprovedByUserId    = h.ApprovedByUserId,
+        SupportingDocumentId = h.SupportingDocumentId,
+        SnapshotJson        = h.SnapshotJson,
+        CreatedByUserId     = h.CreatedByUserId,
+        CreatedAtUtc        = h.CreatedAtUtc,
+    };
+}
+
+/// <summary>
+/// Safe projection of <see cref="Zayra.Api.Models.EmployeeTransferRequest"/> for API responses.
+/// Contains only org restructuring data (department, designation, branch, manager changes).
+/// No salary, bank, health, or identity PII.
+/// </summary>
+public record EmployeeTransferDto
+{
+    public Guid Id { get; init; }
+    public int EmployeeId { get; init; }
+    public string CurrentBranch { get; init; } = string.Empty;
+    public string CurrentDepartment { get; init; } = string.Empty;
+    public string CurrentDesignation { get; init; } = string.Empty;
+    public int? CurrentManagerEmployeeId { get; init; }
+    public string NewDepartment { get; init; } = string.Empty;
+    public string NewBranch { get; init; } = string.Empty;
+    public string NewDesignation { get; init; } = string.Empty;
+    public int? NewManagerEmployeeId { get; init; }
+    public DateOnly EffectiveDate { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public Guid? RequestedByUserId { get; init; }
+    public DateTime CreatedAtUtc { get; init; }
+    public DateTime? CurrentManagerApprovedAtUtc { get; init; }
+    public DateTime? NewManagerApprovedAtUtc { get; init; }
+    public DateTime? HrApprovedAtUtc { get; init; }
+
+    public static EmployeeTransferDto Project(EmployeeTransferRequest t) => new()
+    {
+        Id                           = t.Id,
+        EmployeeId                   = t.EmployeeId,
+        CurrentBranch                = t.CurrentBranch,
+        CurrentDepartment            = t.CurrentDepartment,
+        CurrentDesignation           = t.CurrentDesignation,
+        CurrentManagerEmployeeId     = t.CurrentManagerEmployeeId,
+        NewDepartment                = t.NewDepartment,
+        NewBranch                    = t.NewBranch,
+        NewDesignation               = t.NewDesignation,
+        NewManagerEmployeeId         = t.NewManagerEmployeeId,
+        EffectiveDate                = t.EffectiveDate,
+        Reason                       = t.Reason,
+        Status                       = t.Status,
+        RequestedByUserId            = t.RequestedByUserId,
+        CreatedAtUtc                 = t.CreatedAtUtc,
+        CurrentManagerApprovedAtUtc  = t.CurrentManagerApprovedAtUtc,
+        NewManagerApprovedAtUtc      = t.NewManagerApprovedAtUtc,
+        HrApprovedAtUtc              = t.HrApprovedAtUtc,
     };
 }
 

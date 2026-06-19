@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Platform role constants ────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ public class PlatformUser
 
 /// <summary>Short-lived single-use token issued after password validates but before TOTP is checked.
 /// Stored as a SHA-256 hash. Raw value is returned to the client as the MFA challenge token.</summary>
-public class MfaChallengeToken
+public class MfaChallengeToken : INullableTenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     /// <summary>Set for tenant users.</summary>
@@ -100,7 +101,7 @@ public static class FeatureKeys
 
 // ── Tenant Subscription ───────────────────────────────────────────────────────
 
-public class TenantSubscription
+public class TenantSubscription : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -122,7 +123,7 @@ public class TenantSubscription
 
 // ── Tenant Feature Flags ──────────────────────────────────────────────────────
 
-public class TenantFeatureFlag
+public class TenantFeatureFlag : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -135,7 +136,7 @@ public class TenantFeatureFlag
 
 // ── Tenant Localization ───────────────────────────────────────────────────────
 
-public class TenantLocalizationSetting
+public class TenantLocalizationSetting : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -154,7 +155,7 @@ public class TenantLocalizationSetting
 
 // ── Tenant Branding ───────────────────────────────────────────────────────────
 
-public class TenantBranding
+public class TenantBranding : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -170,7 +171,7 @@ public class TenantBranding
 
 // ── Tenant Field Help Text (admin-customizable tooltips) ─────────────────────
 
-public class TenantFieldHelpText
+public class TenantFieldHelpText : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -185,7 +186,7 @@ public class TenantFieldHelpText
 // ── Platform Support Sessions (break-glass access) ───────────────────────────
 
 /// <summary>Audit-trail record for every platform-admin support access session.</summary>
-public class PlatformSupportSession
+public class PlatformSupportSession : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -204,7 +205,7 @@ public class PlatformSupportSession
 
 // ── Country Payroll Rules (Configurable per country) ─────────────────────────
 
-public class CountryPayrollRule
+public class CountryPayrollRule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -222,7 +223,7 @@ public class CountryPayrollRule
 
 // ── Tenant AI Usage ───────────────────────────────────────────────────────────
 
-public class TenantAiUsage
+public class TenantAiUsage : ITenantOwned
 {
     public Guid TenantId { get; set; }
     public int YearMonth { get; set; } // YYYYMM
@@ -234,7 +235,7 @@ public class TenantAiUsage
 
 // ── Tenant Invoices ───────────────────────────────────────────────────────────
 
-public class TenantInvoice
+public class TenantInvoice : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -320,7 +321,7 @@ public class PlatformLead
 
 // ── Invoice Line Items ────────────────────────────────────────────────────────
 
-public class TenantInvoiceLine
+public class TenantInvoiceLine : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid InvoiceId { get; set; }
@@ -339,7 +340,7 @@ public class TenantInvoiceLine
 
 // ── Tenant Payments ───────────────────────────────────────────────────────────
 
-public class TenantPayment
+public class TenantPayment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -369,7 +370,7 @@ public static class PaymentStatuses
 
 // ── Login Activity ────────────────────────────────────────────────────────────
 
-public class LoginActivity
+public class LoginActivity : INullableTenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid? TenantId { get; set; }

@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Performance Cycle ──────────────────────────────────────────────────────────
 
-public class PerformanceCycle
+public class PerformanceCycle : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -29,7 +30,7 @@ public class PerformanceCycle
 
 // ── Scorecard Template ─────────────────────────────────────────────────────────
 
-public class PerformanceScorecardTemplate
+public class PerformanceScorecardTemplate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -55,7 +56,7 @@ public class PerformanceScorecardTemplate
 
 // ── Rating Scale ───────────────────────────────────────────────────────────────
 
-public class PerformanceRatingScale
+public class PerformanceRatingScale : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -65,7 +66,7 @@ public class PerformanceRatingScale
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class PerformanceRatingOption
+public class PerformanceRatingOption : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -79,7 +80,7 @@ public class PerformanceRatingOption
 
 // ── Cycle Employee Enrollment ──────────────────────────────────────────────────
 
-public class PerformanceCycleEmployee
+public class PerformanceCycleEmployee : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -95,7 +96,7 @@ public class PerformanceCycleEmployee
 
 // ── Competency Library ─────────────────────────────────────────────────────────
 
-public class Competency
+public class Competency : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -107,7 +108,7 @@ public class Competency
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class RoleCompetency
+public class RoleCompetency : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -120,7 +121,7 @@ public class RoleCompetency
 
 // ── Employee Goal / KPI ────────────────────────────────────────────────────────
 
-public class EmployeeGoal
+public class EmployeeGoal : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -149,7 +150,7 @@ public class EmployeeGoal
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
-public class GoalProgressUpdate
+public class GoalProgressUpdate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -163,7 +164,7 @@ public class GoalProgressUpdate
 
 // ── Appraisal Review ───────────────────────────────────────────────────────────
 
-public class AppraisalReview
+public class AppraisalReview : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -207,7 +208,7 @@ public class AppraisalReview
 
 // ── Score Breakdown ────────────────────────────────────────────────────────────
 
-public class AppraisalScoreBreakdown
+public class AppraisalScoreBreakdown : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -221,7 +222,7 @@ public class AppraisalScoreBreakdown
 
 // ── Appraisal Competency Rating ────────────────────────────────────────────────
 
-public class AppraisalCompetencyRating
+public class AppraisalCompetencyRating : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -238,7 +239,7 @@ public class AppraisalCompetencyRating
 
 // ── 360 Feedback ───────────────────────────────────────────────────────────────
 
-public class Feedback360
+public class Feedback360 : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -257,7 +258,7 @@ public class Feedback360
 
 // ── Calibration ────────────────────────────────────────────────────────────────
 
-public class AppraisalCalibration
+public class AppraisalCalibration : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -277,7 +278,7 @@ public class AppraisalCalibration
 
 // ── Appraisal Appeal ───────────────────────────────────────────────────────────
 
-public class AppraisalAppeal
+public class AppraisalAppeal : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -296,7 +297,7 @@ public class AppraisalAppeal
 
 // ── Recommendations ────────────────────────────────────────────────────────────
 
-public class IncrementRecommendation
+public class IncrementRecommendation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -319,7 +320,7 @@ public class IncrementRecommendation
     public DateTime? ApprovedAtUtc { get; set; }
 }
 
-public class PromotionRecommendation
+public class PromotionRecommendation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -339,7 +340,7 @@ public class PromotionRecommendation
     public DateTime? ApprovedAtUtc { get; set; }
 }
 
-public class BonusRecommendation
+public class BonusRecommendation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -360,7 +361,7 @@ public class BonusRecommendation
 
 // ── Performance Improvement Plan ───────────────────────────────────────────────
 
-public class PerformanceImprovementPlan
+public class PerformanceImprovementPlan : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -383,7 +384,7 @@ public class PerformanceImprovementPlan
     public DateTime? ClosedAtUtc { get; set; }
 }
 
-public class PIPCheckIn
+public class PIPCheckIn : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -398,7 +399,7 @@ public class PIPCheckIn
 
 // ── Probation Review ───────────────────────────────────────────────────────────
 
-public class ProbationReview
+public class ProbationReview : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -426,7 +427,7 @@ public class ProbationReview
 
 // ── Continuous Feedback ────────────────────────────────────────────────────────
 
-public class ContinuousFeedback
+public class ContinuousFeedback : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -443,7 +444,7 @@ public class ContinuousFeedback
 
 // ── Performance Audit Log ──────────────────────────────────────────────────────
 
-public class PerformanceAuditLog
+public class PerformanceAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

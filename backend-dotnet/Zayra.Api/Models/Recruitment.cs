@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Stage constants ────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ public static class RecruitmentStages
 
 // ── Manpower Requisition ───────────────────────────────────────────────────────
 
-public class ManpowerRequisition
+public class ManpowerRequisition : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -59,7 +60,7 @@ public class ManpowerRequisition
 
 // ── Job Opening ────────────────────────────────────────────────────────────────
 
-public class JobOpening
+public class JobOpening : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -89,7 +90,7 @@ public class JobOpening
 
 // ── Candidate (Talent Pool) ────────────────────────────────────────────────────
 
-public class Candidate
+public class Candidate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -113,7 +114,7 @@ public class Candidate
 
 // ── Job Application (Pipeline record) ─────────────────────────────────────────
 
-public class JobApplication
+public class JobApplication : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -135,7 +136,7 @@ public class JobApplication
 
 // ── Application Event (Timeline) ──────────────────────────────────────────────
 
-public class ApplicationEvent
+public class ApplicationEvent : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -150,7 +151,7 @@ public class ApplicationEvent
 
 // ── Interview Schedule ─────────────────────────────────────────────────────────
 
-public class InterviewSchedule
+public class InterviewSchedule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -172,7 +173,7 @@ public class InterviewSchedule
 
 // ── Offer Letter ───────────────────────────────────────────────────────────────
 
-public class OfferLetter
+public class OfferLetter : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

@@ -1,5 +1,6 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
-public class AttendanceRecord
+public class AttendanceRecord : INullableTenantOwned
 {
     public int Id { get; set; }
     public Guid? TenantId { get; set; }

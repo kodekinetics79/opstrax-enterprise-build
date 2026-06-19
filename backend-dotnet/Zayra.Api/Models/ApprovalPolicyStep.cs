@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 /// <summary>
@@ -11,7 +12,7 @@ namespace Zayra.Api.Models;
 ///   SpecificEmployee  → SpecificEmployeeId (fixed person)
 ///   Role              → Any user with ApproverRole role (legacy behaviour)
 /// </summary>
-public class ApprovalPolicyStep
+public class ApprovalPolicyStep : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

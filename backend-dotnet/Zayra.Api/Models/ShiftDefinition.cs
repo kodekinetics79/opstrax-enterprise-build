@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class ShiftDefinition
+public class ShiftDefinition : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -15,7 +16,7 @@ public class ShiftDefinition
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
-public class ShiftAssignment
+public class ShiftAssignment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

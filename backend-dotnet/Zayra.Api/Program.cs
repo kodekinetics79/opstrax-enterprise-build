@@ -33,12 +33,43 @@ using Zayra.Api.Application.Common;
 using Zayra.Api.Infrastructure.Common;
 using Zayra.Api.Application.AI;
 using Zayra.Api.Infrastructure.AI;
+using Zayra.Api.Infrastructure.Boot;
 using Zayra.Api.Infrastructure.Email;
 using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Infrastructure.Filters;
 using Zayra.Api.Infrastructure.Qiwa;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ── P3: JWT audience prod fail-fast ──────────────────────────────────────────
+// Dev defaults are intentionally left in appsettings.json for zero-config local dev.
+// In Production they MUST be overridden via environment variables (Jwt__TenantAudience,
+// Jwt__PlatformAudience). A forgotten env var in prod becomes a failed deploy, not silent drift.
+{
+    const string DevTenantAudience   = "kynexone-tenant";
+    const string DevPlatformAudience = "kynexone-platform";
+
+    if (builder.Environment.IsProduction())
+    {
+        var jwtSection     = builder.Configuration.GetSection("Jwt");
+        var prodTenantAud  = jwtSection["TenantAudience"];
+        var prodPlatformAud = jwtSection["PlatformAudience"];
+        var prodSigningKey = jwtSection["SigningKey"];
+        var prodErrors     = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(prodTenantAud) || prodTenantAud == DevTenantAudience)
+            prodErrors.Add($"Jwt:TenantAudience is null, empty, or still the dev default ('{DevTenantAudience}'). Set Jwt__TenantAudience env var.");
+        if (string.IsNullOrWhiteSpace(prodPlatformAud) || prodPlatformAud == DevPlatformAudience)
+            prodErrors.Add($"Jwt:PlatformAudience is null, empty, or still the dev default ('{DevPlatformAudience}'). Set Jwt__PlatformAudience env var.");
+        if (string.IsNullOrWhiteSpace(prodSigningKey) || prodSigningKey.StartsWith("CHANGE_ME"))
+            prodErrors.Add("Jwt:SigningKey is null, empty, or still the placeholder value. Set Jwt__SigningKey env var to a ≥64-char random secret.");
+
+        if (prodErrors.Count > 0)
+            throw new InvalidOperationException(
+                "Production JWT configuration fail-fast:\n" + string.Join("\n", prodErrors.Select(e => "  " + e)));
+    }
+}
+
 // Railway injects PORT; fall back to ASPNETCORE_URLS, then local default.
 var port = Environment.GetEnvironmentVariable("PORT");
 var listenUrl = !string.IsNullOrEmpty(port)
@@ -320,6 +351,14 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
+
+        // ── P3 boot assertions ────────────────────────────────────────────────────
+        // Run BEFORE EnsureCreated so a bad entity or controller fails the boot,
+        // not just a future request.
+        TenantOwnershipBootAssertion.Assert(dbContext);
+        ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
+        // ─────────────────────────────────────────────────────────────────────────
+
         await dbContext.Database.EnsureCreatedAsync();
         await MissingTableCreator.EnsureAsync(dbContext, logger);
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();

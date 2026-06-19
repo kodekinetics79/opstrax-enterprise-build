@@ -190,7 +190,7 @@ public class SensitiveFieldMaskingTests
         var controller = CreateController(db, tenantId, "Admin");
 
         var draftResult = await controller.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
-        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        var draft = Assert.IsType<EmployeeDraftDto>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
         await controller.SubmitDraft(draft.Id, CancellationToken.None);
 
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
@@ -208,7 +208,7 @@ public class SensitiveFieldMaskingTests
         var controller = CreateController(db, tenantId, "Admin");
 
         var draftResult = await controller.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
-        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        var draft = Assert.IsType<EmployeeDraftDto>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
         await controller.SubmitDraft(draft.Id, CancellationToken.None);
 
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
@@ -273,7 +273,7 @@ public class SensitiveFieldMaskingTests
         var controller = CreateController(db, tenantId, "Admin");
 
         var draftResult = await controller.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
-        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        var draft = Assert.IsType<EmployeeDraftDto>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
         await controller.SubmitDraft(draft.Id, CancellationToken.None);
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
         var created = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
@@ -302,7 +302,7 @@ public class SensitiveFieldMaskingTests
         // Seed employee directly — HR Officer cannot approve drafts so seed via Admin
         var adminController = CreateController(db, tenantId, "Admin");
         var draftResult = await adminController.CreateDraft(MinimalDraftRequest(), CancellationToken.None);
-        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        var draft = Assert.IsType<EmployeeDraftDto>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
         await adminController.SubmitDraft(draft.Id, CancellationToken.None);
         var approval = await adminController.ApproveDraft(draft.Id, CancellationToken.None);
         var created = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);

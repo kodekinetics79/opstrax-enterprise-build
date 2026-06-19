@@ -23,6 +23,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("policies")]
+    [AllowEntityReturn("OvertimePolicy is a scheduling configuration entity (hours, caps, rounding rules) — no salary/bank/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimePolicy>>> Policies(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -31,6 +32,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("policies")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("OvertimePolicy is a scheduling configuration entity — no salary/bank/health PII.")]
     public async Task<ActionResult<OvertimePolicy>> CreatePolicy(OvertimePolicyRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -62,6 +64,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("types")]
+    [AllowEntityReturn("OvertimeType is a configuration entity (category, name, code) — no salary/bank/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeType>>> Types(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -70,6 +73,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("types")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("OvertimeType is a configuration entity — no salary/bank/health PII.")]
     public async Task<ActionResult<OvertimeType>> CreateType(OvertimeTypeRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -80,6 +84,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("requests")]
+    [AllowEntityReturn("OvertimeRequest list: scheduling data (dates, hours, reason, status) — no salary/bank/health PII.")]
     public async Task<ActionResult<PagedResult<OvertimeRequest>>> Requests([FromQuery] string? status, [FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -95,6 +100,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpPost("requests")]
+    [AllowEntityReturn("OvertimeRequest contains scheduling/timing data only (dates, hours, reason) — no salary, bank, or health PII.")]
     public async Task<ActionResult<OvertimeRequest>> CreateRequest(OvertimeRequestCreate req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -125,6 +131,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("detect-from-attendance")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("OvertimeRequest: auto-detected scheduling records — no salary/bank/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeRequest>>> DetectFromAttendance(DetectOvertimeRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -231,6 +238,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("payroll-review")]
+    [AllowEntityReturn("OvertimePayrollImpact: calculated hours and total overtime amount per request — no bank/IBAN/health PII. Restricted to payroll-role consumers.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimePayrollImpact>>> PayrollReview(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -238,6 +246,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("calculations")]
+    [AllowEntityReturn("OvertimeCalculation: computed overtime breakdown (hours, rates, amount) — no bank/IBAN/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeCalculation>>> Calculations([FromQuery] int? employeeId, [FromQuery] int pageSize = 100, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -250,6 +259,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("budgets")]
+    [AllowEntityReturn("OvertimeBudget: department budget amounts — no salary/bank/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeBudget>>> Budgets([FromQuery] int? year, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -259,6 +269,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("comp-off-conversions")]
+    [AllowEntityReturn("OvertimeCompOffConversion: comp-off leave conversion records (hours, leave credited) — no salary/bank/health PII.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeCompOffConversion>>> CompOffConversions([FromQuery] int? employeeId, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -269,6 +280,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("comp-off-conversions")]
     [Authorize(Roles = "Admin,HR Manager")]
+    [AllowEntityReturn("OvertimeCompOffConversion: comp-off leave conversion — no salary/bank/health PII.")]
     public async Task<ActionResult<OvertimeCompOffConversion>> CreateCompOffConversion(CompOffConversionRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();

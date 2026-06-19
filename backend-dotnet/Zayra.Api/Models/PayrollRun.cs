@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class PayrollRun
+public class PayrollRun : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -18,7 +19,7 @@ public class PayrollRun
     public DateTime? LockedAtUtc { get; set; }
 }
 
-public class PayrollSlip
+public class PayrollSlip : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

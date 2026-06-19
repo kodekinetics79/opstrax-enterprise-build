@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 /// <summary>
@@ -5,7 +6,7 @@ namespace Zayra.Api.Models;
 /// Matches on WorkflowType + optional DepartmentId + optional GradeId.
 /// When IsDefault = true, this policy applies to all employees not matched by a more specific policy.
 /// </summary>
-public class ApprovalPolicy
+public class ApprovalPolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

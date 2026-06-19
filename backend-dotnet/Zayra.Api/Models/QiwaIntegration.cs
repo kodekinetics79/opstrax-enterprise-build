@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Qiwa sync status constants ────────────────────────────────────────────────
@@ -25,7 +26,7 @@ public static class QiwaSyncStatuses
 /// a secrets manager (e.g. Azure Key Vault / Railway secrets) when the real
 /// Qiwa API is integrated.
 /// </summary>
-public class QiwaTenantConnection
+public class QiwaTenantConnection : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -76,7 +77,7 @@ public static class QiwaConnectionStatuses
 /// The real Qiwa API payload will be stored here once integration goes live;
 /// for now the columns exist and the placeholder service writes Pending entries.
 /// </summary>
-public class QiwaSyncLog
+public class QiwaSyncLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -144,7 +145,7 @@ public static class QiwaSyncLogStatuses
 /// encrypted via <see cref="Microsoft.AspNetCore.DataProtection.IDataProtector"/>
 /// and is never returned to clients in plaintext.
 /// </summary>
-public class QiwaApiCredential
+public class QiwaApiCredential : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
