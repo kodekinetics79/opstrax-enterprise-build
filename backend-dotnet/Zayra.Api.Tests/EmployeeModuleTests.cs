@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.Employees;
 using Zayra.Api.Controllers;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
@@ -30,7 +31,7 @@ public class EmployeeModuleTests
 
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
 
-        var profile = Assert.IsType<EmployeeProfileDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
+        var profile = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
         Assert.Equal("Active", profile.Employee.Status);
         Assert.StartsWith("EMP-", profile.Employee.EmployeeCode);
         Assert.NotNull(profile.Employee.UserAccountId);

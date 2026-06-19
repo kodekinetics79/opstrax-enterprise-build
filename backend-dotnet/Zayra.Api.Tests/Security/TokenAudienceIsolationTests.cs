@@ -119,7 +119,7 @@ public class TokenAudienceIsolationTests
     }
 
     [Fact]
-    public void TenantToken_CarryingForgishedPlatformClaim_IsStillRejectedByAudienceCheck()
+    public void TenantToken_CarryingForgedPlatformClaim_IsStillRejectedByAudienceCheck()
     {
         // Worst-case: a tenant-audience token that somehow carries is_platform_admin.
         // This was the only guard BEFORE P1.5. Now the aud check provides a second gate.

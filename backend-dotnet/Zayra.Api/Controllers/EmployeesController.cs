@@ -81,7 +81,7 @@ public class EmployeesController : ControllerBase
         if (!string.IsNullOrWhiteSpace(department)) query = query.Where(e => e.Department == department);
         var total = await query.CountAsync(cancellationToken);
         var items = await query.OrderBy(e => e.FullName).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(e => new EmployeeListItemDto(e.Id, e.EmployeeCode, e.FullName, e.ArabicName ?? string.Empty, e.Department ?? string.Empty, e.Designation ?? string.Empty, e.Branch ?? string.Empty, e.ManagerEmployeeId, e.Status, e.ProfileCompletenessScore, e.VisaExpiryDate, e.PassportExpiryDate, e.IqamaNumber ?? string.Empty))
+            .Select(e => new EmployeeListItemDto(e.Id, e.EmployeeCode, e.FullName, e.ArabicName ?? string.Empty, e.Department ?? string.Empty, e.Designation ?? string.Empty, e.Branch ?? string.Empty, e.ManagerEmployeeId, e.Status, e.ProfileCompletenessScore, e.VisaExpiryDate, e.PassportExpiryDate))
             .ToListAsync(cancellationToken);
         return Ok(new PagedResult<EmployeeListItemDto>(items, total, page, pageSize));
     }
@@ -702,7 +702,7 @@ public class EmployeesController : ControllerBase
 
     [HttpPost("drafts/{draftId:guid}/approve")]
     [Authorize(Roles = "Admin,HR Manager")]
-    public async Task<ActionResult<EmployeeProfileDto>> ApproveDraft(Guid draftId, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDetailDto>> ApproveDraft(Guid draftId, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
         var draft = await FindDraft(draftId, cancellationToken);
@@ -783,7 +783,10 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Employee activated", $"{employee.FullName} was activated with ID {employee.EmployeeCode}.", "Employee", employee.Id.ToString(), cancellationToken);
         await Audit("employee.activated", "Employee", employee.Id.ToString(), cancellationToken);
-        return Ok(new EmployeeProfileDto(employee, await _db.EmployeeDocuments.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken), await _db.EmployeeHistories.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken)));
+        if (!CanViewSensitive()) EmployeeSensitiveMask.Apply(employee);
+        var documents = await _db.EmployeeDocuments.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
+        var histories = await _db.EmployeeHistories.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
+        return Ok(new EmployeeDetailDto(employee, null, [], documents, histories, []));
     }
 
     [HttpPut("{id:int}")]
@@ -1339,19 +1342,9 @@ public class EmployeesController : ControllerBase
 
     private bool CanEditSensitive() => User.IsInRole("Admin") || User.IsInRole("HR Manager") || User.HasClaim("permission", "employees.sensitive");
     private bool CanViewSensitive() => CanEditSensitive() || User.IsInRole("Payroll Officer") || User.HasClaim("permission", "employees.sensitive");
-    private static void MaskSensitive(Employee employee)
-    {
-        employee.Salary = null;
-        employee.BankName = string.Empty;
-        employee.BankIban = string.Empty;
-        employee.WpsBankDetails = string.Empty;
-        employee.MedicalInformation = string.Empty;
-        employee.DisciplinaryRecords = string.Empty;
-        employee.TerminationReason = string.Empty;
-    }
     private Task Notify(string title, string message, string entity, string? entityId, CancellationToken cancellationToken) => _notifications.NotifyAsync(RequireTenant(), null, title, message, entity, entityId, cancellationToken);
 
-    private EmployeeListItemDto ToListItem(Employee employee) => new(employee.Id, employee.EmployeeCode, employee.FullName, employee.ArabicName, employee.Department, employee.Designation, employee.Branch, employee.ManagerEmployeeId, employee.Status, employee.ProfileCompletenessScore, employee.VisaExpiryDate, employee.PassportExpiryDate, employee.IqamaNumber);
+    private EmployeeListItemDto ToListItem(Employee employee) => new(employee.Id, employee.EmployeeCode, employee.FullName, employee.ArabicName, employee.Department, employee.Designation, employee.Branch, employee.ManagerEmployeeId, employee.Status, employee.ProfileCompletenessScore, employee.VisaExpiryDate, employee.PassportExpiryDate);
     private static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "Unnamed Employee";
     private Guid RequireTenant() => Guid.Parse(User.FindFirstValue("tenant_id") ?? throw new UnauthorizedAccessException("Tenant claim missing."));
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
@@ -1359,8 +1352,7 @@ public class EmployeesController : ControllerBase
     private Task Audit(string action, string entity, string? entityId, CancellationToken cancellationToken) => _audit.WriteAsync(action, entity, entityId, new RequestContext(HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), GetUserId(), RequireTenant()), null, cancellationToken);
 }
 
-public record EmployeeListItemDto(int Id, string EmployeeCode, string FullName, string ArabicName, string Department, string Designation, string Branch, int? ManagerEmployeeId, string Status, decimal ProfileCompletenessScore, DateOnly? VisaExpiryDate, DateOnly? PassportExpiryDate, string IqamaNumber);
-public record EmployeeProfileDto(Employee Employee, IReadOnlyCollection<EmployeeDocument> Documents, IReadOnlyCollection<EmployeeHistory> History);
+public record EmployeeListItemDto(int Id, string EmployeeCode, string FullName, string ArabicName, string Department, string Designation, string Branch, int? ManagerEmployeeId, string Status, decimal ProfileCompletenessScore, DateOnly? VisaExpiryDate, DateOnly? PassportExpiryDate);
 public record EmployeeDocumentRequest(string DocumentType, string FileName, string ContentType, string StorageUrl, bool IsRequired, DateOnly? ExpiryDate);
 public record EmployeeTransferRequestDto(string NewDepartment, string NewBranch, int? NewManagerEmployeeId, DateOnly EffectiveDate);
 public record EmployeeUpdateRequest(DateOnly EffectiveDate, Dictionary<string, JsonElement> Changes);

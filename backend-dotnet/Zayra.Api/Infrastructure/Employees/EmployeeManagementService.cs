@@ -50,7 +50,7 @@ public class EmployeeManagementService : IEmployeeManagementService
 
         var total = await query.CountAsync(cancellationToken);
         var items = await query.OrderBy(x => x.EmployeeCode).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(x => new EmployeeListItemDto(x.Id, x.EmployeeCode, x.FullName, x.ArabicName, x.Department, x.Designation, x.Branch, x.ManagerEmployeeId, x.Status, x.ProfileCompletenessScore, x.VisaExpiryDate, x.PassportExpiryDate, x.IqamaNumber))
+            .Select(x => new EmployeeListItemDto(x.Id, x.EmployeeCode, x.FullName, x.ArabicName, x.Department, x.Designation, x.Branch, x.ManagerEmployeeId, x.Status, x.ProfileCompletenessScore, x.VisaExpiryDate, x.PassportExpiryDate))
             .ToListAsync(cancellationToken);
         return new PagedResult<EmployeeListItemDto>(items, total, page, pageSize);
     }
@@ -65,7 +65,7 @@ public class EmployeeManagementService : IEmployeeManagementService
         }
         else
         {
-            MaskSensitive(employee);
+            EmployeeSensitiveMask.Apply(employee);
         }
 
         return new EmployeeDetailDto(
@@ -542,17 +542,6 @@ public class EmployeeManagementService : IEmployeeManagementService
         var values = new[] { employee.EnglishName, employee.Gender, employee.Nationality, employee.MaritalStatus, employee.PersonalEmail, employee.WorkEmail, employee.Phone, employee.Department, employee.Designation, employee.Branch, employee.JobTitle, employee.EmploymentType, employee.ContractType, employee.WorkLocation, employee.ShiftPolicyCode, employee.LeavePolicyCode };
         var completed = values.Count(x => !string.IsNullOrWhiteSpace(x)) + (employee.DateOfBirth.HasValue ? 1 : 0) + (employee.JoiningDate != default ? 1 : 0) + (payroll is not null ? 2 : 0) + (compliance?.Count > 0 ? 2 : 0);
         return Math.Round(Math.Min(100m, completed * 100m / 22m), 1);
-    }
-
-    private static void MaskSensitive(Employee employee)
-    {
-        employee.BankName = string.Empty;
-        employee.BankIban = string.Empty;
-        employee.PassportNumber = string.Empty;
-        employee.VisaNumber = string.Empty;
-        employee.IqamaNumber = string.Empty;
-        employee.EmiratesId = string.Empty;
-        employee.TerminationReason = string.Empty;
     }
 
     private static string Clean(string? value) => value?.Trim() ?? string.Empty;
