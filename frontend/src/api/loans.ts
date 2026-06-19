@@ -305,6 +305,9 @@ export const bonusBatchesApi = {
   addEmployee: (batchId: string, body: { employeeId: string; employeeName: string; department?: string; basicSalary: number; calculationMethod: string; calculationValue: number; notes?: string }) =>
     client.post<{ bonus: EmployeeBonus; grossBonusAmount: number; taxWithheld: number; netBonusAmount: number }>(`/api/finance/bonuses/batches/${batchId}/employees`, body).then(r => r.data),
 
+  bulkAddEmployees: (batchId: string, body: { companyId?: string; departmentId?: string; department?: string; gradeId?: string; overrideCalculationValue?: number }) =>
+    client.post<{ added: number; skippedDuplicate: number; skippedMinService: number; skippedNoSalary: number; totalNetAdded: number }>(`/api/finance/bonuses/batches/${batchId}/employees/bulk`, body).then(r => r.data),
+
   updateEmployee: (batchId: string, bonusId: string, body: { calculationMethod?: string; calculationValue?: number; basicSalary?: number; notes?: string }) =>
     client.put<{ bonus: EmployeeBonus; grossBonusAmount: number; taxWithheld: number; netBonusAmount: number }>(`/api/finance/bonuses/batches/${batchId}/employees/${bonusId}`, body).then(r => r.data),
 

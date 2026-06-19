@@ -271,6 +271,108 @@ public class BonusesController : ControllerBase
         return Ok(new { bonus = eb, grossBonusAmount, taxWithheld, netBonusAmount });
     }
 
+    [HttpPost("batches/{batchId:guid}/employees/bulk")]
+    [Authorize(Roles = "Admin,HR Manager,Finance")]
+    public async Task<IActionResult> BulkAddEmployees(Guid batchId, [FromBody] BulkAddRequest req, CancellationToken ct)
+    {
+        var tid = GetTenantId(); var uid = GetUserId();
+        var batch = await _db.BonusBatches.FirstOrDefaultAsync(x => x.Id == batchId && x.TenantId == tid && !x.IsDeleted, ct);
+        if (batch == null) return NotFound("Batch not found.");
+        if (batch.Status != "Draft") return BadRequest("Can only add employees to a Draft batch.");
+
+        var bonusType = await _db.BonusTypes.FirstOrDefaultAsync(x => x.Id == batch.BonusTypeId && x.TenantId == tid, ct);
+        if (bonusType == null) return NotFound("Bonus type not found.");
+
+        // Already-added employee int IDs (to skip duplicates)
+        var alreadyAdded = await _db.EmployeeBonuses
+            .Where(x => x.BonusBatchId == batchId && !x.IsDeleted)
+            .Select(x => x.EmployeeId)
+            .ToListAsync(ct);
+
+        // Load active employees for this tenant
+        var empQuery = _db.Employees
+            .Where(e => e.TenantId == tid && e.Status == "Active");
+        if (req.DepartmentId.HasValue)
+            empQuery = empQuery.Where(e => e.DepartmentId == req.DepartmentId.Value);
+        else if (!string.IsNullOrEmpty(req.Department))
+            empQuery = empQuery.Where(e => e.Department == req.Department);
+        if (req.CompanyId.HasValue)
+            empQuery = empQuery.Where(e => e.CompanyId == req.CompanyId.Value);
+        if (req.GradeId.HasValue)
+            empQuery = empQuery.Where(e => e.GradeId == req.GradeId.Value);
+
+        var employees = await empQuery.ToListAsync(ct);
+
+        // Load salary structures once — keyed by Employee.Id
+        var empIds = employees.Select(e => e.Id).ToList();
+        var salaryMap = await _db.EmployeeSalaryStructures
+            .Where(s => empIds.Contains(s.EmployeeId) && s.IsActive)
+            .GroupBy(s => s.EmployeeId)
+            .Select(g => new { EmployeeId = g.Key, BasicSalary = g.OrderByDescending(s => s.EffectiveDate).First().BasicSalary })
+            .ToDictionaryAsync(x => x.EmployeeId, x => x.BasicSalary, ct);
+
+        var minServiceCutoff = DateTime.UtcNow.AddMonths(-bonusType.MinServiceMonths);
+        decimal taxRate = ResolveTaxRate(bonusType);
+
+        int added = 0; int skippedDuplicate = 0; int skippedMinService = 0; int skippedNoSalary = 0;
+        decimal totalNetAdded = 0m;
+        var newBonuses = new List<EmployeeBonus>();
+
+        // Build a set of already-added EmployeeId GUIDs for fast lookup — but our EmployeeBonus.EmployeeId is Guid
+        // We track by employee int Id via EmployeeIntId linkage; fall back to name match if needed
+        // Use a simpler approach: load existing by employee int ids
+        var alreadyAddedIntIds = await _db.EmployeeBonuses
+            .Where(x => x.BonusBatchId == batchId && !x.IsDeleted)
+            .Select(x => x.EmployeeName)
+            .ToListAsync(ct);
+        var alreadyAddedSet = new HashSet<string>(alreadyAddedIntIds);
+
+        foreach (var emp in employees)
+        {
+            // Duplicate check by name (EmployeeBonus.EmployeeName)
+            if (alreadyAddedSet.Contains(emp.FullName)) { skippedDuplicate++; continue; }
+
+            // Min service months
+            if (bonusType.MinServiceMonths > 0 && emp.JoiningDate > minServiceCutoff) { skippedMinService++; continue; }
+
+            // Get basic salary — prefer salary structure, fall back to Employee.Salary
+            if (!salaryMap.TryGetValue(emp.Id, out var basicSalary))
+                basicSalary = emp.Salary ?? 0;
+            if (basicSalary <= 0) { skippedNoSalary++; continue; }
+
+            var calcValue = req.OverrideCalculationValue.HasValue ? req.OverrideCalculationValue.Value : bonusType.DefaultCalculationValue;
+            var method = bonusType.CalculationMethod;
+            decimal gross = method == "PercentageSalary" ? Math.Round(basicSalary * (calcValue / 100m), 2) : calcValue;
+            decimal tax  = bonusType.IsTaxable ? Math.Round(gross * taxRate, 2) : 0m;
+            decimal net  = gross - tax;
+
+            var eb = new EmployeeBonus
+            {
+                TenantId = tid, BonusBatchId = batchId, EmployeeId = Guid.NewGuid(),
+                EmployeeName = emp.FullName, Department = emp.Department,
+                BonusTypeId = bonusType.Id, BonusTypeName = bonusType.NameEn,
+                BasicSalary = basicSalary, CalculationMethod = method, CalculationValue = calcValue,
+                GrossBonusAmount = gross, TaxWithheld = tax, BonusAmount = net,
+                TaxRegion = bonusType.TaxRegion, PaymentPeriod = batch.PaymentPeriod,
+                Status = "Draft", CreatedBy = uid,
+            };
+            newBonuses.Add(eb);
+            totalNetAdded += net;
+            added++;
+        }
+
+        if (newBonuses.Count > 0)
+        {
+            _db.EmployeeBonuses.AddRange(newBonuses);
+            batch.TotalAmount += totalNetAdded;
+            batch.EmployeeCount += added;
+            batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return Ok(new { added, skippedDuplicate, skippedMinService, skippedNoSalary, totalNetAdded });
+    }
+
     [HttpPut("batches/{batchId:guid}/employees/{bonusId:guid}")]
     [Authorize(Roles = "Admin,HR Manager,Finance")]
     public async Task<IActionResult> UpdateEmployeeBonus(Guid batchId, Guid bonusId, [FromBody] UpdateEmployeeBonusRequest req, CancellationToken ct)
@@ -504,6 +606,7 @@ public record BonusTypeRequest(
     bool IsTaxable, string? Frequency, int? MinServiceMonths, bool? ProRataEligibility, bool? RequiresApproval,
     bool? IsIncludedInEosb, bool? IsIncludedInGosiBase, bool? IsIncludedInWps,
     string? TaxRegion, decimal? TaxRate, string? Notes, bool? IsActive = null);
+public record BulkAddRequest(Guid? CompanyId, Guid? DepartmentId, string? Department, Guid? GradeId, decimal? OverrideCalculationValue);
 public record CreateBatchRequest(Guid BonusTypeId, string BatchName, string PaymentPeriod, DateOnly PaymentDate, string? Notes);
 public record UpdateBatchRequest(string? BatchName, string? PaymentPeriod, DateOnly? PaymentDate, string? Notes);
 public record AddEmployeeBonusRequest(Guid EmployeeId, string EmployeeName, string? Department, decimal BasicSalary, string CalculationMethod, decimal CalculationValue, string? Notes);

@@ -19,6 +19,7 @@ import { Modal } from '../components/Modal';
 import { useTenantSettings } from '../contexts/TenantSettingsContext';
 import { EmployeeSearchSelect } from '../components/EmployeeSearchSelect';
 import type { EmployeeSelection } from '../components/EmployeeSearchSelect';
+import { employeesApi } from '../api/employees';
 
 type Tab = 'loans' | 'loanTypes' | 'advances' | 'advancePolicy' | 'bonusTypes' | 'bonusBatches' | 'auditReport';
 
@@ -1079,6 +1080,10 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   const [editBatchForm, setEditBatchForm] = useState({ batchName: '', paymentPeriod: '', paymentDate: '', notes: '' });
   const [deleteBatchId, setDeleteBatchId] = useState<string | null>(null);
   const [deletingBatch, setDeletingBatch] = useState(false);
+  const [bulkModal, setBulkModal] = useState(false);
+  const [bulkForm, setBulkForm] = useState({ department: '', overrideValue: '' });
+  const [bulkResult, setBulkResult] = useState<{ added: number; skippedDuplicate: number; skippedMinService: number; skippedNoSalary: number; totalNetAdded: number } | null>(null);
+  const [departments, setDepartments] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1142,6 +1147,34 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
     setSaving(true); setError('');
     try { await bonusBatchesApi.update(editBatchId, editBatchForm); setEditBatchModal(false); load(); }
     catch { setError('Failed to update batch.'); }
+    finally { setSaving(false); }
+  };
+
+  const openBulkModal = async () => {
+    setBulkForm({ department: '', overrideValue: '' }); setBulkResult(null); setError('');
+    setBulkModal(true);
+    if (departments.length === 0) {
+      try {
+        const report = await employeesApi.reports.headcount();
+        setDepartments(report.byDepartment.map((d) => d.name).filter(Boolean));
+      } catch { /**/ }
+    }
+  };
+
+  const runBulkAdd = async () => {
+    if (!selected) return;
+    setSaving(true); setError(''); setBulkResult(null);
+    try {
+      const btype = bonusTypes.find(t => t.id === selected.batch.bonusTypeId);
+      const overrideCalculationValue = bulkForm.overrideValue ? parseFloat(bulkForm.overrideValue) : undefined;
+      const r = await bonusBatchesApi.bulkAddEmployees(selected.batch.id, {
+        department: bulkForm.department || undefined,
+        overrideCalculationValue: overrideCalculationValue ?? (btype?.defaultCalculationValue || undefined),
+      });
+      setBulkResult(r);
+      const d = await bonusBatchesApi.get(selected.batch.id); setSelected(d);
+      load();
+    } catch { setError('Bulk add failed.'); }
     finally { setSaving(false); }
   };
 
@@ -1260,7 +1293,10 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
             {selected?.batch.status === 'Draft' && <button type="button" onClick={() => submitBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Submit for Approval</button>}
             {selected?.batch.status === 'PendingApproval' && <button type="button" onClick={() => approveBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Approve Batch</button>}
             {selected?.batch.status === 'Approved' && <button type="button" onClick={() => markPaidBatch(selected!.batch.id)} className="h-8 px-3 text-sm rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600">Mark Paid</button>}
-            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { const btype = bonusTypes.find(t => t.id === selected?.batch.bonusTypeId); setEmpForm({ basicSalary: 0, calculationMethod: btype?.calculationMethod ?? 'Fixed', calculationValue: btype?.defaultCalculationValue ?? 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
+            {selected?.batch.status === 'Draft' && <>
+              <button type="button" onClick={openBulkModal} className="btn-primary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Bulk Add</button>
+              <button type="button" onClick={() => { const btype = bonusTypes.find(t => t.id === selected?.batch.bonusTypeId); setEmpForm({ basicSalary: 0, calculationMethod: btype?.calculationMethod ?? 'Fixed', calculationValue: btype?.defaultCalculationValue ?? 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add One</button>
+            </>}
             <button type="button" onClick={() => setDetailModal(false)} className="btn-secondary ml-auto">Close</button>
           </div>
         }>
@@ -1307,6 +1343,56 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
             )}
             {detailTab === 'gl' && <GlEntriesTable entries={selected.glEntries ?? []} fmt={fmt} />}
             {detailTab === 'audit' && <AuditTrailTable logs={selected.auditLogs ?? []} />}
+          </div>
+        )}
+      </Modal>
+
+      {/* Bulk Add Modal */}
+      <Modal isOpen={bulkModal} title="Bulk Add Employees" onClose={() => { setBulkModal(false); setBulkResult(null); }}
+        footer={
+          bulkResult ? (
+            <button type="button" onClick={() => { setBulkModal(false); setBulkResult(null); }} className="btn-primary">Done</button>
+          ) : (
+            <><button type="button" onClick={() => setBulkModal(false)} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={runBulkAdd} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Adding…' : 'Add All'}</button></>
+          )
+        }>
+        {bulkResult ? (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-800 dark:bg-emerald-900/20">
+              <p className="font-semibold text-emerald-700 dark:text-emerald-300">{bulkResult.added} employees added</p>
+              <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">Total bonus: {bulkResult.totalNetAdded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            </div>
+            {(bulkResult.skippedDuplicate + bulkResult.skippedMinService + bulkResult.skippedNoSalary) > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20 text-sm space-y-1">
+                {bulkResult.skippedDuplicate > 0 && <p className="text-amber-700 dark:text-amber-300">Skipped {bulkResult.skippedDuplicate} already in batch</p>}
+                {bulkResult.skippedMinService > 0 && <p className="text-amber-700 dark:text-amber-300">Skipped {bulkResult.skippedMinService} below minimum service months</p>}
+                {bulkResult.skippedNoSalary > 0 && <p className="text-amber-700 dark:text-amber-300">Skipped {bulkResult.skippedNoSalary} with no salary on record</p>}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Adds all active employees matching the filters below. Salary is fetched from each employee&apos;s salary structure. Bonus amount is calculated using the type&apos;s default value (or your override below).
+            </p>
+            <FormError error={error} />
+            <FormField label="Department (leave blank for all)">
+              <select value={bulkForm.department} onChange={(e) => setBulkForm(x => ({ ...x, department: e.target.value }))} className="select w-full" title="Department filter">
+                <option value="">All departments</option>
+                {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </FormField>
+            <FormField label={`Override Calculation Value (${bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.calculationMethod === 'PercentageSalary' ? '%' : 'amount'}) — leave blank to use type default`}>
+              <input
+                type="number" min={0} step={0.01}
+                value={bulkForm.overrideValue}
+                onChange={(e) => setBulkForm(x => ({ ...x, overrideValue: e.target.value }))}
+                className="input w-full"
+                placeholder={`Default: ${bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.defaultCalculationValue ?? 0}`}
+                title="Override calculation value"
+              />
+            </FormField>
           </div>
         )}
       </Modal>
