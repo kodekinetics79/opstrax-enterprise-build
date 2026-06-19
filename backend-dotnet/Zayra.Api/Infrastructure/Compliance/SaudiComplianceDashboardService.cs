@@ -145,6 +145,9 @@ public sealed class SaudiComplianceDashboardService
             .Where(s => s.TenantId == tenantId)
             .ToListAsync(ct);
 
+        // IgnoreQueryFilters is intentional: same as GosiReadinessReportService — Guid.Empty
+        // platform defaults are invisible through the global tenant filter. Scope is re-applied
+        // explicitly: own-tenant overrides + Guid.Empty defaults only.
         var rules = await _db.GosiContributionRules
             .IgnoreQueryFilters()
             .AsNoTracking()

@@ -27,6 +27,9 @@ public class GosiController : ControllerBase
     public async Task<IActionResult> GetContributionRules(CancellationToken ct)
     {
         var tenantId = GetTenantId();
+        // IgnoreQueryFilters is intentional: GosiContributionRule uses TenantId==Guid.Empty for
+        // platform-wide defaults, which the global tenant filter would exclude. We re-apply
+        // explicit tenant scope in the WHERE clause below (own tenant + Guid.Empty only).
         var rules = await _db.GosiContributionRules
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -104,8 +107,10 @@ public class GosiController : ControllerBase
         if (!HasPermission("payroll.manage")) return Forbid();
 
         var tenantId = GetTenantId();
+        // GosiContributionRule has no IsDeleted; the global filter is purely tenant-scoped
+        // (TenantId == tenantId). IgnoreQueryFilters is not needed here — removed so the
+        // global filter remains active as a second tenant-isolation guard.
         var rule = await _db.GosiContributionRules
-            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, ct);
 
         if (rule is null) return NotFound(new { error = "Rule not found or belongs to a different tenant." });
@@ -366,6 +371,9 @@ public class GosiController : ControllerBase
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // IgnoreQueryFilters is intentional: same reasoning as GetContributionRules.
+    // Platform defaults (TenantId==Guid.Empty) are excluded by the global filter, so we bypass
+    // it and re-apply explicit scope: own tenant rows + Guid.Empty defaults only.
     private async Task<IReadOnlyList<GosiContributionRule>> LoadRulesAsync(Guid tenantId, CancellationToken ct) =>
         await _db.GosiContributionRules
             .IgnoreQueryFilters()

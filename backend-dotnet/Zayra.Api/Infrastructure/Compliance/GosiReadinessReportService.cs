@@ -30,7 +30,9 @@ public sealed class GosiReadinessReportService
             .Where(s => s.TenantId == tenantId)
             .ToListAsync(ct);
 
-        // Load global defaults (TenantId == Guid.Empty) + tenant overrides together.
+        // IgnoreQueryFilters is intentional: platform-wide default rules carry TenantId==Guid.Empty
+        // and are excluded by the global tenant filter. We bypass the filter and re-apply explicit
+        // scope: own-tenant overrides + Guid.Empty defaults only. No other tenant's rows are visible.
         var rules = await _db.GosiContributionRules
             .IgnoreQueryFilters()
             .AsNoTracking()

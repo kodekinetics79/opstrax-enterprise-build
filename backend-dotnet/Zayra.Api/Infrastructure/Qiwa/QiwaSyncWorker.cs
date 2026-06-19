@@ -74,6 +74,8 @@ public sealed class QiwaSyncWorker : BackgroundService
         // Requeue Failed logs whose exponential backoff window has elapsed.
         // Backoff = 2^retryCount * 30s → 60s, 120s, 240s before each subsequent attempt.
         var now = DateTime.UtcNow;
+        // SYSTEM CONTEXT: tenant scope intentionally bypassed — background worker has no HTTP
+        // request context; must process logs for all tenants in a single pass.
         var failed = await db.QiwaSyncLogs
             .IgnoreQueryFilters()
             .Where(l => l.Status == QiwaSyncLogStatuses.Failed && l.RetryCount < l.MaxRetries && l.Direction == "Push")
@@ -86,8 +88,8 @@ public sealed class QiwaSyncWorker : BackgroundService
         }
         if (failed.Count > 0) await db.SaveChangesAsync(ct);
 
-        // IgnoreQueryFilters: the worker runs outside a request, so the per-request
-        // tenant filter is not set. We re-apply tenant scoping explicitly below.
+        // SYSTEM CONTEXT: tenant scope intentionally bypassed — same reasoning as above.
+        // Tenant scoping is re-applied per-group inside the foreach below.
         var pending = await db.QiwaSyncLogs
             .IgnoreQueryFilters()
             .Where(l => l.Status == QiwaSyncLogStatuses.Pending && l.RetryCount < l.MaxRetries && l.Direction == "Push")
@@ -102,6 +104,7 @@ public sealed class QiwaSyncWorker : BackgroundService
             var tenantId = group.Key;
 
             // Feature flag: absent row = enabled; explicit IsEnabled=false = skip.
+            // SYSTEM CONTEXT: tenant scope intentionally bypassed; explicit TenantId predicate above.
             var featureFlag = await db.TenantFeatureFlags.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.FeatureKey == FeatureKeys.QiwaIntegration, ct);
             if (featureFlag is { IsEnabled: false })
@@ -112,8 +115,10 @@ public sealed class QiwaSyncWorker : BackgroundService
                 continue;
             }
 
+            // SYSTEM CONTEXT: tenant scope intentionally bypassed; explicit TenantId predicate above.
             var connection = await db.QiwaTenantConnections.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
+            // SYSTEM CONTEXT: tenant scope intentionally bypassed; explicit TenantId predicate above.
             var credential = await db.QiwaApiCredentials.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
 
@@ -192,6 +197,8 @@ public sealed class QiwaSyncWorker : BackgroundService
         ZayraDbContext db, QiwaTenantConnection? connection, string? token,
         QiwaSyncLog log, Guid tenantId, CancellationToken ct)
     {
+        // SYSTEM CONTEXT: tenant scope intentionally bypassed; explicit TenantId and IsDeleted
+        // predicates below replace the global filter for this background-worker call site.
         var employee = await db.Employees.IgnoreQueryFilters()
             .FirstOrDefaultAsync(e => e.TenantId == tenantId && e.Id == log.EmployeeId && !e.IsDeleted, ct);
 

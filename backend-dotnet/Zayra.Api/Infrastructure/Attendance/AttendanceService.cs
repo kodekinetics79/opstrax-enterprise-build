@@ -316,8 +316,12 @@ public class AttendanceService : IAttendanceService
     {
         if (string.IsNullOrWhiteSpace(deviceKey)) return null;
         var hash = HashKey(deviceKey.Trim());
-        // The device key identifies device + tenant. Lookup spans tenants by design;
-        // every subsequent query is scoped explicitly to device.TenantId.
+        // IgnoreQueryFilters: this endpoint is [AllowAnonymous] — the device API key IS the
+        // authentication token, so there is no JWT and DbContext._tenantId is null. The global
+        // tenant filter is therefore already inactive; IgnoreQueryFilters here is explicit
+        // documentation of that design. The lookup is intentionally cross-tenant: the device key
+        // hash resolves which tenant owns the device. Every subsequent query in this method is
+        // scoped to device.TenantId (a DB-sourced value, not a caller parameter).
         var device = await _db.AttendanceDevices.IgnoreQueryFilters()
             .FirstOrDefaultAsync(x => x.ApiKeyReference == hash && !x.IsDeleted, ct);
         if (device is null || !device.IsActive) return null;
@@ -335,6 +339,9 @@ public class AttendanceService : IAttendanceService
         {
             var employee = await ResolveEmployee(tenantId, null, punch.EmployeeCode, ct);
             var direction = NormalizeDirection(punch.PunchDirection);
+            // IgnoreQueryFilters: same null-tenantId context as above. Explicit
+            // x.TenantId == tenantId predicate (where tenantId == device.TenantId, a DB value)
+            // provides the tenant scope that the inactive global filter would otherwise give.
             var dup = await _db.AttendanceRawEvents.IgnoreQueryFilters().AnyAsync(x =>
                 x.TenantId == tenantId && x.DeviceId == device.Id && x.PunchTimestampUtc == punch.PunchTimestampUtc &&
                 x.PunchDirection == direction &&

@@ -146,7 +146,8 @@ public class PayrollController : ControllerBase
             .Select(x => x.SettingValue)
             .FirstOrDefaultAsync(cancellationToken);
         decimal.TryParse(taxRateSetting, out var incomeTaxRate); // 0 if unset
-        // Load GOSI contribution rules (global defaults + tenant overrides) once per run
+        // IgnoreQueryFilters is intentional: same as GosiController — Guid.Empty defaults are
+        // invisible to the global tenant filter. Explicit predicate re-applies correct scope.
         var gosiRules = await _db.GosiContributionRules
             .IgnoreQueryFilters()
             .AsNoTracking()
