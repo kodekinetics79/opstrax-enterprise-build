@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAutoTranslate } from '../hooks/useAutoTranslate';
 import { useAuth } from '../contexts/AuthContext';
+import { useLocale } from '../contexts/LocaleContext';
 import { EmployeePicker } from '../components/EmployeePicker';
 import type { SelectedEmployee } from '../components/EmployeePicker';
 import {
@@ -1726,6 +1727,7 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
 
 export function LeavePage() {
   const { user } = useAuth();
+  const { t } = useLocale();
   const [tab, setTab] = useState<Tab>('dashboard');
   const [companies, setCompanies] = useState<CompanyDto[]>([]);
   const [branches, setBranches] = useState<BranchDto[]>([]);
@@ -1780,7 +1782,7 @@ export function LeavePage() {
     <div className="space-y-5 p-4 sm:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">Leave &amp; Absence Management</h1>
+          <h1 className="text-2xl font-extrabold text-slate-950 dark:text-white">{t('Leave & Absence Management')}</h1>
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
         </div>
         <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
@@ -1805,11 +1807,11 @@ export function LeavePage() {
 
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'max-content' }}>
-          {visibleTabs.map(t => (
-            <button key={t.id} type="button" onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === t.id ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
-              <t.icon className="h-3.5 w-3.5" />
-              {t.label}
+          {visibleTabs.map(tb => (
+            <button key={tb.id} type="button" onClick={() => setTab(tb.id)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === tb.id ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
+              <tb.icon className="h-3.5 w-3.5" />
+              {t(tb.label)}
             </button>
           ))}
         </div>

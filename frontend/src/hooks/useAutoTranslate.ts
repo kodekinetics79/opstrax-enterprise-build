@@ -1,21 +1,58 @@
-import { useEffect, useRef, useState } from 'react';
+'use client';
 
-const DEBOUNCE_MS = 700;
+import { useEffect, useRef, useState } from 'react';
+import type { LocaleCode } from '../i18n/translations';
+
+const DEBOUNCE_MS = 600;
+const CACHE_PREFIX = 'zayra-tx-';
+
+// MyMemory language pair codes
+const LANG_PAIR: Partial<Record<LocaleCode, string>> = {
+  ar: 'en|ar',
+  fr: 'en|fr',
+  es: 'en|es',
+};
+
+function cacheKey(locale: string, source: string): string {
+  return `${CACHE_PREFIX}${locale}:${source.trim().toLowerCase()}`;
+}
+
+function getCache(locale: string, source: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(cacheKey(locale, source)); } catch { return null; }
+}
+
+function setCache(locale: string, source: string, translation: string): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(cacheKey(locale, source), translation); } catch { /* quota */ }
+}
 
 /**
- * Debounced English → Arabic auto-translation via MyMemory (free, no key required).
- * Returns the latest translated text and a loading flag.
- * Aborts in-flight requests when the source changes or the component unmounts.
+ * Debounced English → target-locale auto-translation via MyMemory (free, no key required).
+ * Results are cached in localStorage to avoid repeat API calls.
+ * Falls back silently on network errors — translation is best-effort.
  */
-export function useAutoTranslate(source: string) {
+export function useAutoTranslate(source: string, locale: LocaleCode = 'ar') {
   const [translation, setTranslation] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const trimmed = source.trim();
-    if (!trimmed || trimmed.length < 2) {
+
+    // English or unsupported locale — no translation needed
+    if (!trimmed || trimmed.length < 2 || locale === 'en') {
       setTranslation('');
+      return;
+    }
+
+    const pair = LANG_PAIR[locale];
+    if (!pair) { setTranslation(''); return; }
+
+    // Serve from cache immediately
+    const cached = getCache(locale, trimmed);
+    if (cached) {
+      setTranslation(cached);
       return;
     }
 
@@ -26,15 +63,17 @@ export function useAutoTranslate(source: string) {
 
       try {
         const res = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmed)}&langpair=en|ar`,
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmed)}&langpair=${pair}`,
           { signal: abortRef.current.signal },
         );
         const data: { responseStatus: number; responseData?: { translatedText: string } } = await res.json();
         if (data.responseStatus === 200 && data.responseData?.translatedText) {
-          setTranslation(data.responseData.translatedText);
+          const tx = data.responseData.translatedText;
+          setCache(locale, trimmed, tx);
+          setTranslation(tx);
         }
       } catch {
-        // Translation is best-effort — silently ignore network / abort errors
+        // Best-effort — silently ignore network / abort errors
       } finally {
         setIsTranslating(false);
       }
@@ -44,7 +83,7 @@ export function useAutoTranslate(source: string) {
       clearTimeout(timer);
       abortRef.current?.abort();
     };
-  }, [source]);
+  }, [source, locale]);
 
   return { translation, isTranslating };
 }
