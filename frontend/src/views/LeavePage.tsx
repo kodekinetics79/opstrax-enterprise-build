@@ -1228,6 +1228,13 @@ function HolidayCalendarTab() {
     reloadHolidays(selected);
   }, [selected]);
 
+  // ── error helper ──
+  const apiErr = (err: unknown) => {
+    const ax = err as { response?: { status?: number; data?: unknown } };
+    if (ax?.response) return `${ax.response.status}: ${JSON.stringify(ax.response.data)}`;
+    return String(err);
+  };
+
   // ── Calendar save (create or edit) ──
   const saveCal = async () => {
     try {
@@ -1240,7 +1247,7 @@ function HolidayCalendarTab() {
         await reloadCalendars();
       }
       setCalModal('none');
-    } catch { alert('Failed.'); }
+    } catch (err) { alert(`Failed: ${apiErr(err)}`); }
   };
 
   const openEditCal = (c: PublicHolidayCalendar) => {
@@ -1254,7 +1261,24 @@ function HolidayCalendarTab() {
       await holidayCalendarApi.deleteCalendar(c.id);
       if (selected?.id === c.id) { setSelected(null); setHolidays([]); }
       await reloadCalendars();
-    } catch { alert('Failed.'); }
+    } catch (err) { alert(`Failed: ${apiErr(err)}`); }
+  };
+
+  // Normalise date from API (DateOnly → "YYYY-MM-DD" for <input type=date>)
+  const toInputDate = (d: unknown): string => {
+    if (!d) return '';
+    if (typeof d === 'string') {
+      // Already ISO string — take only the date part
+      return d.split('T')[0];
+    }
+    // DateOnly serialised as object { year, month, day } (legacy .NET builds)
+    if (typeof d === 'object') {
+      const o = d as { year?: number; month?: number; day?: number };
+      if (o.year && o.month && o.day) {
+        return `${o.year}-${String(o.month).padStart(2, '0')}-${String(o.day).padStart(2, '0')}`;
+      }
+    }
+    return String(d).split('T')[0];
   };
 
   // ── Holiday save (add or edit) ──
@@ -1269,7 +1293,7 @@ function HolidayCalendarTab() {
       setHolidayModal('none');
       setEditingHoliday(null);
       await reloadHolidays(selected);
-    } catch { alert('Failed.'); }
+    } catch (err) { alert(`Failed: ${apiErr(err)}`); }
   };
 
   const openEditHoliday = (h: PublicHoliday) => {
@@ -1277,7 +1301,7 @@ function HolidayCalendarTab() {
     setHolidayForm({
       nameEn: h.nameEn,
       nameAr: h.nameAr ?? '',
-      date: typeof h.date === 'string' ? h.date : String(h.date),
+      date: toInputDate(h.date),
       hijriDate: h.hijriDate ?? '',
       holidayType: h.holidayType ?? 'National',
       isRecurring: h.isRecurring ?? false,
@@ -1291,7 +1315,7 @@ function HolidayCalendarTab() {
     try {
       await holidayCalendarApi.deleteHoliday(h.id);
       setHolidays(prev => prev.filter(x => x.id !== h.id));
-    } catch { alert('Failed.'); }
+    } catch (err) { alert(`Failed: ${apiErr(err)}`); }
   };
 
   const openAddHoliday = () => {
