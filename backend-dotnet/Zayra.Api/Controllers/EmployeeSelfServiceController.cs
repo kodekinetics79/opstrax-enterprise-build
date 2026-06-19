@@ -32,7 +32,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("dashboard")]
-    [AllowEntityReturn("ESSDashboardDto is a DTO. AttendanceToday member is AttendanceDailyRecord (flat, no nav props): work date, check-in/check-out times, work-time metrics. All other members of ESSDashboardDto are already projected DTOs or scalars. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data in AttendanceDailyRecord.")]
+    [AllowEntityReturn("Flat entity (AttendanceDailyRecord, embedded in ESSDashboardDto DTO return). No navigation properties. Fields: WorkDate, FirstInUtc, LastOutUtc, TotalWorkedMinutes, LateMinutes, EarlyExitMinutes, OvertimeMinutes, MissingPunch, Status, WorkMode. All other ESSDashboardDto members are projected DTOs or scalars. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<ESSDashboardDto>> Dashboard(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);

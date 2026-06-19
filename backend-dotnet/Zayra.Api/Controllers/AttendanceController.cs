@@ -306,7 +306,8 @@ public class AttendanceController : ControllerBase
         _attendance.DeviceSyncReportAsync(RequireTenant(), ct);
 
     [HttpGet("ai/insights")]
-    [AllowEntityReturn("Flat entity — no navigation properties. Fields: InsightType, Severity, Title, Summary (AI-generated analysis text), EmployeeId (int FK), DataJson, IsAcknowledged. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
+    [Authorize(Roles = "Admin,HR Director,HR Manager")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: InsightType, Severity, Title, Summary (AI-generated analysis text), EmployeeId (int FK), DataJson (contains only aggregate metrics: {count, since} — no salary/bank/passport/ID), IsAcknowledged. Restricted to Admin/HR Director/HR Manager; employees cannot call this endpoint.")]
     public Task<IReadOnlyCollection<AttendanceAIInsight>> Insights(CancellationToken ct) =>
         _attendance.GenerateInsightsAsync(RequireTenant(), ct);
 

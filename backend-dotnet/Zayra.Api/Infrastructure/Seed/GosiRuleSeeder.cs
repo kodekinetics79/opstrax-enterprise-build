@@ -24,8 +24,9 @@ public static class GosiRuleSeeder
 
     public static async Task SeedDefaultsAsync(ZayraDbContext db, ILogger logger)
     {
-        // SYSTEM CONTEXT: tenant scope intentionally bypassed — seeder runs at startup
-        // outside any request; must see all tenants (and Guid.Empty rows) to check existence.
+        // IgnoreQueryFilters is intentional: seeder runs at startup outside any request context
+        // (no IHttpContextAccessor, so the tenant filter is inactive). Must see Guid.Empty rows
+        // to check whether platform defaults have already been seeded.
         var hasDefaults = await db.GosiContributionRules
             .IgnoreQueryFilters()
             .AnyAsync(r => r.TenantId == Guid.Empty);
