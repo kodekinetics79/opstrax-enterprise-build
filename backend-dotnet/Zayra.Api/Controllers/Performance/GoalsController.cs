@@ -33,7 +33,7 @@ public class GoalsController : ControllerBase
     {
         var tenantId = this.GetTenantId()!.Value;
         var scope = await _scopeService.ResolveAsync(User, tenantId, ct);
-        var query = _db.EmployeeGoals.Where(g => g.TenantId == tenantId);
+        var query = _db.EmployeeGoals.Where(g => g.TenantId == tenantId && !g.IsDeleted);
         if (!scope.IsUnrestricted)
             query = query.Where(g => scope.AllowedEmployeeIds!.Contains(g.EmployeeId));
         if (employeeId.HasValue) query = query.Where(g => g.EmployeeId == employeeId.Value);
@@ -85,9 +85,12 @@ public class GoalsController : ControllerBase
             KpiType          = req.KpiType,
             MeasurementUnit  = req.MeasurementUnit ?? string.Empty,
             TargetValue      = req.TargetValue,
+            BaselineValue    = req.BaselineValue ?? 0,
             ActualValue      = req.ActualValue,
-            Weight           = req.Weight,
+            Priority         = req.Priority ?? "Medium",
+            StartDate        = req.StartDate,
             DueDate          = req.DueDate,
+            Status           = "Draft",
             CreatedByUserId  = userId,
         };
         goal.AchievementPct = goal.TargetValue > 0
@@ -114,8 +117,11 @@ public class GoalsController : ControllerBase
         goal.KpiType         = req.KpiType;
         goal.MeasurementUnit = req.MeasurementUnit ?? string.Empty;
         goal.TargetValue     = req.TargetValue;
+        goal.BaselineValue   = req.BaselineValue ?? goal.BaselineValue;
         goal.ActualValue     = req.ActualValue;
         goal.Weight          = req.Weight;
+        goal.Priority        = req.Priority ?? goal.Priority;
+        goal.StartDate       = req.StartDate;
         goal.DueDate         = req.DueDate;
         goal.AchievementPct  = goal.TargetValue > 0
             ? Math.Min(100, Math.Round(goal.ActualValue / goal.TargetValue * 100, 1))
@@ -170,12 +176,26 @@ public class GoalsController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return Ok(goal);
     }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin,HR Manager,HR Officer,Manager,Employee")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var tenantId = this.GetTenantId()!.Value;
+        var goal = await _db.EmployeeGoals.FirstOrDefaultAsync(g => g.Id == id && g.TenantId == tenantId && !g.IsDeleted, ct);
+        if (goal is null) return NotFound();
+        if (goal.ManagerApproved) return BadRequest("Cannot delete an approved goal. Set it to Cancelled instead.");
+        goal.IsDeleted = true; goal.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { deleted = true });
+    }
 }
 
 public record GoalRequest(
     int EmployeeId, string EmployeeName, Guid? CycleId,
     string Title, string? Description, string Category, string KpiType,
     string? MeasurementUnit, decimal TargetValue, decimal ActualValue,
-    decimal Weight, DateOnly? DueDate);
+    decimal Weight, DateOnly? DueDate,
+    string? Priority = "Medium", DateOnly? StartDate = null, decimal? BaselineValue = null);
 
 public record ProgressUpdateRequest(decimal UpdatedValue, string? Notes, string? UpdatedByName);

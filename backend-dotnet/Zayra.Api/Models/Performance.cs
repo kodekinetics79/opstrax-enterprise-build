@@ -135,9 +135,13 @@ public class EmployeeGoal
     public decimal TargetValue { get; set; }
     public decimal ActualValue { get; set; }
     public decimal Weight { get; set; } = 100;
+    public decimal BaselineValue { get; set; } = 0; // starting value before the goal period
     public decimal AchievementPct { get; set; }
+    public string Priority { get; set; } = "Medium"; // High/Medium/Low
+    public DateOnly? StartDate { get; set; }
     public DateOnly? DueDate { get; set; }
-    public string Status { get; set; } = "Active"; // Draft/Active/Completed/Cancelled
+    public string Status { get; set; } = "Draft"; // Draft/Active/Completed/OnHold/Cancelled
+    public bool IsDeleted { get; set; }
     public bool ManagerApproved { get; set; }
     public Guid? ApprovedByUserId { get; set; }
     public Guid? CreatedByUserId { get; set; }

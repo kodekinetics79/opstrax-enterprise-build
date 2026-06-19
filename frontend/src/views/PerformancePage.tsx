@@ -1,6 +1,9 @@
 'use client';
 
 import { InfoTip } from '../components/InfoTip';
+import { EmployeeSearchSelect } from '../components/EmployeeSearchSelect';
+import type { EmployeeSelection } from '../components/EmployeeSearchSelect';
+import { useTenantSettings } from '../contexts/TenantSettingsContext';
 import { useEffect, useState } from 'react';
 import {
   Activity, AlertTriangle, BarChart2, CheckCircle, ChevronRight,
@@ -53,8 +56,16 @@ function statusBadge(status: string) {
     Acknowledged: 'bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-400',
     Appealed: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
   };
+  const labels: Record<string, string> = {
+    SelfAssessmentDue: 'Self-Assessment Due',
+    SelfAssessmentSubmitted: 'Self-Assessment Submitted',
+    ManagerReview: 'Manager Review',
+    FinalApproval: 'Final Approval',
+    InReview: 'In Review',
+    OnHold: 'On Hold',
+  };
   const cls = map[status] ?? 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400';
-  return <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${cls}`}>{status}</span>;
+  return <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${cls}`}>{labels[status] ?? status}</span>;
 }
 
 // ── KPI Card ──────────────────────────────────────────────────────────────────
@@ -575,37 +586,40 @@ function TeamReviewsTab() {
 // ── Goals Tab ─────────────────────────────────────────────────────────────────
 
 function CreateGoalModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeSelection | null>(null);
   const [form, setForm] = useState({
-    employeeId: '', employeeName: '', title: '', description: '', category: 'KPI',
-    kpiType: 'Numeric', measurementUnit: '', targetValue: '', actualValue: '0',
-    weight: '10', dueDate: '',
+    title: '', description: '', category: 'KPI',
+    kpiType: 'Numeric', measurementUnit: '', baselineValue: '0', targetValue: '', actualValue: '0',
+    weight: '10', priority: 'Medium', startDate: '', dueDate: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const save = async () => {
-    if (!form.employeeId || !form.title || !form.targetValue) { setError('Employee ID, Title, and Target Value are required.'); return; }
+    if (!selectedEmployee) { setError('Please select an employee.'); return; }
+    if (!form.title || !form.targetValue) { setError('Title and Target Value are required.'); return; }
     setSaving(true); setError('');
     try {
       await goalsApi.create({
-        employeeId: Number(form.employeeId), employeeName: form.employeeName,
+        employeeId: selectedEmployee.intId, employeeName: selectedEmployee.fullName,
         title: form.title, description: form.description, category: form.category,
         kpiType: form.kpiType, measurementUnit: form.measurementUnit,
+        baselineValue: Number(form.baselineValue),
         targetValue: Number(form.targetValue), actualValue: Number(form.actualValue),
-        weight: Number(form.weight), dueDate: form.dueDate || undefined,
+        weight: Number(form.weight), priority: form.priority,
+        startDate: form.startDate || undefined, dueDate: form.dueDate || undefined,
       });
       onSaved();
     } catch { setError('Failed to create goal.'); setSaving(false); }
   };
 
   return (
-    <Modal title="Add Goal / KPI" onClose={onClose}>
+    <Modal title="Add Goal / KPI" onClose={onClose} wide>
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-          <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-        </div>
+        <Field label="Employee *">
+          <EmployeeSearchSelect value={selectedEmployee} onChange={setSelectedEmployee} required />
+        </Field>
         <Field label="Goal Title *"><input className={inp} value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Achieve 95% customer satisfaction score" /></Field>
         <Field label="Description"><textarea className={inp} rows={2} value={form.description} onChange={e => set('description', e.target.value)} /></Field>
         <div className="grid grid-cols-3 gap-3">
@@ -614,19 +628,28 @@ function CreateGoalModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               {['KPI', 'Learning', 'Behavioral', 'Project', 'Strategic'].map(c => <option key={c}>{c}</option>)}
             </select>
           </Field>
+          <Field label="Priority">
+            <select className={sel} value={form.priority} onChange={e => set('priority', e.target.value)}>
+              {['High', 'Medium', 'Low'].map(p => <option key={p}>{p}</option>)}
+            </select>
+          </Field>
           <Field label="Measurement">
             <select className={sel} value={form.kpiType} onChange={e => set('kpiType', e.target.value)}>
               {['Numeric', 'Percentage', 'Boolean', 'Currency', 'Rating'].map(t => <option key={t}>{t}</option>)}
             </select>
           </Field>
+        </div>
+        <div className="grid grid-cols-4 gap-3">
+          <Field label="Baseline"><input type="number" className={inp} value={form.baselineValue} onChange={e => set('baselineValue', e.target.value)} /></Field>
+          <Field label="Target *"><input type="number" className={inp} value={form.targetValue} onChange={e => set('targetValue', e.target.value)} /></Field>
+          <Field label="Actual"><input type="number" className={inp} value={form.actualValue} onChange={e => set('actualValue', e.target.value)} /></Field>
           <Field label="Unit"><input className={inp} value={form.measurementUnit} onChange={e => set('measurementUnit', e.target.value)} placeholder="e.g. %" /></Field>
         </div>
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Target *"><input type="number" className={inp} value={form.targetValue} onChange={e => set('targetValue', e.target.value)} /></Field>
-          <Field label="Current Actual"><input type="number" className={inp} value={form.actualValue} onChange={e => set('actualValue', e.target.value)} /></Field>
           <Field label="Weight (%)"><input type="number" min={1} max={100} className={inp} value={form.weight} onChange={e => set('weight', e.target.value)} /></Field>
+          <Field label="Start Date"><input type="date" title="Start Date" className={inp} value={form.startDate} onChange={e => set('startDate', e.target.value)} /></Field>
+          <Field label="Due Date"><input type="date" title="Due Date" className={inp} value={form.dueDate} onChange={e => set('dueDate', e.target.value)} /></Field>
         </div>
-        <Field label="Due Date"><input type="date" className={inp} value={form.dueDate} onChange={e => set('dueDate', e.target.value)} /></Field>
         {error && <p className="text-xs text-rose-500">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className={btn.ghost} onClick={onClose}>Cancel</button>
@@ -637,6 +660,12 @@ function CreateGoalModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
   );
 }
 
+const PRIORITY_BADGE: Record<string, string> = {
+  High: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400',
+  Medium: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  Low: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400',
+};
+
 function GoalsTab() {
   const [goals, setGoals] = useState<EmployeeGoal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -645,6 +674,8 @@ function GoalsTab() {
   const [progressGoal, setProgressGoal] = useState<EmployeeGoal | null>(null);
   const [progressVal, setProgressVal] = useState('');
   const [progressNotes, setProgressNotes] = useState('');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -658,12 +689,20 @@ function GoalsTab() {
     catch { alert('Update failed.'); }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
+    try { await goalsApi.delete(deleteId); setDeleteId(null); load(); }
+    catch { alert('Delete failed. Goal may be approved.'); }
+    setDeleting(false);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <select className={`${sel} w-48`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">All Statuses</option>
-          {['Active', 'Completed', 'OnHold', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
+          {['Draft', 'Active', 'Completed', 'OnHold', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
         </select>
         <p className="flex-1 text-sm text-slate-500 dark:text-slate-400">{goals.length} goal{goals.length !== 1 ? 's' : ''}</p>
         <button type="button" className={btn.primary} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4" /> Add Goal</button>
@@ -681,7 +720,7 @@ function GoalsTab() {
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-900 dark:text-white">{g.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-400">{g.employeeName} · {g.category} · {g.kpiType} · Weight: {g.weight}%</p>
+                  <p className="mt-0.5 text-xs text-slate-400">{g.employeeName} · {g.category} · {g.kpiType} · Weight: {g.weight}%{g.dueDate ? ` · Due ${fmtDate(g.dueDate)}` : ''}</p>
                   <div className="mt-2 flex items-center gap-4">
                     <div className="flex-1">
                       <div className="h-1.5 w-48 rounded-full bg-slate-100 dark:bg-white/10">
@@ -693,9 +732,13 @@ function GoalsTab() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE[g.priority] ?? PRIORITY_BADGE.Medium}`}>{g.priority}</span>
                   {statusBadge(g.status)}
                   {g.status === 'Active' && (
                     <button type="button" className={btn.ghost} onClick={() => { setProgressGoal(g); setProgressVal(String(g.actualValue)); setProgressNotes(''); }}>Update</button>
+                  )}
+                  {!g.managerApproved && (
+                    <button type="button" className="rounded px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-900/20" onClick={() => setDeleteId(g.id)}>Delete</button>
                   )}
                 </div>
               </div>
@@ -709,12 +752,23 @@ function GoalsTab() {
         <Modal title={`Update Progress — ${progressGoal.title}`} onClose={() => setProgressGoal(null)}>
           <div className="space-y-4">
             <Field label={`New Actual Value (target: ${progressGoal.targetValue} ${progressGoal.measurementUnit})`}>
-              <input type="number" className={inp} value={progressVal} onChange={e => setProgressVal(e.target.value)} />
+              <input type="number" title="New Actual Value" className={inp} value={progressVal} onChange={e => setProgressVal(e.target.value)} />
             </Field>
-            <Field label="Notes"><textarea className={inp} rows={2} value={progressNotes} onChange={e => setProgressNotes(e.target.value)} /></Field>
+            <Field label="Notes"><textarea className={inp} value={progressNotes} onChange={e => setProgressNotes(e.target.value)} /></Field>
             <div className="flex justify-end gap-2">
               <button type="button" className={btn.ghost} onClick={() => setProgressGoal(null)}>Cancel</button>
               <button type="button" className={btn.primary} onClick={updateProgress}>Save Progress</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {deleteId && (
+        <Modal title="Delete Goal" onClose={() => setDeleteId(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700 dark:text-slate-300">This will permanently remove the goal and its progress history. Approved goals cannot be deleted.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.ghost} onClick={() => setDeleteId(null)}>Cancel</button>
+              <button type="button" className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50" onClick={confirmDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete Goal'}</button>
             </div>
           </div>
         </Modal>
@@ -971,6 +1025,7 @@ function CalibrationTab() {
 // ── Recommendations Tab ───────────────────────────────────────────────────────
 
 function RecommendationsTab() {
+  const { currencyCode } = useTenantSettings();
   const [tab, setTab] = useState<'increments' | 'promotions' | 'bonuses'>('increments');
   const [increments, setIncrements] = useState<IncrementRecommendation[]>([]);
   const [promotions, setPromotions] = useState<PromotionRecommendation[]>([]);
@@ -1002,7 +1057,7 @@ function RecommendationsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'fit-content' }}>
+      <div className="flex w-fit gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]">
         {(['increments', 'promotions', 'bonuses'] as const).map(t => (
           <button key={t} type="button" onClick={() => setTab(t)} className={`rounded-lg px-4 py-1.5 text-sm font-medium capitalize transition ${tab === t ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>{t}</button>
         ))}
@@ -1019,7 +1074,7 @@ function RecommendationsTab() {
               <div>
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">{r.employeeName}</p>
                 <p className="text-xs text-slate-400">{r.departmentName} · {r.designationTitle}</p>
-                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Current: AED {fmtCurrency(r.currentSalary)} → New: AED {fmtCurrency(r.newSalary)} (+{r.recommendedIncrementPct}%)</p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Current: {currencyCode} {fmtCurrency(r.currentSalary)} → New: {currencyCode} {fmtCurrency(r.newSalary)} (+{r.recommendedIncrementPct}%)</p>
               </div>
               <button type="button" className={btn.primary} onClick={() => { setDecideModal({ type: 'increment', id: r.id, name: r.employeeName }); setDecision('Approved'); setNotes(''); }}>Decide</button>
             </div>
@@ -1039,7 +1094,7 @@ function RecommendationsTab() {
               <div>
                 <p className="text-sm font-semibold text-slate-900 dark:text-white">{r.employeeName}</p>
                 <p className="text-xs text-slate-400">{r.departmentName} · {r.bonusType}</p>
-                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Amount: AED {fmtCurrency(r.bonusAmount)}</p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Amount: {currencyCode} {fmtCurrency(r.bonusAmount)}</p>
               </div>
               <button type="button" className={btn.primary} onClick={() => { setDecideModal({ type: 'bonus', id: r.id, name: r.employeeName }); setDecision('Approved'); setNotes(''); }}>Decide</button>
             </div>
@@ -1051,12 +1106,12 @@ function RecommendationsTab() {
         <Modal title={`Decision — ${decideModal.name}`} onClose={() => setDecideModal(null)}>
           <div className="space-y-4">
             <Field label="Decision">
-              <select className={sel} value={decision} onChange={e => setDecision(e.target.value)}>
+              <select title="Decision" className={sel} value={decision} onChange={e => setDecision(e.target.value)}>
                 <option value="Approved">Approve</option>
                 <option value="Rejected">Reject</option>
               </select>
             </Field>
-            <Field label="Notes"><textarea className={inp} rows={3} value={notes} onChange={e => setNotes(e.target.value)} /></Field>
+            <Field label="Notes"><textarea title="Notes" className={inp} rows={3} value={notes} onChange={e => setNotes(e.target.value)} /></Field>
             <div className="flex justify-end gap-2">
               <button type="button" className={btn.ghost} onClick={() => setDecideModal(null)}>Cancel</button>
               <button type="button" className={decision === 'Approved' ? btn.primary : btn.danger} onClick={decide}>{decision}</button>
@@ -1071,16 +1126,18 @@ function RecommendationsTab() {
 // ── PIP & Probation Tab ───────────────────────────────────────────────────────
 
 function CreatePIPModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ employeeId: '', employeeName: '', departmentName: '', performanceGaps: '', improvementGoals: '', supportPlan: '', startDate: '', endDate: '', hrNotes: '' });
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeSelection | null>(null);
+  const [form, setForm] = useState({ performanceGaps: '', improvementGoals: '', supportPlan: '', startDate: '', endDate: '', hrNotes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const save = async () => {
-    if (!form.employeeId || !form.performanceGaps || !form.improvementGoals || !form.startDate || !form.endDate) { setError('Employee, gaps, goals and dates are required.'); return; }
+    if (!selectedEmployee) { setError('Please select an employee.'); return; }
+    if (!form.performanceGaps || !form.improvementGoals || !form.startDate || !form.endDate) { setError('Performance gaps, goals and dates are required.'); return; }
     setSaving(true); setError('');
     try {
-      await pipApi.create({ employeeId: Number(form.employeeId), employeeName: form.employeeName, departmentName: form.departmentName, performanceGaps: form.performanceGaps, improvementGoals: form.improvementGoals, supportPlan: form.supportPlan, startDate: form.startDate, endDate: form.endDate, hrNotes: form.hrNotes });
+      await pipApi.create({ employeeId: selectedEmployee.intId, employeeName: selectedEmployee.fullName, departmentName: selectedEmployee.department, performanceGaps: form.performanceGaps, improvementGoals: form.improvementGoals, supportPlan: form.supportPlan, startDate: form.startDate, endDate: form.endDate, hrNotes: form.hrNotes });
       onSaved();
     } catch { setError('Failed to create PIP.'); setSaving(false); }
   };
@@ -1088,19 +1145,20 @@ function CreatePIPModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   return (
     <Modal title="Create Performance Improvement Plan" onClose={onClose} wide>
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-          <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-          <Field label="Department"><input className={inp} value={form.departmentName} onChange={e => set('departmentName', e.target.value)} /></Field>
-        </div>
+        <Field label="Employee *">
+          <EmployeeSearchSelect value={selectedEmployee} onChange={setSelectedEmployee} required />
+        </Field>
+        {selectedEmployee && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">Department: {selectedEmployee.department}</p>
+        )}
         <Field label="Performance Gaps *"><textarea className={inp} rows={3} value={form.performanceGaps} onChange={e => set('performanceGaps', e.target.value)} placeholder="Describe specific performance deficiencies…" /></Field>
         <Field label="Improvement Goals *"><textarea className={inp} rows={3} value={form.improvementGoals} onChange={e => set('improvementGoals', e.target.value)} placeholder="Measurable objectives to achieve within the PIP period…" /></Field>
         <Field label="Support Plan"><textarea className={inp} rows={2} value={form.supportPlan} onChange={e => set('supportPlan', e.target.value)} placeholder="Training, coaching, resources provided…" /></Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Start Date *"><input type="date" className={inp} value={form.startDate} onChange={e => set('startDate', e.target.value)} /></Field>
-          <Field label="End Date *"><input type="date" className={inp} value={form.endDate} onChange={e => set('endDate', e.target.value)} /></Field>
+          <Field label="Start Date *"><input type="date" title="Start Date" className={inp} value={form.startDate} onChange={e => set('startDate', e.target.value)} /></Field>
+          <Field label="End Date *"><input type="date" title="End Date" className={inp} value={form.endDate} onChange={e => set('endDate', e.target.value)} /></Field>
         </div>
-        <Field label="HR Notes"><textarea className={inp} rows={2} value={form.hrNotes} onChange={e => set('hrNotes', e.target.value)} /></Field>
+        <Field label="HR Notes"><textarea title="HR Notes" className={inp} rows={2} value={form.hrNotes} onChange={e => set('hrNotes', e.target.value)} /></Field>
         {error && <p className="text-xs text-rose-500">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className={btn.ghost} onClick={onClose}>Cancel</button>
@@ -1144,7 +1202,7 @@ function PIPProbationTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'fit-content' }}>
+      <div className="flex w-fit gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]">
         <button type="button" onClick={() => setSubTab('pip')} className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${subTab === 'pip' ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}`}>PIPs ({pips.length})</button>
         <button type="button" onClick={() => setSubTab('probation')} className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${subTab === 'probation' ? 'bg-white text-sapphire shadow-sm dark:bg-white/10 dark:text-cyanAccent' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'}`}>Probation ({probations.length})</button>
       </div>
@@ -1220,7 +1278,7 @@ function PIPProbationTab() {
         <Modal title={`Update PIP Status — ${statusModal.name}`} onClose={() => setStatusModal(null)}>
           <div className="space-y-4">
             <Field label="New Status">
-              <select className={sel} value={newStatus} onChange={e => setNewStatus(e.target.value)}>
+              <select title="New Status" className={sel} value={newStatus} onChange={e => setNewStatus(e.target.value)}>
                 {['Improved', 'Extended', 'Failed', 'TerminationRecommended'].map(s => <option key={s}>{s}</option>)}
               </select>
             </Field>
@@ -1229,7 +1287,7 @@ function PIPProbationTab() {
                 This is a recommendation only — not an automatic termination. HR and leadership must make the final employment decision.
               </div>
             )}
-            <Field label="Notes"><textarea className={inp} rows={3} value={statusNotes} onChange={e => setStatusNotes(e.target.value)} /></Field>
+            <Field label="Notes"><textarea title="Status Notes" className={inp} rows={3} value={statusNotes} onChange={e => setStatusNotes(e.target.value)} /></Field>
             <div className="flex justify-end gap-2">
               <button type="button" className={btn.ghost} onClick={() => setStatusModal(null)}>Cancel</button>
               <button type="button" className={newStatus === 'TerminationRecommended' || newStatus === 'Failed' ? btn.danger : btn.primary} onClick={updatePIPStatus}>Update</button>
@@ -1258,7 +1316,7 @@ function AnalyticsTab() {
 
   return (
     <div className="space-y-4">
-      <select className={`${sel} w-72`} value={selectedCycle} onChange={e => setSelectedCycle(e.target.value)}>
+      <select title="Select Cycle" className={`${sel} w-72`} value={selectedCycle} onChange={e => setSelectedCycle(e.target.value)}>
         <option value="">Select cycle</option>
         {cycles.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
@@ -1285,7 +1343,7 @@ function AnalyticsTab() {
                     <div key={d.rating} className="flex items-center gap-3">
                       <span className="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400">{d.rating || 'Unrated'}</span>
                       <div className="flex-1 rounded-full bg-slate-100 dark:bg-white/10">
-                        <div className="h-2 rounded-full bg-sapphire" style={{ width: `${d.pct}%` }} />
+                        <div className="h-2 rounded-full bg-sapphire" style={{ width: `${d.pct}%` }} />{/* dynamic — inline required */}
                       </div>
                       <span className="w-12 text-right text-xs font-semibold tabular-nums text-slate-600 dark:text-slate-300">{d.count} ({d.pct}%)</span>
                     </div>
@@ -1373,7 +1431,8 @@ function FeedbackTab() {
   const [feedbacks, setFeedbacks] = useState<Awaited<ReturnType<typeof feedbackApi.listContinuous>>>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ employeeId: '', employeeName: '', feedbackType: 'Commendation', content: '', isPrivate: false });
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeSelection | null>(null);
+  const [form, setForm] = useState({ feedbackType: 'Commendation', content: '', isPrivate: false });
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof form, v: string | boolean) => setForm(f => ({ ...f, [k]: v }));
 
@@ -1381,9 +1440,14 @@ function FeedbackTab() {
   useEffect(load, []);
 
   const save = async () => {
-    if (!form.employeeId || !form.content) return;
+    if (!selectedEmployee || !form.content) return;
     setSaving(true);
-    try { await feedbackApi.createContinuous({ employeeId: Number(form.employeeId), employeeName: form.employeeName, feedbackType: form.feedbackType, content: form.content, isPrivate: form.isPrivate }); setShowCreate(false); load(); }
+    try {
+      await feedbackApi.createContinuous({ employeeId: selectedEmployee.intId, employeeName: selectedEmployee.fullName, feedbackType: form.feedbackType, content: form.content, isPrivate: form.isPrivate });
+      setShowCreate(false);
+      setSelectedEmployee(null);
+      load();
+    }
     catch { alert('Failed to submit feedback.'); }
     setSaving(false);
   };
@@ -1419,12 +1483,11 @@ function FeedbackTab() {
       {showCreate && (
         <Modal title="Give Continuous Feedback" onClose={() => setShowCreate(false)}>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Employee ID *"><input type="number" className={inp} value={form.employeeId} onChange={e => set('employeeId', e.target.value)} /></Field>
-              <Field label="Employee Name"><input className={inp} value={form.employeeName} onChange={e => set('employeeName', e.target.value)} /></Field>
-            </div>
+            <Field label="Employee *">
+              <EmployeeSearchSelect value={selectedEmployee} onChange={setSelectedEmployee} required />
+            </Field>
             <Field label="Feedback Type">
-              <select className={sel} value={form.feedbackType} onChange={e => set('feedbackType', e.target.value)}>
+              <select title="Feedback Type" className={sel} value={form.feedbackType} onChange={e => set('feedbackType', e.target.value)}>
                 {['Commendation', 'Concern', 'Coaching', 'Developmental', 'Recognition'].map(t => <option key={t}>{t}</option>)}
               </select>
             </Field>
@@ -1476,7 +1539,7 @@ export function PerformancePage({ initialTab }: { initialTab?: Tab } = {}) {
 
       {/* Tab bar — scrollable on mobile */}
       <div className="overflow-x-auto">
-        <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]" style={{ width: 'max-content' }}>
+        <div className="flex w-max gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/[0.03]">
           {TABS.map(t => (
             <button
               key={t.id}

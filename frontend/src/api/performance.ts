@@ -56,12 +56,15 @@ export interface EmployeeGoal {
   category: string;
   kpiType: string;
   measurementUnit: string;
+  baselineValue: number;
   targetValue: number;
   actualValue: number;
   weight: number;
   achievementPct: number;
+  priority: string; // High/Medium/Low
+  startDate: string | null;
   dueDate: string | null;
-  status: string;
+  status: string; // Draft/Active/Completed/OnHold/Cancelled
   managerApproved: boolean;
   createdAtUtc: string;
 }
@@ -338,7 +341,8 @@ export const goalsApi = {
   create: (body: {
     employeeId: number; employeeName: string; cycleId?: string; title: string;
     description?: string; category: string; kpiType: string; measurementUnit?: string;
-    targetValue: number; actualValue: number; weight: number; dueDate?: string;
+    baselineValue?: number; targetValue: number; actualValue: number; weight: number;
+    priority?: string; startDate?: string; dueDate?: string;
   }) => client.post<EmployeeGoal>('/api/performance/goals', body).then(r => r.data),
 
   updateProgress: (id: string, updatedValue: number, notes?: string, updatedByName?: string) =>
@@ -346,6 +350,9 @@ export const goalsApi = {
 
   approve: (id: string) =>
     client.post<EmployeeGoal>(`/api/performance/goals/${id}/approve`).then(r => r.data),
+
+  delete: (id: string) =>
+    client.delete<{ deleted: boolean }>(`/api/performance/goals/${id}`).then(r => r.data),
 };
 
 export const reviewsApi = {
