@@ -172,31 +172,69 @@ builder.Services.AddHostedService<AiInsightEngine>();
 builder.Services.AddHttpClient<ILlmClient, LlmClient>();
 builder.Services.AddHttpContextAccessor();
 
-// Country pack framework — default (no-op) pack wired as singleton fallbacks.
-// Real country packs register their strategies as KeyedService<T> entries;
-// the resolver prefers those over the defaults when a match is found.
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
+// Country pack framework — scoped per request (strategies depend on scoped IStatutoryRuleReader).
+// Default (no-op) pack registered as the non-keyed fallback for each interface.
+// Country packs registered as keyed scoped services; the resolver checks keyed registrations
+// in order: exact jurisdiction key (e.g. "ARE:UAE-DIFC") → country key ("ARE") → default.
+
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.IStatutoryRuleReader,
+    Zayra.Api.Infrastructure.CountryPack.StatutoryRuleReader>();
+
+// Default pack (fallback — non-keyed)
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
     Zayra.Api.Infrastructure.CountryPack.DefaultStatutoryDeductionCalculator>();
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
     Zayra.Api.Infrastructure.CountryPack.DefaultEndOfServiceCalculator>();
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
     Zayra.Api.Infrastructure.CountryPack.DefaultWageProtectionExporter>();
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.INationalizationTracker,
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.INationalizationTracker,
     Zayra.Api.Infrastructure.CountryPack.DefaultNationalizationTracker>();
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.ILocalizationProfile,
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.ILocalizationProfile,
     Zayra.Api.Infrastructure.CountryPack.DefaultLocalizationProfile>();
-builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.ICountryPackResolver>(sp =>
-    new Zayra.Api.Infrastructure.CountryPack.CountryPackResolver(
-        deductionCalcs: Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator>>(),
-        eosCalcs:       Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator>>(),
-        wpsExporters:   Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.IWageProtectionExporter>>(),
-        natTrackers:    Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.INationalizationTracker>>(),
-        localeProfiles: Enumerable.Empty<Zayra.Api.Infrastructure.CountryPack.KeyedService<Zayra.Api.Application.CountryPack.ILocalizationProfile>>(),
-        defaultDeduction: sp.GetRequiredService<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator>(),
-        defaultEos:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator>(),
-        defaultWps:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.IWageProtectionExporter>(),
-        defaultNat:       sp.GetRequiredService<Zayra.Api.Application.CountryPack.INationalizationTracker>(),
-        defaultLocale:    sp.GetRequiredService<Zayra.Api.Application.CountryPack.ILocalizationProfile>()));
+
+// KSA pack — country-wide key "SAU"
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaDeductionCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaEndOfServiceCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaWageProtectionExporter>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.INationalizationTracker,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaNationalizationTracker>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.ILocalizationProfile,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaLocalizationProfile>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+
+// UAE pack — country-wide key "ARE" (mainland + ADGM)
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeDeductionCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeMainlandEndOfServiceCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeWageProtectionExporter>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.INationalizationTracker,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeNationalizationTracker>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.ILocalizationProfile,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeLocalizationProfile>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+
+// UAE DIFC override — jurisdiction-exact key "ARE:UAE-DIFC" (EOS only; deduction/WPS/locale use mainland)
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeDifcEndOfServiceCalculator>(
+    $"{Zayra.Api.Application.CountryPack.CountryCodes.UAE}:{Zayra.Api.Application.CountryPack.Jurisdictions.Difc}");
+
+// Qatar pack — country-wide key "QAT"
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarDeductionCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IEndOfServiceCalculator,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarEndOfServiceCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IWageProtectionExporter,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarWageProtectionExporter>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.INationalizationTracker,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarNationalizationTracker>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.ILocalizationProfile,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarLocalizationProfile>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+
+builder.Services.AddScoped<Zayra.Api.Application.CountryPack.ICountryPackResolver,
+    Zayra.Api.Infrastructure.CountryPack.CountryPackResolver>();
 
 // Rate limiting — brute-force protection on auth endpoints.
 // Limits are configurable via RateLimit:* in appsettings / env vars.
@@ -374,6 +412,7 @@ using (var scope = app.Services.CreateScope())
         }
 
         await GosiRuleSeeder.SeedDefaultsAsync(dbContext, logger);
+        await Zayra.Api.Infrastructure.Seed.StatutoryRuleSeeder.SeedAsync(dbContext, logger);
     }
     catch (Exception ex)
     {

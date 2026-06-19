@@ -4,9 +4,9 @@ namespace Zayra.Api.Application.CountryPack;
 
 public static class CountryCodes
 {
-    public const string Saudi  = "SAU";
-    public const string Qatar  = "QAT";
-    public const string UAE    = "ARE";
+    public const string Saudi = "SAU";
+    public const string Qatar = "QAT";
+    public const string UAE   = "ARE";
 }
 
 public static class Jurisdictions
@@ -18,12 +18,30 @@ public static class Jurisdictions
     public const string Adgm          = "UAE-ADGM";
 }
 
+// ── Salary breakdown ──────────────────────────────────────────────────────────
+// GCC statutory bases (GOSI, GPSSA, GRSIA, EOSB) are computed on basic or
+// basic+housing — NOT gross.  The breakdown is provided by the caller so
+// each pack can apply the correct base without reaching back to the DB.
+
+public sealed record SalaryBreakdown(
+    decimal Basic,
+    decimal HousingAllowance,
+    decimal TransportAllowance,
+    decimal OtherAllowances)
+{
+    public decimal Gross => Basic + HousingAllowance + TransportAllowance + OtherAllowances;
+    // KSA GOSI "covered wage" = basic + housing; subject to ceiling set in StatutoryRule
+    public decimal GosiCoveredWage => Basic + HousingAllowance;
+    // UAE GPSSA contribution base (same logic)
+    public decimal GpssaBase => Basic + HousingAllowance;
+}
+
 // ── Statutory deduction ───────────────────────────────────────────────────────
 
 public sealed record StatutoryDeductionInput(
     Guid EmployeeId,
     Guid CompanyId,
-    decimal GrossSalary,
+    SalaryBreakdown Salary,
     string Nationality,
     string ContractType,
     int PeriodYear,
@@ -37,12 +55,15 @@ public sealed record StatutoryDeductionResult(
     IReadOnlyList<StatutoryDeductionLine> Lines);
 
 // ── End of service ───────────────────────────────────────────────────────────
+// Service dates (not pre-computed years) are required because proration and
+// rounding rules are country-specific (day-count vs month-count vs week-count).
 
 public sealed record EndOfServiceInput(
     Guid EmployeeId,
     Guid CompanyId,
-    decimal BasicSalary,
-    decimal YearsOfService,
+    SalaryBreakdown Salary,
+    DateOnly ServiceStartDate,
+    DateOnly ServiceEndDate,
     string TerminationReason,
     string ContractType,
     string Nationality);
@@ -54,6 +75,22 @@ public sealed record EndOfServiceResult(
     string ApplicableRule,
     IReadOnlyList<EndOfServiceBreakdown> Breakdown);
 
+// ── Wage protection employee row ──────────────────────────────────────────────
+// The exporter receives the full union of all WPS format fields so no pack
+// needs to reach back to the DB mid-export.
+
+public sealed record WpsEmployee(
+    Guid EmployeeId,
+    string EmployeeCode,
+    string FullNameEn,
+    string FullNameAr,
+    string Nationality,
+    string NationalId,        // QID (QA), Emirates ID (UAE), National ID (KSA)
+    string IbanOrAccount,
+    string BankCode,
+    SalaryBreakdown Salary,
+    decimal NetPay);
+
 // ── Wage protection export ────────────────────────────────────────────────────
 
 public sealed record WageProtectionExportInput(
@@ -61,7 +98,12 @@ public sealed record WageProtectionExportInput(
     Guid CompanyId,
     Guid PayrollRunId,
     int PeriodYear,
-    int PeriodMonth);
+    int PeriodMonth,
+    string EstablishmentId,   // KSA: Mudad employer ID; UAE: MOHRE establishment; QA: CR number
+    string EmployerIban,
+    string CompanyNameEn,
+    string CompanyNameAr,
+    IReadOnlyList<WpsEmployee> Employees);
 
 public sealed record WageProtectionExportResult(
     byte[] FileBytes,
@@ -70,8 +112,14 @@ public sealed record WageProtectionExportResult(
     int RecordCount);
 
 // ── Nationalization tracking ──────────────────────────────────────────────────
+// The caller pre-computes headcount from the employee roster so the tracker
+// stays pure (no DB queries inside the strategy).
 
-public sealed record NationalizationInput(Guid TenantId, Guid CompanyId);
+public sealed record NationalizationInput(
+    Guid TenantId,
+    Guid CompanyId,
+    int TotalHeadcount,
+    int NationalHeadcount);
 
 public enum NationalizationComplianceStatus { Compliant, AtRisk, NonCompliant, NotApplicable }
 
@@ -80,7 +128,8 @@ public sealed record NationalizationResult(
     double CurrentRatio,
     int TotalHeadcount,
     int NationalHeadcount,
-    NationalizationComplianceStatus Status);
+    NationalizationComplianceStatus Status,
+    string SchemeLabel);
 
 // ── Localization profile ──────────────────────────────────────────────────────
 

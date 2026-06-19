@@ -2,10 +2,8 @@ using Zayra.Api.Application.CountryPack;
 
 namespace Zayra.Api.Infrastructure.CountryPack;
 
-// ── Default (no-op) implementations ──────────────────────────────────────────
-// Used as the fallback pack when no country-specific pack is registered.
-// Returns safe zero-value results so the framework is provably end-to-end
-// before real packs exist. Each real pack replaces exactly one of these.
+// Safe no-op implementations — returned by the resolver when no country-specific
+// pack matches.  Each real pack replaces exactly one of these per (country, jurisdiction).
 
 public sealed class DefaultStatutoryDeductionCalculator : IStatutoryDeductionCalculator
 {
@@ -28,7 +26,8 @@ public sealed class DefaultWageProtectionExporter : IWageProtectionExporter
 public sealed class DefaultNationalizationTracker : INationalizationTracker
 {
     public Task<NationalizationResult> GetStatusAsync(NationalizationInput input, CancellationToken ct = default)
-        => Task.FromResult(new NationalizationResult(0d, 0d, 0, 0, NationalizationComplianceStatus.NotApplicable));
+        => Task.FromResult(new NationalizationResult(0d, 0d, input.TotalHeadcount, input.NationalHeadcount,
+            NationalizationComplianceStatus.NotApplicable, "default"));
 }
 
 public sealed class DefaultLocalizationProfile : ILocalizationProfile
