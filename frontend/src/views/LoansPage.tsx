@@ -17,6 +17,8 @@ import type {
 } from '../api/loans';
 import { Modal } from '../components/Modal';
 import { useTenantSettings } from '../contexts/TenantSettingsContext';
+import { EmployeeSearchSelect } from '../components/EmployeeSearchSelect';
+import type { EmployeeSelection } from '../components/EmployeeSearchSelect';
 
 type Tab = 'loans' | 'loanTypes' | 'advances' | 'advancePolicy' | 'bonusTypes' | 'bonusBatches' | 'auditReport';
 
@@ -261,7 +263,8 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
   const [selected, setSelected] = useState<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] } | null>(null);
   const [decideModal, setDecideModal] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<LoanApproval | null>(null);
-  const [createForm, setCreateForm] = useState({ employeeId: '', employeeName: '', loanTypeId: '', requestedAmount: 0, requestedInstallments: 12, notes: '' });
+  const [createForm, setCreateForm] = useState({ loanTypeId: '', requestedAmount: 0, requestedInstallments: 12, notes: '' });
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeSelection | null>(null);
   const [decideForm, setDecideForm] = useState({ decision: 'Approved', comments: '', approvedAmount: 0, approvedInstallments: 0, repaymentStartDate: '' });
   const [settleForm, setSettleForm] = useState({ settlementType: 'Early', settlementAmount: 0, settlementDate: '', notes: '' });
   const [saving, setSaving] = useState(false);
@@ -280,9 +283,17 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
   };
 
   const createLoan = async () => {
-    if (!createForm.employeeId.trim() || !createForm.loanTypeId) { setError('Employee ID and loan type are required'); return; }
+    if (!selectedEmployee || !createForm.loanTypeId) { setError('Select an employee and loan type'); return; }
     setSaving(true); setError('');
-    try { await loansApi.create(createForm); setCreateModal(false); load(); }
+    try {
+      await loansApi.create({
+        ...createForm,
+        employeeId: '00000000-0000-0000-0000-000000000000', // server auto-generates
+        employeeName: selectedEmployee.fullName,
+        employeeIntId: selectedEmployee.intId,
+      });
+      setCreateModal(false); setSelectedEmployee(null); load();
+    }
     catch (e: any) { setError(e?.response?.data || 'Failed to create loan.'); }
     finally { setSaving(false); }
   };
@@ -327,7 +338,7 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
             <option value="">All Statuses</option>
             {['PendingApproval', 'Approved', 'Active', 'Settled', 'Rejected', 'Closed'].map((s) => <option key={s}>{s}</option>)}
           </select>
-          <button type="button" onClick={() => { setCreateForm({ employeeId: '', employeeName: '', loanTypeId: loanTypes[0]?.id ?? '', requestedAmount: 0, requestedInstallments: 12, notes: '' }); setError(''); setCreateModal(true); }} className="btn-primary">
+          <button type="button" onClick={() => { setCreateForm({ loanTypeId: loanTypes[0]?.id ?? '', requestedAmount: 0, requestedInstallments: 12, notes: '' }); setSelectedEmployee(null); setError(''); setCreateModal(true); }} className="btn-primary">
             <Plus className="h-4 w-4" /> New Loan Request
           </button>
         </div>
@@ -377,18 +388,27 @@ function LoansTab({ loanTypes }: { loanTypes: LoanType[] }) {
       <Modal isOpen={createModal} title="New Loan Request" onClose={() => setCreateModal(false)} size="lg"
         footer={<><button type="button" onClick={() => setCreateModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={createLoan} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Submitting…' : 'Submit Request'}</button></>}>
         <FormError error={error} />
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="Employee ID (GUID)" required><input value={createForm.employeeId} onChange={(e) => setCreateForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></FormField>
-          <FormField label="Employee Name" required><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
-          <FormField label="Loan Type" required>
-            <select value={createForm.loanTypeId} onChange={(e) => setCreateForm(x => ({ ...x, loanTypeId: e.target.value }))} className="select w-full" title="Loan Type">
-              <option value="">Select type</option>
-              {loanTypes.map((t) => <option key={t.id} value={t.id}>{t.nameEn}</option>)}
-            </select>
+        <div className="space-y-3">
+          <FormField label="Employee" required>
+            <EmployeeSearchSelect value={selectedEmployee} onChange={setSelectedEmployee} required />
           </FormField>
-          <FormField label={`Requested Amount (${currencyCode})`} required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" /></FormField>
-          <FormField label="Requested Installments"><input type="number" value={createForm.requestedInstallments} onChange={(e) => setCreateForm(x => ({ ...x, requestedInstallments: Number(e.target.value) }))} className="input w-full" title="Requested Installments" /></FormField>
-          <FormField label="Notes"><textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" /></FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Loan Type" required>
+              <select value={createForm.loanTypeId} onChange={(e) => setCreateForm(x => ({ ...x, loanTypeId: e.target.value }))} className="select w-full" title="Loan Type">
+                <option value="">Select type</option>
+                {loanTypes.map((t) => <option key={t.id} value={t.id}>{t.nameEn} {t.isInterestFree ? '(Interest-Free)' : `(${t.interestRate}%)`}</option>)}
+              </select>
+            </FormField>
+            <FormField label={`Amount (${currencyCode})`} required>
+              <input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" min="1" />
+            </FormField>
+            <FormField label="Installments">
+              <input type="number" value={createForm.requestedInstallments} onChange={(e) => setCreateForm(x => ({ ...x, requestedInstallments: Number(e.target.value) }))} className="input w-full" title="Requested Installments" min="1" />
+            </FormField>
+            <FormField label="Notes">
+              <textarea value={createForm.notes} onChange={(e) => setCreateForm(x => ({ ...x, notes: e.target.value }))} className="input w-full" rows={2} title="Notes" />
+            </FormField>
+          </div>
         </div>
       </Modal>
 
@@ -584,7 +604,8 @@ function AdvancesTab() {
   const [createModal, setCreateModal] = useState(false);
   const [approveModal, setApproveModal] = useState(false);
   const [selected, setSelected] = useState<SalaryAdvance | null>(null);
-  const [createForm, setCreateForm] = useState({ employeeId: '', employeeName: '', requestedAmount: 0, repaymentType: 'FullDeduction', installments: 1, repaymentStartDate: '', reason: '' });
+  const [createForm, setCreateForm] = useState({ requestedAmount: 0, repaymentType: 'FullDeduction', installments: 1, repaymentStartDate: '', reason: '' });
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeSelection | null>(null);
   const [approveForm, setApproveForm] = useState({ approvedAmount: 0, installments: 1, repaymentStartDate: '' });
   const [rejectReason, setRejectReason] = useState('');
   const [rejectModal, setRejectModal] = useState(false);
@@ -599,9 +620,17 @@ function AdvancesTab() {
   useEffect(() => { load(); }, [load]);
 
   const createAdvance = async () => {
-    if (!createForm.employeeId.trim()) { setError('Employee ID is required'); return; }
+    if (!selectedEmployee) { setError('Select an employee'); return; }
     setSaving(true); setError('');
-    try { await advancesApi.create(createForm); setCreateModal(false); load(); }
+    try {
+      await advancesApi.create({
+        ...createForm,
+        employeeId: '00000000-0000-0000-0000-000000000000',
+        employeeName: selectedEmployee.fullName,
+        employeeIntId: selectedEmployee.intId,
+      });
+      setCreateModal(false); setSelectedEmployee(null); load();
+    }
     catch (e: any) { setError(e?.response?.data || 'Failed to create advance.'); }
     finally { setSaving(false); }
   };
@@ -630,7 +659,7 @@ function AdvancesTab() {
             <option value="">All Statuses</option>
             {['Pending', 'Approved', 'Active', 'Settled', 'Rejected'].map((s) => <option key={s}>{s}</option>)}
           </select>
-          <button type="button" onClick={() => { setCreateForm({ employeeId: '', employeeName: '', requestedAmount: 0, repaymentType: 'FullDeduction', installments: 1, repaymentStartDate: '', reason: '' }); setError(''); setCreateModal(true); }} className="btn-primary">
+          <button type="button" onClick={() => { setCreateForm({ requestedAmount: 0, repaymentType: 'FullDeduction', installments: 1, repaymentStartDate: '', reason: '' }); setSelectedEmployee(null); setError(''); setCreateModal(true); }} className="btn-primary">
             <Plus className="h-4 w-4" /> New Advance Request
           </button>
         </div>
@@ -686,9 +715,10 @@ function AdvancesTab() {
         footer={<><button type="button" onClick={() => setCreateModal(false)} className="btn-secondary">Cancel</button><button type="button" onClick={createAdvance} disabled={saving} className="btn-primary disabled:opacity-60">{saving ? 'Submitting…' : 'Submit'}</button></>}>
         <FormError error={error} />
         <div className="space-y-3">
-          <FormField label="Employee ID (GUID)" required><input value={createForm.employeeId} onChange={(e) => setCreateForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-…" /></FormField>
-          <FormField label="Employee Name"><input value={createForm.employeeName} onChange={(e) => setCreateForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
-          <FormField label={`Requested Amount (${currencyCode})`} required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" /></FormField>
+          <FormField label="Employee" required>
+            <EmployeeSearchSelect value={selectedEmployee} onChange={setSelectedEmployee} required />
+          </FormField>
+          <FormField label={`Requested Amount (${currencyCode})`} required><input type="number" value={createForm.requestedAmount} onChange={(e) => setCreateForm(x => ({ ...x, requestedAmount: Number(e.target.value) }))} className="input w-full" title="Requested Amount" min="1" /></FormField>
           <FormField label="Repayment Type">
             <select value={createForm.repaymentType} onChange={(e) => setCreateForm(x => ({ ...x, repaymentType: e.target.value }))} className="select w-full" title="Repayment Type">
               {['FullDeduction', 'Installments'].map((v) => <option key={v}>{v}</option>)}
@@ -828,7 +858,8 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   const [selected, setSelected] = useState<{ batch: BonusBatch; bonuses: EmployeeBonus[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] } | null>(null);
   const [addEmployeeModal, setAddEmployeeModal] = useState(false);
   const [createForm, setCreateForm] = useState({ bonusTypeId: '', batchName: '', paymentPeriod: '', paymentDate: '', notes: '' });
-  const [empForm, setEmpForm] = useState({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: 'Fixed', calculationValue: 0, notes: '' });
+  const [empForm, setEmpForm] = useState({ basicSalary: 0, calculationMethod: 'Fixed', calculationValue: 0, notes: '' });
+  const [selectedBonusEmp, setSelectedBonusEmp] = useState<EmployeeSelection | null>(null);
   const [addResult, setAddResult] = useState<{ grossBonusAmount: number; taxWithheld: number; netBonusAmount: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -854,10 +885,15 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
   };
 
   const addEmployee = async () => {
-    if (!selected || !empForm.employeeId.trim()) { setError('Employee ID is required'); return; }
+    if (!selected || !selectedBonusEmp) { setError('Select an employee'); return; }
     setSaving(true); setError(''); setAddResult(null);
     try {
-      const r = await bonusBatchesApi.addEmployee(selected.batch.id, empForm);
+      const r = await bonusBatchesApi.addEmployee(selected.batch.id, {
+        ...empForm,
+        employeeId: '00000000-0000-0000-0000-000000000000',
+        employeeName: selectedBonusEmp.fullName,
+        department: selectedBonusEmp.department,
+      });
       setAddResult({ grossBonusAmount: r.grossBonusAmount, taxWithheld: r.taxWithheld, netBonusAmount: r.netBonusAmount });
       const d = await bonusBatchesApi.get(selected.batch.id); setSelected(d);
     } catch { setError('Failed to add employee.'); }
@@ -958,7 +994,7 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
             {selected?.batch.status === 'Draft' && <button type="button" onClick={() => submitBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Submit for Approval</button>}
             {selected?.batch.status === 'PendingApproval' && <button type="button" onClick={() => approveBatch(selected!.batch.id)} className="btn-primary h-8 px-3 text-sm">Approve Batch</button>}
             {selected?.batch.status === 'Approved' && <button type="button" onClick={() => markPaidBatch(selected!.batch.id)} className="h-8 px-3 text-sm rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600">Mark Paid</button>}
-            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { setEmpForm({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.calculationMethod ?? 'Fixed', calculationValue: 0, notes: '' }); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
+            {selected?.batch.status === 'Draft' && <button type="button" onClick={() => { setEmpForm({ basicSalary: 0, calculationMethod: bonusTypes.find(t => t.id === selected?.batch.bonusTypeId)?.calculationMethod ?? 'Fixed', calculationValue: 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); setError(''); setAddEmployeeModal(true); }} className="btn-secondary h-8 px-3 text-sm"><Plus className="h-3.5 w-3.5" /> Add Employee</button>}
             <button type="button" onClick={() => setDetailModal(false)} className="btn-secondary ml-auto">Close</button>
           </div>
         }>
@@ -1023,13 +1059,13 @@ function BonusBatchesTab({ bonusTypes }: { bonusTypes: BonusType[] }) {
                 <div><p className="text-xs text-slate-400">Net to Employee</p><p className="font-bold text-emerald-600 dark:text-emerald-400">{fmt(addResult.netBonusAmount)}</p></div>
               </div>
             </div>
-            <button type="button" onClick={() => { setEmpForm({ employeeId: '', employeeName: '', department: '', basicSalary: 0, calculationMethod: empForm.calculationMethod, calculationValue: 0, notes: '' }); setAddResult(null); }} className="btn-secondary w-full">Add Another Employee</button>
+            <button type="button" onClick={() => { setEmpForm({ basicSalary: 0, calculationMethod: empForm.calculationMethod, calculationValue: 0, notes: '' }); setSelectedBonusEmp(null); setAddResult(null); }} className="btn-secondary w-full">Add Another Employee</button>
           </div>
         ) : (
           <div className="space-y-3">
-            <FormField label="Employee ID (GUID)" required><input value={empForm.employeeId} onChange={(e) => setEmpForm(x => ({ ...x, employeeId: e.target.value }))} className="input w-full" placeholder="xxxxxxxx-xxxx-…" /></FormField>
-            <FormField label="Employee Name"><input value={empForm.employeeName} onChange={(e) => setEmpForm(x => ({ ...x, employeeName: e.target.value }))} className="input w-full" title="Employee Name" /></FormField>
-            <FormField label="Department"><input value={empForm.department} onChange={(e) => setEmpForm(x => ({ ...x, department: e.target.value }))} className="input w-full" title="Department" /></FormField>
+            <FormField label="Employee" required>
+              <EmployeeSearchSelect value={selectedBonusEmp} onChange={setSelectedBonusEmp} required />
+            </FormField>
             <FormField label={`Basic Salary (${currencyCode})`} required><input type="number" value={empForm.basicSalary} onChange={(e) => setEmpForm(x => ({ ...x, basicSalary: Number(e.target.value) }))} className="input w-full" title="Basic Salary" /></FormField>
             <FormField label="Calculation Method">
               <select value={empForm.calculationMethod} onChange={(e) => setEmpForm(x => ({ ...x, calculationMethod: e.target.value }))} className="select w-full" title="Calculation Method">

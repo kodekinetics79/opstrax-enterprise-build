@@ -193,7 +193,7 @@ export const loansApi = {
   get: (id: string) =>
     client.get<{ loan: EmployeeLoan; installments: LoanInstallment[]; approvals: LoanApproval[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] }>(`/api/finance/loans/${id}`).then(r => r.data),
 
-  create: (body: { employeeId: string; employeeName: string; loanTypeId: string; requestedAmount: number; requestedInstallments: number; notes?: string }) =>
+  create: (body: { employeeId?: string; employeeName: string; loanTypeId: string; requestedAmount: number; requestedInstallments: number; notes?: string; employeeIntId?: number }) =>
     client.post<EmployeeLoan>('/api/finance/loans', body).then(r => r.data),
 
   settle: (id: string, body: { settlementType: string; settlementAmount: number; settlementDate: string; notes?: string }) =>
@@ -223,7 +223,7 @@ export const advancesApi = {
   get: (id: string) =>
     client.get<{ advance: SalaryAdvance; installments: AdvanceInstallment[]; auditLogs: AuditLogEntry[]; glEntries: FinanceGlEntry[] }>(`/api/finance/advances/${id}`).then(r => r.data),
 
-  create: (body: { employeeId: string; employeeName: string; requestedAmount: number; repaymentType: string; installments: number; repaymentStartDate?: string; reason?: string }) =>
+  create: (body: { employeeId?: string; employeeName: string; requestedAmount: number; repaymentType: string; installments: number; repaymentStartDate?: string; reason?: string; employeeIntId?: number }) =>
     client.post<SalaryAdvance>('/api/finance/advances', body).then(r => r.data),
 
   approve: (id: string, body: { approvedAmount: number; installments: number; repaymentStartDate?: string }) =>

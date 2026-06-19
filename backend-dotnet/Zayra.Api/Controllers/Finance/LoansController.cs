@@ -122,10 +122,10 @@ public class LoansController : ControllerBase
 
         // Policy: check for loan policy and enforce max concurrent loans + cooldown
         var policy = await _db.Set<LoanPolicy>().FirstOrDefaultAsync(x => x.TenantId == tid && x.LoanTypeId == loanType.Id && x.IsActive, ct);
-        if (policy != null)
+        if (policy != null && req.EmployeeIntId.HasValue)
         {
             var activeCount = await _db.EmployeeLoans.CountAsync(
-                x => x.TenantId == tid && x.EmployeeId == req.EmployeeId && !x.IsDeleted
+                x => x.TenantId == tid && x.EmployeeIntId == req.EmployeeIntId && !x.IsDeleted
                      && (x.Status == "Active" || x.Status == "Pending"), ct);
             if (activeCount >= policy.MaxConcurrentLoans)
                 return BadRequest($"Employee already has {activeCount} active/pending loan(s). Maximum allowed is {policy.MaxConcurrentLoans}.");
@@ -134,7 +134,7 @@ public class LoansController : ControllerBase
             {
                 var cooldownCutoff = DateTime.UtcNow.AddMonths(-policy.CooldownMonthsAfterRepayment);
                 var recentlySettled = await _db.EmployeeLoans.AnyAsync(
-                    x => x.TenantId == tid && x.EmployeeId == req.EmployeeId && !x.IsDeleted
+                    x => x.TenantId == tid && x.EmployeeIntId == req.EmployeeIntId && !x.IsDeleted
                          && x.Status == "Settled" && x.UpdatedAtUtc > cooldownCutoff, ct);
                 if (recentlySettled)
                     return BadRequest($"Employee must wait {policy.CooldownMonthsAfterRepayment} month(s) after settling a loan before requesting a new one.");
@@ -144,9 +144,12 @@ public class LoansController : ControllerBase
         var count = await _db.EmployeeLoans.CountAsync(x => x.TenantId == tid, ct);
         var loanNumber = $"LN-{DateTime.UtcNow.Year}-{(count + 1):D5}";
 
+        // Auto-generate EmployeeId Guid when client omits it (frontend now uses EmployeeIntId for payroll)
+        var resolvedEmployeeId = req.EmployeeId == Guid.Empty ? Guid.NewGuid() : req.EmployeeId;
+
         var loan = new EmployeeLoan
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName,
+            TenantId = tid, EmployeeId = resolvedEmployeeId, EmployeeName = req.EmployeeName,
             EmployeeIntId = req.EmployeeIntId,
             LoanTypeId = req.LoanTypeId, LoanTypeName = loanType.NameEn, LoanNumber = loanNumber,
             RequestedAmount = req.RequestedAmount, RequestedInstallments = req.RequestedInstallments,

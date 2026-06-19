@@ -124,11 +124,14 @@ public class AdvancesController : ControllerBase
         var policy = await _db.AdvancePolicies.FirstOrDefaultAsync(x => x.TenantId == tid && x.IsActive, ct);
 
         // Policy compliance checks
-        if (policy != null)
+        // Auto-generate EmployeeId Guid when client omits it (frontend uses EmployeeIntId for payroll)
+        var resolvedEmployeeId = req.EmployeeId == Guid.Empty ? Guid.NewGuid() : req.EmployeeId;
+
+        if (policy != null && req.EmployeeIntId.HasValue)
         {
             var currentYear = DateTime.UtcNow.Year;
             var advancesThisYear = await _db.SalaryAdvances.CountAsync(
-                x => x.TenantId == tid && x.EmployeeId == req.EmployeeId && !x.IsDeleted
+                x => x.TenantId == tid && x.EmployeeIntId == req.EmployeeIntId && !x.IsDeleted
                      && x.CreatedAtUtc.Year == currentYear, ct);
             if (advancesThisYear >= policy.MaxAdvancesPerYear)
                 return BadRequest($"Employee has already used {advancesThisYear} advance(s) this year. Maximum allowed is {policy.MaxAdvancesPerYear}.");
@@ -137,7 +140,7 @@ public class AdvancesController : ControllerBase
             {
                 var cooldownCutoff = DateTime.UtcNow.AddMonths(-policy.CooldownMonths);
                 var recentlySettled = await _db.SalaryAdvances.AnyAsync(
-                    x => x.TenantId == tid && x.EmployeeId == req.EmployeeId && !x.IsDeleted
+                    x => x.TenantId == tid && x.EmployeeIntId == req.EmployeeIntId && !x.IsDeleted
                          && x.Status == "Settled" && x.UpdatedAtUtc > cooldownCutoff, ct);
                 if (recentlySettled)
                     return BadRequest($"Employee must wait {policy.CooldownMonths} month(s) after settling an advance before requesting a new one.");
@@ -149,7 +152,8 @@ public class AdvancesController : ControllerBase
 
         var adv = new SalaryAdvance
         {
-            TenantId = tid, EmployeeId = req.EmployeeId, EmployeeName = req.EmployeeName,
+            TenantId = tid, EmployeeId = resolvedEmployeeId, EmployeeName = req.EmployeeName,
+            EmployeeIntId = req.EmployeeIntId,
             AdvanceNumber = advNumber, RequestedAmount = req.RequestedAmount,
             RepaymentType = req.RepaymentType, Installments = req.Installments,
             Reason = req.Reason ?? string.Empty,
@@ -335,7 +339,7 @@ public class AdvancesController : ControllerBase
 }
 
 public record AdvancePolicyRequest(string PolicyName, decimal MaxPercentageOfSalary, int MaxAdvancesPerYear, int MinServiceMonths, bool AllowInstallments, int MaxInstallments, int CooldownMonths, bool RequiresApproval);
-public record CreateAdvanceRequest(Guid EmployeeId, string EmployeeName, decimal RequestedAmount, string RepaymentType, int Installments, DateOnly? RepaymentStartDate, string? Reason);
+public record CreateAdvanceRequest(Guid EmployeeId, string EmployeeName, decimal RequestedAmount, string RepaymentType, int Installments, DateOnly? RepaymentStartDate, string? Reason, int? EmployeeIntId = null);
 public record AdvanceApproveRequest(decimal ApprovedAmount, int Installments, DateOnly? RepaymentStartDate);
 public record RejectRequest(string? Reason);
 public record PayAdvanceInstallmentRequest(decimal AmountPaid, DateOnly PaidDate, Guid? PayrollRunId);
