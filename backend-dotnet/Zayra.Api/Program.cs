@@ -439,8 +439,14 @@ using (var scope = app.Services.CreateScope())
         ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
         // ─────────────────────────────────────────────────────────────────────────
 
-        await dbContext.Database.EnsureCreatedAsync();
-        await MissingTableCreator.EnsureAsync(dbContext, logger);
+        // EnsureCreatedAsync returns true when it created the DB from scratch.
+        // On a fresh DB, skip MissingTableCreator — it calls GenerateCreateScript()
+        // which rebuilds the full 100+ entity model in memory a second time, spiking
+        // peak usage past 512 MB. EnsureCreated already wrote every table, so there
+        // is nothing for MissingTableCreator to do anyway.
+        bool dbCreatedFresh = await dbContext.Database.EnsureCreatedAsync();
+        if (!dbCreatedFresh)
+            await MissingTableCreator.EnsureAsync(dbContext, logger);
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
         await authSeeder.SeedAsync();
