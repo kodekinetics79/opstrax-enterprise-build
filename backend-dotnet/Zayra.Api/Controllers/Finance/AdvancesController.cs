@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -35,6 +36,7 @@ public class AdvancesController : ControllerBase
     {
         var tid = GetTenantId();
         var p = await _db.AdvancePolicies.FirstOrDefaultAsync(x => x.TenantId == tid && x.IsActive, ct);
+        // SAFE-SERIALIZATION: AdvancePolicy is tenant config (percentage caps, cooldowns) — no personal PII.
         return Ok(p);
     }
 
@@ -52,6 +54,7 @@ public class AdvancesController : ControllerBase
             p.AllowInstallments = req.AllowInstallments; p.MaxInstallments = req.MaxInstallments;
             p.CooldownMonths = req.CooldownMonths; p.RequiresApproval = req.RequiresApproval;
             await _db.SaveChangesAsync(ct);
+            // SAFE-SERIALIZATION: AdvancePolicy is tenant config (percentage caps, cooldowns) — no personal PII.
             return Ok(p);
         }
         p = new AdvancePolicy
@@ -63,6 +66,7 @@ public class AdvancesController : ControllerBase
         };
         _db.AdvancePolicies.Add(p);
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: AdvancePolicy is tenant config (percentage caps, cooldowns) — no personal PII.
         return Ok(p);
     }
 
@@ -88,7 +92,7 @@ public class AdvancesController : ControllerBase
             }
             else
             {
-                return Ok(new { total = 0, items = Array.Empty<SalaryAdvance>() });
+                return Ok(new { total = 0, items = Array.Empty<SalaryAdvanceDto>() });
             }
         }
         else if (employeeId.HasValue)
@@ -100,7 +104,7 @@ public class AdvancesController : ControllerBase
         var total = await q.CountAsync(ct);
         var items = await q.OrderByDescending(x => x.CreatedAtUtc)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
-        return Ok(new { total, items });
+        return Ok(new { total, items = items.Select(SalaryAdvanceDto.Project).ToList() });
     }
 
     [HttpGet("{id:guid}")]
@@ -113,7 +117,7 @@ public class AdvancesController : ControllerBase
         var approvals = await _db.AdvanceApprovals.Where(x => x.AdvanceId == id).OrderBy(x => x.StepOrder).ToListAsync(ct);
         var auditLogs = await _db.AdvanceAuditLogs.Where(x => x.AdvanceId == id).OrderByDescending(x => x.CreatedAtUtc).ToListAsync(ct);
         var glEntries = await _db.FinanceGlEntries.Where(x => x.SourceEntityId == id).OrderByDescending(x => x.EntryDate).ToListAsync(ct);
-        return Ok(new { advance = adv, installments, approvals, auditLogs, glEntries });
+        return Ok(new { advance = SalaryAdvanceDto.Project(adv), installments, approvals, auditLogs, glEntries });
     }
 
     [HttpPost]
@@ -176,7 +180,7 @@ public class AdvancesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteAdvanceAudit(tid, uid, adv.Id, "AdvanceRequested", null,
             JsonSerializer.Serialize(new { adv.AdvanceNumber, adv.RequestedAmount, adv.Status }), ct);
-        return Ok(adv);
+        return Ok(SalaryAdvanceDto.Project(adv));
     }
 
     [HttpPatch("{id:guid}/approve")]
@@ -212,7 +216,7 @@ public class AdvancesController : ControllerBase
         await WriteAdvanceAudit(tid, uid, id, "AdvanceApproved",
             JsonSerializer.Serialize(new { Status = oldStatus }),
             JsonSerializer.Serialize(new { Status = "Active", ApprovedAmount = req.ApprovedAmount }), ct);
-        return Ok(adv);
+        return Ok(SalaryAdvanceDto.Project(adv));
     }
 
     [HttpPatch("{id:guid}/reject")]
@@ -230,7 +234,7 @@ public class AdvancesController : ControllerBase
         await WriteAdvanceAudit(tid, uid, id, "AdvanceRejected",
             JsonSerializer.Serialize(new { Status = oldStatus }),
             JsonSerializer.Serialize(new { Status = "Rejected", Reason = req.Reason }), ct);
-        return Ok(adv);
+        return Ok(SalaryAdvanceDto.Project(adv));
     }
 
     [HttpPatch("{id:guid}/installments/{installmentId:guid}/pay")]

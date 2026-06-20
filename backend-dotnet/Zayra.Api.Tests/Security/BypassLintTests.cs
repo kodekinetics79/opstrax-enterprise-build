@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using FluentAssertions;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Controllers;
+using Zayra.Api.Data;
 
 namespace Zayra.Api.Tests.Security;
 
@@ -202,6 +203,143 @@ public class BypassLintTests
             "silently expose cross-tenant data. All data access must go through the EF DbContext " +
             "with the tenant-scoped global filter active. If raw SQL is genuinely required, add " +
             "the file:line to the allowList above with a comment explaining the explicit WHERE tenantId filter.");
+    }
+
+    // ── 5. P3 blind-spot: Ok(rawEntity) scanner for finance-sensitive entity types ─
+
+    /// <summary>
+    /// Entities with per-employee salary or financial amounts that must never be
+    /// serialised directly from a controller action. Any Ok(variable) where the
+    /// preceding declarations reveal one of these types requires a DTO projection.
+    /// Config / aggregate entities (PayrollRun, BonusBatch, etc.) are excluded from
+    /// this check because they carry no per-employee PII.
+    /// </summary>
+    private static readonly IReadOnlySet<string> FinanceSensitiveEntityNames = new HashSet<string>
+    {
+        "EmployeeLoan",
+        "SalaryAdvance",
+        "EmployeeBonus",
+        "PayrollSlip",
+        "EmployeeSalaryStructure",
+        "EOSBCalculation",
+        "Employee",              // has Salary, BankName, IBAN
+    };
+
+    private static IEnumerable<string> ScanForRawEntityOkReturns(
+        string sourceText,
+        IReadOnlySet<string> sensitiveEntityNames,
+        string fileLabel)
+    {
+        var violations = new List<string>();
+        var lines = sourceText.Split('\n');
+
+        // Match single-identifier returns only: `return Ok(ident);` or `return Created(url, ident);`
+        // Multi-part expressions (Ok(new ...), Ok(await ...), Ok(ident.Project(...))) are safe by construction.
+        var okPattern = new Regex(@"\breturn\s+Ok\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*;");
+        var createdPattern = new Regex(@"\breturn\s+Created\s*\([^,]+,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*;");
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (line.TrimStart().StartsWith("//")) continue;
+            if (line.Contains("// SAFE-SERIALIZATION:", StringComparison.OrdinalIgnoreCase)) continue;
+
+            Match m = okPattern.Match(line);
+            if (!m.Success) m = createdPattern.Match(line);
+            if (!m.Success) continue;
+
+            var identifier = m.Groups[1].Value;
+
+            // SAFE-SERIALIZATION comment in any of the 5 preceding lines exempts this return.
+            bool hasSafeComment = false;
+            for (int j = Math.Max(0, i - 5); j < i; j++)
+            {
+                if (lines[j].Contains("// SAFE-SERIALIZATION:", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasSafeComment = true;
+                    break;
+                }
+            }
+            if (hasSafeComment) continue;
+
+            // Look back up to 30 lines for a declaration of this identifier that names a
+            // finance-sensitive entity type. A line qualifies if it:
+            //   (a) contains the identifier name, AND
+            //   (b) contains an assignment or query keyword (=, FirstOrDefault, First(, Single(), etc.), AND
+            //   (c) contains one of the sensitive entity type names as a substring.
+            bool likelyEntity = false;
+            for (int j = Math.Max(0, i - 30); j < i && !likelyEntity; j++)
+            {
+                var prev = lines[j];
+                if (!prev.Contains(identifier, StringComparison.Ordinal)) continue;
+                if (!(prev.Contains('=')
+                      || prev.Contains("FirstOrDefault", StringComparison.Ordinal)
+                      || prev.Contains(".First(", StringComparison.Ordinal)
+                      || prev.Contains(".Single(", StringComparison.Ordinal))) continue;
+                foreach (var entityName in sensitiveEntityNames)
+                {
+                    // Word-boundary match prevents "Employee" from matching "EmployeeProfileChangeRequest".
+                    if (Regex.IsMatch(prev, @"\b" + Regex.Escape(entityName) + @"\b"))
+                    {
+                        likelyEntity = true;
+                        break;
+                    }
+                }
+            }
+
+            if (likelyEntity)
+                violations.Add($"  {fileLabel}:{i + 1} — return Ok({identifier}) — identifier is a finance-sensitive EF entity; project to a DTO");
+        }
+
+        return violations;
+    }
+
+    [Fact]
+    public void RawEntityOkReturn_ControllersMustProjectSensitiveEntitiesToDto()
+    {
+        var sourceRoot = ResolveSourceRoot();
+        if (sourceRoot is null) return;
+
+        var violations = new List<string>();
+        var controllerDir = Path.Combine(sourceRoot, "Controllers");
+        if (!Directory.Exists(controllerDir)) return;
+
+        foreach (var filePath in Directory.EnumerateFiles(controllerDir, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(filePath);
+            var label = Path.GetRelativePath(sourceRoot, filePath);
+            violations.AddRange(ScanForRawEntityOkReturns(source, FinanceSensitiveEntityNames, label));
+        }
+
+        violations.Should().BeEmpty(
+            "Controller actions must not serialize finance-sensitive EF entities directly via Ok(entity). " +
+            "Project to a FinanceDto first (see Application/Finance/FinanceDtos.cs). " +
+            "For confirmed-safe config or aggregate entities, add '// SAFE-SERIALIZATION: <reason>' " +
+            "in the 5 lines before the return statement.\n\n" +
+            "Finance-sensitive entity types checked: " + string.Join(", ", FinanceSensitiveEntityNames));
+    }
+
+    [Fact]
+    public void RawEntityOkReturn_PlantedLeakIsDetected()
+    {
+        // Deliberately bad source: a variable declared as SalaryAdvance returned raw via Ok().
+        // This simulates the exact exposure that existed before this fix. The lint must catch it.
+        const string plantedSource = """
+            [HttpGet("test-leak")]
+            public async Task<IActionResult> DeliberatelyLeakingAction()
+            {
+                var adv = new SalaryAdvance { Id = Guid.NewGuid(), RequestedAmount = 5000m };
+                return Ok(adv);
+            }
+            """;
+
+        var violations = ScanForRawEntityOkReturns(
+            plantedSource, FinanceSensitiveEntityNames, "PlantedLeak.cs").ToList();
+
+        violations.Should().ContainSingle(
+            "the planted leak (return Ok(adv) where adv is a SalaryAdvance) must be caught by the scanner");
+        violations[0].Should().Contain("adv",
+            "the violation message must name the leaking identifier");
     }
 
     // ── 4. No new [AllowEntityReturn] on controller-class (only method-level) ────

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
 using Zayra.Api.Application.CountryPack;
+using Zayra.Api.Application.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.CountryPack;
 using Zayra.Api.Infrastructure.Notifications;
@@ -75,7 +76,7 @@ public class PayrollController : ControllerBase
         _db.EmployeeSalaryStructures.Add(assignment);
         await PayrollAudit("payroll.employee_salary.assigned", "EmployeeSalaryStructure", assignment.Id.ToString(), new { employeeId = req.EmployeeId, basicSalary = req.BasicSalary }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
-        return Created($"/api/payroll/employee-salary-structures/{assignment.Id}", assignment);
+        return Created($"/api/payroll/employee-salary-structures/{assignment.Id}", SalaryStructureAssignmentDto.Project(assignment, true));
     }
 
     [HttpGet("runs")]
@@ -487,7 +488,7 @@ public class PayrollController : ControllerBase
             query = query.Where(s => scope.AllowedEmployeeIds!.Contains(s.EmployeeId));
         var total = await query.CountAsync(cancellationToken);
         var items = await query.OrderBy(s => s.EmployeeCode).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
-        return Ok(new PagedResult<PayrollSlip>(items, total, page, pageSize));
+        return Ok(new PagedResult<PayrollSlipDto>(items.Select(s => PayrollSlipDto.Project(s, true)).ToList(), total, page, pageSize));
     }
 
     [HttpPost("runs/{id:guid}/validate")]
@@ -1080,7 +1081,8 @@ public class PayrollController : ControllerBase
         if (employeeId.HasValue) query = query.Where(x => x.EmployeeId == employeeId.Value);
         if (!scope.IsUnrestricted)
             query = query.Where(x => scope.AllowedEmployeeIds!.Contains(x.EmployeeId));
-        return Ok(await query.OrderByDescending(x => x.EffectiveDate).ToListAsync(cancellationToken));
+        var structs = await query.OrderByDescending(x => x.EffectiveDate).ToListAsync(cancellationToken);
+        return Ok(structs.Select(s => SalaryStructureAssignmentDto.Project(s, true)).ToList());
     }
 
     [HttpGet("payment-batches")]
@@ -1089,6 +1091,7 @@ public class PayrollController : ControllerBase
         var tenantId = GetTenantId();
         var query = _db.PayrollPaymentBatches.AsNoTracking().Where(x => x.TenantId == tenantId);
         if (runId.HasValue) query = query.Where(x => x.PayrollRunId == runId.Value);
+        // SAFE-SERIALIZATION: PayrollPaymentBatch is a payment workflow aggregate (TotalAmount is batch-level) — no per-employee salary PII.
         return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).ToListAsync(cancellationToken));
     }
 
@@ -1124,6 +1127,7 @@ public class PayrollController : ControllerBase
             query = query.Where(x => scope.AllowedEmployeeIds!.Contains(x.EmployeeId));
         var total = await query.CountAsync(cancellationToken);
         var items = await query.OrderBy(x => x.EmployeeId).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
+        // SAFE-SERIALIZATION: Payslip is a header-only record (Id, EmployeeId, PayslipNumber, IsPublishedToEss) — no salary amounts.
         return Ok(new PagedResult<Payslip>(items, total, page, pageSize));
     }
 
@@ -1131,6 +1135,7 @@ public class PayrollController : ControllerBase
     public async Task<IActionResult> ListRunApprovals(Guid id, CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
+        // SAFE-SERIALIZATION: PayrollApproval is a workflow record (who approved, when, status) — no salary amounts.
         return Ok(await _db.PayrollApprovals.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).OrderByDescending(x => x.DecidedAtUtc).ToListAsync(cancellationToken));
     }
 
@@ -1138,6 +1143,7 @@ public class PayrollController : ControllerBase
     public async Task<IActionResult> ListGroups(CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
+        // SAFE-SERIALIZATION: PayrollGroup is config (Code, Name, Currency) — no personal PII.
         return Ok(await _db.PayrollGroups.AsNoTracking().Where(x => x.TenantId == tenantId && x.IsActive).ToListAsync(cancellationToken));
     }
 
@@ -1148,6 +1154,7 @@ public class PayrollController : ControllerBase
         var group = new PayrollGroup { TenantId = tenantId, Code = req.Code.Trim(), Name = req.Name.Trim(), Currency = req.Currency ?? "USD" };
         _db.PayrollGroups.Add(group);
         await _db.SaveChangesAsync(cancellationToken);
+        // SAFE-SERIALIZATION: PayrollGroup is config (Code, Name, Currency) — no personal PII.
         return Created($"/api/payroll/groups/{group.Id}", group);
     }
 
@@ -1160,7 +1167,8 @@ public class PayrollController : ControllerBase
         var query = _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == runId);
         if (!scope.IsUnrestricted)
             query = query.Where(x => scope.AllowedEmployeeIds!.Contains(x.EmployeeId));
-        return Ok(await query.OrderBy(x => x.EmployeeCode).ToListAsync(cancellationToken));
+        var slipList = await query.OrderBy(x => x.EmployeeCode).ToListAsync(cancellationToken);
+        return Ok(slipList.Select(s => PayrollSlipDto.Project(s, true)).ToList());
     }
 
     [HttpGet("reports/register/export")]
@@ -1318,7 +1326,8 @@ public class PayrollController : ControllerBase
         var tenantId = GetTenantId();
         var query = _db.EOSBCalculations.AsNoTracking().Where(x => x.TenantId == tenantId);
         if (employeeId.HasValue) query = query.Where(x => x.EmployeeId == employeeId.Value);
-        return Ok(await query.OrderByDescending(x => x.CalculationDate).ToListAsync(cancellationToken));
+        var eosbList = await query.OrderByDescending(x => x.CalculationDate).ToListAsync(cancellationToken);
+        return Ok(eosbList.Select(EosbCalculationDto.Project).ToList());
     }
 
     [HttpGet("ai-validation")]

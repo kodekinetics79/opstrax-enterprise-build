@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -75,6 +76,7 @@ public class BonusesController : ControllerBase
         };
         _db.BonusTypes.Add(t);
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: BonusType is policy config (rates, tax region) — no personal PII.
         return Ok(t);
     }
 
@@ -104,6 +106,7 @@ public class BonusesController : ControllerBase
         t.IsActive = req.IsActive ?? t.IsActive;
         t.UpdatedAtUtc = DateTime.UtcNow; t.UpdatedBy = GetUserId();
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: BonusType is policy config (rates, tax region) — no personal PII.
         return Ok(t);
     }
 
@@ -159,7 +162,8 @@ public class BonusesController : ControllerBase
         var approvals = await _db.BonusApprovals.Where(x => x.BonusBatchId == id).OrderBy(x => x.StepOrder).ToListAsync(ct);
         var auditLogs = await _db.BonusAuditLogs.Where(x => x.BonusBatchId == id).OrderByDescending(x => x.CreatedAtUtc).ToListAsync(ct);
         var glEntries = await _db.FinanceGlEntries.Where(x => x.SourceEntityId == id).OrderByDescending(x => x.EntryDate).ToListAsync(ct);
-        return Ok(new { batch, bonuses, approvals, auditLogs, glEntries });
+        // SAFE-SERIALIZATION: batch is BonusBatch (aggregate totals, no per-employee PII).
+        return Ok(new { batch, bonuses = bonuses.Select(b => EmployeeBonusDto.Project(b, scope.IsUnrestricted)).ToList(), approvals, auditLogs, glEntries });
     }
 
     [HttpPost("batches")]
@@ -185,6 +189,7 @@ public class BonusesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, batch.Id, null, "BatchCreated", null,
             JsonSerializer.Serialize(new { batch.BatchNumber, batch.BatchName }), ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -202,6 +207,7 @@ public class BonusesController : ControllerBase
         batch.Notes = req.Notes ?? batch.Notes;
         batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -275,7 +281,7 @@ public class BonusesController : ControllerBase
         batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
 
         await _db.SaveChangesAsync(ct);
-        return Ok(new { bonus = eb, grossBonusAmount, taxWithheld, netBonusAmount });
+        return Ok(new { bonus = EmployeeBonusDto.Project(eb, true), grossBonusAmount, taxWithheld, netBonusAmount });
     }
 
     [HttpPost("batches/{batchId:guid}/employees/bulk")]
@@ -407,7 +413,7 @@ public class BonusesController : ControllerBase
         batch.TotalAmount = batch.TotalAmount - oldNet + net;
         batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
         await _db.SaveChangesAsync(ct);
-        return Ok(new { bonus = eb, grossBonusAmount = gross, taxWithheld = tax, netBonusAmount = net });
+        return Ok(new { bonus = EmployeeBonusDto.Project(eb, true), grossBonusAmount = gross, taxWithheld = tax, netBonusAmount = net });
     }
 
     [HttpDelete("batches/{batchId:guid}/employees/{bonusId:guid}")]
@@ -440,6 +446,7 @@ public class BonusesController : ControllerBase
         batch.Status = "PendingApproval"; batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, id, null, "BatchSubmitted", "Draft", "PendingApproval", ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -483,6 +490,7 @@ public class BonusesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, id, null, "BatchApproved", "PendingApproval",
             JsonSerializer.Serialize(new { Status = "Approved", Comments = req.Comments, batch.TotalAmount }), ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -498,6 +506,7 @@ public class BonusesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, id, null, "BatchRejected", "PendingApproval",
             $"Cancelled: {req.Reason}", ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -555,6 +564,7 @@ public class BonusesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, id, null, "BatchPaid", "Approved",
             JsonSerializer.Serialize(new { Status = "Paid", PayrollRunId = req.PayrollRunId, batch.TotalAmount }), ct);
+        // SAFE-SERIALIZATION: BonusBatch is a workflow aggregate (total amounts, batch metadata) — no per-employee PII.
         return Ok(batch);
     }
 
@@ -569,7 +579,7 @@ public class BonusesController : ControllerBase
             .Where(x => x.TenantId == tid && !x.IsDeleted && x.Status == "Approved"
                 && x.PaymentPeriod == paymentPeriod && x.PayrollRunId == null)
             .ToListAsync(ct);
-        return Ok(new { count = bonuses.Count, totalAmount = bonuses.Sum(x => x.BonusAmount), bonuses });
+        return Ok(new { count = bonuses.Count, totalAmount = bonuses.Sum(x => x.BonusAmount), bonuses = bonuses.Select(b => EmployeeBonusDto.Project(b, true)).ToList() });
     }
 
     // ── Audit & Reconciliation Report ────────────────────────────────────────

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Models;
 
@@ -55,6 +56,7 @@ public class LoansController : ControllerBase
         };
         _db.LoanTypes.Add(t);
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: LoanType is policy config (rates, limits) — no personal PII.
         return Ok(t);
     }
 
@@ -80,7 +82,7 @@ public class LoansController : ControllerBase
             }
             else
             {
-                return Ok(new { total = 0, items = Array.Empty<EmployeeLoan>() });
+                return Ok(new { total = 0, items = Array.Empty<EmployeeLoanDto>() });
             }
         }
         else if (employeeId.HasValue)
@@ -92,7 +94,7 @@ public class LoansController : ControllerBase
         var total = await q.CountAsync(ct);
         var items = await q.OrderByDescending(x => x.CreatedAtUtc)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
-        return Ok(new { total, items });
+        return Ok(new { total, items = items.Select(EmployeeLoanDto.Project).ToList() });
     }
 
     [HttpGet("{id:guid}")]
@@ -105,7 +107,7 @@ public class LoansController : ControllerBase
         var approvals = await _db.LoanApprovals.Where(x => x.LoanId == id).OrderBy(x => x.StepOrder).ToListAsync(ct);
         var auditLogs = await _db.LoanAuditLogs.Where(x => x.LoanId == id).OrderByDescending(x => x.CreatedAtUtc).ToListAsync(ct);
         var glEntries = await _db.FinanceGlEntries.Where(x => x.SourceEntityId == id).OrderByDescending(x => x.EntryDate).ToListAsync(ct);
-        return Ok(new { loan, installments, approvals, auditLogs, glEntries });
+        return Ok(new { loan = EmployeeLoanDto.Project(loan), installments, approvals, auditLogs, glEntries });
     }
 
     [HttpPost]
@@ -174,7 +176,7 @@ public class LoansController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteLoanAudit(tid, uid, loan.Id, "LoanRequested", null,
             JsonSerializer.Serialize(new { loan.LoanNumber, loan.RequestedAmount, loan.Status }), ct);
-        return Ok(loan);
+        return Ok(EmployeeLoanDto.Project(loan));
     }
 
     [HttpPost("{id:guid}/approvals")]
@@ -191,6 +193,7 @@ public class LoansController : ControllerBase
         };
         _db.LoanApprovals.Add(step);
         await _db.SaveChangesAsync(ct);
+        // SAFE-SERIALIZATION: LoanApproval is a workflow step record — no salary or personal financial data.
         return Ok(step);
     }
 
@@ -236,7 +239,7 @@ public class LoansController : ControllerBase
         await WriteLoanAudit(tid, uid, id, $"Approval{req.Decision}",
             JsonSerializer.Serialize(new { Status = oldStatus }),
             JsonSerializer.Serialize(new { Status = req.Decision, Step = approval.StepOrder, approval.Comments }), ct);
-        return Ok(new { loan, approval });
+        return Ok(new { loan = EmployeeLoanDto.Project(loan), approval });
     }
 
     [HttpPatch("{id:guid}/settle")]
@@ -270,7 +273,7 @@ public class LoansController : ControllerBase
         await WriteLoanAudit(tid, uid, id, "LoanSettled",
             JsonSerializer.Serialize(new { Balance = oldBalance }),
             JsonSerializer.Serialize(new { SettlementAmount = req.SettlementAmount, Type = req.SettlementType, NewBalance = loan.OutstandingBalance }), ct);
-        return Ok(new { loan, settlement });
+        return Ok(new { loan = EmployeeLoanDto.Project(loan), settlement });
     }
 
     [HttpGet("{id:guid}/installments")]
@@ -308,7 +311,7 @@ public class LoansController : ControllerBase
         await _db.SaveChangesAsync(ct);
         await WriteLoanAudit(tid, uid, id, "InstallmentPaid", null,
             JsonSerializer.Serialize(new { InstallmentNumber = inst.InstallmentNumber, AmountPaid = req.AmountPaid, inst.PaidDate }), ct);
-        return Ok(new { installment = inst, loan });
+        return Ok(new { installment = inst, loan = EmployeeLoanDto.Project(loan) });
     }
 
     // ── Audit & Reconciliation Report ────────────────────────────────────────
