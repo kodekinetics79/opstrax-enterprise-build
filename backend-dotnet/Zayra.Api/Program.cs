@@ -462,7 +462,17 @@ using (var scope = app.Services.CreateScope())
                 // recreates the full schema in one shot (safe — no rows to lose).
                 logger.LogWarning("Database exists but contains no tables. Recreating schema from scratch.");
                 await dbContext.Database.EnsureDeletedAsync();
-                await dbContext.Database.EnsureCreatedAsync();
+                try
+                {
+                    bool rebuilt = await dbContext.Database.EnsureCreatedAsync();
+                    logger.LogInformation("Schema rebuilt via EnsureCreatedAsync: {Result}", rebuilt);
+                }
+                catch (Exception schemaEx)
+                {
+                    logger.LogError(schemaEx, "EnsureCreatedAsync failed — DDL error. Falling back to MissingTableCreator.");
+                    // DB was just recreated empty; MissingTableCreator will create all tables.
+                    await MissingTableCreator.EnsureAsync(dbContext, logger);
+                }
             }
             else
             {
