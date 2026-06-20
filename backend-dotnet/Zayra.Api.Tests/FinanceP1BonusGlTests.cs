@@ -5,10 +5,13 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Zayra.Api.Application.Auth;
+using Zayra.Api.Application.CountryPack;
 using Zayra.Api.Controllers;
 using Zayra.Api.Controllers.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Domain.Entities;
+using Zayra.Api.Infrastructure.CountryPack;
+using Zayra.Api.Infrastructure.CountryPack.Ksa;
 using Zayra.Api.Models;
 
 namespace Zayra.Api.Tests;
@@ -71,6 +74,27 @@ public class FinanceP1BonusGlTests
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
         var httpCtx   = new DefaultHttpContext { User = principal };
         var ctrl = new BonusesController(db, new _P1UnrestrictedScope());
+        ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
+        return ctrl;
+    }
+
+    // Factory for tests that need the real KSA statutory calculator (non-zero deductions).
+    private static PayrollController MakeKsaPackPayrollCtrl(ZayraDbContext db, Guid tenantId)
+    {
+        var claims = new List<Claim>
+        {
+            new("tenant_id", tenantId.ToString()),
+            new(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
+            new(ClaimTypes.Name, "test-user"),
+        };
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
+        var httpCtx   = new DefaultHttpContext { User = principal };
+        var ctrl = new PayrollController(
+            db,
+            new _P1UnrestrictedScope(),
+            new _P1HttpAccessor(httpCtx),
+            new _P1NullNotifications(),
+            new _KsaPackResolver());
         ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
         return ctrl;
     }
@@ -265,6 +289,21 @@ public class FinanceP1BonusGlTests
 
         var slipB = await db.PayrollSlips.FirstOrDefaultAsync(s => s.RunId == runB.Id);
         slipB!.GrossSalary.Should().Be(13_500m, "non-GOSI bonus 500 still adds to gross = 10000+2000+1000+500");
+    }
+
+    // KSA-specific seed: seeds a Company with CountryCode="SAU" and links it to the run.
+    // Required for tests that use _KsaPackResolver (which resolves by company CountryCode).
+    private static async Task SeedKsaCompany(ZayraDbContext db, Guid tenantId, PayrollRun run)
+    {
+        var company = new Company
+        {
+            TenantId = tenantId, LegalNameEn = "Test KSA Co",
+            CountryCode = "SAU", Jurisdiction = "KSA-mainland", IsActive = true,
+        };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        run.CompanyId = company.Id;
+        await db.SaveChangesAsync();
     }
 
     // Helper: add a second payroll run for an already-existing employee.
@@ -490,9 +529,278 @@ public class FinanceP1BonusGlTests
         lockResult.Should().BeOfType<UnprocessableEntityObjectResult>(
             "Lock must return 422 when GL debits ≠ credits");
     }
+
+    // ── Test 7: GOSI amount assertion — hand-worked expected value ─────────────
+    // Uses the real KSA pack so statutory deductions are computed, not zeroed.
+    // Verified by hand:
+    //   covered wage without bonus = Basic(10,000) + Housing(2,000) = 12,000
+    //   covered wage with GOSI-included bonus(1,000) = 13,000
+    //   Saudi national employee rate 9.75% (annuity 9% + SANED 0.75%)
+    //   Employee deduction = 13,000 × 9.75% = 1,267.50
+
+    [Fact]
+    public async Task Process_GosiIncludedBonus_RaisesActualGosiContributionByExpectedAmount()
+    {
+        var (db, conn) = CreateSqliteDb();
+        await using var _ = conn;
+        await using var __ = db;
+
+        var tenantId = Guid.NewGuid();
+        var (emp, run, _) = await SeedMinimalRun(db, tenantId);
+
+        var bonusType = new BonusType
+        {
+            TenantId = tenantId, Code = "BASE", NameEn = "Base Bonus",
+            IsIncludedInGosiBase = true, IsIncludedInWps = false, IsIncludedInEosb = false,
+            TaxRegion = "GCC", IsActive = true,
+        };
+        db.BonusTypes.Add(bonusType);
+        await db.SaveChangesAsync();
+
+        var batch = new BonusBatch
+        {
+            TenantId = tenantId, BatchNumber = "BON-GOSI", BonusTypeId = bonusType.Id,
+            BonusTypeName = bonusType.NameEn, PaymentPeriod = "2026-06",
+            Status = "Approved", CreatedBy = null,
+        };
+        db.BonusBatches.Add(batch);
+        await db.SaveChangesAsync();
+
+        db.EmployeeBonuses.Add(new EmployeeBonus
+        {
+            TenantId = tenantId, BonusBatchId = batch.Id,
+            EmployeeId = Guid.NewGuid(), EmployeeIntId = emp.Id,
+            EmployeeName = emp.FullName, BonusTypeId = bonusType.Id,
+            BonusTypeName = bonusType.NameEn, BasicSalary = 10_000m,
+            CalculationMethod = "Fixed", CalculationValue = 1_000m,
+            GrossBonusAmount = 1_000m, TaxWithheld = 0m, BonusAmount = 1_000m,
+            PaymentPeriod = "2026-06", Status = "Approved", TaxRegion = "GCC",
+        });
+        await db.SaveChangesAsync();
+
+        // Link the run to a KSA company so the pack resolver fires with CountryCode="SAU".
+        await SeedKsaCompany(db, tenantId, run);
+
+        // Use the real KSA pack so deductions are calculated (not zeroed by NullPackResolver).
+        var ksaCtrl = MakeKsaPackPayrollCtrl(db, tenantId);
+        var result = await ksaCtrl.Process(run.Id, CancellationToken.None);
+        result.Should().BeOfType<OkObjectResult>("Process must succeed with KSA pack");
+
+        // Employee-side Statutory deductions for a Saudi national on covered wage 13,000:
+        //   GOSI annuity EE:  13,000 × 9%    = 1,170.00
+        //   SANED EE:         13,000 × 0.75% = 97.50
+        //   Total employee:                    1,267.50
+        // SQLite does not translate decimal Sum in SQL — enumerate then sum on client.
+        var employeeStatutoryRows = await db.PayrollDeductions
+            .Where(d => d.TenantId == tenantId && d.PayrollRunId == run.Id
+                && d.Source == "Statutory" && !d.ComponentCode.EndsWith("-ER"))
+            .ToListAsync();
+        var employeeStatutory = employeeStatutoryRows.Sum(d => d.Amount);
+        employeeStatutory.Should().Be(1_267.50m,
+            "Saudi national on covered wage 13,000 (base 12,000 + GOSI bonus 1,000) " +
+            "should pay 9.75% = 1,267.50; without bonus it would be 12,000 × 9.75% = 1,170.00");
+
+        // Baseline check: without the bonus, covered wage = 12,000 → 1,170.00.
+        // The test run with bonus must exceed that by exactly 1,000 × 9.75% = 97.50.
+        const decimal baselineEmployeeGosi = 12_000m * 0.0975m; // 1,170.00
+        (employeeStatutory - baselineEmployeeGosi).Should().Be(97.50m,
+            "GOSI-included bonus of 1,000 must raise the employee contribution by exactly 97.50");
+    }
+
+    // ── Test 8: Partial batch consumption — line-level isolation ──────────────
+    // Batch has bonuses for Employee A (has salary assignment → processed by payroll)
+    // and Employee B (no salary assignment → skipped by payroll).
+    // After Process(): A's bonus is PaidInPayroll; B's is still Approved; batch NOT locked.
+    // After MarkBatchPaid(): B's bonus is Paid; A's is still PaidInPayroll (no clobber).
+    // GL covers B's remaining amount only.
+
+    [Fact]
+    public async Task PartialBatch_PayrollConsumesA_MarkBatchPaidPaysB_NoClobberAndNoDoubleGl()
+    {
+        var (db, conn) = CreateSqliteDb();
+        await using var _ = conn;
+        await using var __ = db;
+
+        var tenantId = Guid.NewGuid();
+        var (empA, run, str) = await SeedMinimalRun(db, tenantId);
+
+        // Employee B: exists but has NO salary assignment — payroll run will skip them.
+        // Terminated — excluded from Process() employees query (Status != "Active").
+        // Real-world case: employee leaves between batch creation and payroll run.
+        var empB = new Employee
+        {
+            TenantId = tenantId, EmployeeCode = "E002", FullName = "Sara Lee",
+            Status = "Terminated", JoiningDate = new DateTime(2023, 1, 1),
+            WorkEmail = "sara@test.com", Nationality = "GBR", ContractType = "Indefinite",
+        };
+        db.Employees.Add(empB);
+        await db.SaveChangesAsync();
+
+        var bonusType = new BonusType
+        {
+            TenantId = tenantId, Code = "PART", NameEn = "Partial Test",
+            IsIncludedInGosiBase = false, IsIncludedInWps = false, IsIncludedInEosb = false,
+            TaxRegion = "GCC", IsActive = true,
+        };
+        db.BonusTypes.Add(bonusType);
+        await db.SaveChangesAsync();
+
+        var batch = new BonusBatch
+        {
+            TenantId = tenantId, BatchNumber = "BON-PARTIAL", BonusTypeId = bonusType.Id,
+            BonusTypeName = bonusType.NameEn, PaymentPeriod = "2026-06",
+            Status = "Approved", TotalAmount = 3_500m, CreatedBy = null,
+        };
+        db.BonusBatches.Add(batch);
+        await db.SaveChangesAsync();
+
+        var bonusA = new EmployeeBonus
+        {
+            TenantId = tenantId, BonusBatchId = batch.Id,
+            EmployeeId = Guid.NewGuid(), EmployeeIntId = empA.Id,
+            EmployeeName = empA.FullName, BonusTypeId = bonusType.Id,
+            BonusTypeName = bonusType.NameEn, BasicSalary = 10_000m,
+            CalculationMethod = "Fixed", CalculationValue = 2_000m,
+            GrossBonusAmount = 2_000m, TaxWithheld = 0m, BonusAmount = 2_000m,
+            PaymentPeriod = "2026-06", Status = "Approved", TaxRegion = "GCC",
+        };
+        var bonusB = new EmployeeBonus
+        {
+            TenantId = tenantId, BonusBatchId = batch.Id,
+            EmployeeId = Guid.NewGuid(), EmployeeIntId = empB.Id,
+            EmployeeName = empB.FullName, BonusTypeId = bonusType.Id,
+            BonusTypeName = bonusType.NameEn, BasicSalary = 8_000m,
+            CalculationMethod = "Fixed", CalculationValue = 1_500m,
+            GrossBonusAmount = 1_500m, TaxWithheld = 0m, BonusAmount = 1_500m,
+            PaymentPeriod = "2026-06", Status = "Approved", TaxRegion = "GCC",
+        };
+        db.EmployeeBonuses.AddRange(bonusA, bonusB);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        // ── Step 1: Process payroll — only empA has a salary assignment.
+        var payrollCtrl = MakePayrollCtrl(db, tenantId);
+        var processResult = await payrollCtrl.Process(run.Id, CancellationToken.None);
+        processResult.Should().BeOfType<OkObjectResult>();
+
+        db.ChangeTracker.Clear();
+
+        // empA's bonus: consumed → PaidInPayroll
+        var reloadA = await db.EmployeeBonuses.AsNoTracking().FirstAsync(x => x.Id == bonusA.Id);
+        reloadA.Status.Should().Be("PaidInPayroll", "empA bonus consumed by payroll");
+        reloadA.PayrollRunId.Should().Be(run.Id);
+
+        // empB's bonus: not consumed (terminated → excluded from employees query) → still Approved
+        var reloadB = await db.EmployeeBonuses.AsNoTracking().FirstAsync(x => x.Id == bonusB.Id);
+        reloadB.Status.Should().Be("Approved", "empB bonus NOT consumed (employee terminated, not in run)");
+
+        // Batch: NOT locked (batchHasUnpaid=true because empB's bonus is still Approved)
+        var reloadBatch = await db.BonusBatches.AsNoTracking().FirstAsync(x => x.Id == batch.Id);
+        reloadBatch.IsLockedByPayroll.Should().BeFalse("partially-consumed batch must not be locked");
+        reloadBatch.Status.Should().Be("Approved");
+
+        // ── Step 2: MarkBatchPaid for the remaining (empB's) bonus.
+        var bonusCtrl = MakeBonusCtrl(db, tenantId);
+        var markResult = await bonusCtrl.MarkBatchPaid(batch.Id, new MarkBatchPaidRequest(null), CancellationToken.None);
+        markResult.Should().BeOfType<OkObjectResult>(
+            "MarkBatchPaid must succeed for a partially-consumed batch (empB still Approved)");
+
+        db.ChangeTracker.Clear();
+
+        // empA's bonus: still PaidInPayroll, PayrollRunId unchanged (not clobbered by MarkBatchPaid)
+        var finalA = await db.EmployeeBonuses.AsNoTracking().FirstAsync(x => x.Id == bonusA.Id);
+        finalA.Status.Should().Be("PaidInPayroll", "empA bonus must NOT be touched by MarkBatchPaid");
+        finalA.PayrollRunId.Should().Be(run.Id, "empA PayrollRunId must not be overwritten");
+
+        // empB's bonus: now PaidInPayroll (set by MarkBatchPaid)
+        var finalB = await db.EmployeeBonuses.AsNoTracking().FirstAsync(x => x.Id == bonusB.Id);
+        finalB.Status.Should().Be("PaidInPayroll", "empB bonus paid via MarkBatchPaid");
+
+        // GL entry covers only empB's BonusAmount (1,500) — NOT the full batch total (3,500)
+        var bonusGl = await db.FinanceGlEntries
+            .Where(x => x.SourceModule == "Bonus" && x.SourceEntityId == batch.Id)
+            .ToListAsync();
+        bonusGl.Should().ContainSingle("exactly one GL entry for the manual pay path");
+        bonusGl[0].Amount.Should().Be(1_500m,
+            "GL must cover only the remaining 1,500 (empB), not the full 3,500 batch total");
+    }
+
+    // ── Test 9: Employer-GOSI GL balance — DR 5101 + CR 2106 path ─────────────
+    // Uses the real KSA pack so employer-side statutory lines are generated.
+    // Hand-worked balance:
+    //   Earnings DR: BASIC(10,000) + HOUSING(2,000) + TRANSPORT(1,000) = 13,000
+    //   Employee GOSI CR (2101): 12,000 × 9.75% = 1,170.00
+    //   Employer GOSI CR (2106): 12,000 × 9.75% = 1,170.00
+    //   Employer GOSI DR (5101): 1,170.00
+    //   Net salary CR (2100):    13,000 − 1,170 = 11,830.00
+    //   Total DR: 13,000 + 1,170 = 14,170   Total CR: 1,170 + 1,170 + 11,830 = 14,170 ✓
+
+    [Fact]
+    public async Task Lock_WithEmployerStatutoryLines_GlIsBalancedAndIdempotent()
+    {
+        var (db, conn) = CreateSqliteDb();
+        await using var _ = conn;
+        await using var __ = db;
+
+        var tenantId = Guid.NewGuid();
+        var (_, run, _) = await SeedMinimalRun(db, tenantId);
+
+        // Link the run to a KSA company so the pack resolver fires with CountryCode="SAU".
+        await SeedKsaCompany(db, tenantId, run);
+
+        // KSA pack produces both employee (EE) and employer (ER) lines.
+        var ctrl = MakeKsaPackPayrollCtrl(db, tenantId);
+        await ctrl.Process(run.Id, CancellationToken.None);
+
+        run.Status = "Processed";
+        await db.SaveChangesAsync();
+
+        var lockResult = await ctrl.Lock(run.Id, CancellationToken.None);
+        lockResult.Should().BeOfType<OkObjectResult>("Lock must succeed with KSA employer lines present");
+
+        var glEntries = await db.FinanceGlEntries
+            .Where(x => x.SourceModule == "Payroll" && x.SourceEntityId == run.Id)
+            .ToListAsync();
+        glEntries.Should().NotBeEmpty();
+
+        // Verify employer expense (5101) and employer liability (2106) entries exist.
+        var hasEmployerDr = glEntries.Any(e => e.DebitAccount.Contains("5101"));
+        var hasEmployerCr = glEntries.Any(e => e.CreditAccount.Contains("2106"));
+        hasEmployerDr.Should().BeTrue("employer statutory expense DR to 5101 must be posted");
+        hasEmployerCr.Should().BeTrue("employer statutory liability CR to 2106 must be posted");
+
+        var totalDebits  = glEntries.Where(e => !string.IsNullOrEmpty(e.DebitAccount)).Sum(e => e.Amount);
+        var totalCredits = glEntries.Where(e => !string.IsNullOrEmpty(e.CreditAccount)).Sum(e => e.Amount);
+        Math.Abs(totalDebits - totalCredits).Should().BeLessThan(0.01m,
+            $"GL must be balanced with employer lines: DR={totalDebits}, CR={totalCredits}");
+
+        // Re-lock idempotency: count must not increase.
+        run.Status = "Processed";
+        await db.SaveChangesAsync();
+        await ctrl.Lock(run.Id, CancellationToken.None);
+
+        var countAfterRelock = await db.FinanceGlEntries
+            .CountAsync(x => x.SourceModule == "Payroll" && x.SourceEntityId == run.Id);
+        countAfterRelock.Should().Be(glEntries.Count,
+            "re-locking a run with employer GOSI lines must not double-post");
+    }
 }
 
 // ── Test doubles ──────────────────────────────────────────────────────────────
+
+// Controller factory that wires the real KSA deduction calculator so statutory deductions
+// are computed (not zeroed). Used by tests that assert actual GOSI figures or GL balance
+// with employer-side lines.
+file static class KsaPackFactory
+{
+    // KSA rates matching the seeder defaults — directional, VERIFY annually.
+    internal static readonly StubRuleReader Rules = new StubRuleReader()
+        .Set("gosi.saudi_employee_rate",          0.09m)
+        .Set("gosi.saudi_employer_rate",          0.09m)
+        .Set("gosi.saned_rate",                   0.0075m)
+        .Set("gosi.expat_occupational_hazard_rate", 0.02m)
+        .Set("gosi.covered_wage_ceiling_sar",     45_000m);
+}
 
 file sealed class _P1UnrestrictedScope : Zayra.Api.Application.Common.IDataScopeService
 {
@@ -512,18 +820,38 @@ file sealed class _P1NullNotifications : Zayra.Api.Infrastructure.Notifications.
     public Task SendEmailAsync(Guid tenantId, string templateCode, string toAddress, string toName, Dictionary<string, string> variables, CancellationToken ct) => Task.CompletedTask;
 }
 
-file sealed class _P1NullPackResolver : Zayra.Api.Application.CountryPack.ICountryPackResolver
+file sealed class _P1NullPackResolver : ICountryPackResolver
 {
-    public Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator ResolveDeductionCalculator(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultStatutoryDeductionCalculator();
-    public Zayra.Api.Application.CountryPack.IEndOfServiceCalculator ResolveEndOfServiceCalculator(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultEndOfServiceCalculator();
-    public Zayra.Api.Application.CountryPack.IWageProtectionExporter ResolveWageProtectionExporter(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultWageProtectionExporter();
-    public Zayra.Api.Application.CountryPack.INationalizationTracker ResolveNationalizationTracker(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultNationalizationTracker();
-    public Zayra.Api.Application.CountryPack.ILocalizationProfile ResolveLocalizationProfile(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultLocalizationProfile();
-    public Zayra.Api.Application.CountryPack.ICountryPackDescriptor ResolveDescriptor(string cc, string j)
-        => new Zayra.Api.Infrastructure.CountryPack.DefaultCountryPackDescriptor();
+    public IStatutoryDeductionCalculator ResolveDeductionCalculator(string cc, string j)
+        => new DefaultStatutoryDeductionCalculator();
+    public IEndOfServiceCalculator ResolveEndOfServiceCalculator(string cc, string j)
+        => new DefaultEndOfServiceCalculator();
+    public IWageProtectionExporter ResolveWageProtectionExporter(string cc, string j)
+        => new DefaultWageProtectionExporter();
+    public INationalizationTracker ResolveNationalizationTracker(string cc, string j)
+        => new DefaultNationalizationTracker();
+    public ILocalizationProfile ResolveLocalizationProfile(string cc, string j)
+        => new DefaultLocalizationProfile();
+    public ICountryPackDescriptor ResolveDescriptor(string cc, string j)
+        => new DefaultCountryPackDescriptor();
+}
+
+// Resolver that uses the real KSA calculators for tests that need non-zero statutory figures.
+// All non-KSA jurisdictions fall back to defaults.
+file sealed class _KsaPackResolver : ICountryPackResolver
+{
+    private static readonly KsaDeductionCalculator _calc = new(KsaPackFactory.Rules);
+
+    public IStatutoryDeductionCalculator ResolveDeductionCalculator(string cc, string j)
+        => cc == "SAU" ? _calc : (IStatutoryDeductionCalculator)new DefaultStatutoryDeductionCalculator();
+    public IEndOfServiceCalculator ResolveEndOfServiceCalculator(string cc, string j)
+        => new DefaultEndOfServiceCalculator();
+    public IWageProtectionExporter ResolveWageProtectionExporter(string cc, string j)
+        => new DefaultWageProtectionExporter();
+    public INationalizationTracker ResolveNationalizationTracker(string cc, string j)
+        => new DefaultNationalizationTracker();
+    public ILocalizationProfile ResolveLocalizationProfile(string cc, string j)
+        => new DefaultLocalizationProfile();
+    public ICountryPackDescriptor ResolveDescriptor(string cc, string j)
+        => new DefaultCountryPackDescriptor();
 }

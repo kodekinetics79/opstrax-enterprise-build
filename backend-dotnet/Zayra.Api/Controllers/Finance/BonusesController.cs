@@ -523,26 +523,34 @@ public class BonusesController : ControllerBase
         batch.Status = "Paid"; batch.IsLockedByPayroll = true;
         batch.UpdatedAtUtc = DateTime.UtcNow; batch.UpdatedBy = uid;
 
-        var bonuses = await _db.EmployeeBonuses.Where(x => x.BonusBatchId == id && !x.IsDeleted).ToListAsync(ct);
-        foreach (var b in bonuses)
+        // Only mark bonuses that are still "Approved" — already-consumed bonuses (PaidInPayroll
+        // via a payroll run) must not have their Status or PayrollRunId clobbered. This makes
+        // MarkBatchPaid safe to call on a partially-consumed batch.
+        var unpaidBonuses = await _db.EmployeeBonuses
+            .Where(x => x.BonusBatchId == id && !x.IsDeleted && x.Status == "Approved")
+            .ToListAsync(ct);
+        foreach (var b in unpaidBonuses)
         {
             b.Status = "PaidInPayroll";
             if (req.PayrollRunId.HasValue) b.PayrollRunId = req.PayrollRunId;
         }
 
-        // GL: Bonus Payable Dr / Cash/Bank Cr
+        // GL amount covers only the remaining (previously-unpaid) bonuses so that the
+        // payroll-consumed portion is not double-counted in the bonus GL.
+        var remainingGlAmount = unpaidBonuses.Sum(b => b.BonusAmount);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        _db.FinanceGlEntries.Add(new FinanceGlEntry
-        {
-            TenantId = tid, SourceModule = "Bonus", SourceEntityId = id,
-            SourceEntityRef = batch.BatchNumber, EventType = "BonusPayment",
-            DebitAccount = "2300 - Bonus Payable",
-            CreditAccount = "1000 - Cash/Bank",
-            Amount = batch.TotalAmount, Currency = "USD",
-            EntryDate = today, Period = batch.PaymentPeriod,
-            Description = $"Bonus payment: {batch.BatchName} ({batch.BatchNumber})",
-            PostedBy = uid, PostedByName = GetUserName(),
-        });
+        if (remainingGlAmount > 0)
+            _db.FinanceGlEntries.Add(new FinanceGlEntry
+            {
+                TenantId = tid, SourceModule = "Bonus", SourceEntityId = id,
+                SourceEntityRef = batch.BatchNumber, EventType = "BonusPayment",
+                DebitAccount = "2300 - Bonus Payable",
+                CreditAccount = "1000 - Cash/Bank",
+                Amount = remainingGlAmount, Currency = "USD",
+                EntryDate = today, Period = batch.PaymentPeriod,
+                Description = $"Bonus payment: {batch.BatchName} ({batch.BatchNumber})",
+                PostedBy = uid, PostedByName = GetUserName(),
+            });
 
         await _db.SaveChangesAsync(ct);
         await WriteBonusAudit(tid, uid, id, null, "BatchPaid", "Approved",

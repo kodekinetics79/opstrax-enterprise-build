@@ -381,10 +381,17 @@ public class PayrollController : ControllerBase
         }
 
         // BONUS: mark consumed bonuses as PaidInPayroll so MarkBatchPaid() cannot double-pay.
-        if (pendingBonuses.Count > 0)
+        // Only bonuses for employees that were actually processed (had a payslip generated) are
+        // consumed here. Employees with no salary assignment are skipped in the per-employee loop,
+        // so their pending bonuses stay Approved for the next period or manual payment.
+        var processedEmpIds = slips.Select(s => s.EmployeeId).ToHashSet();
+        var toConsumeBonuses = pendingBonuses
+            .Where(b => processedEmpIds.Contains(b.EmployeeIntId!.Value))
+            .ToList();
+        if (toConsumeBonuses.Count > 0)
         {
-            var consumedBonusIds = pendingBonuses.Select(b => b.Id).ToHashSet();
-            var consumedBatches  = pendingBonuses.Select(b => b.BonusBatchId).Distinct().ToList();
+            var consumedBonusIds = toConsumeBonuses.Select(b => b.Id).ToHashSet();
+            var consumedBatches  = toConsumeBonuses.Select(b => b.BonusBatchId).Distinct().ToList();
             await _db.EmployeeBonuses
                 .Where(b => consumedBonusIds.Contains(b.Id))
                 .ExecuteUpdateAsync(s => s
@@ -405,7 +412,7 @@ public class PayrollController : ControllerBase
             }
         }
 
-        await PayrollAudit("payroll.run.processed", "PayrollRun", run.Id.ToString(), new { employeeCount = slips.Count, totalNet = run.TotalNetSalary, bonusesConsumed = pendingBonuses.Count }, cancellationToken);
+        await PayrollAudit("payroll.run.processed", "PayrollRun", run.Id.ToString(), new { employeeCount = slips.Count, totalNet = run.TotalNetSalary, bonusesConsumed = toConsumeBonuses.Count }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(run);
     }
