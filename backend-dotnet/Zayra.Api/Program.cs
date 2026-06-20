@@ -110,6 +110,7 @@ builder.Services.AddDbContextPool<ZayraDbContext>(options => options
     .UseMySql(connectionString, ServerVersion.Create(new Version(8, 0, 0), Pomelo.EntityFrameworkCore.MySql.Infrastructure.ServerType.MySql),
         mySqlOptions => mySqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null))
     .ReplaceService<IMigrationsSqlGenerator, Zayra.Api.Infrastructure.Common.TiDbMigrationsSqlGenerator>()
+    .ReplaceService<IMigrationCommandExecutor, Zayra.Api.Infrastructure.Common.TiDbMigrationCommandExecutor>()
     .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)));
 
 builder.Services.AddMemoryCache();
