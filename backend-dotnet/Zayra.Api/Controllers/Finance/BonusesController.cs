@@ -248,9 +248,16 @@ public class BonusesController : ControllerBase
             : 0m;
         decimal netBonusAmount = grossBonusAmount - taxWithheld;
 
+        // Resolve int PK (Employee.Id) for payroll-run matching — same bridge as Loans/Advances.
+        var linkedEmployee = await _db.Employees
+            .Where(e => e.TenantId == tid && e.FullName == req.EmployeeName && !e.IsDeleted)
+            .Select(e => (int?)e.Id)
+            .FirstOrDefaultAsync(ct);
+
         var eb = new EmployeeBonus
         {
             TenantId = tid, BonusBatchId = batchId, EmployeeId = req.EmployeeId,
+            EmployeeIntId = linkedEmployee,
             EmployeeName = req.EmployeeName, Department = req.Department ?? string.Empty,
             BonusTypeId = batch.BonusTypeId, BonusTypeName = batch.BonusTypeName,
             BasicSalary = req.BasicSalary, CalculationMethod = req.CalculationMethod,
@@ -349,6 +356,7 @@ public class BonusesController : ControllerBase
             var eb = new EmployeeBonus
             {
                 TenantId = tid, BonusBatchId = batchId, EmployeeId = Guid.NewGuid(),
+                EmployeeIntId = emp.Id,   // int PK for payroll-run join
                 EmployeeName = emp.FullName, Department = emp.Department,
                 BonusTypeId = bonusType.Id, BonusTypeName = bonusType.NameEn,
                 BasicSalary = basicSalary, CalculationMethod = method, CalculationValue = calcValue,
@@ -501,6 +509,15 @@ public class BonusesController : ControllerBase
         var uid = GetUserId();
         var batch = await _db.BonusBatches.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid && !x.IsDeleted, ct);
         if (batch == null) return NotFound();
+        // Double-pay guard must run before the status check: Process() sets IsLockedByPayroll=true
+        // and Status="Paid" simultaneously, so without this order the 409 is swallowed by the 400.
+        if (batch.IsLockedByPayroll)
+            return Conflict(new
+            {
+                error   = "already_paid_via_payroll",
+                message = "This batch was already paid through a payroll run. " +
+                          "Marking it paid again would double-pay employees.",
+            });
         if (batch.Status != "Approved") return BadRequest("Only Approved batches can be marked as paid.");
 
         batch.Status = "Paid"; batch.IsLockedByPayroll = true;

@@ -278,7 +278,8 @@ public class EmployeeBonus
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
     public Guid BonusBatchId { get; set; }
-    public Guid EmployeeId { get; set; }
+    public Guid EmployeeId { get; set; }       // placeholder Guid — use EmployeeIntId for payroll join
+    public int? EmployeeIntId { get; set; }    // Employee.Id (int PK) for payroll-run matching
     public string EmployeeName { get; set; } = string.Empty;
     public string Department { get; set; } = string.Empty;
     public Guid BonusTypeId { get; set; }

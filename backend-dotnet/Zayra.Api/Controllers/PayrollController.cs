@@ -171,6 +171,26 @@ public class PayrollController : ControllerBase
             .Where(a => a.TenantId == tenantId && a.Status == "Active" && a.EmployeeIntId != null && a.OutstandingBalance > 0)
             .ToListAsync(cancellationToken);
 
+        // BONUS: Load approved bonuses for this pay period — consumed here, blocked from MarkBatchPaid.
+        var periodStr = $"{run.Year}-{run.Month:D2}";
+        var pendingBonuses = await _db.EmployeeBonuses
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted
+                && x.Status == "Approved"
+                && x.PaymentPeriod == periodStr
+                && x.PayrollRunId == null
+                && x.EmployeeIntId != null)
+            .ToListAsync(cancellationToken);
+        var bonusTypeIds = pendingBonuses.Select(b => b.BonusTypeId).Distinct().ToList();
+        var bonusTypeMap = bonusTypeIds.Count > 0
+            ? await _db.BonusTypes.AsNoTracking()
+                .Where(t => bonusTypeIds.Contains(t.Id))
+                .ToDictionaryAsync(t => t.Id, cancellationToken)
+            : new Dictionary<Guid, BonusType>();
+        var bonusesByEmployee = pendingBonuses
+            .Where(b => b.EmployeeIntId.HasValue)
+            .GroupBy(b => b.EmployeeIntId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         // COMPLIANCE: YTD — sum of all locked runs in the same year (before this month)
         var ytdSlips = await _db.PayrollSlips.AsNoTracking()
             .Where(s => s.TenantId == tenantId)
@@ -227,12 +247,22 @@ public class PayrollController : ControllerBase
                 taxDeduction = Math.Round(taxableBase * incomeTaxRate / 100m, 2);
             }
 
+            // BONUS: collect this employee's approved bonuses for the period.
+            var empBonuses = bonusesByEmployee.TryGetValue(e.Id, out var eb) ? eb : new List<EmployeeBonus>();
+            // Gross bonus amounts that are part of the social insurance base (e.g. GOSI/GPSSA/GRSIA).
+            decimal gosiIncludedBonusTotal = empBonuses
+                .Where(b => bonusTypeMap.TryGetValue(b.BonusTypeId, out var bt) && bt.IsIncludedInGosiBase)
+                .Sum(b => b.GrossBonusAmount);
+            // Net bonus earnings added to employee take-home this period.
+            decimal totalBonusNet = empBonuses.Sum(b => b.BonusAmount);
+
             // Statutory deduction via country pack — rates from tenant-overridable StatutoryRule rows.
             // GosiCalculationService is retained for parity testing; it is no longer called in the run path.
+            // GOSI-included bonus is added to housing slot so GosiCoveredWage = Basic + Housing + Bonus.
             var statutoryInput = new StatutoryDeductionInput(
                 EmployeeId:   Guid.Empty, // Employee PK is int; Guid field not used in pack calculations
                 CompanyId:    run.CompanyId ?? Guid.Empty,
-                Salary:       new SalaryBreakdown(basic, housing, transport, otherAllowances),
+                Salary:       new SalaryBreakdown(basic, housing + gosiIncludedBonusTotal, transport, otherAllowances),
                 Nationality:  e.Nationality ?? string.Empty,
                 ContractType: e.ContractType ?? "Indefinite",
                 PeriodYear:   run.Year,
@@ -249,9 +279,9 @@ public class PayrollController : ControllerBase
 
             var deductions = fixedDeduction + attendanceDeduction + absenceDeduction + leaveDeduction + taxDeduction + gosiEmployeeTotal + totalLoanDeduction;
             // C3: net salary cannot be negative (GCC labour law)
-            var netSalary = Math.Max(0m, gross + overtimePay - deductions);
-            if (gross + overtimePay - deductions < 0)
-                _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Error", Code = "NEGATIVE_NET", Message = "Calculated net salary is negative. Deductions exceed gross pay. Run blocked for this employee." });
+            var netSalary = Math.Max(0m, gross + overtimePay + totalBonusNet - deductions);
+            if (gross + overtimePay + totalBonusNet - deductions < 0)
+                _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Error", Code = "NEGATIVE_NET", Message = "Calculated net salary is negative. Deductions exceed gross pay plus bonus. Run blocked for this employee." });
 
             // COMPLIANCE: YTD — sum all locked slips for this employee earlier in the same year
             var empYtdSlips = ytdSlips.Where(s => s.EmployeeId == e.Id).ToList();
@@ -270,8 +300,8 @@ public class PayrollController : ControllerBase
                 BasicSalary = basic,
                 HousingAllowance = housing,
                 TransportAllowance = transport,
-                OtherAllowances = otherAllowances + overtimePay,
-                GrossSalary = gross + overtimePay,
+                OtherAllowances = otherAllowances + overtimePay + totalBonusNet,
+                GrossSalary = gross + overtimePay + totalBonusNet,
                 Deductions = deductions,
                 NetSalary = netSalary,
                 LoanDeductions = totalLoanDeduction,
@@ -282,6 +312,9 @@ public class PayrollController : ControllerBase
             };
             slips.Add(slip);
             _db.PayrollRunEmployees.Add(new PayrollRunEmployee { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, GrossEarnings = slip.GrossSalary, TotalDeductions = deductions, NetPay = slip.NetSalary });
+            // Bonus earning lines (one per bonus in the batch, gross amount for GL expense tracking).
+            foreach (var bonus in empBonuses)
+                AddEarning(tenantId, id, e.Id, $"BONUS_{bonus.BonusTypeName.ToUpperInvariant().Replace(' ', '_')}", bonus.BonusTypeName, bonus.GrossBonusAmount, "Bonus");
             AddEarning(tenantId, id, e.Id, "BASIC", "Basic salary", basic, "Salary");
             if (housing > 0) AddEarning(tenantId, id, e.Id, "HOUSING", "Housing allowance", housing, "Salary");
             if (transport > 0) AddEarning(tenantId, id, e.Id, "TRANSPORT", "Transport allowance", transport, "Salary");
@@ -347,7 +380,32 @@ public class PayrollController : ControllerBase
             if (adv.OutstandingBalance <= 0) adv.Status = "Closed";
         }
 
-        await PayrollAudit("payroll.run.processed", "PayrollRun", run.Id.ToString(), new { employeeCount = slips.Count, totalNet = run.TotalNetSalary }, cancellationToken);
+        // BONUS: mark consumed bonuses as PaidInPayroll so MarkBatchPaid() cannot double-pay.
+        if (pendingBonuses.Count > 0)
+        {
+            var consumedBonusIds = pendingBonuses.Select(b => b.Id).ToHashSet();
+            var consumedBatches  = pendingBonuses.Select(b => b.BonusBatchId).Distinct().ToList();
+            await _db.EmployeeBonuses
+                .Where(b => consumedBonusIds.Contains(b.Id))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, "PaidInPayroll")
+                    .SetProperty(b => b.PayrollRunId, id), cancellationToken);
+            // Lock the batch if all its approved bonuses are now consumed.
+            foreach (var batchId2 in consumedBatches)
+            {
+                var batchHasUnpaid = await _db.EmployeeBonuses.AnyAsync(
+                    b => b.BonusBatchId == batchId2 && !b.IsDeleted
+                       && b.Status == "Approved" && b.PayrollRunId == null, cancellationToken);
+                if (!batchHasUnpaid)
+                    await _db.BonusBatches
+                        .Where(x => x.Id == batchId2 && x.TenantId == tenantId)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(x => x.Status, "Paid")
+                            .SetProperty(x => x.IsLockedByPayroll, true), cancellationToken);
+            }
+        }
+
+        await PayrollAudit("payroll.run.processed", "PayrollRun", run.Id.ToString(), new { employeeCount = slips.Count, totalNet = run.TotalNetSalary, bonusesConsumed = pendingBonuses.Count }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(run);
     }
@@ -359,11 +417,39 @@ public class PayrollController : ControllerBase
         var run = await _db.PayrollRuns.FirstOrDefaultAsync(r => r.Id == id && r.TenantId == tenantId, cancellationToken);
         if (run is null) return NotFound();
         if (run.Status is not ("Processed" or "Approved" or "PendingFinanceReview")) return BadRequest(new { message = "Only processed, pending finance review, or approved runs can be locked." });
+
+        // FINANCE-P1: Persist double-entry GL on lock (idempotent — skip if already posted).
+        var period = $"{run.Year}-{run.Month:D2}";
+        var alreadyPosted = await _db.FinanceGlEntries
+            .AnyAsync(x => x.SourceModule == "Payroll" && x.SourceEntityId == id && x.TenantId == tenantId, cancellationToken);
+        if (!alreadyPosted)
+        {
+            var earnings   = await _db.PayrollEarnings.AsNoTracking()
+                .Where(e => e.TenantId == tenantId && e.PayrollRunId == id).ToListAsync(cancellationToken);
+            var dedxns     = await _db.PayrollDeductions.AsNoTracking()
+                .Where(d => d.TenantId == tenantId && d.PayrollRunId == id).ToListAsync(cancellationToken);
+            var totalNet   = run.TotalNetSalary;
+            var uid        = GetUserId();
+            var uname      = GetUserName();
+            var (glLines, totalDebits, totalCredits) = BuildPayrollGlEntries(
+                tenantId, id, period, earnings, dedxns, totalNet, uid, uname);
+            if (Math.Abs(totalDebits - totalCredits) > 0.01m)
+                return UnprocessableEntity(new
+                {
+                    error         = "gl_unbalanced",
+                    message       = "Payroll GL is not balanced. Total debits must equal total credits before locking.",
+                    totalDebits,
+                    totalCredits,
+                    difference    = Math.Abs(totalDebits - totalCredits),
+                });
+            _db.FinanceGlEntries.AddRange(glLines);
+        }
+
         run.Status = "Locked";
         run.LockedAtUtc = DateTime.UtcNow;
         await _db.PayrollSlips.Where(s => s.RunId == id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, "Final"), cancellationToken);
         await _db.Payslips.Where(s => s.PayrollRunId == id && s.TenantId == tenantId).ExecuteUpdateAsync(s => s.SetProperty(p => p.IsPublishedToEss, true).SetProperty(p => p.PublishedAtUtc, DateTime.UtcNow), cancellationToken);
-        await PayrollAudit("payroll.run.locked", "PayrollRun", id.ToString(), null, cancellationToken);
+        await PayrollAudit("payroll.run.locked", "PayrollRun", id.ToString(), new { glPosted = !alreadyPosted, period }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         // Notify all employees with a payslip for this run
         var employeeIds = await _db.PayrollSlips.AsNoTracking().Where(s => s.RunId == id && s.TenantId == tenantId).Select(s => s.EmployeeId).ToListAsync(cancellationToken);
@@ -475,53 +561,55 @@ public class PayrollController : ControllerBase
         var deductions = await _db.PayrollDeductions.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayrollRunId == id).ToListAsync(cancellationToken);
         var totalNet   = await _db.PayrollSlips.AsNoTracking().Where(x => x.TenantId == tenantId && x.RunId == id).SumAsync(x => x.NetSalary, cancellationToken);
 
-        var glMap = new Dictionary<string, (string Account, string AccountName, string EntryType)>
-        {
-            ["BASIC"]            = ("5001", "Basic Salary Expense",            "DR"),
-            ["HOUSING"]          = ("5002", "Housing Allowance Expense",       "DR"),
-            ["TRANSPORT"]        = ("5003", "Transport Allowance Expense",     "DR"),
-            ["OTHER_ALLOWANCES"] = ("5004", "Other Allowances Expense",        "DR"),
-            ["OVERTIME"]         = ("5005", "Overtime Expense",                "DR"),
-            // GOSI employee contributions — liability to GOSI
-            ["GOSI_EMPLOYEE"]         = ("2101", "GOSI / Social Insurance Payable",           "CR"),  // pre-PR3 backward compat
-            ["GOSI_ANNUITIES_EMP"]    = ("2101", "GOSI Annuities Payable (Employee)",         "CR"),
-            ["GOSI_SANED_EMP"]        = ("2101", "GOSI SANED Payable (Employee)",             "CR"),
-            // GOSI employer contributions — liability to GOSI (DR generated below via employer entry)
-            ["GOSI_ANNUITIES_ER"]     = ("2106", "GOSI Annuities Payable (Employer)",         "CR"),
-            ["GOSI_SANED_ER"]         = ("2106", "GOSI SANED Payable (Employer)",             "CR"),
-            ["GOSI_OCHAZARDS_ER"]     = ("2106", "GOSI Occupational Hazards Payable (Employer)", "CR"),
-            ["INCOME_TAX"]       = ("2102", "Income Tax Payable",              "CR"),
-            ["FIXED_DEDUCTION"]  = ("2103", "Fixed Deductions Payable",        "CR"),
-            ["ATTENDANCE"]       = ("2104", "Attendance Adjustment Payable",   "CR"),
-            ["ABSENCE"]          = ("2104", "Attendance Adjustment Payable",   "CR"),
-            ["LEAVE"]            = ("2105", "Leave Deduction Payable",         "CR"),
-        };
-
+        // Build entries using source-based routing — works for both legacy codes and new pack codes
+        // (e.g. "GOSI-ANN-EE", "GPSSA-ER", "GRSIA-EE") without per-code dictionary changes.
         var entries = new List<(string Code, string Name, string Account, string AccountName, string EntryType, decimal Amount)>();
 
         foreach (var grp in earnings.GroupBy(e => e.ComponentCode))
         {
-            if (!glMap.TryGetValue(grp.Key, out var acct))
-                acct = ("5099", $"Other Earnings — {grp.Key}", "DR");
-            entries.Add((grp.Key, grp.First().ComponentName, acct.Account, acct.AccountName, acct.EntryType, grp.Sum(e => e.Amount)));
+            var first = grp.First();
+            var (acct, aName) = (first.Source, grp.Key) switch
+            {
+                ("Bonus", _)            => ("6100", "Employee Bonus Expense"),
+                (_, "BASIC")            => ("5001", "Basic Salary Expense"),
+                (_, "HOUSING")          => ("5002", "Housing Allowance Expense"),
+                (_, "TRANSPORT")        => ("5003", "Transport Allowance Expense"),
+                (_, "OTHER_ALLOWANCES") => ("5004", "Other Allowances Expense"),
+                (_, "OVERTIME")         => ("5005", "Overtime Expense"),
+                _                       => ("5099", $"Other Earnings — {grp.Key}"),
+            };
+            entries.Add((grp.Key, first.ComponentName, acct, aName, "DR", grp.Sum(e => e.Amount)));
         }
-        foreach (var grp in deductions.GroupBy(d => d.ComponentCode))
+
+        var employerStatutoryTotal = 0m;
+        foreach (var grp in deductions.GroupBy(d => new { d.ComponentCode, d.Source }))
         {
-            if (!glMap.TryGetValue(grp.Key, out var acct))
-                acct = ("2199", $"Other Deductions — {grp.Key}", "CR");
-            entries.Add((grp.Key, grp.First().ComponentName, acct.Account, acct.AccountName, acct.EntryType, grp.Sum(d => d.Amount)));
+            var first = grp.First();
+            var isEr  = first.Source == "Statutory" && first.ComponentCode.EndsWith("-ER");
+            if (isEr) employerStatutoryTotal += grp.Sum(d => d.Amount);
+
+            var (acct, aName) = (first.Source, isEr) switch
+            {
+                ("Statutory", true)  => ("2106", "Social Insurance Employer Payable"),
+                ("Statutory", false) => ("2101", "Social Insurance Payable (Employee)"),
+                ("Tax", _)           => ("2102", "Income Tax Payable"),
+                ("Loan", _)          => ("2107", "Loan & Advance Deductions Payable"),
+                ("Attendance", _)    => ("2104", "Attendance Adjustment Payable"),
+                ("Leave", _)         => ("2105", "Leave Deduction Payable"),
+                _ => first.ComponentCode switch
+                {
+                    "FIXED_DEDUCTION" => ("2103", "Fixed Deductions Payable"),
+                    _                 => ("2199", $"Other Deductions — {first.ComponentCode}"),
+                },
+            };
+            entries.Add((grp.Key.ComponentCode, first.ComponentName, acct, aName, "CR", grp.Sum(d => d.Amount)));
         }
 
-        // Employer GOSI DR expense entries — one per employer-side component code
-        var employerGosiCodes = new HashSet<string>
-            { "GOSI_ANNUITIES_ER", "GOSI_SANED_ER", "GOSI_OCHAZARDS_ER" };
-        var employerGosiTotal = deductions
-            .Where(d => employerGosiCodes.Contains(d.ComponentCode))
-            .Sum(d => d.Amount);
-        if (employerGosiTotal > 0)
-            entries.Add(("GOSI_EMPLOYER_DR", "Employer GOSI Expense", "5101", "Employer GOSI Expense", "DR", employerGosiTotal));
+        // Employer statutory expense DR balances the CR 2106 liability posted above.
+        if (employerStatutoryTotal > 0)
+            entries.Add(("SOCIAL_INS_ER_DR", "Employer Social Insurance Expense", "5101", "Employer Social Insurance Expense", "DR", employerStatutoryTotal));
 
-        // Net salary payable CR balances all earning DRs net of deduction CRs
+        // Net salary payable CR balances all earning DRs net of deduction CRs.
         entries.Add(("NET_SALARY", "Net Salary Payable", "2100", "Salaries Payable", "CR", totalNet));
 
         var totalDebits  = entries.Where(e => e.EntryType == "DR").Sum(e => e.Amount);
@@ -1240,6 +1328,107 @@ public class PayrollController : ControllerBase
     private void AddDeduction(Guid tenantId, Guid runId, int employeeId, string code, string name, decimal amount, string source) =>
         _db.PayrollDeductions.Add(new PayrollDeduction { TenantId = tenantId, PayrollRunId = runId, EmployeeId = employeeId, ComponentCode = code, ComponentName = name, Amount = amount, Source = source });
 
+    // Builds the double-entry GL lines for a payroll run.
+    // Uses Source-based routing so new pack codes (GOSI-ANN-EE, GPSSA-EE, etc.) map correctly
+    // without requiring changes to the component code dictionary as new packs are added.
+    // Returns: (lines, totalDebits, totalCredits).
+    private static (List<FinanceGlEntry> Lines, decimal TotalDebits, decimal TotalCredits) BuildPayrollGlEntries(
+        Guid tenantId, Guid runId, string period,
+        List<PayrollEarning> earnings, List<PayrollDeduction> deductions,
+        decimal totalNetSalary, Guid? postedBy, string postedByName)
+    {
+        var lines = new List<FinanceGlEntry>();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // ── Earnings (Debit side) ──────────────────────────────────────────────
+        foreach (var grp in earnings.GroupBy(e => e.ComponentCode))
+        {
+            var (acct, acctName) = (grp.First().Source, grp.Key) switch
+            {
+                ("Bonus", _)        => ("6100", "Employee Bonus Expense"),
+                (_, "BASIC")        => ("5001", "Basic Salary Expense"),
+                (_, "HOUSING")      => ("5002", "Housing Allowance Expense"),
+                (_, "TRANSPORT")    => ("5003", "Transport Allowance Expense"),
+                (_, "OTHER_ALLOWANCES") => ("5004", "Other Allowances Expense"),
+                (_, "OVERTIME")     => ("5005", "Overtime Expense"),
+                _                   => ("5099", $"Other Earnings — {grp.Key}"),
+            };
+            lines.Add(new FinanceGlEntry
+            {
+                TenantId = tenantId, SourceModule = "Payroll", SourceEntityId = runId,
+                SourceEntityRef = period, EventType = "PayrollLock",
+                DebitAccount  = $"{acct} - {acctName}", CreditAccount = string.Empty,
+                Amount = grp.Sum(e => e.Amount), Currency = "USD",
+                EntryDate = today, Period = period,
+                Description = $"Payroll earning: {acctName}",
+                PostedBy = postedBy, PostedByName = postedByName,
+            });
+        }
+
+        // ── Deductions (Credit side) ──────────────────────────────────────────
+        decimal employerStatutoryTotal = 0m;
+        foreach (var grp in deductions.GroupBy(d => new { d.ComponentCode, d.Source }))
+        {
+            var isEmployerSide = grp.Key.Source == "Statutory" && grp.Key.ComponentCode.EndsWith("-ER");
+            if (isEmployerSide)
+                employerStatutoryTotal += grp.Sum(d => d.Amount); // aggregated into DR/CR pair below
+
+            var (acct, acctName) = (grp.Key.Source, isEmployerSide) switch
+            {
+                ("Statutory", true)  => ("2106", "Social Insurance Employer Payable"),
+                ("Statutory", false) => ("2101", "Social Insurance Payable (Employee)"),
+                ("Tax", _)           => ("2102", "Income Tax Payable"),
+                ("Loan", _)          => ("2107", "Loan & Advance Deductions Payable"),
+                ("Attendance", _)    => ("2104", "Attendance Adjustment Payable"),
+                ("Leave", _)         => ("2105", "Leave Deduction Payable"),
+                _ => grp.Key.ComponentCode switch
+                {
+                    "FIXED_DEDUCTION" => ("2103", "Fixed Deductions Payable"),
+                    _                 => ("2199", $"Other Deductions — {grp.Key.ComponentCode}"),
+                },
+            };
+            lines.Add(new FinanceGlEntry
+            {
+                TenantId = tenantId, SourceModule = "Payroll", SourceEntityId = runId,
+                SourceEntityRef = period, EventType = "PayrollLock",
+                DebitAccount = string.Empty, CreditAccount = $"{acct} - {acctName}",
+                Amount = grp.Sum(d => d.Amount), Currency = "USD",
+                EntryDate = today, Period = period,
+                Description = $"Payroll deduction: {acctName}",
+                PostedBy = postedBy, PostedByName = postedByName,
+            });
+        }
+
+        // Employer statutory contribution: DR expense to balance the CR liability above.
+        if (employerStatutoryTotal > 0)
+            lines.Add(new FinanceGlEntry
+            {
+                TenantId = tenantId, SourceModule = "Payroll", SourceEntityId = runId,
+                SourceEntityRef = period, EventType = "PayrollLock",
+                DebitAccount = "5101 - Employer Social Insurance Expense", CreditAccount = string.Empty,
+                Amount = employerStatutoryTotal, Currency = "USD",
+                EntryDate = today, Period = period,
+                Description = "Employer statutory contributions (social insurance)",
+                PostedBy = postedBy, PostedByName = postedByName,
+            });
+
+        // Net salary payable balances all DR earnings vs. CR deductions.
+        lines.Add(new FinanceGlEntry
+        {
+            TenantId = tenantId, SourceModule = "Payroll", SourceEntityId = runId,
+            SourceEntityRef = period, EventType = "PayrollLock",
+            DebitAccount = string.Empty, CreditAccount = "2100 - Salaries Payable",
+            Amount = totalNetSalary, Currency = "USD",
+            EntryDate = today, Period = period,
+            Description = "Net salaries payable",
+            PostedBy = postedBy, PostedByName = postedByName,
+        });
+
+        var totalDebits  = lines.Where(l => !string.IsNullOrEmpty(l.DebitAccount)).Sum(l => l.Amount);
+        var totalCredits = lines.Where(l => !string.IsNullOrEmpty(l.CreditAccount)).Sum(l => l.Amount);
+        return (lines, totalDebits, totalCredits);
+    }
+
     // M1: audit log now captures caller IP and structured metadata
     private async Task PayrollAudit(string action, string entity, string entityId, object? metadata, CancellationToken ct)
     {
@@ -1860,6 +2049,7 @@ public class PayrollController : ControllerBase
 
     private Guid GetTenantId() => Guid.Parse(User.FindFirstValue("tenant_id")!);
     private Guid? GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub"), out var id) ? id : null;
+    private string GetUserName() => User.FindFirstValue(ClaimTypes.Name) ?? User.FindFirstValue("name") ?? "system";
     private bool HasPermission(string permission) =>
         User.Claims.Any(c => c.Type == "permission" && string.Equals(c.Value, permission, StringComparison.OrdinalIgnoreCase));
 }
