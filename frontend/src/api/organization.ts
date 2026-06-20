@@ -15,6 +15,7 @@ export interface CompanyDto {
   legalNameAr: string;
   tradeName: string;
   countryCode: string;
+  jurisdiction: string;
   registrationNumber: string;
   taxNumber: string;
   wpsEmployerId: string;
@@ -29,6 +30,7 @@ export interface CompanyRequest {
   legalNameAr?: string;
   tradeName?: string;
   countryCode: string;
+  jurisdiction?: string;
   registrationNumber: string;
   taxNumber?: string;
   wpsEmployerId?: string;

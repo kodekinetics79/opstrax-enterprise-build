@@ -224,6 +224,7 @@ public class ZayraDbContext : DbContext
     public DbSet<TenantLocalizationSetting> TenantLocalizationSettings => Set<TenantLocalizationSetting>();
     public DbSet<TenantBranding> TenantBrandings => Set<TenantBranding>();
     public DbSet<CountryPayrollRule> CountryPayrollRules => Set<CountryPayrollRule>();
+    public DbSet<StatutoryRule> StatutoryRules => Set<StatutoryRule>();
     public DbSet<TenantFieldHelpText> TenantFieldHelpTexts => Set<TenantFieldHelpText>();
     public DbSet<PlatformSupportSession> PlatformSupportSessions => Set<PlatformSupportSession>();
     public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
@@ -668,6 +669,7 @@ public class ZayraDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.LegalNameEn });
             entity.HasIndex(x => new { x.TenantId, x.RegistrationNumber });
             entity.HasIndex(x => new { x.TenantId, x.IsDeleted });
+            entity.Property(x => x.Jurisdiction).HasMaxLength(30);
         });
 
         modelBuilder.Entity<Branch>(entity =>
@@ -1534,6 +1536,17 @@ public class ZayraDbContext : DbContext
             entity.ToTable("country_payroll_rules");
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.TenantId, x.CountryCode, x.RuleKey, x.EffectiveFrom });
+        });
+
+        modelBuilder.Entity<StatutoryRule>(entity =>
+        {
+            entity.ToTable("statutory_rules");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CountryCode).HasMaxLength(5);
+            entity.Property(x => x.Jurisdiction).HasMaxLength(30);
+            entity.Property(x => x.RuleKey).HasMaxLength(120);
+            entity.Property(x => x.DataType).HasMaxLength(20);
+            entity.HasIndex(x => new { x.TenantId, x.CountryCode, x.Jurisdiction, x.RuleKey, x.EffectiveFrom }).IsUnique();
         });
 
         modelBuilder.Entity<TenantFieldHelpText>(entity =>

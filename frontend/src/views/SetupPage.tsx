@@ -10,6 +10,8 @@ import {
   gradesApi,
   costCentersApi,
 } from '../api/organization';
+import { countryPacksApi, statutoryRulesApi } from '../api/countryPacks';
+import type { CountryPackOption, StatutorySummary } from '../api/countryPacks';
 import type {
   CompanyDto,
   CompanyRequest,
@@ -71,6 +73,17 @@ const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'adminAuditLogs', label: 'Audit Logs', icon: ClipboardList },
 ];
 
+// Small read-only field for the statutory pack profile panel.
+function InfoRow({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="text-sm text-slate-800 dark:text-slate-100">{value}</p>
+      {detail && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 leading-snug">{detail}</p>}
+    </div>
+  );
+}
+
 // ─── Companies ───────────────────────────────────────────────────────────────
 
 function CompaniesTab() {
@@ -80,6 +93,9 @@ function CompaniesTab() {
   const [editing, setEditing] = useState<CompanyDto | null>(null);
   const [form, setForm] = useState<CompanyRequest>(emptyCompany());
   const [saving, setSaving] = useState(false);
+  const [availablePacks, setAvailablePacks] = useState<CountryPackOption[]>([]);
+  const [statutorySummary, setStatutorySummary] = useState<StatutorySummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -91,10 +107,22 @@ function CompaniesTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    countryPacksApi.available().then(setAvailablePacks).catch(() => {});
+  }, []);
+
+  const loadStatutorySummary = async (companyId: string) => {
+    setSummaryLoading(true);
+    setStatutorySummary(null);
+    try { setStatutorySummary(await countryPacksApi.statutorySummary(companyId)); }
+    catch { /**/ }
+    finally { setSummaryLoading(false); }
+  };
+
   const openNew = () => { setEditing(null); setForm(emptyCompany()); setError(''); setModalOpen(true); };
   const openEdit = (c: CompanyDto) => {
     setEditing(c);
-    setForm({ legalNameEn: c.legalNameEn, legalNameAr: c.legalNameAr, tradeName: c.tradeName, countryCode: c.countryCode, registrationNumber: c.registrationNumber, taxNumber: c.taxNumber, wpsEmployerId: c.wpsEmployerId, gosiEmployerId: c.gosiEmployerId, qiwaEstablishmentId: c.qiwaEstablishmentId, defaultCurrency: c.defaultCurrency, isActive: c.isActive });
+    setForm({ legalNameEn: c.legalNameEn, legalNameAr: c.legalNameAr, tradeName: c.tradeName, countryCode: c.countryCode, jurisdiction: c.jurisdiction, registrationNumber: c.registrationNumber, taxNumber: c.taxNumber, wpsEmployerId: c.wpsEmployerId, gosiEmployerId: c.gosiEmployerId, qiwaEstablishmentId: c.qiwaEstablishmentId, defaultCurrency: c.defaultCurrency, isActive: c.isActive });
     setError('');
     setModalOpen(true);
   };
@@ -144,7 +172,10 @@ function CompaniesTab() {
           <tr key={c.id} className="group hover:bg-slate-50 dark:hover:bg-white/[0.03]">
             <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{c.legalNameEn}</td>
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{c.tradeName || '—'}</td>
-            <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{c.countryCode || '—'}</td>
+            <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+              {c.countryCode || '—'}
+              {c.jurisdiction && <span className="ml-1 text-xs text-slate-400">({c.jurisdiction})</span>}
+            </td>
             <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{c.defaultCurrency}</td>
             <td className="px-4 py-3">
               <ActiveBadge active={c.isActive} />
@@ -152,6 +183,7 @@ function CompaniesTab() {
             <td className="px-4 py-3">
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
                 <button type="button" onClick={() => openEdit(c)} className="btn-secondary h-7 px-2 text-xs"><Pencil className="h-3 w-3" /> Edit</button>
+                <button type="button" onClick={() => loadStatutorySummary(c.id)} className="btn-secondary h-7 px-2 text-xs" title="View statutory pack profile"><Globe className="h-3 w-3" /></button>
                 <button type="button" onClick={() => deleteCompany(c.id)} disabled={deleting === c.id} aria-label="Delete company" className="grid h-7 w-7 place-items-center rounded-md border border-slate-200 text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40 dark:border-white/10 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-400">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -160,6 +192,32 @@ function CompaniesTab() {
           </tr>
         ))}
       </TableShell>
+
+      {/* Statutory Pack Profile panel — shown when a company's globe icon is clicked */}
+      {(summaryLoading || statutorySummary) && (
+        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-5 dark:border-indigo-800/40 dark:bg-indigo-900/20">
+          {summaryLoading && <p className="text-sm text-slate-500">Loading statutory profile…</p>}
+          {statutorySummary && (
+            <>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  Statutory Pack Profile — {statutorySummary.countryNameEn}
+                  {statutorySummary.jurisdiction && <span className="ml-1 text-xs font-normal text-slate-500">({statutorySummary.jurisdiction})</span>}
+                </h3>
+                <button type="button" onClick={() => setStatutorySummary(null)} className="text-xs text-slate-400 hover:text-slate-600">Dismiss</button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <InfoRow label="Social Insurance" value={statutorySummary.socialInsuranceScheme} detail={statutorySummary.socialInsuranceDescription} />
+                <InfoRow label="EOSB Formula" value={statutorySummary.eosbFormula} />
+                <InfoRow label="WPS Format" value={statutorySummary.wpsFormatLabel} />
+                <InfoRow label="Nationalization Scheme" value={statutorySummary.nationalizationScheme} />
+                <InfoRow label="Locale / Currency" value={`${statutorySummary.localeCode} · ${statutorySummary.currencyCode} ${statutorySummary.currencySymbol}`} />
+                <InfoRow label="Calendar / RTL" value={`${statutorySummary.calendarSystem} · ${statutorySummary.isRtl ? 'RTL' : 'LTR'}`} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <Modal
         isOpen={modalOpen}
@@ -184,8 +242,35 @@ function CompaniesTab() {
           <FormField label="Trade Name">
             <input type="text" value={form.tradeName ?? ''} onChange={(e) => f('tradeName', e.target.value)} className="input w-full" />
           </FormField>
-          <FormField label="Country Code" required>
-            <input type="text" value={form.countryCode} onChange={(e) => f('countryCode', e.target.value)} className="input w-full" placeholder="AE" maxLength={10} />
+          <FormField label="Country" required>
+            <select
+              value={form.countryCode}
+              onChange={(e) => {
+                const cc = e.target.value;
+                f('countryCode', cc);
+                const pack = availablePacks.find((p) => p.countryCode === cc);
+                f('jurisdiction', pack?.jurisdictions[0]?.code ?? '');
+              }}
+              className="select w-full"
+            >
+              <option value="">Select country…</option>
+              {availablePacks.map((p) => (
+                <option key={p.countryCode} value={p.countryCode}>{p.nameEn}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Jurisdiction">
+            <select
+              value={form.jurisdiction ?? ''}
+              onChange={(e) => f('jurisdiction', e.target.value)}
+              className="select w-full"
+              disabled={!form.countryCode}
+            >
+              <option value="">Select jurisdiction…</option>
+              {(availablePacks.find((p) => p.countryCode === form.countryCode)?.jurisdictions ?? []).map((j) => (
+                <option key={j.code} value={j.code}>{j.label}</option>
+              ))}
+            </select>
           </FormField>
           <FormField label="Registration Number" required>
             <input type="text" value={form.registrationNumber} onChange={(e) => f('registrationNumber', e.target.value)} className="input w-full" />
@@ -1864,9 +1949,9 @@ function FormError({ error }: { error: string }) {
 // ─── Empty form factories ────────────────────────────────────────────────────
 
 const emptyCompany = (): CompanyRequest => ({
-  legalNameEn: '', legalNameAr: '', tradeName: '', countryCode: '', registrationNumber: '',
-  taxNumber: '', wpsEmployerId: '', gosiEmployerId: '', qiwaEstablishmentId: '',
-  defaultCurrency: 'USD', isActive: true,
+  legalNameEn: '', legalNameAr: '', tradeName: '', countryCode: '', jurisdiction: '',
+  registrationNumber: '', taxNumber: '', wpsEmployerId: '', gosiEmployerId: '',
+  qiwaEstablishmentId: '', defaultCurrency: 'USD', isActive: true,
 });
 
 const emptyBranch = (companyId: string): BranchRequest => ({

@@ -8,6 +8,7 @@ public class Company
     public string LegalNameAr { get; set; } = string.Empty;
     public string TradeName { get; set; } = string.Empty;
     public string CountryCode { get; set; } = string.Empty;
+    public string Jurisdiction { get; set; } = string.Empty;
     public string RegistrationNumber { get; set; } = string.Empty;
     public string TaxNumber { get; set; } = string.Empty;
     public string WpsEmployerId { get; set; } = string.Empty;
