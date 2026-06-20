@@ -446,7 +446,29 @@ using (var scope = app.Services.CreateScope())
         // is nothing for MissingTableCreator to do anyway.
         bool dbCreatedFresh = await dbContext.Database.EnsureCreatedAsync();
         if (!dbCreatedFresh)
-            await MissingTableCreator.EnsureAsync(dbContext, logger);
+        {
+            // EnsureCreatedAsync is a no-op when the DATABASE already exists — even if it
+            // is completely empty (e.g. pre-provisioned by the operator before first deploy).
+            // Detect that case and rebuild from scratch rather than using MissingTableCreator,
+            // whose per-statement DDL can fail silently on managed MySQL-compatible hosts.
+            var schemaConn = dbContext.Database.GetDbConnection();
+            if (schemaConn.State != System.Data.ConnectionState.Open) await schemaConn.OpenAsync();
+            await using var countCmd = schemaConn.CreateCommand();
+            countCmd.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()";
+            var tableCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+            if (tableCount == 0)
+            {
+                // Empty pre-provisioned database: delete it so EnsureCreatedAsync
+                // recreates the full schema in one shot (safe — no rows to lose).
+                logger.LogWarning("Database exists but contains no tables. Recreating schema from scratch.");
+                await dbContext.Database.EnsureDeletedAsync();
+                await dbContext.Database.EnsureCreatedAsync();
+            }
+            else
+            {
+                await MissingTableCreator.EnsureAsync(dbContext, logger);
+            }
+        }
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
         await authSeeder.SeedAsync();
