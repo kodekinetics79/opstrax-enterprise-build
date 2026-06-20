@@ -439,46 +439,15 @@ using (var scope = app.Services.CreateScope())
         ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
         // ─────────────────────────────────────────────────────────────────────────
 
-        // EnsureCreatedAsync returns true when it created the DB from scratch.
-        // On a fresh DB, skip MissingTableCreator — it calls GenerateCreateScript()
-        // which rebuilds the full 100+ entity model in memory a second time, spiking
-        // peak usage past 512 MB. EnsureCreated already wrote every table, so there
-        // is nothing for MissingTableCreator to do anyway.
-        bool dbCreatedFresh = await dbContext.Database.EnsureCreatedAsync();
-        if (!dbCreatedFresh)
-        {
-            // EnsureCreatedAsync is a no-op when the DATABASE already exists — even if it
-            // is completely empty (e.g. pre-provisioned by the operator before first deploy).
-            // Detect that case and rebuild from scratch rather than using MissingTableCreator,
-            // whose per-statement DDL can fail silently on managed MySQL-compatible hosts.
-            var schemaConn = dbContext.Database.GetDbConnection();
-            if (schemaConn.State != System.Data.ConnectionState.Open) await schemaConn.OpenAsync();
-            await using var countCmd = schemaConn.CreateCommand();
-            countCmd.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()";
-            var tableCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
-            if (tableCount == 0)
-            {
-                // Empty pre-provisioned database: delete it so EnsureCreatedAsync
-                // recreates the full schema in one shot (safe — no rows to lose).
-                logger.LogWarning("Database exists but contains no tables. Recreating schema from scratch.");
-                await dbContext.Database.EnsureDeletedAsync();
-                try
-                {
-                    bool rebuilt = await dbContext.Database.EnsureCreatedAsync();
-                    logger.LogInformation("Schema rebuilt via EnsureCreatedAsync: {Result}", rebuilt);
-                }
-                catch (Exception schemaEx)
-                {
-                    logger.LogError(schemaEx, "EnsureCreatedAsync failed — DDL error. Falling back to MissingTableCreator.");
-                    // DB was just recreated empty; MissingTableCreator will create all tables.
-                    await MissingTableCreator.EnsureAsync(dbContext, logger);
-                }
-            }
-            else
-            {
-                await MissingTableCreator.EnsureAsync(dbContext, logger);
-            }
-        }
+        // Use MigrateAsync() instead of EnsureCreatedAsync(): MigrateAsync runs the explicit
+        // migration SQL files which are fully TiDB-compatible. EnsureCreatedAsync generates
+        // bulk DDL from the model that TiDB rejects. MigrateAsync also handles pre-existing
+        // empty databases and only applies pending migrations, so it is safe on every boot.
+        await dbContext.Database.MigrateAsync();
+        // MissingTableCreator adds tables for any entities added to the model without a
+        // corresponding migration (e.g. rapid prototyping). On a fresh DB this is a no-op
+        // because MigrateAsync already applied everything.
+        await MissingTableCreator.EnsureAsync(dbContext, logger);
         await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
         await authSeeder.SeedAsync();
