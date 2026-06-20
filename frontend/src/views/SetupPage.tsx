@@ -214,6 +214,9 @@ function CompaniesTab() {
                 <InfoRow label="Locale / Currency" value={`${statutorySummary.localeCode} · ${statutorySummary.currencyCode} ${statutorySummary.currencySymbol}`} />
                 <InfoRow label="Calendar / RTL" value={`${statutorySummary.calendarSystem} · ${statutorySummary.isRtl ? 'RTL' : 'LTR'}`} />
               </div>
+              <p className="mt-3 text-xs text-amber-700 border-t border-indigo-200 pt-3">
+                Sample default — configure rates for your establishment in Tenant Admin → Statutory Rules Engine.
+              </p>
             </>
           )}
         </div>

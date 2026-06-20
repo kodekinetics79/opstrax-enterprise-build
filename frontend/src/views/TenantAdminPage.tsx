@@ -1125,7 +1125,7 @@ export default function TenantAdminPage() {
               <h2 className="text-lg font-semibold text-gray-900">Statutory Rules Engine</h2>
               <p className="text-xs text-gray-500 mt-0.5">
                 Effective-dated rates for GOSI, GPSSA, GRSIA, EOSB, and WPS thresholds.
-                Platform defaults (marked VERIFY) are read-only. Create tenant overrides to apply your own certified rates.
+                Sample defaults are pre-loaded for reference (marked VERIFY). Create tenant overrides to apply your own certified rates for your establishment.
               </p>
             </div>
             <button
@@ -1244,7 +1244,7 @@ export default function TenantAdminPage() {
             <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-400">Loading…</div>
           ) : statRules.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-400">
-              No statutory rules loaded. Platform defaults will appear here — check that the seeder ran on startup.
+              No statutory rules loaded. Sample defaults will appear here — check that the seeder ran on startup.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -1269,7 +1269,7 @@ export default function TenantAdminPage() {
                         {rule.isTenantOverride ? (
                           <span className="inline-block px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">Override</span>
                         ) : (
-                          <span className="inline-block px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">Platform default</span>
+                          <span className="inline-block px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-xs">Sample default — configure for your establishment</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5">
