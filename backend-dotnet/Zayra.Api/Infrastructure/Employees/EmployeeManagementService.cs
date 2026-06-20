@@ -60,16 +60,11 @@ public class EmployeeManagementService : IEmployeeManagementService
         var employee = await _db.Employees.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id && !x.IsDeleted, cancellationToken);
         if (employee is null) return null;
         if (includeSensitive)
-        {
             await _audit.WriteAsync("employee.sensitive_viewed", "Employee", id.ToString(), context, null, cancellationToken);
-        }
-        else
-        {
-            EmployeeSensitiveMask.Apply(employee);
-        }
 
-        return new EmployeeDetailDto(
+        return EmployeeDetailDto.Project(
             employee,
+            includeSensitive,
             includeSensitive ? await _db.EmployeePayrollProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.EmployeeId == id && !x.IsDeleted, cancellationToken) : null,
             includeSensitive ? await _db.EmployeeComplianceRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.EmployeeId == id && !x.IsDeleted).ToListAsync(cancellationToken) : [],
             await GetDocumentsAsync(tenantId, id, cancellationToken),

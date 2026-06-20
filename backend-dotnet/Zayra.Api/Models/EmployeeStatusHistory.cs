@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class EmployeeStatusHistory
+public class EmployeeStatusHistory : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

@@ -1,3 +1,5 @@
+using Zayra.Api.Domain.Entities;
+
 namespace Zayra.Api.Models;
 
 public static class GosiBranches
@@ -25,7 +27,7 @@ public static class GosiClassifications
 /// TenantId == Guid.Empty is a system-wide default (queried with IgnoreQueryFilters).
 /// Tenant-specific overrides carry the tenant's own Guid and take precedence over defaults.
 /// </summary>
-public class GosiContributionRule
+public class GosiContributionRule : ITenantOwned
 {
     public Guid     Id                   { get; set; } = Guid.NewGuid();
     public Guid     TenantId             { get; set; }   // Guid.Empty = system default

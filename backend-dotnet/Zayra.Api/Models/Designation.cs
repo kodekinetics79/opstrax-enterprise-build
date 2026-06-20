@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class Designation
+public class Designation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

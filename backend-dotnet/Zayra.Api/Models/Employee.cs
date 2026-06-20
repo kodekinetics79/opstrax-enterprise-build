@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Employee status constants ─────────────────────────────────────────────────
@@ -22,7 +23,7 @@ public static class EmployeeStatuses
     public const string Exited     = "Exited";
 }
 
-public class Employee
+public class Employee : INullableTenantOwned
 {
     public int Id { get; set; }
     public Guid? TenantId { get; set; }

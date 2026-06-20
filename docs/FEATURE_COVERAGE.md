@@ -1,4 +1,4 @@
-# Zayra Feature Coverage
+# KynexOne Feature Coverage
 
 This tracker keeps the build review moving feature by feature. A feature is considered production-ready only when the database/API contract, UI integration, empty/error states, and verification steps are covered.
 

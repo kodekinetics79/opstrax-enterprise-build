@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class AttendanceDevice
+public class AttendanceDevice : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -40,7 +41,7 @@ public class AttendanceDevice
     public Guid? DeletedBy { get; set; }
 }
 
-public class AttendanceDeviceConnector
+public class AttendanceDeviceConnector : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -53,7 +54,7 @@ public class AttendanceDeviceConnector
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceDeviceSyncLog
+public class AttendanceDeviceSyncLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -67,7 +68,7 @@ public class AttendanceDeviceSyncLog
     public string ErrorMessage { get; set; } = string.Empty;
 }
 
-public class AttendanceRawEvent
+public class AttendanceRawEvent : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -91,7 +92,7 @@ public class AttendanceRawEvent
     public Guid? CreatedBy { get; set; }
 }
 
-public class AttendanceDailyRecord
+public class AttendanceDailyRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -119,7 +120,7 @@ public class AttendanceDailyRecord
     public bool IsDeleted { get; set; }
 }
 
-public class AttendancePolicy
+public class AttendancePolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -142,7 +143,7 @@ public class AttendancePolicy
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceRule
+public class AttendanceRule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -152,7 +153,7 @@ public class AttendanceRule
     public bool IsActive { get; set; } = true;
 }
 
-public class AttendanceLocation
+public class AttendanceLocation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -163,7 +164,7 @@ public class AttendanceLocation
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceGeofence
+public class AttendanceGeofence : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -178,7 +179,7 @@ public class AttendanceGeofence
     public bool IsActive { get; set; } = true;
 }
 
-public class AttendanceRegularizationRequest
+public class AttendanceRegularizationRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -195,7 +196,7 @@ public class AttendanceRegularizationRequest
     public bool PayrollLockChecked { get; set; }
 }
 
-public class AttendanceCorrectionApproval
+public class AttendanceCorrectionApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -207,7 +208,7 @@ public class AttendanceCorrectionApproval
     public DateTime? DecidedAtUtc { get; set; }
 }
 
-public class AttendancePayrollImpact
+public class AttendancePayrollImpact : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -221,7 +222,7 @@ public class AttendancePayrollImpact
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceImportBatch
+public class AttendanceImportBatch : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -235,7 +236,7 @@ public class AttendanceImportBatch
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceImportError
+public class AttendanceImportError : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -245,7 +246,7 @@ public class AttendanceImportError
     public string RawRow { get; set; } = string.Empty;
 }
 
-public class AttendanceException
+public class AttendanceException : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -259,7 +260,7 @@ public class AttendanceException
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceLockPeriod
+public class AttendanceLockPeriod : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -271,7 +272,7 @@ public class AttendanceLockPeriod
     public DateTime LockedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceAIInsight
+public class AttendanceAIInsight : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -285,7 +286,7 @@ public class AttendanceAIInsight
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AttendanceAuditLog
+public class AttendanceAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

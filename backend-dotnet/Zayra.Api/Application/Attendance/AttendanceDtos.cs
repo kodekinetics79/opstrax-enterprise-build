@@ -3,6 +3,52 @@ using Zayra.Api.Models;
 
 namespace Zayra.Api.Application.Attendance;
 
+/// <summary>
+/// Safe projection of AttendanceDevice — AuthCredentialsJson is omitted; replaced by HasCredentials bool.
+/// Raw device credentials must never be serialised in API responses.
+/// </summary>
+public record AttendanceDeviceDto(
+    Guid Id,
+    Guid TenantId,
+    string DeviceName,
+    string DeviceType,
+    string Vendor,
+    string SerialNumber,
+    Guid? BranchId,
+    string LocationName,
+    string IpAddress,
+    string EndpointUrl,
+    int? Port,
+    string ApiKeyReference,
+    string SyncMethod,
+    string SyncFrequency,
+    string AuthType,
+    string CustomHeadersJson,
+    string DeviceParametersJson,
+    string FieldMappingsJson,
+    string Notes,
+    string LastSyncStatus,
+    DateTime? LastSyncAtUtc,
+    string ErrorLog,
+    bool IsActive,
+    DateTime CreatedAtUtc,
+    Guid? CreatedBy,
+    DateTime? UpdatedAtUtc,
+    Guid? UpdatedBy,
+    bool IsDeleted,
+    DateTime? DeletedAtUtc,
+    Guid? DeletedBy,
+    bool HasCredentials)
+{
+    public static AttendanceDeviceDto Project(AttendanceDevice d) => new(
+        d.Id, d.TenantId, d.DeviceName, d.DeviceType, d.Vendor, d.SerialNumber,
+        d.BranchId, d.LocationName, d.IpAddress, d.EndpointUrl, d.Port, d.ApiKeyReference,
+        d.SyncMethod, d.SyncFrequency, d.AuthType, d.CustomHeadersJson, d.DeviceParametersJson,
+        d.FieldMappingsJson, d.Notes, d.LastSyncStatus, d.LastSyncAtUtc, d.ErrorLog, d.IsActive,
+        d.CreatedAtUtc, d.CreatedBy, d.UpdatedAtUtc, d.UpdatedBy, d.IsDeleted, d.DeletedAtUtc, d.DeletedBy,
+        HasCredentials: !string.IsNullOrWhiteSpace(d.AuthCredentialsJson) && d.AuthCredentialsJson != "{}");
+}
+
 public record AttendanceDeviceRequest(
     [Required, MaxLength(160)] string DeviceName,
     [Required, MaxLength(80)] string DeviceType,

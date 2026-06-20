@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Zayra.Api.Domain.Entities;
 using Zayra.Api.Models;
 
@@ -24,14 +25,47 @@ public class ZayraDbContext : DbContext
     /// </summary>
     private readonly Guid? _actorId;
 
-    public ZayraDbContext(DbContextOptions<ZayraDbContext> options, IHttpContextAccessor? httpContextAccessor = null)
+    /// <summary>
+    /// Injected only to emit a warning when the context resolves without tenant context
+    /// inside an HTTP request (which would silently bypass the global query filter).
+    /// Null during EF design-time scaffolding — guard checks for null before using.
+    /// </summary>
+    private readonly ILogger<ZayraDbContext>? _logger;
+
+    public ZayraDbContext(
+        DbContextOptions<ZayraDbContext> options,
+        IHttpContextAccessor? httpContextAccessor = null,
+        ILogger<ZayraDbContext>? logger = null)
         : base(options)
     {
-        var user = httpContextAccessor?.HttpContext?.User;
-        if (user is null) return;
-        if (Guid.TryParse(user.FindFirstValue("tenant_id"), out var tid)) _tenantId = tid;
-        var sub = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
-        if (Guid.TryParse(sub, out var uid)) _actorId = uid;
+        _logger = logger;
+        var httpContext = httpContextAccessor?.HttpContext;
+        var user = httpContext?.User;
+
+        if (user is not null)
+        {
+            if (Guid.TryParse(user.FindFirstValue("tenant_id"), out var tid))
+            {
+                _tenantId = tid;
+            }
+            else if (httpContext is not null)
+            {
+                // We are inside an HTTP request but there is no tenant_id claim.
+                // This is expected for: login, platform admin routes, seeder-triggered HTTP calls.
+                // It is UNEXPECTED for any tenant-scoped endpoint — log a warning so the call
+                // origin can be traced without throwing (seeders and platform routes are legitimate).
+                _logger?.LogWarning(
+                    "ZayraDbContext resolved with no tenant_id claim inside an HTTP request. " +
+                    "The global tenant query filter is BYPASSED for this context. " +
+                    "Path={Path} TraceId={TraceId}",
+                    httpContext.Request.Path,
+                    System.Diagnostics.Activity.Current?.TraceId.ToString() ?? httpContext.TraceIdentifier);
+            }
+
+            var sub = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
+            if (Guid.TryParse(sub, out var uid)) _actorId = uid;
+        }
+        // null httpContext → seeder/migration/background — bypass is intentional; no log needed
     }
 
     /// <summary>
@@ -2310,10 +2344,17 @@ public class ZayraDbContext : DbContext
         typeof(ZayraDbContext).GetMethod(nameof(SetTenantFilterNullable), BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     /// <summary>
-    /// Defence-in-depth tenant isolation: every entity exposing a `TenantId` property gets a
-    /// global query filter so a forgotten <c>.Where(x =&gt; x.TenantId == ...)</c> cannot leak
-    /// across tenants. The filter is bypassed when <see cref="_tenantId"/> is null (seeding,
-    /// login/refresh, background work — see the field doc).
+    /// Defence-in-depth tenant isolation: every entity implementing <see cref="ITenantOwned"/>
+    /// or <see cref="INullableTenantOwned"/> gets a global query filter so a forgotten
+    /// <c>.Where(x => x.TenantId == ...)</c> cannot leak across tenants.
+    ///
+    /// Discovery is now driven by interface membership (not by "has a property named TenantId")
+    /// so a misnamed property cannot silently lose its filter.  A mis-declared entity — one that
+    /// has a TenantId property but doesn't implement the interface — is caught by
+    /// <see cref="Zayra.Api.Infrastructure.Boot.TenantOwnershipBootAssertion"/> at startup.
+    ///
+    /// The filter is bypassed when <see cref="_tenantId"/> is null (seeding, login/refresh,
+    /// background work — see the field doc).
     /// </summary>
     private void ApplyTenantQueryFilters(ModelBuilder modelBuilder)
     {
@@ -2321,11 +2362,10 @@ public class ZayraDbContext : DbContext
         {
             if (entityType.IsOwned() || entityType.BaseType is not null) continue;
             var clr = entityType.ClrType;
-            var prop = clr.GetProperty("TenantId", BindingFlags.Public | BindingFlags.Instance);
-            if (prop is null) continue;
-            if (prop.PropertyType == typeof(Guid))
+
+            if (typeof(ITenantOwned).IsAssignableFrom(clr))
                 _setTenantFilterNonNull.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
-            else if (prop.PropertyType == typeof(Guid?))
+            else if (typeof(INullableTenantOwned).IsAssignableFrom(clr))
                 _setTenantFilterNullable.MakeGenericMethod(clr).Invoke(this, new object[] { modelBuilder });
         }
     }

@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class LeavePolicyEligibility
+public class LeavePolicyEligibility : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -16,7 +17,7 @@ public class LeavePolicyEligibility
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveAccrualRule
+public class LeaveAccrualRule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -29,7 +30,7 @@ public class LeaveAccrualRule
     public bool IsActive { get; set; } = true;
 }
 
-public class LeaveRequestDate
+public class LeaveRequestDate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -40,7 +41,7 @@ public class LeaveRequestDate
     public bool IsWeekend { get; set; }
 }
 
-public class LeaveAttachment
+public class LeaveAttachment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -52,7 +53,7 @@ public class LeaveAttachment
     public Guid? CreatedBy { get; set; }
 }
 
-public class OvertimePolicy
+public class OvertimePolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -79,7 +80,7 @@ public class OvertimePolicy
     public Guid? DeletedBy { get; set; }
 }
 
-public class OvertimeType
+public class OvertimeType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -89,7 +90,7 @@ public class OvertimeType
     public bool IsActive { get; set; } = true;
 }
 
-public class OvertimeMultiplier
+public class OvertimeMultiplier : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -100,7 +101,7 @@ public class OvertimeMultiplier
     public bool IsActive { get; set; } = true;
 }
 
-public class OvertimeRule
+public class OvertimeRule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -110,7 +111,7 @@ public class OvertimeRule
     public bool IsActive { get; set; } = true;
 }
 
-public class OvertimeRequest
+public class OvertimeRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -133,7 +134,7 @@ public class OvertimeRequest
     public DateTime? DecidedAtUtc { get; set; }
 }
 
-public class OvertimeApproval
+public class OvertimeApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -145,7 +146,7 @@ public class OvertimeApproval
     public DateTime? DecidedAtUtc { get; set; }
 }
 
-public class OvertimeCalculation
+public class OvertimeCalculation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -160,7 +161,7 @@ public class OvertimeCalculation
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class OvertimePayrollImpact
+public class OvertimePayrollImpact : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -174,7 +175,7 @@ public class OvertimePayrollImpact
     public DateTime? ProcessedAtUtc { get; set; }
 }
 
-public class OvertimeAdjustment
+public class OvertimeAdjustment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -187,7 +188,7 @@ public class OvertimeAdjustment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class OvertimeBudget
+public class OvertimeBudget : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -200,7 +201,7 @@ public class OvertimeBudget
     public string Currency { get; set; } = "AED";
 }
 
-public class OvertimeCompOffConversion
+public class OvertimeCompOffConversion : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -212,7 +213,7 @@ public class OvertimeCompOffConversion
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class OvertimeAuditLog
+public class OvertimeAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -224,7 +225,7 @@ public class OvertimeAuditLog
     public Guid? UserId { get; set; }
 }
 
-public class SalaryStructure
+public class SalaryStructure : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -239,7 +240,7 @@ public class SalaryStructure
     public bool IsDeleted { get; set; }
 }
 
-public class SalaryComponent
+public class SalaryComponent : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -254,7 +255,7 @@ public class SalaryComponent
     public bool IsActive { get; set; } = true;
 }
 
-public class EmployeeSalaryStructure
+public class EmployeeSalaryStructure : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -274,7 +275,7 @@ public class EmployeeSalaryStructure
     public Guid? CreatedBy { get; set; }
 }
 
-public class PayrollGroup
+public class PayrollGroup : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -284,7 +285,7 @@ public class PayrollGroup
     public bool IsActive { get; set; } = true;
 }
 
-public class PayrollCycle
+public class PayrollCycle : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -296,7 +297,7 @@ public class PayrollCycle
     public string Status { get; set; } = "Open";
 }
 
-public class PayrollRunEmployee
+public class PayrollRunEmployee : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -308,7 +309,7 @@ public class PayrollRunEmployee
     public string Status { get; set; } = "Draft";
 }
 
-public class PayrollEarning
+public class PayrollEarning : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -320,7 +321,7 @@ public class PayrollEarning
     public string Source { get; set; } = "Salary";
 }
 
-public class PayrollDeduction
+public class PayrollDeduction : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -332,7 +333,7 @@ public class PayrollDeduction
     public string Source { get; set; } = "Manual";
 }
 
-public class PayrollAllowance
+public class PayrollAllowance : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -342,7 +343,7 @@ public class PayrollAllowance
     public decimal Amount { get; set; }
 }
 
-public class PayrollAdjustment
+public class PayrollAdjustment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -354,7 +355,7 @@ public class PayrollAdjustment
     public string Status { get; set; } = "Pending";
 }
 
-public class PayrollApproval
+public class PayrollApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -366,7 +367,7 @@ public class PayrollApproval
     public DateTime? DecidedAtUtc { get; set; }
 }
 
-public class PayrollValidationResult
+public class PayrollValidationResult : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -379,7 +380,7 @@ public class PayrollValidationResult
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class PayrollException
+public class PayrollException : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -390,7 +391,7 @@ public class PayrollException
     public string Status { get; set; } = "Open";
 }
 
-public class Payslip
+public class Payslip : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -403,7 +404,7 @@ public class Payslip
     public DateTime? PublishedAtUtc { get; set; }
 }
 
-public class PayslipComponent
+public class PayslipComponent : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -413,7 +414,7 @@ public class PayslipComponent
     public decimal Amount { get; set; }
 }
 
-public class PayrollPaymentBatch
+public class PayrollPaymentBatch : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -471,7 +472,7 @@ public static class WpsTransitions
         => Allowed.TryGetValue(from, out var next) ? next : Array.Empty<string>();
 }
 
-public class PayrollPaymentRecord
+public class PayrollPaymentRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -483,7 +484,7 @@ public class PayrollPaymentRecord
     public string WpsReference { get; set; } = string.Empty;
 }
 
-public class BankTransferFile
+public class BankTransferFile : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -493,7 +494,7 @@ public class BankTransferFile
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class WPSFileBatch
+public class WPSFileBatch : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -515,7 +516,7 @@ public class WPSFileBatch
     public string FormatVersion { get; set; } = "SIF_SA_V1";
 }
 
-public class SIFFileRecord
+public class SIFFileRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -530,7 +531,7 @@ public class SIFFileRecord
     public string RoutingCode { get; set; } = string.Empty;
 }
 
-public class EOSBCalculation
+public class EOSBCalculation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -542,7 +543,7 @@ public class EOSBCalculation
     public string Status { get; set; } = "Draft";
 }
 
-public class PayrollAuditLog
+public class PayrollAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

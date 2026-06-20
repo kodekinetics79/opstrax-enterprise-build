@@ -1,9 +1,14 @@
+using Zayra.Api.Domain.Entities;
+
 namespace Zayra.Api.Models;
 
 // Effective-dated configuration row for a country + jurisdiction.
 // Null TenantId = platform-wide default; non-null = tenant override.
 // Keys: CountryCode + Jurisdiction + RuleKey + EffectiveFrom.
-public class StatutoryRule
+// INullableTenantOwned: null means "applies to all tenants" (platform default);
+// non-null means the owning tenant's override. The global query filter is
+// intentionally bypassed in StatutoryRuleReader — see comment there.
+public class StatutoryRule : INullableTenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid? TenantId { get; set; }

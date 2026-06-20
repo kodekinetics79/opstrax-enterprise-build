@@ -209,7 +209,7 @@ Call `authApi.mfaSetup()` → show provisioning URI as QR code. Then call `authA
 
 ## Enterprise Benchmark
 
-| Capability | Workday / SAP | Jisr / Bayzat | Zayra (current) |
+| Capability | Workday / SAP | Jisr / Bayzat | KynexOne (current) |
 |---|---|---|---|
 | TOTP-based MFA | ✅ | ⚠️ SMS only | ✅ RFC 6238 |
 | Platform admin MFA | ✅ | N/A | ✅ DB users |

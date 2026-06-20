@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class ESSDashboardPreference
+public class ESSDashboardPreference : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -12,7 +13,7 @@ public class ESSDashboardPreference
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
-public class EmployeeProfileChangeRequest
+public class EmployeeProfileChangeRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -27,7 +28,7 @@ public class EmployeeProfileChangeRequest
     public Guid? DecidedBy { get; set; }
 }
 
-public class EmployeeDocumentRequest
+public class EmployeeDocumentRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -40,7 +41,7 @@ public class EmployeeDocumentRequest
     public Guid? CreatedBy { get; set; }
 }
 
-public class HRRequestCategory
+public class HRRequestCategory : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -50,7 +51,7 @@ public class HRRequestCategory
     public bool IsActive { get; set; } = true;
 }
 
-public class HRRequest
+public class HRRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -66,7 +67,7 @@ public class HRRequest
     public Guid? CreatedBy { get; set; }
 }
 
-public class HRRequestComment
+public class HRRequestComment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -77,7 +78,7 @@ public class HRRequestComment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class HRRequestAttachment
+public class HRRequestAttachment : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -88,7 +89,7 @@ public class HRRequestAttachment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class HRRequestSLA
+public class HRRequestSLA : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -98,7 +99,7 @@ public class HRRequestSLA
     public bool IsActive { get; set; } = true;
 }
 
-public class EmployeePolicyAcknowledgement
+public class EmployeePolicyAcknowledgement : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -108,7 +109,7 @@ public class EmployeePolicyAcknowledgement
     public Guid? UserId { get; set; }
 }
 
-public class EmployeeAnnouncement
+public class EmployeeAnnouncement : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -120,7 +121,7 @@ public class EmployeeAnnouncement
     public bool IsActive { get; set; } = true;
 }
 
-public class EmployeeNotification
+public class EmployeeNotification : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -133,7 +134,7 @@ public class EmployeeNotification
     public DateTime? ReadAtUtc { get; set; }
 }
 
-public class EmployeeNotificationPreference
+public class EmployeeNotificationPreference : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -144,7 +145,7 @@ public class EmployeeNotificationPreference
     public string QuietHoursJson { get; set; } = "{}";
 }
 
-public class EmployeePayslipAccessLog
+public class EmployeePayslipAccessLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -155,7 +156,7 @@ public class EmployeePayslipAccessLog
     public Guid? UserId { get; set; }
 }
 
-public class EmployeeSelfServiceAuditLog
+public class EmployeeSelfServiceAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -167,7 +168,7 @@ public class EmployeeSelfServiceAuditLog
     public Guid? UserId { get; set; }
 }
 
-public class EmployeeAIQueryLog
+public class EmployeeAIQueryLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -178,7 +179,7 @@ public class EmployeeAIQueryLog
     public Guid? UserId { get; set; }
 }
 
-public class EmployeeActionItem
+public class EmployeeActionItem : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -190,7 +191,7 @@ public class EmployeeActionItem
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class EmployeeSentimentPulse
+public class EmployeeSentimentPulse : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -200,7 +201,7 @@ public class EmployeeSentimentPulse
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class EmployeeMobileDevice
+public class EmployeeMobileDevice : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

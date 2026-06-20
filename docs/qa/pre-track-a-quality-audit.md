@@ -1,5 +1,5 @@
 # Pre-Track A Quality Audit
-**Zayra AI Workforce — HRM SaaS**  
+**KynexOne AI Workforce — HRM SaaS**  
 **Audit Date:** 2026-06-17  
 **Auditor Roles:** Software Architect · QA Lead · Security Engineer · DB Architect · DevOps · Performance · UI/UX  
 **Scope:** Full codebase audit before implementing Track A (Saudi Regulatory Compliance)  

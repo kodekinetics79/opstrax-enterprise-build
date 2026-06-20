@@ -1,6 +1,6 @@
 # Backend Foundation
 
-Zayra backend foundation now covers the SaaS-ready primitives required before building deeper HR, payroll, attendance, and compliance modules.
+KynexOne backend foundation now covers the SaaS-ready primitives required before building deeper HR, payroll, attendance, and compliance modules.
 
 Implemented modules:
 

@@ -1,6 +1,6 @@
 namespace Zayra.Api.Domain.Entities;
 
-public class TenantHrConfig
+public class TenantHrConfig : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

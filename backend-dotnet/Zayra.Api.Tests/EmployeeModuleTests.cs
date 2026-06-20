@@ -26,16 +26,16 @@ public class EmployeeModuleTests
         var tenantId = await SeedTenantAndEmployeeRole(db);
         var controller = CreateController(db, tenantId);
         var draftResult = await controller.CreateDraft(new EmployeeDraftRequest("Review", "Sara Ahmed", "سارة أحمد", "sara.personal@example.com", "sara@zayra.local", "+9715000000", "Female", DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(-30)), "Married", "Ali Ahmed", "+9715111111", "UAE", "UAE", "People", "HR Officer", "Dubai", "Dubai HQ", null, DateTime.UtcNow.Date, "Unlimited", "G5", "HR-001", DateOnly.FromDateTime(DateTime.UtcNow.Date), DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(2)), DateOnly.FromDateTime(DateTime.UtcNow.Date.AddMonths(6)), "MONTHLY", 12000m, "Emirates NBD", "AE000000", "WPS-1", "DAY", "UAE-ANNUAL", "Zayra", DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(-1)), "P123", DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(5)), DateOnly.FromDateTime(DateTime.UtcNow.Date), "V123", DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(2)), null, null, null, null, "784-0000", "LC-1", "VF-1", null, null, null, null, null, null), CancellationToken.None);
-        var draft = Assert.IsType<EmployeeDraft>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
+        var draft = Assert.IsType<EmployeeDraftDto>(Assert.IsType<CreatedResult>(draftResult.Result).Value);
         await controller.SubmitDraft(draft.Id, CancellationToken.None);
 
         var approval = await controller.ApproveDraft(draft.Id, CancellationToken.None);
 
         var profile = Assert.IsType<EmployeeDetailDto>(Assert.IsType<OkObjectResult>(approval.Result).Value);
-        Assert.Equal("Active", profile.Employee.Status);
-        Assert.StartsWith("EMP-", profile.Employee.EmployeeCode);
-        Assert.NotNull(profile.Employee.UserAccountId);
-        Assert.True(await db.EmployeeHistories.AnyAsync(x => x.EmployeeId == profile.Employee.Id && x.EventType == "Activated"));
+        Assert.Equal("Active", profile.Status);
+        Assert.StartsWith("EMP-", profile.EmployeeCode);
+        Assert.NotNull(profile.UserAccountId);
+        Assert.True(await db.EmployeeHistories.AnyAsync(x => x.EmployeeId == profile.Id && x.EventType == "Activated"));
     }
 
     [Fact]

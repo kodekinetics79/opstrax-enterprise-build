@@ -1,7 +1,7 @@
 # Saudi Regulatory Product Compliance — Track A
 
 This document describes the Saudi compliance capabilities (QIWA, WPS/SIF, GOSI
-readiness) implemented in the Zayra HRM SaaS platform, the data lifecycle, RBAC,
+readiness) implemented in the KynexOne HRM SaaS platform, the data lifecycle, RBAC,
 audit events, and the checklist to activate the real QIWA integration.
 
 ---

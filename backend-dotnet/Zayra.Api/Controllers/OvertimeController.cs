@@ -23,6 +23,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("policies")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: Code, Name, HourlyRateBasis, FixedHourlyRate, scheduling caps, RoundingRule, flags. No employee salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimePolicy>>> Policies(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -31,6 +32,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("policies")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: Code, Name, HourlyRateBasis, FixedHourlyRate, scheduling caps, RoundingRule, flags. No employee salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<OvertimePolicy>> CreatePolicy(OvertimePolicyRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -62,6 +64,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("types")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: Code, Name, Category, IsActive. No employee data, salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeType>>> Types(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -70,6 +73,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("types")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: Code, Name, Category, IsActive. No employee data, salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<OvertimeType>> CreateType(OvertimeTypeRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -80,6 +84,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("requests")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: EmployeeId, EmployeeName, WorkDate, start/end times, requested/approved minutes, Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<PagedResult<OvertimeRequest>>> Requests([FromQuery] string? status, [FromQuery] int? employeeId, [FromQuery] int page = 1, [FromQuery] int pageSize = 25, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -95,6 +100,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpPost("requests")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: EmployeeId, EmployeeName, WorkDate, start/end times, requested/approved minutes, Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<OvertimeRequest>> CreateRequest(OvertimeRequestCreate req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -125,6 +131,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("detect-from-attendance")]
     [Authorize(Roles = "Admin,HR Manager,Payroll Officer")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: EmployeeId, EmployeeName, WorkDate, start/end times, requested/approved minutes, Reason, Status. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeRequest>>> DetectFromAttendance(DetectOvertimeRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -231,6 +238,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("payroll-review")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: OvertimeRequestId, EmployeeId, PayrollRunId, Hours, Amount, Status. Payroll-role consumers require this data to process overtime pay. No bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimePayrollImpact>>> PayrollReview(CancellationToken ct)
     {
         var tenantId = RequireTenant();
@@ -238,6 +246,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("calculations")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: OvertimeRequestId, EmployeeId, ApprovedHours, HourlyRate (derived from salary for computation), Multiplier, Amount, CalculationJson. Scope-filtered to caller's accessible employees. No bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeCalculation>>> Calculations([FromQuery] int? employeeId, [FromQuery] int pageSize = 100, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -250,6 +259,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("budgets")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: DepartmentId, ProjectId, Year, Month, BudgetAmount, ConsumedAmount, Currency. Department-level aggregates; no individual salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeBudget>>> Budgets([FromQuery] int? year, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -259,6 +269,7 @@ public class OvertimeController : ControllerBase
     }
 
     [HttpGet("comp-off-conversions")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: OvertimeRequestId, EmployeeId, OvertimeHours, CompOffDays, Status, CreatedAtUtc. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<OvertimeCompOffConversion>>> CompOffConversions([FromQuery] int? employeeId, CancellationToken ct = default)
     {
         var tenantId = RequireTenant();
@@ -269,6 +280,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost("comp-off-conversions")]
     [Authorize(Roles = "Admin,HR Manager")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: OvertimeRequestId, EmployeeId, OvertimeHours, CompOffDays, Status, CreatedAtUtc. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<OvertimeCompOffConversion>> CreateCompOffConversion(CompOffConversionRequest req, CancellationToken ct)
     {
         var tenantId = RequireTenant();

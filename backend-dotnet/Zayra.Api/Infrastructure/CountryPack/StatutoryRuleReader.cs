@@ -31,7 +31,13 @@ public sealed class StatutoryRuleReader : IStatutoryRuleReader
     {
         var cutoff = effectiveDate.ToDateTime(TimeOnly.MinValue);
 
-        // Prefer tenant override; fall back to platform default (TenantId = null).
+        // IgnoreQueryFilters is intentional: StatutoryRule rows span two scopes — platform defaults
+        // (TenantId = null, set by StatutoryRuleSeeder) and tenant overrides (TenantId = tenantId).
+        // The EF global query filter excludes TenantId=null rows entirely, so bypassing it is
+        // required to reach the platform defaults. The WHERE clause below re-applies the correct
+        // per-call scope restriction (tenantId == null ? platform-only : tenant-or-platform fallback).
+        // SYSTEM CONTEXT: tenant scope intentionally bypassed — reads platform-default rates AND
+        // the calling tenant's overrides; never reads another tenant's rows (see WHERE predicate).
         var row = await _db.StatutoryRules
             .IgnoreQueryFilters()
             .Where(r => r.CountryCode == countryCode

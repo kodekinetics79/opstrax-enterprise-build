@@ -4,6 +4,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Zayra.Api.Application.Common;
+using Zayra.Api.Application.Employees;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Models;
@@ -30,6 +32,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("dashboard")]
+    [AllowEntityReturn("Flat entity (AttendanceDailyRecord, embedded in ESSDashboardDto DTO return). No navigation properties. Fields: WorkDate, FirstInUtc, LastOutUtc, TotalWorkedMinutes, LateMinutes, EarlyExitMinutes, OvertimeMinutes, MissingPunch, Status, WorkMode. All other ESSDashboardDto members are projected DTOs or scalars. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<ESSDashboardDto>> Dashboard(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
@@ -171,17 +174,18 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("profile")]
-    public async Task<ActionResult<Employee>> Profile(CancellationToken cancellationToken)
+    public async Task<ActionResult<EssEmployeeProfileDto>> Profile(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
         if (!essOk) return BadRequest(new { message = ctxError });
         var employee = await OwnEmployee(tenantId, employeeId, cancellationToken);
         if (employee is null) return NotFound();
         await EssAudit(tenantId, employeeId, "ess.profile.viewed", "Employee", employeeId.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EssEmployeeProfileDto.Project(employee));
     }
 
     [HttpPut("profile-change-request")]
+    [AllowEntityReturn("Flat entity — no navigation properties. RequestedChangesJson is the employee's own submitted change payload (they authored it). ContainsSensitiveFields is a boolean flag, not the underlying values. Scoped to the requesting employee's EmployeeId by GetEssContextAsync. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data exposed beyond what the employee submitted.")]
     public async Task<ActionResult<EmployeeProfileChangeRequest>> ProfileChangeRequest(ProfileChangeRequestDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
@@ -204,6 +208,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("payslips")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Salary fields (BasicSalary, GrossSalary, NetSalary, etc.) are intentional: employee is viewing their own finalised payslips (Status='Final'). Scoped to their EmployeeId by GetEssContextAsync. Satisfies standing constraint 'employee can view only own payslip/salary-visible fields'.")]
     public async Task<ActionResult<IReadOnlyCollection<PayrollSlip>>> Payslips(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
@@ -269,6 +274,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("attendance")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, check-in/check-out times, work-time metrics (LateMinutes, OvertimeMinutes, etc.), Status, WorkMode. Scoped to the requesting employee's EmployeeId by GetEssContextAsync. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<AttendanceDailyRecord>>> Attendance([FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
@@ -282,6 +288,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpPost("attendance/regularization")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: WorkDate, RequestType, correction timestamps, free-text Reason, Status. Scoped to the requesting employee's EmployeeId by GetEssContextAsync. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<AttendanceRegularizationRequest>> AttendanceRegularization(ESSAttendanceRegularizationDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
@@ -314,6 +321,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpPost("leave/request")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: LeaveTypeId/Name, StartDate, EndDate, TotalDays, Reason, Status. Employee creating their own leave request. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<LeaveRequest>> LeaveRequest(ESSLeaveRequestDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
@@ -361,7 +369,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpPost("documents/upload")]
-    public async Task<ActionResult<EmployeeDocument>> UploadDocument(ESSDocumentUploadDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> UploadDocument(ESSDocumentUploadDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
         if (!essOk) return BadRequest(new { message = ctxError });
@@ -380,10 +388,11 @@ public class EmployeeSelfServiceController : ControllerBase
         _db.EmployeeDocuments.Add(document);
         await _db.SaveChangesAsync(cancellationToken);
         await EssAudit(tenantId, employeeId, "ess.document.uploaded", "EmployeeDocument", document.Id.ToString(), cancellationToken);
-        return Created($"/api/ess/documents/{document.Id}", document);
+        return Created($"/api/ess/documents/{document.Id}", EmployeeDocumentDto.Project(document));
     }
 
     [HttpPost("hr-requests")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: CategoryId/Name, Subject, Description, Priority, Status, DueAtUtc. Employee's own service ticket. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<HRRequest>> CreateHrRequest(ESSHRRequestCreateDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
@@ -409,6 +418,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpGet("hr-requests/my")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: CategoryId/Name, Subject, Description, Priority, Status, DueAtUtc. Scoped to the requesting employee's EmployeeId by GetEssContextAsync. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<IReadOnlyCollection<HRRequest>>> MyHrRequests(CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken);
@@ -417,6 +427,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpPost("hr-requests/{id:guid}/comments")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: HRRequestId, EmployeeId, UserId, Comment text, CreatedAtUtc. Scoped to a ticket owned by the requesting employee. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<HRRequestComment>> AddHrRequestComment(Guid id, ESSCommentDto request, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);
@@ -449,6 +460,7 @@ public class EmployeeSelfServiceController : ControllerBase
     }
 
     [HttpPost("policies/{id:guid}/acknowledge")]
+    [AllowEntityReturn("Flat entity — no navigation properties. Fields: PolicyId, EmployeeId, AcknowledgedAtUtc, UserId. No salary, bank/IBAN, passport, national-ID, medical, or disciplinary data.")]
     public async Task<ActionResult<EmployeePolicyAcknowledgement>> AcknowledgePolicy(Guid id, CancellationToken cancellationToken)
     {
         var (essOk, tenantId, employeeId, ctxError) = await GetEssContextAsync(cancellationToken, requireWrite: true);

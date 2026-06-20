@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Saved Reports ─────────────────────────────────────────────────────────────
 
-public class SavedReport
+public class SavedReport : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -21,7 +22,7 @@ public class SavedReport
 
 // ── Report Schedules ──────────────────────────────────────────────────────────
 
-public class ReportSchedule
+public class ReportSchedule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -45,7 +46,7 @@ public class ReportSchedule
 
 // ── Report Execution Log ──────────────────────────────────────────────────────
 
-public class ReportExecutionLog
+public class ReportExecutionLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

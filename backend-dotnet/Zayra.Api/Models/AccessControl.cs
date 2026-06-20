@@ -17,7 +17,7 @@ public static class AccessModes
     public const string NoLogin = "NoLogin";
 }
 
-public class SecuritySetting
+public class SecuritySetting : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -42,7 +42,7 @@ public class SecuritySetting
     public Guid? UpdatedBy { get; set; }
 }
 
-public class EmployeeUserAccount
+public class EmployeeUserAccount : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -67,7 +67,7 @@ public class EmployeeUserAccount
     public Guid? DeletedBy { get; set; }
 }
 
-public class UserPermissionOverride
+public class UserPermissionOverride : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -84,7 +84,7 @@ public class UserPermissionOverride
     public Guid? UpdatedBy { get; set; }
 }
 
-public class ApprovalDelegation
+public class ApprovalDelegation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -101,7 +101,7 @@ public class ApprovalDelegation
     public Guid? CreatedBy { get; set; }
 }
 
-public class ApprovalAuthority
+public class ApprovalAuthority : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -118,7 +118,7 @@ public class ApprovalAuthority
 }
 
 // Tracks users who are authorised to manually grant/revoke individual permissions
-public class PermissionGrantorRecord
+public class PermissionGrantorRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -140,7 +140,7 @@ public class PermissionGrantorRecord
 /// SAP/Workday-style Legal Entity access grant.
 /// CompanyId null = group-level (all companies). CompanyId set = scoped to that company only.
 /// </summary>
-public class UserEntityAccess
+public class UserEntityAccess : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

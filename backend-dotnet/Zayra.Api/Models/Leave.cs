@@ -1,6 +1,7 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
-public class LeaveType
+public class LeaveType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -20,7 +21,7 @@ public class LeaveType
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeavePolicy
+public class LeavePolicy : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -53,7 +54,7 @@ public class LeavePolicy
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class EmployeeLeaveBalance
+public class EmployeeLeaveBalance : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -78,7 +79,7 @@ public class EmployeeLeaveBalance
         Entitled + Accrued + CarriedForward + ManualAdjustment - Used - Pending - Encashed;
 }
 
-public class LeaveBalanceTransaction
+public class LeaveBalanceTransaction : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -95,7 +96,7 @@ public class LeaveBalanceTransaction
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveRequest
+public class LeaveRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -129,7 +130,7 @@ public class LeaveRequest
     public DateTime? CancelledAtUtc { get; set; }
 }
 
-public class LeaveApproval
+public class LeaveApproval : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -144,7 +145,7 @@ public class LeaveApproval
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveCancellationRequest
+public class LeaveCancellationRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -158,7 +159,7 @@ public class LeaveCancellationRequest
     public DateTime? ReviewedAtUtc { get; set; }
 }
 
-public class LeaveModificationRequest
+public class LeaveModificationRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -175,7 +176,7 @@ public class LeaveModificationRequest
     public DateTime? ReviewedAtUtc { get; set; }
 }
 
-public class PublicHolidayCalendar
+public class PublicHolidayCalendar : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -188,7 +189,7 @@ public class PublicHolidayCalendar
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class PublicHoliday
+public class PublicHoliday : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -204,7 +205,7 @@ public class PublicHoliday
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveBlackoutDate
+public class LeaveBlackoutDate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -217,7 +218,7 @@ public class LeaveBlackoutDate
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveEncashmentRequest
+public class LeaveEncashmentRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -237,7 +238,7 @@ public class LeaveEncashmentRequest
     public DateTime? ProcessedAtUtc { get; set; }
 }
 
-public class CompOffCredit
+public class CompOffCredit : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -255,7 +256,7 @@ public class CompOffCredit
     public DateTime? ApprovedAtUtc { get; set; }
 }
 
-public class CompOffUsage
+public class CompOffUsage : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -266,7 +267,7 @@ public class CompOffUsage
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AbsenceRecord
+public class AbsenceRecord : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -281,7 +282,7 @@ public class AbsenceRecord
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class AbsenceRegularizationRequest
+public class AbsenceRegularizationRequest : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -297,7 +298,7 @@ public class AbsenceRegularizationRequest
     public DateTime? ReviewedAtUtc { get; set; }
 }
 
-public class LeaveDelegation
+public class LeaveDelegation : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -314,7 +315,7 @@ public class LeaveDelegation
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeavePayrollImpact
+public class LeavePayrollImpact : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -329,7 +330,7 @@ public class LeavePayrollImpact
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveAuditLog
+public class LeaveAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -343,7 +344,7 @@ public class LeaveAuditLog
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
-public class LeaveAIInsight
+public class LeaveAIInsight : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

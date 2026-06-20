@@ -13,7 +13,7 @@ import { LocaleProvider } from '../contexts/LocaleContext';
 import { navigationItems } from '../routes/navigation';
 import type { ThemeMode } from '../types/ui';
 
-const HISTORY_KEY = 'zayra-search-history';
+const HISTORY_KEY = 'kynexone-search-history';
 const MAX_HISTORY = 8;
 
 function loadHistory(): string[] {

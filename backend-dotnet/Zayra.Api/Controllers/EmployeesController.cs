@@ -577,26 +577,26 @@ public class EmployeesController : ControllerBase
             }
 
             var employee = await employeeManagement.CreateAsync(tenantId, request, Context(), cancellationToken);
-            return CreatedAtAction(nameof(Get), new { id = employee.Employee.Id }, employee);
+            return CreatedAtAction(nameof(Get), new { id = employee.Id }, employee);
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpPost("drafts")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDraft>> CreateDraft(EmployeeDraftRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDraftDto>> CreateDraft(EmployeeDraftRequest request, CancellationToken cancellationToken)
     {
         var draft = ApplyDraft(new EmployeeDraft { TenantId = RequireTenant(), CreatedByUserId = GetUserId() }, request);
         draft.ProfileCompletenessScore = CalculateCompleteness(draft, 0);
         _db.EmployeeDrafts.Add(draft);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.draft_created", "EmployeeDraft", draft.Id.ToString(), cancellationToken);
-        return Created($"/api/employees/drafts/{draft.Id}", draft);
+        return Created($"/api/employees/drafts/{draft.Id}", EmployeeDraftDto.Project(draft, CanViewSensitive()));
     }
 
     [HttpPut("drafts/{draftId:guid}")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDraft>> UpdateDraft(Guid draftId, EmployeeDraftRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDraftDto>> UpdateDraft(Guid draftId, EmployeeDraftRequest request, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
         var draft = await _db.EmployeeDrafts.FirstOrDefaultAsync(x => x.Id == draftId && x.TenantId == tenantId, cancellationToken);
@@ -606,12 +606,12 @@ public class EmployeesController : ControllerBase
         draft.ProfileCompletenessScore = CalculateCompleteness(draft, docs);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.draft_updated", "EmployeeDraft", draft.Id.ToString(), cancellationToken);
-        return Ok(draft);
+        return Ok(EmployeeDraftDto.Project(draft, CanViewSensitive()));
     }
 
     [HttpPost("drafts/{draftId:guid}/documents")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDocument>> AddDraftDocument(Guid draftId, EmployeeDocumentRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> AddDraftDocument(Guid draftId, EmployeeDocumentRequest request, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
         if (!await _db.EmployeeDrafts.AnyAsync(x => x.Id == draftId && x.TenantId == tenantId, cancellationToken)) return NotFound();
@@ -629,13 +629,13 @@ public class EmployeesController : ControllerBase
         _db.EmployeeDocuments.Add(document);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.document_uploaded", "EmployeeDraft", draftId.ToString(), cancellationToken);
-        return Created($"/api/employees/documents/{document.Id}", document);
+        return Created($"/api/employees/documents/{document.Id}", EmployeeDocumentDto.Project(document));
     }
 
     [HttpPost("drafts/{draftId:guid}/documents/upload")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
     [RequestSizeLimit(10_485_760)]
-    public async Task<ActionResult<EmployeeDocument>> UploadDraftDocument(Guid draftId, [FromForm] EmployeeDocumentUploadRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> UploadDraftDocument(Guid draftId, [FromForm] EmployeeDocumentUploadRequest request, CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
         if (request.File is null) return BadRequest(new { message = "Document file is required." });
@@ -656,7 +656,7 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Document uploaded", $"{request.DocumentType} was uploaded for draft {draftId}.", "EmployeeDraft", draftId.ToString(), cancellationToken);
         await Audit("employee.document_file_uploaded", "EmployeeDraft", draftId.ToString(), cancellationToken);
-        return Created($"/api/employees/documents/{document.Id}", document);
+        return Created($"/api/employees/documents/{document.Id}", EmployeeDocumentDto.Project(document));
     }
 
     [HttpGet("documents/{documentId:guid}/download")]
@@ -783,10 +783,9 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Employee activated", $"{employee.FullName} was activated with ID {employee.EmployeeCode}.", "Employee", employee.Id.ToString(), cancellationToken);
         await Audit("employee.activated", "Employee", employee.Id.ToString(), cancellationToken);
-        if (!CanViewSensitive()) EmployeeSensitiveMask.Apply(employee);
         var documents = await _db.EmployeeDocuments.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
         var histories = await _db.EmployeeHistories.Where(x => x.EmployeeId == employee.Id).ToListAsync(cancellationToken);
-        return Ok(new EmployeeDetailDto(employee, null, [], documents, histories, []));
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive(), documents: documents, history: histories));
     }
 
     [HttpPut("{id:int}")]
@@ -821,7 +820,7 @@ public class EmployeesController : ControllerBase
         await AddHistory(employee, "Updated", request.EffectiveDate, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.updated", "Employee", employee.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpPatch("{id:int}/status")]
@@ -839,47 +838,48 @@ public class EmployeesController : ControllerBase
     [HttpPost("{id:int}/documents")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
     [RequestSizeLimit(10_485_760)]
-    public async Task<ActionResult<EmployeeDocument>> UploadEmployeeDocument(int id, [FromForm] EmployeeDocumentUploadMetadata request, [FromForm] IFormFile file, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> UploadEmployeeDocument(int id, [FromForm] EmployeeDocumentUploadMetadata request, [FromForm] IFormFile file, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         try
         {
             var document = await employeeManagement.UploadDocumentAsync(RequireTenant(), id, request, file, Context(), cancellationToken);
-            return Created($"/api/employees/{id}/documents/{document.Id}", document);
+            return Created($"/api/employees/{id}/documents/{document.Id}", EmployeeDocumentDto.Project(document));
         }
         catch (InvalidOperationException ex) { return BadRequest(new { message = ex.Message }); }
     }
 
     [HttpGet("{id:int}/documents")]
-    public async Task<ActionResult<IReadOnlyCollection<EmployeeDocument>>> EmployeeDocuments(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<EmployeeDocumentDto>>> EmployeeDocuments(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         var scope = await _scopeService.ResolveAsync(User, RequireTenant(), cancellationToken);
         if (!scope.IsUnrestricted && !scope.AllowedEmployeeIds!.Contains(id))
             return Forbid();
-        return Ok(await employeeManagement.GetDocumentsAsync(RequireTenant(), id, cancellationToken));
+        var docs = await employeeManagement.GetDocumentsAsync(RequireTenant(), id, cancellationToken);
+        return Ok(docs.Select(EmployeeDocumentDto.Project).ToList());
     }
 
     [HttpPut("{id:int}/documents/{docId:guid}")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDocument>> UpdateEmployeeDocument(int id, Guid docId, [FromBody] UpdateDocumentMetadataRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> UpdateEmployeeDocument(int id, Guid docId, [FromBody] UpdateDocumentMetadataRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         var doc = await employeeManagement.UpdateDocumentAsync(RequireTenant(), id, docId, request, Context(), cancellationToken);
-        return doc is null ? NotFound() : Ok(doc);
+        return doc is null ? NotFound() : Ok(EmployeeDocumentDto.Project(doc));
     }
 
     [HttpPost("{id:int}/documents/{docId:guid}/verify")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDocument>> VerifyEmployeeDocument(int id, Guid docId, [FromBody] DocumentVerifyRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> VerifyEmployeeDocument(int id, Guid docId, [FromBody] DocumentVerifyRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         var doc = await employeeManagement.VerifyDocumentAsync(RequireTenant(), id, docId, request.Notes, Context(), cancellationToken);
-        return doc is null ? NotFound() : Ok(doc);
+        return doc is null ? NotFound() : Ok(EmployeeDocumentDto.Project(doc));
     }
 
     [HttpPost("{id:int}/documents/{docId:guid}/reject")]
     [Authorize(Roles = "Admin,HR Manager,HR Officer")]
-    public async Task<ActionResult<EmployeeDocument>> RejectEmployeeDocument(int id, Guid docId, [FromBody] DocumentRejectRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeDocumentDto>> RejectEmployeeDocument(int id, Guid docId, [FromBody] DocumentRejectRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         var doc = await employeeManagement.RejectDocumentAsync(RequireTenant(), id, docId, request.Reason, Context(), cancellationToken);
-        return doc is null ? NotFound() : Ok(doc);
+        return doc is null ? NotFound() : Ok(EmployeeDocumentDto.Project(doc));
     }
 
     [HttpDelete("{id:int}/documents/{docId:guid}")]
@@ -890,9 +890,10 @@ public class EmployeesController : ControllerBase
     }
 
     [HttpGet("{id:int}/history")]
-    public async Task<ActionResult<IReadOnlyCollection<EmployeeHistory>>> EmployeeHistory(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<EmployeeHistoryDto>>> EmployeeHistory(int id, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
-        return Ok(await employeeManagement.GetHistoryAsync(RequireTenant(), id, cancellationToken));
+        var history = await employeeManagement.GetHistoryAsync(RequireTenant(), id, cancellationToken);
+        return Ok(history.Select(EmployeeHistoryDto.Project).ToList());
     }
 
     [HttpPost("{id:int}/activate")]
@@ -949,16 +950,16 @@ public class EmployeesController : ControllerBase
         await AddHistory(employee, "SensitiveChangeApproved", change.EffectiveDate, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         await Audit("employee.change_approved", "EmployeeChangeRequest", change.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpPost("{id:int}/transfer")]
     [Authorize(Roles = "Admin,HR Manager,Manager")]
-    public async Task<ActionResult<EmployeeTransferRequest>> RequestTransfer(int id, EmployeeTransferCreateRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
+    public async Task<ActionResult<EmployeeTransferDto>> RequestTransfer(int id, EmployeeTransferCreateRequest request, [FromServices] IEmployeeManagementService employeeManagement, CancellationToken cancellationToken)
     {
         var transfer = await employeeManagement.RequestTransferAsync(RequireTenant(), id, request, Context(), cancellationToken);
         if (transfer is null) return NotFound();
-        return Created($"/api/employees/transfers/{transfer.Id}", transfer);
+        return Created($"/api/employees/transfers/{transfer.Id}", EmployeeTransferDto.Project(transfer));
     }
 
     [HttpPost("transfers/{transferId:guid}/approve-current-manager")]
@@ -988,7 +989,7 @@ public class EmployeesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         await Notify("Employee transfer approved", $"Transfer for employee {employee.EmployeeCode} was applied.", "EmployeeTransferRequest", transfer.Id.ToString(), cancellationToken);
         await Audit("employee.transfer_approved", "EmployeeTransferRequest", transfer.Id.ToString(), cancellationToken);
-        return Ok(employee);
+        return Ok(EmployeeDetailDto.Project(employee, CanViewSensitive()));
     }
 
     [HttpGet("reports/summary")]

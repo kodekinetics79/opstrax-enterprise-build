@@ -1,3 +1,4 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 /// <summary>
@@ -5,7 +6,7 @@ namespace Zayra.Api.Models;
 /// SolidLine = direct manager chain, DottedLine = functional/matrix relationship,
 /// Temporary = covers like leave replacements, Functional = cross-team technical lead.
 /// </summary>
-public class ReportingLine
+public class ReportingLine : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

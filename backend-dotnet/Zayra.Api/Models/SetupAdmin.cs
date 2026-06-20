@@ -1,8 +1,9 @@
+using Zayra.Api.Domain.Entities;
 namespace Zayra.Api.Models;
 
 // ── Master Data ───────────────────────────────────────────────────────────────
 
-public class MasterDataType
+public class MasterDataType : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -20,7 +21,7 @@ public class MasterDataType
     public Guid? UpdatedBy { get; set; }
 }
 
-public class MasterDataValue
+public class MasterDataValue : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -42,7 +43,7 @@ public class MasterDataValue
 
 // ── Numbering Rules ───────────────────────────────────────────────────────────
 
-public class NumberingRule
+public class NumberingRule : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -64,7 +65,7 @@ public class NumberingRule
 
 // ── System Settings ───────────────────────────────────────────────────────────
 
-public class SystemSetting
+public class SystemSetting : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -81,7 +82,7 @@ public class SystemSetting
 
 // ── GCC Compliance Settings ───────────────────────────────────────────────────
 
-public class GCCComplianceSetting
+public class GCCComplianceSetting : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -114,7 +115,7 @@ public class GCCComplianceSetting
 
 // ── Location / Site ───────────────────────────────────────────────────────────
 
-public class Location
+public class Location : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -140,7 +141,7 @@ public class Location
 
 // ── Fiscal Year ───────────────────────────────────────────────────────────────
 
-public class FiscalYear
+public class FiscalYear : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -158,7 +159,7 @@ public class FiscalYear
 
 // ── Notification Templates ────────────────────────────────────────────────────
 
-public class NotificationTemplate
+public class NotificationTemplate : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
@@ -180,7 +181,7 @@ public class NotificationTemplate
 
 // ── Admin Audit Log ───────────────────────────────────────────────────────────
 
-public class AdminAuditLog
+public class AdminAuditLog : ITenantOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
