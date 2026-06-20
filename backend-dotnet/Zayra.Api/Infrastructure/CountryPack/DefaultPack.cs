@@ -35,3 +35,17 @@ public sealed class DefaultLocalizationProfile : ILocalizationProfile
     public LocalizationProfile GetProfile()
         => new("USD", "$", "en", false, "yyyy-MM-dd", "Gregorian");
 }
+
+public sealed class DefaultCountryPackDescriptor : ICountryPackDescriptor
+{
+    public PackDescriptor GetDescriptor() => new(
+        CountryCode:              "N/A",
+        CountryNameEn:            "Not configured",
+        CountryNameAr:            string.Empty,
+        SocialInsuranceScheme:    "None",
+        SocialInsuranceDescription: "No statutory deduction pack is configured for this company.",
+        EosbFormula:              "No end-of-service pack configured.",
+        WpsFormat:                "none",
+        WpsFormatLabel:           "No WPS format configured.",
+        NationalizationScheme:    "None");
+}

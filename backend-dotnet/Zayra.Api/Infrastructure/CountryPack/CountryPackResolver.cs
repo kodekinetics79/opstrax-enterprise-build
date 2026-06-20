@@ -28,6 +28,9 @@ public sealed class CountryPackResolver : ICountryPackResolver
     public ILocalizationProfile ResolveLocalizationProfile(string cc, string j)
         => Resolve<ILocalizationProfile>(cc, j);
 
+    public ICountryPackDescriptor ResolveDescriptor(string cc, string j)
+        => Resolve<ICountryPackDescriptor>(cc, j);
+
     private T Resolve<T>(string countryCode, string jurisdiction) where T : class
         => _sp.GetKeyedService<T>($"{countryCode}:{jurisdiction}")
         ?? _sp.GetKeyedService<T>(countryCode)

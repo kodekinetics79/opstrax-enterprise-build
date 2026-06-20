@@ -286,7 +286,8 @@ public class OrganizationSetupService : IOrganizationSetupService
         company.LegalNameEn = Clean(request.LegalNameEn);
         company.LegalNameAr = Clean(request.LegalNameAr);
         company.TradeName = Clean(request.TradeName);
-        company.CountryCode = Clean(request.CountryCode).ToUpperInvariant();
+        company.CountryCode  = Clean(request.CountryCode).ToUpperInvariant();
+        company.Jurisdiction = Clean(request.Jurisdiction);
         company.RegistrationNumber = Clean(request.RegistrationNumber);
         company.TaxNumber = Clean(request.TaxNumber);
         company.WpsEmployerId = Clean(request.WpsEmployerId);

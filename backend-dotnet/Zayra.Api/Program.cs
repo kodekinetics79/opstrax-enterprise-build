@@ -221,6 +221,11 @@ builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IEndOfServiceC
     Zayra.Api.Infrastructure.CountryPack.Uae.UaeDifcEndOfServiceCalculator>(
     $"{Zayra.Api.Application.CountryPack.CountryCodes.UAE}:{Zayra.Api.Application.CountryPack.Jurisdictions.Difc}");
 
+// UAE DIFC descriptor override (DEWS EOS description differs from mainland)
+builder.Services.AddKeyedSingleton<Zayra.Api.Application.CountryPack.ICountryPackDescriptor,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeDifcDescriptor>(
+    $"{Zayra.Api.Application.CountryPack.CountryCodes.UAE}:{Zayra.Api.Application.CountryPack.Jurisdictions.Difc}");
+
 // Qatar pack — country-wide key "QAT"
 builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator,
     Zayra.Api.Infrastructure.CountryPack.Qatar.QatarDeductionCalculator>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
@@ -232,6 +237,16 @@ builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.INationalizati
     Zayra.Api.Infrastructure.CountryPack.Qatar.QatarNationalizationTracker>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
 builder.Services.AddKeyedScoped<Zayra.Api.Application.CountryPack.ILocalizationProfile,
     Zayra.Api.Infrastructure.CountryPack.Qatar.QatarLocalizationProfile>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
+
+// Pack descriptors — singletons (no DB dependency; static metadata only)
+builder.Services.AddSingleton<Zayra.Api.Application.CountryPack.ICountryPackDescriptor,
+    Zayra.Api.Infrastructure.CountryPack.DefaultCountryPackDescriptor>();
+builder.Services.AddKeyedSingleton<Zayra.Api.Application.CountryPack.ICountryPackDescriptor,
+    Zayra.Api.Infrastructure.CountryPack.Ksa.KsaDescriptor>(Zayra.Api.Application.CountryPack.CountryCodes.Saudi);
+builder.Services.AddKeyedSingleton<Zayra.Api.Application.CountryPack.ICountryPackDescriptor,
+    Zayra.Api.Infrastructure.CountryPack.Uae.UaeDescriptor>(Zayra.Api.Application.CountryPack.CountryCodes.UAE);
+builder.Services.AddKeyedSingleton<Zayra.Api.Application.CountryPack.ICountryPackDescriptor,
+    Zayra.Api.Infrastructure.CountryPack.Qatar.QatarDescriptor>(Zayra.Api.Application.CountryPack.CountryCodes.Qatar);
 
 builder.Services.AddScoped<Zayra.Api.Application.CountryPack.ICountryPackResolver,
     Zayra.Api.Infrastructure.CountryPack.CountryPackResolver>();

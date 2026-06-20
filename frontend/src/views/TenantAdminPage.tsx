@@ -11,9 +11,11 @@ import {
   type TenantAiUsageSummary,
 } from '../api/intelligence';
 import client from '../api/client';
+import { statutoryRulesApi, countryPacksApi } from '../api/countryPacks';
+import type { StatutoryRuleDto, CountryPackOption, CreateStatutoryRuleRequest } from '../api/countryPacks';
 import { HelpTextManager } from '../components/HelpTextManager';
 
-type Tab = 'subscription' | 'features' | 'invoices' | 'localization' | 'branding' | 'security' | 'country-rules' | 'help-text';
+type Tab = 'subscription' | 'features' | 'invoices' | 'localization' | 'branding' | 'security' | 'country-rules' | 'statutory-rules' | 'help-text';
 
 const FEATURE_KEYS = [
   { key: 'ai_assistant', label: 'AI HR Assistant', description: 'Enable natural-language HR queries' },
@@ -178,6 +180,17 @@ export default function TenantAdminPage() {
   const [addingRule, setAddingRule] = useState(false);
   const [showAddRule, setShowAddRule] = useState(false);
 
+  // Statutory rules (GCC-2 pack engine — effective-dated, tenant-overridable)
+  const [statRules, setStatRules] = useState<StatutoryRuleDto[]>([]);
+  const [statRulesLoading, setStatRulesLoading] = useState(false);
+  const [availablePacks, setAvailablePacks] = useState<CountryPackOption[]>([]);
+  const [showAddStatRule, setShowAddStatRule] = useState(false);
+  const [addingStatRule, setAddingStatRule] = useState(false);
+  const [newStatRule, setNewStatRule] = useState<CreateStatutoryRuleRequest>({
+    countryCode: 'SAU', jurisdiction: 'KSA-mainland', ruleKey: '', ruleValue: '',
+    dataType: 'decimal', description: '', effectiveFrom: new Date().toISOString().slice(0, 10),
+  });
+
   useEffect(() => {
     if (tab === 'subscription') { loadSubscription(); loadUsage(); loadAiUsage(); loadSubscriptionUsage(); }
     if (tab === 'features') loadFlags();
@@ -186,6 +199,7 @@ export default function TenantAdminPage() {
     if (tab === 'branding') loadBranding();
     if (tab === 'security') loadSecurity();
     if (tab === 'country-rules') loadRules();
+    if (tab === 'statutory-rules') { loadStatRules(); countryPacksApi.available().then(setAvailablePacks).catch(() => {}); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -321,6 +335,34 @@ export default function TenantAdminPage() {
     }
   }
 
+  // Statutory rules (GCC-2 pack engine)
+  async function loadStatRules() {
+    setStatRulesLoading(true);
+    try { setStatRules(await statutoryRulesApi.list()); }
+    catch {} finally { setStatRulesLoading(false); }
+  }
+
+  async function deleteStatRule(id: string) {
+    try {
+      await statutoryRulesApi.remove(id);
+      setStatRules(prev => prev.filter(r => r.id !== id));
+    } catch {}
+  }
+
+  async function addStatRule() {
+    setAddingStatRule(true);
+    try {
+      const created = await statutoryRulesApi.create({
+        ...newStatRule,
+        effectiveFrom: new Date(newStatRule.effectiveFrom).toISOString(),
+      });
+      setStatRules(prev => [...prev, created]);
+      setNewStatRule({ countryCode: 'SAU', jurisdiction: 'KSA-mainland', ruleKey: '', ruleValue: '',
+        dataType: 'decimal', description: '', effectiveFrom: new Date().toISOString().slice(0, 10) });
+      setShowAddStatRule(false);
+    } catch {} finally { setAddingStatRule(false); }
+  }
+
   function getCountryName(code: string) {
     return GCC_COUNTRIES.find(c => c.code === code)?.name ?? code;
   }
@@ -340,6 +382,7 @@ export default function TenantAdminPage() {
     { id: 'branding', label: 'Branding' },
     { id: 'security', label: 'Security' },
     { id: 'country-rules', label: 'Country Rules' },
+    { id: 'statutory-rules', label: 'Statutory Rules Engine' },
     { id: 'help-text', label: 'Help Text' },
   ];
 
@@ -1069,6 +1112,183 @@ export default function TenantAdminPage() {
                   </table>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Statutory Rules Engine */}
+      {tab === 'statutory-rules' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Statutory Rules Engine</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Effective-dated rates for GOSI, GPSSA, GRSIA, EOSB, and WPS thresholds.
+                Platform defaults (marked VERIFY) are read-only. Create tenant overrides to apply your own certified rates.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddStatRule(v => !v)}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+            >
+              {showAddStatRule ? 'Cancel' : '+ Add Override'}
+            </button>
+          </div>
+
+          {showAddStatRule && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-gray-900">New Tenant Override</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="sr-country" className="block text-xs font-medium text-gray-700 mb-1">Country Pack</label>
+                  <select
+                    id="sr-country"
+                    aria-label="Country Pack"
+                    value={newStatRule.countryCode}
+                    onChange={e => {
+                      const cc = e.target.value;
+                      const firstJ = availablePacks.find(p => p.countryCode === cc)?.jurisdictions[0]?.code ?? '';
+                      setNewStatRule(p => ({ ...p, countryCode: cc, jurisdiction: firstJ }));
+                    }}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  >
+                    {availablePacks.map(p => <option key={p.countryCode} value={p.countryCode}>{p.nameEn}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="sr-jurisdiction" className="block text-xs font-medium text-gray-700 mb-1">Jurisdiction</label>
+                  <select
+                    id="sr-jurisdiction"
+                    aria-label="Jurisdiction"
+                    value={newStatRule.jurisdiction}
+                    onChange={e => setNewStatRule(p => ({ ...p, jurisdiction: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  >
+                    {(availablePacks.find(p => p.countryCode === newStatRule.countryCode)?.jurisdictions ?? []).map(j => (
+                      <option key={j.code} value={j.code}>{j.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="sr-key" className="block text-xs font-medium text-gray-700 mb-1">Rule Key</label>
+                  <input
+                    id="sr-key"
+                    value={newStatRule.ruleKey}
+                    onChange={e => setNewStatRule(p => ({ ...p, ruleKey: e.target.value }))}
+                    placeholder="e.g. gosi.saudi_employee_rate"
+                    aria-label="Rule Key"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="sr-value" className="block text-xs font-medium text-gray-700 mb-1">Rule Value</label>
+                  <input
+                    id="sr-value"
+                    value={newStatRule.ruleValue}
+                    onChange={e => setNewStatRule(p => ({ ...p, ruleValue: e.target.value }))}
+                    placeholder="e.g. 0.09"
+                    aria-label="Rule Value"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="sr-datatype" className="block text-xs font-medium text-gray-700 mb-1">Data Type</label>
+                  <select
+                    id="sr-datatype"
+                    aria-label="Data Type"
+                    value={newStatRule.dataType}
+                    onChange={e => setNewStatRule(p => ({ ...p, dataType: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="decimal">Decimal</option>
+                    <option value="string">String</option>
+                    <option value="int">Integer</option>
+                    <option value="bool">Boolean</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="sr-effdate" className="block text-xs font-medium text-gray-700 mb-1">Effective From</label>
+                  <input
+                    id="sr-effdate"
+                    type="date"
+                    aria-label="Effective From"
+                    value={newStatRule.effectiveFrom}
+                    onChange={e => setNewStatRule(p => ({ ...p, effectiveFrom: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Description / Source</label>
+                  <input
+                    value={newStatRule.description}
+                    onChange={e => setNewStatRule(p => ({ ...p, description: e.target.value }))}
+                    placeholder="e.g. Source: GOSI Royal Decree M/33 2016 — verified 2026-01"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={addStatRule}
+                disabled={addingStatRule || !newStatRule.ruleKey.trim() || !newStatRule.ruleValue.trim()}
+                className="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-indigo-700"
+              >
+                {addingStatRule ? 'Adding…' : 'Add Override'}
+              </button>
+            </div>
+          )}
+
+          {statRulesLoading ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-400">Loading…</div>
+          ) : statRules.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-400">
+              No statutory rules loaded. Platform defaults will appear here — check that the seeder ran on startup.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    {['Country', 'Jurisdiction', 'Rule Key', 'Value', 'Effective From', 'Source / Note', 'Override', 'Actions'].map(col => (
+                      <th key={col} className="text-left text-xs font-medium text-gray-500 px-4 py-2">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {statRules.map(rule => (
+                    <tr key={rule.id} className={`hover:bg-gray-50 transition-colors ${!rule.isTenantOverride ? 'opacity-80' : ''}`}>
+                      <td className="px-4 py-2.5 text-xs font-medium text-gray-700">{rule.countryCode}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-500">{rule.jurisdiction || '—'}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-gray-800">{rule.ruleKey}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-indigo-700">{rule.ruleValue}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-400">{rule.effectiveFrom ? new Date(rule.effectiveFrom).toLocaleDateString() : '—'}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-400 max-w-xs truncate" title={rule.description}>{rule.description || '—'}</td>
+                      <td className="px-4 py-2.5">
+                        {rule.isTenantOverride ? (
+                          <span className="inline-block px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">Override</span>
+                        ) : (
+                          <span className="inline-block px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">Platform default</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {rule.isTenantOverride ? (
+                          <button
+                            type="button"
+                            onClick={() => deleteStatRule(rule.id)}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            Delete
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-300">Read-only</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

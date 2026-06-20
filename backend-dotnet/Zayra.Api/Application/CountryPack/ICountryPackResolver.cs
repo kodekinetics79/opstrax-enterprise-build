@@ -7,4 +7,5 @@ public interface ICountryPackResolver
     IWageProtectionExporter ResolveWageProtectionExporter(string countryCode, string jurisdiction);
     INationalizationTracker ResolveNationalizationTracker(string countryCode, string jurisdiction);
     ILocalizationProfile ResolveLocalizationProfile(string countryCode, string jurisdiction);
+    ICountryPackDescriptor ResolveDescriptor(string countryCode, string jurisdiction);
 }

@@ -140,3 +140,28 @@ public sealed record LocalizationProfile(
     bool IsRtl,
     string DateFormat,
     string CalendarSystem);
+
+// ── Pack descriptor ───────────────────────────────────────────────────────────
+// Static metadata returned by ICountryPackDescriptor — lets controllers surface
+// the resolved pack's behaviour without branching on country code.
+
+public sealed record PackDescriptor(
+    string CountryCode,
+    string CountryNameEn,
+    string CountryNameAr,
+    string SocialInsuranceScheme,
+    string SocialInsuranceDescription,
+    string EosbFormula,
+    string WpsFormat,
+    string WpsFormatLabel,
+    string NationalizationScheme);
+
+// ── Country registry entry ────────────────────────────────────────────────────
+
+public sealed record AvailableJurisdiction(string Code, string Label);
+
+public sealed record AvailableCountryPack(
+    string CountryCode,
+    string NameEn,
+    string NameAr,
+    IReadOnlyList<AvailableJurisdiction> Jurisdictions);

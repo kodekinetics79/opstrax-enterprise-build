@@ -319,15 +319,19 @@ public static class DemoDataSeeder
             return;
 
         // ── Company ─────────────────────────────────────────────────────────
+        // IntelliFlow → KSA (SAU / KSA-mainland)
+        // Evostel     → UAE-DIFC (ARE / UAE-DIFC) — demonstrates jurisdiction fallback
+        bool isKsa = slug == "intelliflow";
         var company = new Company
         {
-            TenantId = tenantId,
-            LegalNameEn = slug == "intelliflow" ? "IntelliFlow Systems Pvt Ltd" : "Evostel LLC",
-            LegalNameAr = string.Empty,
-            TradeName = slug == "intelliflow" ? "IntelliFlow" : "Evostel",
-            CountryCode = "AE",
-            RegistrationNumber = slug == "intelliflow" ? "IFL-2019-001" : "EVS-2021-001",
-            DefaultCurrency = "AED",
+            TenantId    = tenantId,
+            LegalNameEn = isKsa ? "IntelliFlow Systems Ltd"      : "Evostel DIFC Ltd",
+            LegalNameAr = isKsa ? "إنتلي فلو سيستمز"            : "إيفوستيل دايف سنتر",
+            TradeName   = isKsa ? "IntelliFlow"                   : "Evostel",
+            CountryCode = isKsa ? "SAU"                           : "ARE",
+            Jurisdiction = isKsa ? "KSA-mainland"                 : "UAE-DIFC",
+            RegistrationNumber = isKsa ? "IFL-2019-001"           : "EVS-2021-001",
+            DefaultCurrency    = isKsa ? "SAR"                    : "AED",
             IsActive = true,
         };
         db.Companies.Add(company);
@@ -335,16 +339,16 @@ public static class DemoDataSeeder
 
         var branch = new Branch
         {
-            TenantId = tenantId,
-            CompanyId = company.Id,
-            Code = "HQ",
-            NameEn = "Head Office",
-            NameAr = "المقر الرئيسي",
-            CountryCode = "AE",
-            City = "Dubai",
-            TimeZoneId = "Arabian Standard Time",
+            TenantId    = tenantId,
+            CompanyId   = company.Id,
+            Code        = "HQ",
+            NameEn      = "Head Office",
+            NameAr      = "المقر الرئيسي",
+            CountryCode = isKsa ? "SAU" : "ARE",
+            City        = isKsa ? "Riyadh" : "Dubai",
+            TimeZoneId  = isKsa ? "Arab Standard Time" : "Arabian Standard Time",
             IsHeadOffice = true,
-            IsActive = true,
+            IsActive     = true,
         };
         db.Branches.Add(branch);
         await db.SaveChangesAsync(ct);
