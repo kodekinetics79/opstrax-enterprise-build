@@ -1,4 +1,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# Cache bust: increment when a stale registry cache must be forced to rebuild.
+ARG CACHE_BUST=2
 WORKDIR /src
 COPY backend-dotnet/Zayra.Api/Zayra.Api.csproj ./
 RUN dotnet restore
