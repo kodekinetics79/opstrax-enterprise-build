@@ -1,11 +1,14 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Zayra.Api.Application.Common;
+using Zayra.Api.Application.CountryPack;
 using Zayra.Api.Data;
+using Zayra.Api.Infrastructure.CountryPack;
 using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Infrastructure.Payroll;
 using Zayra.Api.Models;
@@ -21,13 +24,16 @@ public class PayrollController : ControllerBase
     private readonly IDataScopeService _scopeService;
     private readonly IHttpContextAccessor _http;
     private readonly INotificationService _notifications;
+    private readonly ICountryPackResolver _packResolver;
 
-    public PayrollController(ZayraDbContext db, IDataScopeService scopeService, IHttpContextAccessor http, INotificationService notifications)
+    public PayrollController(ZayraDbContext db, IDataScopeService scopeService, IHttpContextAccessor http,
+        INotificationService notifications, ICountryPackResolver packResolver)
     {
         _db = db;
         _scopeService = scopeService;
         _http = http;
         _notifications = notifications;
+        _packResolver = packResolver;
     }
 
     [HttpGet("salary-structures")]
@@ -140,20 +146,20 @@ public class PayrollController : ControllerBase
             .Where(x => x.TenantId == tenantId && x.SalaryStructureId.HasValue && structureIds.Contains(x.SalaryStructureId!.Value))
             .ToListAsync(cancellationToken);
 
+        // Resolve company → country pack for statutory deduction.
+        // CompanyId on the run determines which CountryCode + Jurisdiction drives GOSI/GPSSA/GRSIA.
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == run.CompanyId, cancellationToken);
+        var packCc  = company?.CountryCode  ?? string.Empty;
+        var packJur = company?.Jurisdiction ?? string.Empty;
+        var deductionCalc = _packResolver.ResolveDeductionCalculator(packCc, packJur);
+
         // Income tax rate from System Settings (0 if not configured — GCC has no personal income tax by default)
         var taxRateSetting = await _db.SystemSettings.AsNoTracking()
             .Where(x => x.Category == "Payroll" && x.SettingKey == "IncomeTaxRate")
             .Select(x => x.SettingValue)
             .FirstOrDefaultAsync(cancellationToken);
         decimal.TryParse(taxRateSetting, out var incomeTaxRate); // 0 if unset
-        // IgnoreQueryFilters is intentional: same as GosiController — Guid.Empty defaults are
-        // invisible to the global tenant filter. Explicit predicate re-applies correct scope.
-        var gosiRules = await _db.GosiContributionRules
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(r => (r.TenantId == Guid.Empty || r.TenantId == tenantId) && r.IsActive)
-            .ToListAsync(cancellationToken);
-        var gosiPeriodDate = periodEnd; // periodEnd is already DateOnly
         var attendanceImpacts = await _db.AttendancePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.WorkDate >= periodStart && x.WorkDate <= periodEnd && x.Status != "Processed").ToListAsync(cancellationToken);
         var leaveImpacts = await _db.LeavePayrollImpacts.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayPeriod == $"{run.Year}-{run.Month:00}" && x.Status != "Processed").ToListAsync(cancellationToken);
 
@@ -221,8 +227,18 @@ public class PayrollController : ControllerBase
                 taxDeduction = Math.Round(taxableBase * incomeTaxRate / 100m, 2);
             }
 
-            var gosiContrib       = GosiCalculationService.Calculate(e.Nationality, basic, gosiRules, gosiPeriodDate, tenantId);
-            var gosiEmployeeTotal = gosiContrib.EmployeeTotal;
+            // Statutory deduction via country pack — rates from tenant-overridable StatutoryRule rows.
+            // GosiCalculationService is retained for parity testing; it is no longer called in the run path.
+            var statutoryInput = new StatutoryDeductionInput(
+                EmployeeId:   Guid.Empty, // Employee PK is int; Guid field not used in pack calculations
+                CompanyId:    run.CompanyId ?? Guid.Empty,
+                Salary:       new SalaryBreakdown(basic, housing, transport, otherAllowances),
+                Nationality:  e.Nationality ?? string.Empty,
+                ContractType: e.ContractType ?? "Indefinite",
+                PeriodYear:   run.Year,
+                PeriodMonth:  run.Month);
+            var statutoryResult   = await deductionCalc.CalculateAsync(statutoryInput, cancellationToken);
+            var gosiEmployeeTotal = statutoryResult.TotalEmployeeDeduction;
 
             // COMPLIANCE: Loan & advance EMI deduction
             var empLoans   = activeLoans.Where(l => l.EmployeeIntId == e.Id).ToList();
@@ -278,18 +294,14 @@ public class PayrollController : ControllerBase
             if (leaveDeduction > 0) AddDeduction(tenantId, id, e.Id, "LEAVE", "Leave deduction", leaveDeduction, "Leave");
             if (loanEmi > 0) AddDeduction(tenantId, id, e.Id, "LOAN_EMI", "Loan instalment", loanEmi, "Loan");
             if (advEmi > 0) AddDeduction(tenantId, id, e.Id, "ADVANCE_EMI", "Salary advance repayment", advEmi, "Loan");
-            // Per-branch GOSI deduction records — employee contributions reduce net pay
-            foreach (var line in gosiContrib.Lines.Where(l => l.Payer == GosiPayers.Employee && l.Amount > 0))
-                AddDeduction(tenantId, id, e.Id,
-                    GosiCalculationService.ToComponentCode(line.Branch, line.Payer),
-                    GosiCalculationService.ToComponentName(line.Branch, line.Payer, line.Rate),
-                    line.Amount, "GOSI");
-            // Employer-side contributions tracked separately (do NOT reduce employee net pay)
-            foreach (var line in gosiContrib.Lines.Where(l => l.Payer == GosiPayers.Employer && l.Amount > 0))
-                AddDeduction(tenantId, id, e.Id,
-                    GosiCalculationService.ToComponentCode(line.Branch, line.Payer),
-                    GosiCalculationService.ToComponentName(line.Branch, line.Payer, line.Rate),
-                    line.Amount, "GOSI");
+            // Statutory deduction lines from pack — employee contributions reduce net pay.
+            // Code/Label come from the pack (e.g. "GOSI-ANN-EE"/"GOSI Annuities (Employee)" for KSA,
+            // "GPSSA-EE"/"GPSSA (Employee)" for UAE, "GRSIA-EE"/"GRSIA (Employee)" for Qatar).
+            foreach (var line in statutoryResult.Lines.Where(l => l.EmployeeAmount > 0))
+                AddDeduction(tenantId, id, e.Id, line.Code, line.Label, line.EmployeeAmount, "Statutory");
+            // Employer-side contributions tracked for GL/reporting (do NOT reduce employee net pay).
+            foreach (var line in statutoryResult.Lines.Where(l => l.EmployerAmount > 0))
+                AddDeduction(tenantId, id, e.Id, line.Code + "-ER", line.Label + " (Employer)", line.EmployerAmount, "Statutory");
             if (overtimePay > gross * 0.35m && gross > 0) _db.PayrollValidationResults.Add(new PayrollValidationResult { TenantId = tenantId, PayrollRunId = id, EmployeeId = e.Id, Severity = "Warning", Code = "UNUSUAL_OVERTIME", Message = "Overtime payout is above 35% of regular gross earnings." });
         }
 
@@ -655,6 +667,24 @@ public class PayrollController : ControllerBase
         if (run is null || (run.Status is not ("Approved" or "Locked" or "Paid")))
             return BadRequest(new { error = "run_not_exportable", message = "Payroll run must be Approved (or Locked/Paid) before WPS export." });
 
+        // Resolve company → pack exporter; guard if no pack configured for this jurisdiction.
+        var wpsCompany = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == run.CompanyId, cancellationToken);
+        var wpsCc  = wpsCompany?.CountryCode  ?? string.Empty;
+        var wpsJur = wpsCompany?.Jurisdiction ?? string.Empty;
+        var exporter = _packResolver.ResolveWageProtectionExporter(wpsCc, wpsJur);
+
+        // P5 guard: block export if no jurisdiction-specific pack is registered.
+        if (exporter is DefaultWageProtectionExporter)
+            return UnprocessableEntity(new
+            {
+                error       = "no_wps_pack_configured",
+                message     = $"No WPS exporter is configured for company jurisdiction '{wpsCc}/{wpsJur}'. " +
+                              "Configure the company's Country and Jurisdiction in Setup → Companies before exporting.",
+                countryCode = wpsCc,
+                jurisdiction = wpsJur,
+            });
+
         var records  = await _db.PayrollPaymentRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.PaymentBatchId == id).ToListAsync(cancellationToken);
         var profiles = await _db.EmployeePayrollProfiles.AsNoTracking().Where(x => x.TenantId == tenantId && !x.IsDeleted).ToListAsync(cancellationToken);
         var empIds   = records.Select(r => r.EmployeeId).Distinct().ToList();
@@ -672,26 +702,75 @@ public class PayrollController : ControllerBase
                 blockingErrors = validation.BlockingErrors,
             });
 
-        // Build SIF records in DB.
+        var gcc         = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
+        var agentId     = gcc?.WpsAgentId ?? "0000000000";
+        var currency    = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
+                            ? batch.Currency
+                            : await ResolveCurrencyAsync(tenantId, cancellationToken);
+
+        // Build WpsEmployee list from payment records + employee snapshot data.
+        var profileByEmpId = profiles.ToDictionary(p => p.EmployeeId);
+        var slipByEmpId    = slips.ToDictionary(s => s.EmployeeId);
+        var empById        = employees.ToDictionary(e => e.Id);
+
+        var wpsEmployees = records.Select(record =>
+        {
+            var emp     = empById.TryGetValue(record.EmployeeId, out var em) ? em : null;
+            var ppf     = profileByEmpId.TryGetValue(record.EmployeeId, out var pr) ? pr : null;
+            var slip    = slipByEmpId.TryGetValue(record.EmployeeId, out var sl) ? sl : null;
+            var code    = emp?.EmployeeCode ?? record.EmployeeId.ToString();
+            return new WpsEmployee(
+                EmployeeId:     record.EmployeeId,
+                EmployeeCode:   code,
+                FullNameEn:     emp?.FullName    ?? code,
+                FullNameAr:     string.Empty,
+                Nationality:    emp?.Nationality ?? string.Empty,
+                NationalId:     ppf?.MolId       ?? string.Empty,
+                IbanOrAccount:  record.Iban,
+                BankCode:       ppf?.BankRoutingCode ?? string.Empty,
+                Salary: new SalaryBreakdown(
+                    slip?.BasicSalary         ?? 0m,
+                    slip?.HousingAllowance    ?? 0m,
+                    slip?.TransportAllowance  ?? 0m,
+                    slip?.OtherAllowances     ?? 0m),
+                NetPay: record.Amount);
+        }).ToList();
+
+        var exportInput = new WageProtectionExportInput(
+            TenantId:        tenantId,
+            CompanyId:       run.CompanyId ?? Guid.Empty,
+            PayrollRunId:    run.Id,
+            PeriodYear:      run.Year,
+            PeriodMonth:     run.Month,
+            EstablishmentId: agentId,
+            EmployerIban:    string.Empty,
+            CompanyNameEn:   wpsCompany?.LegalNameEn ?? string.Empty,
+            CompanyNameAr:   wpsCompany?.LegalNameAr ?? string.Empty,
+            Employees:       wpsEmployees);
+
+        var exportResult = await exporter.ExportAsync(exportInput, cancellationToken);
+
+        // Compute SHA-256 of generated bytes for integrity tracking.
+        var fileHash = Convert.ToHexString(SHA256.HashData(exportResult.FileBytes)).ToLowerInvariant();
+
+        // Build SIF records in DB for audit snapshot (IBAN/NetPay/MolId preserved at time of export).
         var employeeCodeMap = employees.ToDictionary(e => e.Id, e => e.EmployeeCode);
         var wps = new WPSFileBatch
         {
             TenantId           = tenantId,
             PaymentBatchId     = id,
-            SifFileName        = $"SIF-{batch.BatchNumber}.txt",
+            SifFileName        = exportResult.FileName,
             GeneratedByUserId  = GetUserId(),
-            FormatVersion      = Infrastructure.Payroll.SifFileGenerator.FormatVersion,
+            FormatVersion      = exportResult.Format,   // e.g. "mudad-xml", "mohre-sif", "qcb-sif"
         };
         _db.WPSFileBatches.Add(wps);
 
-        // Build payroll profile lookup keyed by Employee.Id for MolId / RoutingCode lookup
-        var profileByEmpId = profiles.ToDictionary(p => p.EmployeeId);
-
+        var profileByEmpId2 = profiles.ToDictionary(p => p.EmployeeId);
         var sifRows = new List<SIFFileRecord>();
         foreach (var record in records)
         {
             var code   = employeeCodeMap.TryGetValue(record.EmployeeId, out var c) ? c : record.EmployeeId.ToString();
-            var ppf    = profileByEmpId.TryGetValue(record.EmployeeId, out var pr) ? pr : null;
+            var ppf    = profileByEmpId2.TryGetValue(record.EmployeeId, out var pr) ? pr : null;
             var row    = new SIFFileRecord
             {
                 TenantId       = tenantId,
@@ -707,15 +786,14 @@ public class PayrollController : ControllerBase
             sifRows.Add(row);
         }
 
-        // Compute metadata for traceability (hash requires the actual file content).
-        var gcc         = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
-        var agentId     = gcc?.WpsAgentId ?? "0000000000";
-        var molCode     = gcc?.WpsMolCode ?? "0000000";
-        var currency    = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
-                            ? batch.Currency
-                            : await ResolveCurrencyAsync(tenantId, cancellationToken);
-        var paymentDate = new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month));
-        var genResult   = Infrastructure.Payroll.SifFileGenerator.Generate(batch, sifRows, agentId, molCode, currency, paymentDate);
+        // Pack the metadata from the exporter result (replaces hardcoded SifFileGenerator.FormatVersion).
+        var genResult = (
+            EmployeeCount:     exportResult.RecordCount,
+            TotalSalaryAmount: wpsEmployees.Sum(w => w.NetPay),
+            FileHash:          fileHash,
+            FormatVersion:     exportResult.Format,
+            ContentBytes:      exportResult.FileBytes
+        );
 
         wps.EmployeeCount     = genResult.EmployeeCount;
         wps.TotalSalaryAmount = genResult.TotalSalaryAmount;
@@ -803,20 +881,63 @@ public class PayrollController : ControllerBase
         var wpsFile = await _db.WPSFileBatches.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.PaymentBatchId == batchId, cancellationToken);
         if (wpsFile is null) return BadRequest(new { message = "WPS file has not been generated for this batch yet." });
 
-        var sifRecords = await _db.SIFFileRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.WPSFileBatchId == wpsFile.Id).ToListAsync(cancellationToken);
+        var sifRecords  = await _db.SIFFileRecords.AsNoTracking().Where(x => x.TenantId == tenantId && x.WPSFileBatchId == wpsFile.Id).ToListAsync(cancellationToken);
         var gcc         = await _db.GCCComplianceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken);
-        var agentId     = gcc?.WpsAgentId ?? "0000000000";
-        var molCode     = gcc?.WpsMolCode ?? "0000000";
-        var run         = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batch.PayrollRunId, cancellationToken);
-        var paymentDate = run is not null
-            ? new DateTime(run.Year, run.Month, DateTime.DaysInMonth(run.Year, run.Month))
-            : DateTime.UtcNow;
-        var currency = !string.IsNullOrWhiteSpace(batch.Currency) && batch.Currency != "USD"
-            ? batch.Currency
-            : await ResolveCurrencyAsync(tenantId, cancellationToken);
+        var run         = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batch.PayrollRunId && x.TenantId == tenantId, cancellationToken);
 
-        // Use the isolated SifFileGenerator — deterministic, versioned.
-        var genResult = Infrastructure.Payroll.SifFileGenerator.Generate(batch, sifRecords, agentId, molCode, currency, paymentDate);
+        // Resolve exporter via pack for deterministic regeneration.
+        var dlCompany = run is not null
+            ? await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.TenantId == tenantId && c.Id == run.CompanyId, cancellationToken)
+            : null;
+        var dlExporter = _packResolver.ResolveWageProtectionExporter(
+            dlCompany?.CountryCode  ?? string.Empty,
+            dlCompany?.Jurisdiction ?? string.Empty);
+
+        // Rebuild WpsEmployee list from DB snapshots — IBAN/NetPay from SIFFileRecord (frozen at generation),
+        // names/nationality from Employee, salary breakdown from PayrollSlip.
+        var empIds    = sifRecords.Select(r => r.EmployeeId).Distinct().ToList();
+        var dlEmps    = await _db.Employees.AsNoTracking().Where(e => e.TenantId == tenantId && empIds.Contains(e.Id)).ToListAsync(cancellationToken);
+        var dlSlips   = run is not null
+            ? await _db.PayrollSlips.AsNoTracking().Where(s => s.TenantId == tenantId && s.RunId == run.Id && empIds.Contains(s.EmployeeId)).ToListAsync(cancellationToken)
+            : new();
+        var dlEmpById   = dlEmps.ToDictionary(e => e.Id);
+        var dlSlipById  = dlSlips.ToDictionary(s => s.EmployeeId);
+
+        var dlWpsEmployees = sifRecords.Select(r =>
+        {
+            var emp  = dlEmpById.TryGetValue(r.EmployeeId, out var em) ? em : null;
+            var slip = dlSlipById.TryGetValue(r.EmployeeId, out var sl) ? sl : null;
+            return new WpsEmployee(
+                EmployeeId:    r.EmployeeId,
+                EmployeeCode:  r.EmployeeCode,
+                FullNameEn:    emp?.FullName   ?? r.EmployeeCode,
+                FullNameAr:    string.Empty,
+                Nationality:   emp?.Nationality ?? string.Empty,
+                NationalId:    r.MolId,
+                IbanOrAccount: r.Iban,
+                BankCode:      r.RoutingCode,
+                Salary: new SalaryBreakdown(
+                    slip?.BasicSalary        ?? 0m,
+                    slip?.HousingAllowance   ?? 0m,
+                    slip?.TransportAllowance ?? 0m,
+                    slip?.OtherAllowances    ?? 0m),
+                NetPay: r.NetPay);
+        }).ToList();
+
+        var dlInput = new WageProtectionExportInput(
+            TenantId:        tenantId,
+            CompanyId:       (run?.CompanyId) ?? Guid.Empty,
+            PayrollRunId:    run?.Id          ?? Guid.Empty,
+            PeriodYear:      run?.Year      ?? DateTime.UtcNow.Year,
+            PeriodMonth:     run?.Month     ?? DateTime.UtcNow.Month,
+            EstablishmentId: gcc?.WpsAgentId ?? "0000000000",
+            EmployerIban:    string.Empty,
+            CompanyNameEn:   dlCompany?.LegalNameEn ?? string.Empty,
+            CompanyNameAr:   dlCompany?.LegalNameAr ?? string.Empty,
+            Employees:       dlWpsEmployees);
+
+        var dlResult = await dlExporter.ExportAsync(dlInput, cancellationToken);
+        var fileHash = Convert.ToHexString(SHA256.HashData(dlResult.FileBytes)).ToLowerInvariant();
 
         // Advance lifecycle from Generated → Downloaded on first download.
         var tracked = await _db.PayrollPaymentBatches.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == batchId, cancellationToken);
@@ -824,12 +945,13 @@ public class PayrollController : ControllerBase
         {
             tracked.WpsStatus = WpsStatuses.Downloaded;
             await PayrollAudit("payroll.wps.downloaded", "WPSFileBatch", wpsFile.Id.ToString(),
-                new { batchId, fileHash = genResult.FileHash }, cancellationToken);
+                new { batchId, fileHash }, cancellationToken);
             await _db.SaveChangesAsync(cancellationToken);
         }
 
-        Response.Headers["Content-Disposition"] = $"attachment; filename={wpsFile.SifFileName}";
-        return File(genResult.ContentBytes, "text/plain", wpsFile.SifFileName);
+        var mimeType = dlResult.Format == "mudad-xml" ? "application/xml" : "text/plain";
+        Response.Headers["Content-Disposition"] = $"attachment; filename={dlResult.FileName}";
+        return File(dlResult.FileBytes, mimeType, dlResult.FileName);
     }
 
     /// <summary>

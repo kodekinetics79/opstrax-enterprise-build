@@ -203,7 +203,7 @@ public class UaePackTests
     {
         var exporter = new UaeWageProtectionExporter();
         var employee = new WpsEmployee(
-            Guid.NewGuid(), "E001", "Mohammed Al-Mansoori", "محمد المنصوري",
+            1, "E001", "Mohammed Al-Mansoori", "محمد المنصوري",
             "ARE", "784199012345678", "AE060000000000000000123", "ADCB",
             new SalaryBreakdown(15_000m, 5_000m, 1_500m, 0m), 20_575m);
 

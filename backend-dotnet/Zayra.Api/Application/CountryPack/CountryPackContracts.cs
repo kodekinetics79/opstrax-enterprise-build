@@ -80,7 +80,7 @@ public sealed record EndOfServiceResult(
 // needs to reach back to the DB mid-export.
 
 public sealed record WpsEmployee(
-    Guid EmployeeId,
+    int EmployeeId,     // matches Employee.Id (int PK throughout this system)
     string EmployeeCode,
     string FullNameEn,
     string FullNameAr,

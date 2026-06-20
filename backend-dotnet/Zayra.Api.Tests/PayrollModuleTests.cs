@@ -62,7 +62,8 @@ public class PayrollModuleTests
             db,
             new _UnrestrictedScope(),
             new _HttpAccessor(httpCtx),
-            new _NullNotifications());
+            new _NullNotifications(),
+            new _NullPackResolver());
         ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
         return ctrl;
     }
@@ -641,6 +642,24 @@ file sealed class _NullNotifications : Zayra.Api.Infrastructure.Notifications.IN
 {
     public Task NotifyAsync(Guid tenantId, Guid? userId, string title, string message, string entityName, string? entityId, CancellationToken ct) => Task.CompletedTask;
     public Task SendEmailAsync(Guid tenantId, string templateCode, string toAddress, string toName, Dictionary<string, string> variables, CancellationToken ct) => Task.CompletedTask;
+}
+
+// No-op pack resolver — returns default (zero-result) implementations. Only used in PayrollModule
+// unit tests that do not exercise the statutory calculation or WPS export paths.
+file sealed class _NullPackResolver : Zayra.Api.Application.CountryPack.ICountryPackResolver
+{
+    public Zayra.Api.Application.CountryPack.IStatutoryDeductionCalculator ResolveDeductionCalculator(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultStatutoryDeductionCalculator();
+    public Zayra.Api.Application.CountryPack.IEndOfServiceCalculator ResolveEndOfServiceCalculator(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultEndOfServiceCalculator();
+    public Zayra.Api.Application.CountryPack.IWageProtectionExporter ResolveWageProtectionExporter(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultWageProtectionExporter();
+    public Zayra.Api.Application.CountryPack.INationalizationTracker ResolveNationalizationTracker(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultNationalizationTracker();
+    public Zayra.Api.Application.CountryPack.ILocalizationProfile ResolveLocalizationProfile(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultLocalizationProfile();
+    public Zayra.Api.Application.CountryPack.ICountryPackDescriptor ResolveDescriptor(string cc, string j)
+        => new Zayra.Api.Infrastructure.CountryPack.DefaultCountryPackDescriptor();
 }
 
 // Minimal IServiceScopeFactory that hands a fixed ZayraDbContext to any scope.

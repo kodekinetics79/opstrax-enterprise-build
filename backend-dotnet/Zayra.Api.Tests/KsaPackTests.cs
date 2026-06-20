@@ -205,7 +205,7 @@ public class KsaPackTests
     {
         var exporter = new KsaWageProtectionExporter();
         var employee = new WpsEmployee(
-            Guid.NewGuid(), "E001", "Ahmed Al-Rashid", "أحمد الراشد",
+            1, "E001", "Ahmed Al-Rashid", "أحمد الراشد",
             "SAU", "1234567890", "SA0380000000608010167519", "RIBL",
             new SalaryBreakdown(10_000m, 4_000m, 1_000m, 0m), 14_910m);
 

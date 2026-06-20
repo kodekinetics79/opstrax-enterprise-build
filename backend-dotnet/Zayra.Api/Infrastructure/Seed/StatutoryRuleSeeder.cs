@@ -23,6 +23,8 @@ public static class StatutoryRuleSeeder
 
         foreach (var rule in rules)
         {
+            // IgnoreQueryFilters is intentional: seeder checks platform-default rows (TenantId == null)
+            // which are excluded by the per-tenant global query filter; this read is read-only idempotency check.
             bool exists = await db.StatutoryRules
                 .IgnoreQueryFilters()
                 .AnyAsync(r =>

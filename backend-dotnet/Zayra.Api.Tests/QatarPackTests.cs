@@ -135,7 +135,7 @@ public class QatarPackTests
     {
         var exporter = new QatarWageProtectionExporter();
         var employee = new WpsEmployee(
-            Guid.NewGuid(), "E001", "Khalid Al-Thani", "خالد آل ثاني",
+            1, "E001", "Khalid Al-Thani", "خالد آل ثاني",
             "QAT", "29012345678901", "QA58DOHB00001234567890ABCDEFG", "QNBA",
             new SalaryBreakdown(8_000m, 3_000m, 1_000m, 0m), 11_300m);
 
