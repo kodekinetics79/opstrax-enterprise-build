@@ -39,8 +39,10 @@ services:
         value: KynexOne
       - key: SeedAdmin__TenantSlug
         value: zayra
+      # Set to "true" after the first successful boot to seed the KSA demo tenant.
+      # Keep "false" until the app is confirmed healthy — reduces startup memory spike.
       - key: SeedAdmin__SeedDemoData
-        value: "true"
+        value: "false"
 
       # AI provider — set to "none" to disable AI features, or configure as needed
       - key: AI_PROVIDER
