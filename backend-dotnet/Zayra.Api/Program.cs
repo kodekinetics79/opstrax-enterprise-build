@@ -420,6 +420,7 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", utc = DateTime.UtcNow }));
 
 // NOTE: employee endpoints live exclusively in EmployeesController — the former
 // minimal-API duplicates here caused AmbiguousMatchException on /api/employees/reports/*.

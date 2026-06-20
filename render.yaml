@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: zayra-ai-workforce
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://0.0.0.0:8080
+      - key: PORT
+        value: 8080
+
+      # --- Required secrets: set these in the Render dashboard ---
+      # ConnectionStrings__Default  → TiDB Serverless connection string
+      #   Format: Server=<host>;Port=4000;Database=zayra;Uid=<user>;Pwd=<pass>;SslMode=Required;AllowPublicKeyRetrieval=True;
+      - key: ConnectionStrings__Default
+        sync: false
+
+      # Jwt__SigningKey → generate: openssl rand -base64 64
+      - key: Jwt__SigningKey
+        sync: false
+
+      # Platform admin bootstrap credentials
+      - key: PLATFORM_ADMIN_EMAIL
+        sync: false
+      - key: PLATFORM_ADMIN_PASSWORD
+        sync: false
+
+      # --- Non-secret config (can stay here or override in dashboard) ---
+      - key: Jwt__Issuer
+        value: Zayra.Api
+      - key: Jwt__Audience
+        value: Zayra.Client
+      - key: SeedAdmin__TenantName
+        value: KynexOne
+      - key: SeedAdmin__TenantSlug
+        value: zayra
+      - key: SeedAdmin__SeedDemoData
+        value: "true"
+
+      # AI provider — set to "none" to disable AI features, or configure as needed
+      - key: AI_PROVIDER
+        value: none
