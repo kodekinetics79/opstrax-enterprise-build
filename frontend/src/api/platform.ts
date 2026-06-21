@@ -157,6 +157,8 @@ export interface PlatformTenantDetail {
     status: string;
     maxEmployees: number;
     maxUsers: number;
+    maxCompanies?: number;
+    maxAdminUsers?: number;
     billingEmail: string;
     billingCycle: string;
     monthlyAmount: number;
@@ -538,10 +540,15 @@ export const platformApi = {
   deleteTenant: (tenantId: string) =>
     platform.delete(`/api/platform/tenants/${tenantId}?confirm=DELETE`).then(r => r.data),
 
-  getAuditLogs: (tenantId?: string, page = 1, pageSize = 50) =>
+  getAuditLogs: (tenantId?: string, page = 1, pageSize = 50, filters?: {
+    action?: string;
+    entityType?: string;
+    from?: string;
+    to?: string;
+  }) =>
     platform.get<{ total: number; page: number; pageSize: number; logs: PlatformAuditLog[] }>(
       '/api/platform/audit-logs',
-      { params: { ...(tenantId ? { tenantId } : {}), page, pageSize } }
+      { params: { ...(tenantId ? { tenantId } : {}), page, pageSize, ...filters } }
     ).then(r => r.data),
 
   getPlans: () =>
@@ -602,8 +609,12 @@ export const platformApi = {
   updateLead: (id: string, body: { status?: string; notes?: string; assignedTo?: string }) =>
     platform.patch<PlatformLead>(`/api/platform/leads/${id}`, body).then(r => r.data),
 
-  convertLead: (id: string, tenantBody: { adminEmail: string; adminPassword: string; plan?: string }) =>
-    platform.post<{ tenantId: string; tenantName: string }>(`/api/platform/leads/${id}/convert`, tenantBody).then(r => r.data),
+  convertLead: (id: string, tenantBody: {
+    tenantName: string; tenantSlug: string;
+    adminEmail: string; adminPassword: string;
+    plan?: string; billingEmail?: string;
+  }) =>
+    platform.post<{ tenantId: string; tenantSlug: string; adminEmail: string }>(`/api/platform/leads/${id}/convert`, tenantBody).then(r => r.data),
 
   // ── Settings ──────────────────────────────────────────────────────────────
 
@@ -687,7 +698,7 @@ export const platformApi = {
   deleteInvoice: (tenantId: string, invoiceId: string) =>
     platform.delete(`/api/platform/tenants/${tenantId}/invoices/${invoiceId}`).then(r => r.data),
 
-  getTenantAiUsage: (tenantId: string, yearMonth?: number) =>
+  getTenantAiUsage: (tenantId: string, yearMonth?: string) =>
     platform.get<TenantAiUsage>(`/api/platform/tenants/${tenantId}/ai-usage`, { params: yearMonth ? { yearMonth } : {} }).then(r => r.data),
 
   // ── Invoice Lines ──────────────────────────────────────────────────────────
@@ -769,6 +780,12 @@ export const platformApi = {
   patchQuote: (id: string, body: { status?: string; notes?: string }) =>
     platform.patch<PlatformQuote>(`/api/platform/quotes/${id}`, body).then(r => r.data),
 
+  createQuote: (body: {
+    companyName: string; contactEmail: string; contactName?: string;
+    phone?: string; numEmployees?: number; estimatedMonthlyAmount?: number; notes?: string;
+  }) =>
+    platform.post<PlatformQuote>('/api/platform/quotes', body).then(r => r.data),
+
   convertQuote: (id: string, body: {
     slug: string; adminEmail: string; adminFullName?: string; adminPassword: string;
     plan?: string; maxUsers?: number; maxEmployees?: number; maxCompanies?: number;
@@ -797,6 +814,10 @@ export const platformApi = {
     platform.get<PlatformDiagnostics>('/api/platform/settings/diagnostics').then(r => r.data),
   setMaintenanceMode: (enabled: boolean, message?: string) =>
     platform.put('/api/platform/settings/maintenance', { enabled, message }).then(r => r.data),
+
+  // ── Feature Flags Catalog ─────────────────────────────────────────────────
+  getFeatureFlags: () =>
+    platform.get<{ key: string; label: string; category: string }[]>('/api/platform/feature-flags').then(r => r.data),
 };
 
 // ── Compliance types ──────────────────────────────────────────────────────────

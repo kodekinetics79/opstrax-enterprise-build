@@ -2498,22 +2498,73 @@ public class PlatformController : ControllerBase
         return Ok(new { leadId = id, tenantId = tenant.Id, tenantSlug = tenant.Slug, adminEmail = admin.Email });
     }
 
+    // ── Feature Flags Catalog ─────────────────────────────────────────────────
+
+    [HttpGet("feature-flags")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
+    public IActionResult GetFeatureFlags()
+    {
+        // Canonical list of feature flag keys and their display names.
+        // This is the single source of truth shared between backend and frontend.
+        var flags = new[]
+        {
+            new { key = "payroll",                   label = "Payroll",                   category = "Core" },
+            new { key = "recruitment",               label = "Recruitment",               category = "Core" },
+            new { key = "performance",               label = "Performance",               category = "Core" },
+            new { key = "compliance",                label = "Compliance",                category = "Core" },
+            new { key = "finance",                   label = "Finance & GL",              category = "Finance" },
+            new { key = "shifts",                    label = "Shifts & Rosters",          category = "Time" },
+            new { key = "overtime",                  label = "Overtime",                  category = "Time" },
+            new { key = "ai_assistant",              label = "AI Assistant",              category = "Intelligence" },
+            new { key = "resume_screening",          label = "AI Resume Screening",       category = "Intelligence" },
+            new { key = "payroll_ai_validation",     label = "AI Payroll Validation",     category = "Intelligence" },
+            new { key = "risk_scores",               label = "Employee Risk Scores",      category = "Intelligence" },
+            new { key = "wps_export",                label = "WPS Export",                category = "Compliance" },
+            new { key = "eosb_calc",                 label = "EOSB Calculation",          category = "Compliance" },
+            new { key = "qiwa_integration",          label = "Qiwa Integration",          category = "Compliance" },
+            new { key = "hijri_calendar",            label = "Hijri Calendar",            category = "Localisation" },
+            new { key = "mobile_app",                label = "Mobile App",                category = "Access" },
+        };
+        return Ok(flags);
+    }
+
     // ── Platform Settings ─────────────────────────────────────────────────────
 
     [HttpGet("settings")]
     [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
-    public IActionResult GetSettings()
+    public async Task<IActionResult> GetSettings(CancellationToken ct)
     {
+        // Load all SMTP config entries in one query
+        var smtpKeys = new[] { "smtp_host", "smtp_port", "smtp_user", "smtp_from_address", "smtp_from_name", "smtp_use_tls", "smtp_password" };
+        var configMap = await _db.PlatformConfigEntries
+            .AsNoTracking()
+            .Where(e => smtpKeys.Contains(e.Key))
+            .ToDictionaryAsync(e => e.Key, e => e.Value, ct);
+
+        string CfgOrFallback(string key, string fallbackConfigKey, string defaultValue = "")
+            => configMap.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v
+               : _config[fallbackConfigKey] ?? defaultValue;
+
+        var smtpHost      = CfgOrFallback("smtp_host",         "Smtp:Host");
+        var smtpPort      = CfgOrFallback("smtp_port",         "Smtp:Port", "587");
+        var smtpUser      = CfgOrFallback("smtp_user",         "Smtp:Username");
+        var smtpFromAddr  = CfgOrFallback("smtp_from_address", "Smtp:FromEmail");
+        var smtpFromName  = CfgOrFallback("smtp_from_name",    "Smtp:FromName");
+        var smtpUseTls    = CfgOrFallback("smtp_use_tls",      "Smtp:UseSsl", "true");
+        var smtpPwdStored = configMap.TryGetValue("smtp_password", out var p) && !string.IsNullOrEmpty(p);
+
         return Ok(new
         {
             smtp = new
             {
-                host     = _config["Smtp:Host"] ?? "",
-                port     = _config["Smtp:Port"] ?? "587",
-                username = _config["Smtp:Username"] ?? "",
-                useSsl   = _config["Smtp:UseSsl"] ?? "true",
-                fromEmail = _config["Smtp:FromEmail"] ?? "",
-                fromName  = _config["Smtp:FromName"] ?? ""
+                host      = smtpHost,
+                port      = smtpPort,
+                username  = smtpUser,
+                useSsl    = smtpUseTls,
+                fromEmail = smtpFromAddr,
+                fromName  = smtpFromName,
+                // Never return the actual password — return a masked sentinel if one is stored
+                password  = smtpPwdStored ? "***" : ""
             },
             ai = new
             {
@@ -2529,22 +2580,32 @@ public class PlatformController : ControllerBase
 
     [HttpPut("settings/smtp")]
     [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
-    public IActionResult UpdateSmtp([FromBody] UpdateSmtpRequest req)
+    public async Task<IActionResult> UpdateSmtp([FromBody] UpdateSmtpRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Host))
             return BadRequest(new { message = "Host is required." });
 
-        // In a production app, write these to a secrets store or DB-backed setting.
-        // For now: acknowledge the request and note the limitation.
-        _log.LogInformation("SMTP config update requested: host={Host} port={Port}", req.Host, req.Port);
+        await UpsertConfigAsync("smtp_host",         req.Host.Trim(), ct);
+        await UpsertConfigAsync("smtp_port",         req.Port.ToString(), ct);
+        await UpsertConfigAsync("smtp_user",         req.Username?.Trim() ?? "", ct);
+        await UpsertConfigAsync("smtp_from_address", req.FromEmail?.Trim() ?? "", ct);
+        await UpsertConfigAsync("smtp_from_name",    req.FromName?.Trim() ?? "", ct);
+        await UpsertConfigAsync("smtp_use_tls",      req.UseSsl ? "true" : "false", ct);
 
-        return Ok(new
+        // Password: only update if a new one was supplied
+        if (!string.IsNullOrEmpty(req.Password))
         {
-            message = "SMTP configuration noted. To persist across restarts, update the Smtp:* keys in your environment variables or appsettings.",
-            host = req.Host,
-            port = req.Port,
-            useSsl = req.UseSsl
-        });
+            // WARNING: This is Base64 obfuscation, NOT real encryption.
+            // Proper vault integration (Azure Key Vault / AWS Secrets Manager) is required for production.
+            var obfuscated = Convert.ToBase64String(Encoding.UTF8.GetBytes(req.Password));
+            await UpsertConfigAsync("smtp_password", obfuscated, ct);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        _log.LogInformation("SMTP config persisted to PlatformConfigEntries: host={Host} port={Port}", req.Host, req.Port);
+
+        return Ok(new { message = "SMTP configuration saved.", host = req.Host, port = req.Port, useSsl = req.UseSsl });
     }
 
     [HttpPost("settings/smtp/test")]
@@ -2589,9 +2650,15 @@ public class PlatformController : ControllerBase
         }
         catch { /* non-fatal */ }
 
+        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        var fileVersion = assembly.GetName().Version?.ToString() ?? "unknown";
+        var infoVersion = System.Reflection.CustomAttributeExtensions
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(assembly)
+            ?.InformationalVersion ?? fileVersion;
+
         return Ok(new
         {
-            version     = "1.0.0",
+            version     = infoVersion,
             environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production",
             dotnetVersion = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             lastMigration,
@@ -3085,6 +3152,34 @@ public class PlatformController : ControllerBase
         return Ok(quote);
     }
 
+    [HttpPost("quotes")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Finance, PlatformRoles.Marketing)]
+    public async Task<IActionResult> CreateQuote([FromBody] CreateQuoteRequest req, CancellationToken ct)
+    {
+        var quote = new PricingQuote
+        {
+            CompanyName           = req.CompanyName.Trim(),
+            ContactName           = req.ContactName?.Trim() ?? string.Empty,
+            ContactEmail          = req.ContactEmail.Trim(),
+            Phone                 = req.Phone?.Trim(),
+            OrgType               = "single",
+            NumCompanies          = 1,
+            NumBranches           = 0,
+            NumEmployees          = req.NumEmployees ?? 0,
+            NumAdminUsers         = 1,
+            NumCountries          = 1,
+            NeedsArabic           = false,
+            SelectedModulesJson   = "[]",
+            EstimatedMonthlyAmount= req.EstimatedMonthlyAmount ?? 0,
+            EstimatedAnnualAmount = (req.EstimatedMonthlyAmount ?? 0) * 12,
+            Notes                 = req.Notes?.Trim(),
+            Status                = QuoteStatuses.New,
+        };
+        _db.PricingQuotes.Add(quote);
+        await _db.SaveChangesAsync(ct);
+        return Ok(quote);
+    }
+
     [HttpPost("quotes/{id:guid}/convert")]
     [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
     public async Task<IActionResult> ConvertQuoteToTenant(Guid id, [FromBody] ConvertQuoteRequest req, CancellationToken ct)
@@ -3478,7 +3573,9 @@ public record UpdateSmtpRequest(
     int Port,
     string? Username,
     string? Password,
-    bool UseSsl);
+    bool UseSsl,
+    string? FromEmail = null,
+    string? FromName = null);
 
 public record ConvertLeadRequest(
     string TenantName,
@@ -3546,6 +3643,15 @@ public record UpdatePricingModuleRequest(
     decimal? AddonPriceMonthly);
 
 public record PatchQuoteRequest(string? Status, string? Notes);
+
+public record CreateQuoteRequest(
+    string CompanyName,
+    string ContactEmail,
+    string? ContactName,
+    string? Phone,
+    int? NumEmployees,
+    decimal? EstimatedMonthlyAmount,
+    string? Notes);
 
 public record ConvertQuoteRequest(
     string Slug,

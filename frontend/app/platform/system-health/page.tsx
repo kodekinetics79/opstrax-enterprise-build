@@ -2,36 +2,66 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Circle } from 'lucide-react';
-import { platformApi, type PlatformHealthStatus } from '@/src/api/platform';
+import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Circle, Database, Server, Activity } from 'lucide-react';
+import { platformApi, type PlatformDiagnostics } from '@/src/api/platform';
 
-type ComponentStatus = 'ok' | 'configured' | 'error' | 'unknown' | 'not_configured';
+type VersionData = { version: string; environment: string; deployedAt?: string; migrations?: number };
 
-function StatusIcon({ status }: { status: ComponentStatus }) {
-  if (status === 'ok' || status === 'configured') return <CheckCircle className="h-4 w-4 text-emerald-400" />;
-  if (status === 'error') return <XCircle className="h-4 w-4 text-rose-400" />;
-  if (status === 'not_configured') return <AlertTriangle className="h-4 w-4 text-amber-400" />;
-  return <Circle className="h-4 w-4 text-slate-600" />;
+// ── Status dot ────────────────────────────────────────────────────────────────
+
+function StatusDot({ ok, warn }: { ok: boolean; warn?: boolean }) {
+  if (warn) return <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0 inline-block" />;
+  return <span className={`h-2 w-2 rounded-full shrink-0 inline-block ${ok ? 'bg-emerald-400' : 'bg-rose-500'}`} />;
 }
 
-function statusLabel(status: ComponentStatus) {
-  if (status === 'ok') return { text: 'Healthy', cls: 'text-emerald-400' };
-  if (status === 'configured') return { text: 'Configured', cls: 'text-emerald-400' };
-  if (status === 'error') return { text: 'Error', cls: 'text-rose-400' };
-  if (status === 'not_configured') return { text: 'Not Configured', cls: 'text-amber-400' };
-  return { text: 'Unknown', cls: 'text-slate-600' };
+function StatusIcon({ ok, warn }: { ok: boolean; warn?: boolean }) {
+  if (warn) return <AlertTriangle className="h-4 w-4 text-amber-400" />;
+  if (ok)   return <CheckCircle   className="h-4 w-4 text-emerald-400" />;
+  return        <XCircle       className="h-4 w-4 text-rose-400" />;
 }
 
-const COMPONENT_LABELS: Record<string, string> = {
-  database: 'Database (MySQL)',
-  smtp:     'Email (SMTP)',
-  redis:    'Cache (Redis)',
-  jobs:     'Background Jobs',
-};
+// ── Info row ──────────────────────────────────────────────────────────────────
+
+function InfoRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-white/[0.04] last:border-0">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className={`text-xs text-slate-300 ${mono ? 'font-mono' : ''}`}>{value}</span>
+    </div>
+  );
+}
+
+// ── Card ──────────────────────────────────────────────────────────────────────
+
+function Card({ title, icon, children, status }: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  status?: 'ok' | 'error' | 'warn';
+}) {
+  const borderCls = status === 'ok'
+    ? 'border-emerald-500/20'
+    : status === 'error'
+      ? 'border-rose-500/20'
+      : 'border-white/[0.07]';
+
+  return (
+    <div className={`bg-[#161b22] border ${borderCls} rounded-xl px-5 py-4`}>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-slate-500">{icon}</span>
+        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">{title}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SystemHealthPage() {
   const router = useRouter();
-  const [health, setHealth]   = useState<PlatformHealthStatus | null>(null);
+  const [diag, setDiag]       = useState<PlatformDiagnostics | null>(null);
+  const [ver, setVer]         = useState<VersionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -39,43 +69,52 @@ export default function SystemHealthPage() {
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
     if (!token) { router.replace('/platform/login'); return; }
-    check();
+    refresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const check = useCallback(async () => {
+  const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const h = await platformApi.getHealth();
-      setHealth(h);
+      const [d, v] = await Promise.all([
+        platformApi.getDiagnostics(),
+        platformApi.getVersion(),
+      ]);
+      setDiag(d);
+      setVer(v);
       setLastChecked(new Date());
     } catch {
-      setError('Failed to reach health endpoint.');
+      setError('Failed to reach diagnostics endpoints. The API may be down.');
     } finally { setLoading(false); }
   }, []);
 
-  const overallOk = health?.status === 'healthy';
-  const components = health?.components
-    ? Object.entries(health.components) as [string, { status: ComponentStatus }][]
-    : [];
+  const overallOk = diag?.databaseOk !== false && !error;
 
   return (
     <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-white">System Health</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {lastChecked ? `Last checked ${lastChecked.toLocaleTimeString()}` : 'Checking…'}
-            {health && ` · Build ${health.version} · ${health.environment}`}
+            {lastChecked
+              ? `Last checked ${lastChecked.toLocaleTimeString()}`
+              : loading ? 'Checking…' : 'Not checked yet'}
           </p>
         </div>
-        <button type="button" onClick={check} disabled={loading} aria-label="Refresh health"
-          className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40">
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={loading}
+          title="Refresh"
+          className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40"
+        >
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
+      {/* Error banner */}
       {error && (
         <div className="px-4 py-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-sm text-rose-400">
           {error}
@@ -83,81 +122,132 @@ export default function SystemHealthPage() {
       )}
 
       {/* Overall status banner */}
-      {health && (
+      {(diag || error) && (
         <div className={`flex items-center gap-3 px-5 py-4 rounded-xl border ${
           overallOk
             ? 'bg-emerald-500/5 border-emerald-500/20'
-            : 'bg-amber-500/5 border-amber-500/20'
+            : 'bg-rose-500/5 border-rose-500/20'
         }`}>
-          {overallOk
-            ? <CheckCircle className="h-5 w-5 text-emerald-400 shrink-0" />
-            : <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />}
+          <StatusIcon ok={overallOk} />
           <div>
-            <p className={`text-sm font-semibold ${overallOk ? 'text-emerald-300' : 'text-amber-300'}`}>
-              {overallOk ? 'All Systems Operational' : 'Degraded — check components below'}
+            <p className={`text-sm font-semibold ${overallOk ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {overallOk ? 'All Systems Operational' : 'System Degraded — check details below'}
             </p>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Checked at {health.checkedAtUtc ? new Date(health.checkedAtUtc).toLocaleTimeString() : '—'}
-            </p>
+            {diag && (
+              <p className="text-xs text-slate-500 mt-0.5">
+                {diag.activeTenants} active tenant{diag.activeTenants !== 1 ? 's' : ''} ·{' '}
+                {diag.employeeCount.toLocaleString()} employees ·{' '}
+                {diag.maintenance ? 'Maintenance mode ON' : 'Maintenance mode OFF'}
+              </p>
+            )}
           </div>
         </div>
       )}
 
-      {/* Component grid */}
-      {loading && !health ? (
-        <div className="flex items-center justify-center py-16">
+      {loading && !diag ? (
+        <div className="flex items-center justify-center py-20">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
         </div>
       ) : (
-        <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden divide-y divide-white/[0.04]">
-          {components.map(([key, comp]) => {
-            const label = statusLabel(comp.status);
-            return (
-              <div key={key} className="flex items-center gap-4 px-5 py-4">
-                <StatusIcon status={comp.status} />
-                <div className="flex-1">
-                  <p className="text-sm text-white">{COMPONENT_LABELS[key] ?? key}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+          {/* Version card */}
+          {ver && (
+            <Card title="Application" icon={<Activity className="h-3.5 w-3.5" />} status="ok">
+              <InfoRow label="Version"     value={ver.version}     mono />
+              <InfoRow label="Environment" value={ver.environment} mono />
+              {ver.deployedAt && (
+                <InfoRow
+                  label="Deployed At"
+                  value={new Date(ver.deployedAt).toLocaleString('en-GB')}
+                />
+              )}
+              {ver.migrations !== undefined && (
+                <InfoRow label="Migrations Applied" value={ver.migrations} mono />
+              )}
+            </Card>
+          )}
+
+          {/* Database card */}
+          {diag && (
+            <Card
+              title="Database"
+              icon={<Database className="h-3.5 w-3.5" />}
+              status={diag.databaseOk ? 'ok' : 'error'}
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <StatusDot ok={diag.databaseOk} />
+                <span className={`text-sm font-medium ${diag.databaseOk ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {diag.databaseOk ? 'Connected' : 'Unreachable'}
+                </span>
+              </div>
+              <InfoRow label="Tenants"        value={diag.tenantCount}  mono />
+              <InfoRow label="Active Tenants" value={diag.activeTenants} mono />
+              <InfoRow label="Employees"      value={diag.employeeCount.toLocaleString()} mono />
+            </Card>
+          )}
+
+          {/* AI / Services card */}
+          {diag && (
+            <Card
+              title="Services"
+              icon={<Server className="h-3.5 w-3.5" />}
+              status={diag.aiConfigured ? 'ok' : 'warn'}
+            >
+              <div className="space-y-3">
+                {/* AI Provider */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <StatusDot ok={diag.aiConfigured} warn={!diag.aiConfigured} />
+                    <span className="text-xs text-slate-300">AI Provider</span>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">{diag.aiProvider || '—'}</span>
                 </div>
-                <span className={`text-xs font-medium ${label.cls}`}>{label.text}</span>
+                {/* Maintenance */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <StatusDot ok={!diag.maintenance} warn={diag.maintenance} />
+                    <span className="text-xs text-slate-300">Maintenance Mode</span>
+                  </div>
+                  <span className={`text-xs font-mono ${diag.maintenance ? 'text-amber-400' : 'text-slate-600'}`}>
+                    {diag.maintenance ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                {diag.maintenance && diag.maintenanceMsg && (
+                  <p className="text-[11px] text-amber-400/70 bg-amber-500/5 border border-amber-500/10 rounded-lg px-3 py-2">
+                    {diag.maintenanceMsg}
+                  </p>
+                )}
+                {/* Server time */}
+                <div className="pt-1 border-t border-white/[0.04]">
+                  <InfoRow
+                    label="Server Time (UTC)"
+                    value={diag.serverTimeUtc ? new Date(diag.serverTimeUtc).toLocaleTimeString('en-GB') : '—'}
+                    mono
+                  />
+                </div>
               </div>
-            );
-          })}
+            </Card>
+          )}
 
-          {/* Planned components (TODO) */}
+          {/* Planned / future services — greyed out placeholders */}
           {[
-            { key: 'ai_gateway', label: 'AI Gateway' },
-            { key: 'storage',    label: 'Object Storage' },
-            { key: 'cdn',        label: 'CDN / Assets' },
+            { key: 'smtp',    label: 'Email (SMTP)' },
+            { key: 'redis',   label: 'Cache (Redis)' },
+            { key: 'jobs',    label: 'Background Jobs' },
           ].map(c => (
-            <div key={c.key} className="flex items-center gap-4 px-5 py-4 opacity-30">
-              <Circle className="h-4 w-4 text-slate-600" />
-              <div className="flex-1">
-                <p className="text-sm text-white">{c.label}</p>
+            <div key={c.key}
+              className="bg-[#161b22] border border-white/[0.04] rounded-xl px-5 py-4 opacity-35">
+              <div className="flex items-center gap-2 mb-3">
+                <Circle className="h-3.5 w-3.5 text-slate-700" />
+                <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">{c.label}</p>
               </div>
-              <span className="text-xs text-slate-700 font-mono">TODO</span>
+              <div className="flex items-center gap-2 py-1">
+                <Circle className="h-3 w-3 text-slate-700" />
+                <span className="text-xs text-slate-700">Not monitored yet</span>
+              </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Build info */}
-      {health && (
-        <div className="bg-[#161b22] border border-white/[0.07] rounded-xl px-5 py-4 space-y-2">
-          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-3">Build Info</p>
-          {[
-            { label: 'Version',     value: health.version },
-            { label: 'Environment', value: health.environment },
-            { label: 'Checked At',  value: new Date(health.checkedAtUtc).toLocaleString('en-GB') },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex items-center justify-between text-sm">
-              <span className="text-slate-500">{label}</span>
-              <span className="text-slate-300 font-mono">{value}</span>
-            </div>
-          ))}
-          <div className="flex items-center justify-between text-sm pt-1 border-t border-white/[0.04]">
-            <span className="text-slate-500">Deploy Timestamp</span>
-            <span className="text-slate-700 font-mono text-[11px]">TODO: /api/platform/health/version</span>
-          </div>
         </div>
       )}
     </div>

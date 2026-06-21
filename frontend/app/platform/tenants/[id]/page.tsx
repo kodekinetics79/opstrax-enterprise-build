@@ -16,28 +16,25 @@ import {
   type TenantLocalization,
 } from '@/src/api/platform';
 
-const FEATURE_FLAGS: { key: string; label: string; description: string; category: string }[] = [
-  // ── Core Modules ────────────────────────────────────────────────────────────
-  { key: 'payroll',              label: 'Payroll',                  description: 'Payroll processing and payslip generation',                category: 'Core Modules' },
-  { key: 'recruitment',         label: 'Recruitment',              description: 'Job postings, applications and hiring pipeline',          category: 'Core Modules' },
-  { key: 'performance',         label: 'Performance & Appraisals', description: 'Goal setting, reviews and performance cycles',            category: 'Core Modules' },
-  { key: 'compliance',          label: 'Compliance',               description: 'Labour law compliance and regulatory reporting',          category: 'Core Modules' },
-  { key: 'finance',             label: 'Finance',                  description: 'Loans, advances and financial module access',             category: 'Core Modules' },
-  { key: 'shifts',              label: 'Shifts & Scheduling',      description: 'Shift rosters and workforce scheduling',                  category: 'Core Modules' },
-  { key: 'overtime',            label: 'Overtime Management',      description: 'Overtime requests, approvals and calculation',            category: 'Core Modules' },
-  // ── AI & Intelligence ───────────────────────────────────────────────────────
-  { key: 'ai_assistant',        label: 'AI HR Assistant',          description: 'Enable natural-language HR queries',                      category: 'AI & Intelligence' },
-  { key: 'resume_screening',    label: 'AI Resume Screening',      description: 'AI-powered CV analysis (advisory)',                       category: 'AI & Intelligence' },
-  { key: 'payroll_ai_validation', label: 'AI Payroll Validation',  description: 'AI variance detection for payroll',                       category: 'AI & Intelligence' },
-  { key: 'risk_scores',         label: 'Employee Risk Scores',     description: 'Churn and burnout risk indicators (advisory)',            category: 'AI & Intelligence' },
-  // ── GCC / Regional ──────────────────────────────────────────────────────────
-  { key: 'wps_export',          label: 'WPS/SIF Export',           description: 'GCC WPS payroll file generation',                        category: 'GCC / Regional' },
-  { key: 'eosb_calc',           label: 'EOSB Calculator',          description: 'End-of-service benefit computation',                     category: 'GCC / Regional' },
-  { key: 'qiwa_integration',    label: 'Qiwa Integration',         description: 'Saudi Arabia Qiwa platform sync',                        category: 'GCC / Regional' },
-  { key: 'hijri_calendar',      label: 'Hijri Calendar',           description: 'Show Hijri dates alongside Gregorian',                   category: 'GCC / Regional' },
-  // ── Platform & Access ────────────────────────────────────────────────────────
-  { key: 'mobile_app',          label: 'Mobile App',               description: 'Enable mobile API endpoints',                            category: 'Platform & Access' },
-];
+// Feature flag descriptions — UI-only supplemental text (keys match backend catalog)
+const FLAG_DESCRIPTIONS: Record<string, string> = {
+  payroll:              'Payroll processing and payslip generation',
+  recruitment:          'Job postings, applications and hiring pipeline',
+  performance:          'Goal setting, reviews and performance cycles',
+  compliance:           'Labour law compliance and regulatory reporting',
+  finance:              'Loans, advances and financial module access',
+  shifts:               'Shift rosters and workforce scheduling',
+  overtime:             'Overtime requests, approvals and calculation',
+  ai_assistant:         'Enable natural-language HR queries',
+  resume_screening:     'AI-powered CV analysis (advisory)',
+  payroll_ai_validation:'AI variance detection for payroll',
+  risk_scores:          'Churn and burnout risk indicators (advisory)',
+  wps_export:           'GCC WPS payroll file generation',
+  eosb_calc:            'End-of-service benefit computation',
+  qiwa_integration:     'Saudi Arabia Qiwa platform sync',
+  hijri_calendar:       'Show Hijri dates alongside Gregorian',
+  mobile_app:           'Enable mobile API endpoints',
+};
 
 const PLAN_BADGE: Record<string, string> = {
   trial:      'bg-slate-700 text-slate-300 border-slate-600',
@@ -69,24 +66,83 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
 function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDetail; onRefresh: () => void; onDelete: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(tenant.name);
-  const [saving, setSaving] = useState(false);
-  const [suspendOpen, setSuspendOpen] = useState(false);
+  const [editingName, setEditingName]   = useState(false);
+  const [editingSub,  setEditingSub]    = useState(false);
+  const [name, setName]                 = useState(tenant.name);
+  const [saving, setSaving]             = useState(false);
+  const [suspendOpen, setSuspendOpen]   = useState(false);
   const [suspendReason, setSuspendReason] = useState('');
-  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [msg, setMsg]                   = useState<{ text: string; ok: boolean } | null>(null);
 
-  const status = (tenant.subscription?.status ?? '').toLowerCase();
-  const plan   = (tenant.subscription?.plan ?? 'trial').toLowerCase();
+  const sub = tenant.subscription;
+  const status = (sub?.status ?? '').toLowerCase();
+  const plan   = (sub?.plan   ?? 'trial').toLowerCase();
+
+  const [subForm, setSubForm] = useState({
+    plan:          sub?.plan          ?? 'Trial',
+    status:        sub?.status        ?? 'Trial',
+    billingEmail:  sub?.billingEmail  ?? '',
+    billingCycle:  sub?.billingCycle  ?? 'Monthly',
+    currencyCode:  sub?.currencyCode  ?? 'AED',
+    monthlyAmount: sub?.monthlyAmount ?? 0,
+    maxUsers:      sub?.maxUsers      ?? 10,
+    maxEmployees:  sub?.maxEmployees  ?? 50,
+    maxCompanies:  sub?.maxCompanies  ?? 1,
+    maxAdminUsers: sub?.maxAdminUsers ?? 3,
+    startedAtUtc:  sub?.startedAtUtc  ? sub.startedAtUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    expiresAtUtc:  sub?.expiresAtUtc  ? sub.expiresAtUtc.slice(0, 10) : '',
+  });
+
+  function openSubEdit() { setSubForm({
+    plan:          sub?.plan          ?? 'Trial',
+    status:        sub?.status        ?? 'Trial',
+    billingEmail:  sub?.billingEmail  ?? '',
+    billingCycle:  sub?.billingCycle  ?? 'Monthly',
+    currencyCode:  sub?.currencyCode  ?? 'AED',
+    monthlyAmount: sub?.monthlyAmount ?? 0,
+    maxUsers:      sub?.maxUsers      ?? 10,
+    maxEmployees:  sub?.maxEmployees  ?? 50,
+    maxCompanies:  sub?.maxCompanies  ?? 1,
+    maxAdminUsers: sub?.maxAdminUsers ?? 3,
+    startedAtUtc:  sub?.startedAtUtc  ? sub.startedAtUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    expiresAtUtc:  sub?.expiresAtUtc  ? sub.expiresAtUtc.slice(0, 10) : '',
+  }); setEditingSub(true); }
 
   async function saveName() {
     setSaving(true);
     try {
       await platformApi.updateTenant(tenant.id, name);
       setMsg({ text: 'Name updated.', ok: true });
-      setEditing(false);
+      setEditingName(false);
       onRefresh();
     } catch { setMsg({ text: 'Save failed.', ok: false }); }
+    finally { setSaving(false); }
+  }
+
+  async function saveSubscription() {
+    setSaving(true);
+    try {
+      await platformApi.updateSubscription(tenant.id, {
+        plan:          subForm.plan,
+        status:        subForm.status,
+        billingEmail:  subForm.billingEmail,
+        billingCycle:  subForm.billingCycle,
+        currencyCode:  subForm.currencyCode,
+        monthlyAmount: Number(subForm.monthlyAmount),
+        maxUsers:      Number(subForm.maxUsers),
+        maxEmployees:  Number(subForm.maxEmployees),
+        maxCompanies:  Number(subForm.maxCompanies),
+        maxAdminUsers: Number(subForm.maxAdminUsers),
+        startedAtUtc:  subForm.startedAtUtc ? new Date(subForm.startedAtUtc).toISOString() : new Date().toISOString(),
+        expiresAtUtc:  subForm.expiresAtUtc  ? new Date(subForm.expiresAtUtc).toISOString()  : null,
+      });
+      setMsg({ text: 'Subscription updated.', ok: true });
+      setEditingSub(false);
+      onRefresh();
+    } catch (e: unknown) {
+      const m = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setMsg({ text: m ?? 'Save failed.', ok: false });
+    }
     finally { setSaving(false); }
   }
 
@@ -107,6 +163,9 @@ function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDe
     } catch { setMsg({ text: 'Failed.', ok: false }); }
   }
 
+  const inputCls = 'w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sapphire/60';
+  const selectCls = inputCls;
+
   return (
     <div className="space-y-5">
       {msg && (
@@ -116,25 +175,25 @@ function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDe
         </div>
       )}
 
-      {/* Info card */}
+      {/* Tenant identity card */}
       <div className="bg-[#161b22] border border-white/[0.07] rounded-xl divide-y divide-white/[0.04]">
         <div className="px-5 py-3.5 flex items-center justify-between gap-4">
           <span className="text-xs text-slate-500 w-32 shrink-0">Name</span>
-          {editing ? (
+          {editingName ? (
             <div className="flex items-center gap-2 flex-1">
               <input value={name} onChange={e => setName(e.target.value)} autoFocus title="Tenant name" placeholder="Tenant name"
                 className="flex-1 bg-white/[0.05] border border-white/[0.12] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-sapphire/60" />
               <button type="button" title="Save name" onClick={saveName} disabled={saving} className="text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-40">
                 <Check className="h-4 w-4" />
               </button>
-              <button type="button" title="Cancel" onClick={() => { setEditing(false); setName(tenant.name); }} className="text-slate-500 hover:text-white transition-colors">
+              <button type="button" title="Cancel" onClick={() => { setEditingName(false); setName(tenant.name); }} className="text-slate-500 hover:text-white transition-colors">
                 <X className="h-4 w-4" />
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-1">
               <span className="text-sm text-white flex-1">{tenant.name}</span>
-              <button type="button" title="Edit name" onClick={() => setEditing(true)} className="text-slate-600 hover:text-white transition-colors">
+              <button type="button" title="Edit name" onClick={() => setEditingName(true)} className="text-slate-600 hover:text-white transition-colors">
                 <Edit3 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -145,41 +204,130 @@ function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDe
           <span className="text-sm text-slate-300 font-mono">/{tenant.slug}</span>
         </div>
         <div className="px-5 py-3.5 flex items-center gap-4">
-          <span className="text-xs text-slate-500 w-32 shrink-0">Plan</span>
-          <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${PLAN_BADGE[plan] ?? PLAN_BADGE.trial}`}>
-            {tenant.subscription?.plan ?? 'Trial'}
-          </span>
-        </div>
-        <div className="px-5 py-3.5 flex items-center gap-4">
-          <span className="text-xs text-slate-500 w-32 shrink-0">Status</span>
-          <span className={`text-sm font-medium capitalize ${STATUS_CLS[status] ?? 'text-slate-400'}`}>
-            {tenant.subscription?.status ?? 'Unknown'}
-          </span>
-        </div>
-        <div className="px-5 py-3.5 flex items-center gap-4">
-          <span className="text-xs text-slate-500 w-32 shrink-0">Monthly</span>
-          <span className="text-sm text-slate-300">
-            {tenant.subscription?.monthlyAmount
-              ? `${tenant.subscription.currencyCode} ${tenant.subscription.monthlyAmount.toLocaleString()}`
-              : <span className="text-slate-600">—</span>}
-          </span>
-        </div>
-        <div className="px-5 py-3.5 flex items-center gap-4">
           <span className="text-xs text-slate-500 w-32 shrink-0">Users / Employees</span>
-          <span className="text-sm text-slate-300">
-            {tenant.userCount} users · {tenant.employeeCount} employees
-          </span>
+          <span className="text-sm text-slate-300">{tenant.userCount} users · {tenant.employeeCount} employees</span>
         </div>
-        <div className="px-5 py-3.5 flex items-center gap-4">
-          <span className="text-xs text-slate-500 w-32 shrink-0">Billing Email</span>
-          <span className="text-sm text-slate-300 font-mono">{tenant.subscription?.billingEmail || <span className="text-slate-600">—</span>}</span>
+      </div>
+
+      {/* Subscription card */}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-white/[0.06] flex items-center justify-between">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Subscription</p>
+          {!editingSub && (
+            <button type="button" onClick={openSubEdit}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-white transition-colors">
+              <Edit3 className="h-3 w-3" /> Edit
+            </button>
+          )}
         </div>
-        {tenant.subscription?.expiresAtUtc && (
-          <div className="px-5 py-3.5 flex items-center gap-4">
-            <span className="text-xs text-slate-500 w-32 shrink-0">Expires</span>
-            <span className="text-sm text-slate-300">
-              {new Date(tenant.subscription.expiresAtUtc).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </span>
+
+        {editingSub ? (
+          <div className="px-5 py-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Plan</label>
+                <select aria-label="Plan" value={subForm.plan} onChange={e => setSubForm(f => ({ ...f, plan: e.target.value }))} className={selectCls}>
+                  {['Trial','Starter','Growth','Enterprise'].map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Status</label>
+                <select aria-label="Status" value={subForm.status} onChange={e => setSubForm(f => ({ ...f, status: e.target.value }))} className={selectCls}>
+                  {['Trial','Active','PastDue','Suspended','Cancelled'].map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Billing Email</label>
+                <input type="email" title="Billing email" value={subForm.billingEmail} onChange={e => setSubForm(f => ({ ...f, billingEmail: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Billing Cycle</label>
+                <select aria-label="Billing cycle" value={subForm.billingCycle} onChange={e => setSubForm(f => ({ ...f, billingCycle: e.target.value }))} className={selectCls}>
+                  {['Monthly','Quarterly','Annually'].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Monthly Amount</label>
+                <input type="number" title="Monthly amount" min={0} value={subForm.monthlyAmount} onChange={e => setSubForm(f => ({ ...f, monthlyAmount: Number(e.target.value) }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Currency</label>
+                <select aria-label="Currency" value={subForm.currencyCode} onChange={e => setSubForm(f => ({ ...f, currencyCode: e.target.value }))} className={selectCls}>
+                  {['AED','USD','EUR','GBP','SAR','QAR','KWD','BHD','OMR'].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Max Users</label>
+                <input type="number" title="Max users" min={1} value={subForm.maxUsers} onChange={e => setSubForm(f => ({ ...f, maxUsers: Number(e.target.value) }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Max Employees</label>
+                <input type="number" title="Max employees" min={1} value={subForm.maxEmployees} onChange={e => setSubForm(f => ({ ...f, maxEmployees: Number(e.target.value) }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Max Companies</label>
+                <input type="number" title="Max companies" min={1} value={subForm.maxCompanies} onChange={e => setSubForm(f => ({ ...f, maxCompanies: Number(e.target.value) }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Max Admin Users</label>
+                <input type="number" title="Max admin users" min={1} value={subForm.maxAdminUsers} onChange={e => setSubForm(f => ({ ...f, maxAdminUsers: Number(e.target.value) }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Started</label>
+                <input type="date" title="Started date" value={subForm.startedAtUtc} onChange={e => setSubForm(f => ({ ...f, startedAtUtc: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Expires (optional)</label>
+                <input type="date" title="Expires date" value={subForm.expiresAtUtc} onChange={e => setSubForm(f => ({ ...f, expiresAtUtc: e.target.value }))} className={inputCls} />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={() => setEditingSub(false)}
+                className="flex-1 border border-white/10 text-slate-400 rounded-lg py-2 text-sm transition-colors">Cancel</button>
+              <button type="button" onClick={saveSubscription} disabled={saving}
+                className="flex-1 bg-sapphire hover:bg-blue-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-40">
+                {saving ? 'Saving…' : 'Save Subscription'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/[0.04]">
+            <div className="px-5 py-3 flex items-center gap-4">
+              <span className="text-xs text-slate-500 w-32 shrink-0">Plan</span>
+              <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${PLAN_BADGE[plan] ?? PLAN_BADGE.trial}`}>
+                {sub?.plan ?? 'Trial'}
+              </span>
+            </div>
+            <div className="px-5 py-3 flex items-center gap-4">
+              <span className="text-xs text-slate-500 w-32 shrink-0">Status</span>
+              <span className={`text-sm font-medium capitalize ${STATUS_CLS[status] ?? 'text-slate-400'}`}>
+                {sub?.status ?? 'Unknown'}
+              </span>
+            </div>
+            <div className="px-5 py-3 flex items-center gap-4">
+              <span className="text-xs text-slate-500 w-32 shrink-0">Monthly</span>
+              <span className="text-sm text-slate-300">
+                {sub?.monthlyAmount
+                  ? `${sub.currencyCode} ${sub.monthlyAmount.toLocaleString()}`
+                  : <span className="text-slate-600">—</span>}
+              </span>
+            </div>
+            <div className="px-5 py-3 flex items-center gap-4">
+              <span className="text-xs text-slate-500 w-32 shrink-0">Billing Email</span>
+              <span className="text-sm text-slate-300 font-mono">{sub?.billingEmail || <span className="text-slate-600">—</span>}</span>
+            </div>
+            <div className="px-5 py-3 flex items-center gap-4">
+              <span className="text-xs text-slate-500 w-32 shrink-0">Limits</span>
+              <span className="text-sm text-slate-300">{sub?.maxUsers ?? '—'} users · {sub?.maxEmployees ?? '—'} employees</span>
+            </div>
+            {sub?.expiresAtUtc && (
+              <div className="px-5 py-3 flex items-center gap-4">
+                <span className="text-xs text-slate-500 w-32 shrink-0">Expires</span>
+                <span className="text-sm text-slate-300">
+                  {new Date(sub.expiresAtUtc).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -199,7 +347,7 @@ function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDe
             Suspend Tenant
           </button>
         )}
-        <a href={`${typeof window !== 'undefined' ? window.location.origin.replace('localhost:3000', 'localhost:3000') : ''}`}
+        <a href={typeof window !== 'undefined' ? window.location.origin : ''}
           target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1.5 text-sm text-slate-400 border border-white/10 hover:border-white/20 px-4 py-2 rounded-lg transition-colors">
           <ExternalLink className="h-3.5 w-3.5" />
@@ -239,7 +387,13 @@ function OverviewTab({ tenant, onRefresh, onDelete }: { tenant: PlatformTenantDe
 
 // ── Features Tab ──────────────────────────────────────────────────────────────
 
-function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRefresh: () => void }) {
+type FeatureFlagDef = { key: string; label: string; category: string };
+
+function FeaturesTab({ tenant, onRefresh, featureFlags }: {
+  tenant: PlatformTenantDetail;
+  onRefresh: () => void;
+  featureFlags: FeatureFlagDef[];
+}) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const flagMap = Object.fromEntries(tenant.featureFlags.map(f => [f.featureKey, f.isEnabled]));
@@ -248,14 +402,22 @@ function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
     setToggling(key);
     try {
       await platformApi.setFeature(tenant.id, key, !current);
-      const flag = FEATURE_FLAGS.find(f => f.key === key);
+      const flag = featureFlags.find(f => f.key === key);
       setMsg({ text: `${flag?.label ?? key} ${!current ? 'enabled' : 'disabled'}.`, ok: true });
       onRefresh();
     } catch { setMsg({ text: `Failed to update ${key}.`, ok: false }); }
     finally { setToggling(null); }
   }
 
-  const categories = Array.from(new Set(FEATURE_FLAGS.map(f => f.category)));
+  const categories = Array.from(new Set(featureFlags.map(f => f.category)));
+
+  if (featureFlags.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-sapphire border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -269,13 +431,14 @@ function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
         <div key={cat}>
           <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">{cat}</p>
           <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden divide-y divide-white/[0.04]">
-            {FEATURE_FLAGS.filter(f => f.category === cat).map(f => {
+            {featureFlags.filter(f => f.category === cat).map(f => {
               const enabled = flagMap[f.key] ?? false;
+              const description = FLAG_DESCRIPTIONS[f.key];
               return (
                 <div key={f.key} className="flex items-center gap-4 px-5 py-3.5">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white">{f.label}</p>
-                    <p className="text-[11px] text-slate-500">{f.description}</p>
+                    {description && <p className="text-[11px] text-slate-500">{description}</p>}
                   </div>
                   <button
                     type="button"
@@ -283,7 +446,7 @@ function FeaturesTab({ tenant, onRefresh }: { tenant: PlatformTenantDetail; onRe
                     onClick={() => toggle(f.key, enabled)}
                     disabled={toggling === f.key}
                     role="switch"
-                    aria-checked={enabled}
+                    aria-checked={enabled ? 'true' : 'false'}
                     className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40
                       ${enabled ? 'bg-sapphire' : 'bg-slate-700'}`}
                   >
@@ -321,8 +484,7 @@ function UsersTab({ tenantId }: { tenantId: string }) {
     try {
       const { token } = await platformApi.impersonate(tenantId, userId);
       // Open tenant app with impersonation token in a new tab
-      const url = new URL(window.location.href);
-      window.open(`${url.protocol}//${url.hostname}:3000/login?impersonate=${token}`, '_blank');
+      window.open(`${window.location.origin}/login?impersonate=${token}`, '_blank');
       setMsg({ text: `Impersonating ${email} — new tab opened.`, ok: true });
     } catch {
       setMsg({ text: 'Impersonation failed. Ensure the user exists.', ok: false });
@@ -639,11 +801,14 @@ export default function TenantDetailPage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState('');
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlagDef[]>([]);
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
     if (!token) { router.replace('/platform/login'); return; }
     load();
+    platformApi.getFeatureFlags().then(setFeatureFlags).catch(() => {/* non-fatal: UI falls back to empty list */});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -704,7 +869,7 @@ export default function TenantDetailPage() {
 
       {/* Tab content */}
       {tab === 'overview'     && <OverviewTab tenant={tenant} onRefresh={load} onDelete={() => setDeleteOpen(true)} />}
-      {tab === 'features'     && <FeaturesTab tenant={tenant} onRefresh={load} />}
+      {tab === 'features'     && <FeaturesTab tenant={tenant} onRefresh={load} featureFlags={featureFlags} />}
       {tab === 'users'        && <UsersTab tenantId={tenant.id} />}
       {tab === 'billing'      && <BillingTab tenantId={tenant.id} />}
       {tab === 'branding'     && <BrandingTab tenant={tenant} onRefresh={load} />}
@@ -727,13 +892,18 @@ export default function TenantDetailPage() {
               </div>
             </div>
             <p className="text-xs text-slate-400">This will deactivate the tenant, cancel the subscription, and revoke all active sessions. This action is irreversible.</p>
+            {deleteErr && <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">{deleteErr}</p>}
             <div className="flex gap-3">
-              <button type="button" onClick={() => setDeleteOpen(false)}
+              <button type="button" onClick={() => { setDeleteOpen(false); setDeleteErr(''); }}
                 className="flex-1 border border-white/10 text-slate-400 rounded-lg py-2 text-sm transition-colors">Cancel</button>
               <button type="button" disabled={deleting} onClick={async () => {
-                setDeleting(true);
+                setDeleting(true); setDeleteErr('');
                 try { await platformApi.deleteTenant(tenant.id); router.replace('/platform/tenants'); }
-                catch { setDeleting(false); setDeleteOpen(false); }
+                catch (e: unknown) {
+                  const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
+                  setDeleteErr(msg ?? 'Delete failed — you may need Owner role to perform this action.');
+                  setDeleting(false);
+                }
               }}
                 className="flex-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-40">
                 {deleting ? 'Deleting…' : 'Delete Tenant'}

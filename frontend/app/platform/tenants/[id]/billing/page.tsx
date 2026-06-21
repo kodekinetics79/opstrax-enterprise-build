@@ -438,7 +438,126 @@ function DeleteDialog({ invoice, onClose, onDeleted }: {
   );
 }
 
+// ── Line Form (add / edit) ────────────────────────────────────────────────────
+
+interface LineFormState {
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  taxRate: string;
+}
+
+const BLANK_LINE: LineFormState = { description: '', quantity: '1', unitPrice: '', taxRate: '0' };
+
+function LineForm({ initial, saving, err, onSave, onCancel }: {
+  initial?: LineFormState;
+  saving: boolean;
+  err: string;
+  onSave: (f: LineFormState) => void;
+  onCancel: () => void;
+}) {
+  const [f, setF] = useState<LineFormState>(initial ?? BLANK_LINE);
+  const set = (k: keyof LineFormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }));
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    onSave(f);
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-2 bg-white/[0.03] border border-white/[0.07] rounded-lg p-3 space-y-2">
+      {err && <p className="text-xs text-rose-400">{err}</p>}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="col-span-2">
+          <Field label="Description *">
+            <FInput value={f.description} onChange={set('description')} required placeholder="e.g. Monthly subscription" />
+          </Field>
+        </div>
+        <Field label="Quantity *">
+          <FInput value={f.quantity} onChange={set('quantity')} type="number" required min="0" placeholder="1" />
+        </Field>
+        <Field label="Unit Price *">
+          <FInput value={f.unitPrice} onChange={set('unitPrice')} type="number" required min="0" placeholder="0.00" />
+        </Field>
+        <div className="col-span-2">
+          <Field label="Tax %">
+            <FInput value={f.taxRate} onChange={set('taxRate')} type="number" min="0" placeholder="0" />
+          </Field>
+        </div>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={onCancel}
+          className="border border-white/10 text-slate-400 hover:text-white rounded-lg px-3 py-1.5 text-xs transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving}
+          className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
+          {saving ? 'Saving…' : 'Save Line'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Payment Form ──────────────────────────────────────────────────────────────
+
+interface PaymentFormState {
+  amount: string;
+  method: string;
+  reference: string;
+  paidAt: string;
+}
+
+const PAYMENT_METHOD_OPTIONS = ['BankTransfer', 'Cash', 'Card', 'Cheque', 'Online'] as const;
+
+function PaymentForm({ saving, err, onSave, onCancel }: {
+  saving: boolean;
+  err: string;
+  onSave: (f: PaymentFormState) => void;
+  onCancel: () => void;
+}) {
+  const [f, setF] = useState<PaymentFormState>({ amount: '', method: 'BankTransfer', reference: '', paidAt: TODAY() });
+  const set = (k: keyof PaymentFormState) => (v: string) => setF(prev => ({ ...prev, [k]: v }));
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    onSave(f);
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-2 bg-white/[0.03] border border-white/[0.07] rounded-lg p-3 space-y-2">
+      {err && <p className="text-xs text-rose-400">{err}</p>}
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Amount *">
+          <FInput value={f.amount} onChange={set('amount')} type="number" required min="0" placeholder="0.00" />
+        </Field>
+        <Field label="Method *">
+          <FSelect value={f.method} onChange={set('method')} options={PAYMENT_METHOD_OPTIONS} label="Payment Method" />
+        </Field>
+        <Field label="Transaction Ref">
+          <FInput value={f.reference} onChange={set('reference')} placeholder="TXN-12345 (optional)" />
+        </Field>
+        <Field label="Paid Date *">
+          <FInput value={f.paidAt} onChange={set('paidAt')} type="date" required />
+        </Field>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={onCancel}
+          className="border border-white/10 text-slate-400 hover:text-white rounded-lg px-3 py-1.5 text-xs transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving}
+          className="bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
+          {saving ? 'Recording…' : 'Record Payment'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Invoice Lines & Payments Panel ───────────────────────────────────────────
+
+type LineEditMode = { kind: 'add' } | { kind: 'edit'; line: TenantInvoiceLine };
 
 function InvoiceDetailPanel({ tenantId, invoice, currency }: {
   tenantId: string; invoice: TenantInvoice; currency: string;
@@ -447,18 +566,101 @@ function InvoiceDetailPanel({ tenantId, invoice, currency }: {
   const [payments, setPayments] = useState<TenantPayment[] | null>(null);
   const [loading, setLoading]   = useState(true);
 
+  // Line item form state
+  const [lineMode, setLineMode]   = useState<LineEditMode | null>(null);
+  const [lineSaving, setLineSaving] = useState(false);
+  const [lineErr, setLineErr]     = useState('');
+
+  // Payment form state
+  const [showPayForm, setShowPayForm]   = useState(false);
+  const [paySaving, setPaySaving]       = useState(false);
+  const [payErr, setPayErr]             = useState('');
+
+  const isDraft = invoice.status === 'Draft';
+  const canPay  = invoice.status !== 'Paid';
+
+  function loadLines() {
+    return platformApi.listInvoiceLines(tenantId, invoice.id).then(setLines).catch(() => setLines([]));
+  }
+
+  function loadPayments() {
+    return platformApi.listInvoicePayments(tenantId, invoice.id).then(setPayments).catch(() => setPayments([]));
+  }
+
   useEffect(() => {
     setLoading(true);
-    Promise.all([
-      platformApi.listInvoiceLines(tenantId, invoice.id),
-      platformApi.listInvoicePayments(tenantId, invoice.id),
-    ]).then(([l, p]) => { setLines(l); setPayments(p); })
-      .catch(() => { setLines([]); setPayments([]); })
-      .finally(() => setLoading(false));
+    Promise.all([loadLines(), loadPayments()]).finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, invoice.id]);
 
-  const totalPaid    = (payments ?? []).filter(p => p.status === 'Completed').reduce((s, p) => s + p.amount, 0);
-  const balanceDue   = invoice.amount - totalPaid;
+  async function handleSaveLine(f: LineFormState) {
+    const qty  = parseFloat(f.quantity);
+    const price = parseFloat(f.unitPrice);
+    const tax  = parseFloat(f.taxRate || '0');
+    if (!f.description.trim()) { setLineErr('Description is required.'); return; }
+    if (isNaN(qty) || qty <= 0) { setLineErr('Quantity must be positive.'); return; }
+    if (isNaN(price) || price < 0) { setLineErr('Unit price must be 0 or greater.'); return; }
+    setLineSaving(true); setLineErr('');
+    try {
+      if (lineMode?.kind === 'edit') {
+        await platformApi.updateInvoiceLine(tenantId, invoice.id, lineMode.line.id, {
+          description: f.description.trim(),
+          quantity: qty,
+          unitPrice: price,
+          taxRate: isNaN(tax) ? 0 : tax,
+        });
+      } else {
+        await platformApi.addInvoiceLine(tenantId, invoice.id, {
+          description: f.description.trim(),
+          quantity: qty,
+          unitPrice: price,
+          taxRate: isNaN(tax) ? 0 : tax,
+        });
+      }
+      setLineMode(null);
+      await loadLines();
+    } catch (ex: unknown) {
+      setLineErr((ex as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to save line.');
+    } finally {
+      setLineSaving(false);
+    }
+  }
+
+  async function handleDeleteLine(line: TenantInvoiceLine) {
+    if (!window.confirm(`Delete line "${line.description}"?`)) return;
+    try {
+      await platformApi.deleteInvoiceLine(tenantId, invoice.id, line.id);
+      await loadLines();
+    } catch {
+      // silently ignore — user can retry
+    }
+  }
+
+  async function handleSavePayment(f: PaymentFormState) {
+    const amt = parseFloat(f.amount);
+    if (isNaN(amt) || amt <= 0) { setPayErr('Amount must be a positive number.'); return; }
+    if (!f.method) { setPayErr('Method is required.'); return; }
+    setPaySaving(true); setPayErr('');
+    try {
+      await platformApi.createPayment(tenantId, invoice.id, {
+        amount: amt,
+        currencyCode: currency,
+        method: f.method,
+        reference: f.reference.trim() || undefined,
+        paidAt: f.paidAt || undefined,
+        status: 'Completed',
+      });
+      setShowPayForm(false);
+      await loadPayments();
+    } catch (ex: unknown) {
+      setPayErr((ex as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to record payment.');
+    } finally {
+      setPaySaving(false);
+    }
+  }
+
+  const totalPaid  = (payments ?? []).filter(p => p.status === 'Completed').reduce((s, p) => s + p.amount, 0);
+  const balanceDue = invoice.amount - totalPaid;
 
   if (loading) return (
     <tr><td colSpan={8} className="px-8 py-4">
@@ -473,7 +675,16 @@ function InvoiceDetailPanel({ tenantId, invoice, currency }: {
 
           {/* Line Items */}
           <div>
-            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">Line Items</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Line Items</p>
+              {isDraft && lineMode === null && (
+                <button type="button" onClick={() => { setLineErr(''); setLineMode({ kind: 'add' }); }}
+                  className="flex items-center gap-1 text-[10px] text-blue-400 border border-blue-500/20 hover:border-blue-500/50 px-2 py-0.5 rounded transition-colors">
+                  <Plus className="h-2.5 w-2.5" /> Add Line
+                </button>
+              )}
+            </div>
+
             {lines && lines.length > 0 ? (
               <table className="w-full text-xs">
                 <thead>
@@ -483,6 +694,7 @@ function InvoiceDetailPanel({ tenantId, invoice, currency }: {
                     <th className="text-right pb-1 font-medium pr-2">Unit</th>
                     <th className="text-right pb-1 font-medium pr-2">Disc</th>
                     <th className="text-right pb-1 font-medium">Total</th>
+                    {isDraft && <th className="pb-1 w-12" aria-label="Actions" />}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
@@ -493,24 +705,75 @@ function InvoiceDetailPanel({ tenantId, invoice, currency }: {
                       <td className="py-1 text-right pr-2 text-slate-400 tabular-nums">{fmtAmount(l.unitPrice, currency)}</td>
                       <td className="py-1 text-right pr-2 text-slate-600 tabular-nums">{l.discountAmount > 0 ? `-${fmtAmount(l.discountAmount, currency)}` : '—'}</td>
                       <td className="py-1 text-right text-white font-medium tabular-nums">{fmtAmount(l.lineTotal, currency)}</td>
+                      {isDraft && (
+                        <td className="py-1 pl-2">
+                          <div className="flex items-center gap-1">
+                            <button type="button" title="Edit line"
+                              onClick={() => {
+                                setLineErr('');
+                                setLineMode({
+                                  kind: 'edit',
+                                  line: l,
+                                });
+                              }}
+                              className="h-5 w-5 flex items-center justify-center text-slate-600 hover:text-blue-400 transition-colors">
+                              <Pencil className="h-2.5 w-2.5" />
+                            </button>
+                            <button type="button" title="Delete line"
+                              onClick={() => handleDeleteLine(l)}
+                              className="h-5 w-5 flex items-center justify-center text-slate-600 hover:text-rose-400 transition-colors">
+                              <Trash2 className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="border-t border-white/[0.06]">
                   <tr>
-                    <td colSpan={4} className="pt-1.5 text-right text-slate-500 pr-2">Total</td>
+                    <td colSpan={isDraft ? 5 : 4} className="pt-1.5 text-right text-slate-500 pr-2">Total</td>
                     <td className="pt-1.5 text-right text-emerald-400 font-bold tabular-nums">{fmtAmount(invoice.amount, currency)}</td>
+                    {isDraft && <td />}
                   </tr>
                 </tfoot>
               </table>
             ) : (
               <p className="text-xs text-slate-700 italic">No line items — legacy flat invoice.</p>
             )}
+
+            {/* Line item inline form */}
+            {isDraft && lineMode !== null && (
+              <LineForm
+                initial={lineMode.kind === 'edit'
+                  ? {
+                      description: lineMode.line.description,
+                      quantity: String(lineMode.line.quantity),
+                      unitPrice: String(lineMode.line.unitPrice),
+                      taxRate: String(lineMode.line.taxRate),
+                    }
+                  : undefined
+                }
+                saving={lineSaving}
+                err={lineErr}
+                onSave={handleSaveLine}
+                onCancel={() => { setLineMode(null); setLineErr(''); }}
+              />
+            )}
           </div>
 
           {/* Payment History */}
           <div>
-            <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest mb-2">Payment History</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Payment History</p>
+              {canPay && !showPayForm && (
+                <button type="button" onClick={() => { setPayErr(''); setShowPayForm(true); }}
+                  className="flex items-center gap-1 text-[10px] text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/50 px-2 py-0.5 rounded transition-colors">
+                  <Plus className="h-2.5 w-2.5" /> Record Payment
+                </button>
+              )}
+            </div>
+
             {payments && payments.length > 0 ? (
               <>
                 <table className="w-full text-xs mb-2">
@@ -555,6 +818,16 @@ function InvoiceDetailPanel({ tenantId, invoice, currency }: {
               </>
             ) : (
               <p className="text-xs text-slate-700 italic">No payments recorded.</p>
+            )}
+
+            {/* Payment inline form */}
+            {canPay && showPayForm && (
+              <PaymentForm
+                saving={paySaving}
+                err={payErr}
+                onSave={handleSavePayment}
+                onCancel={() => { setShowPayForm(false); setPayErr(''); }}
+              />
             )}
           </div>
         </div>

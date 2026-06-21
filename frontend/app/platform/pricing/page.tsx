@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   RefreshCw, Edit3, Check, X, ChevronDown, ChevronUp,
-  ArrowRight, Building2, Users, Globe, AlertCircle, Info,
+  ArrowRight, Building2, Users, Globe, AlertCircle, Info, Plus,
 } from 'lucide-react';
 import { platformApi, type PlatformPricingConfig, type PlatformPricingModule, type PlatformQuote } from '@/src/api/platform';
 
@@ -32,6 +32,124 @@ const QUOTE_STATUS_BADGE: Record<string, string> = {
 
 type Tab = 'modules' | 'config' | 'quotes';
 
+const INPUT_CLS = 'w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sapphire/60 placeholder-slate-600';
+const LABEL_CLS = 'block text-xs text-slate-400 mb-1';
+
+function NewQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    companyName: '',
+    contactEmail: '',
+    contactName: '',
+    numEmployees: '',
+    estimatedMonthlyAmount: '',
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setErr('');
+    try {
+      await platformApi.createQuote({
+        companyName: form.companyName,
+        contactEmail: form.contactEmail,
+        contactName: form.contactName || undefined,
+        numEmployees: form.numEmployees ? parseInt(form.numEmployees, 10) : undefined,
+        estimatedMonthlyAmount: form.estimatedMonthlyAmount ? parseFloat(form.estimatedMonthlyAmount) : undefined,
+        notes: form.notes || undefined,
+      });
+      onSaved();
+      onClose();
+    } catch (ex: unknown) {
+      setErr((ex as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to create quote.');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm bg-[#0d1117] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
+          <h2 className="text-sm font-semibold text-white">New Quote</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-white transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={submit} className="px-6 py-5 space-y-3">
+          {err && <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">{err}</div>}
+
+          <div>
+            <label htmlFor="nq-company" className={LABEL_CLS}>Company Name *</label>
+            <input id="nq-company" type="text" required title="Company Name"
+              value={form.companyName}
+              onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))}
+              placeholder="Acme Corp"
+              className={INPUT_CLS} />
+          </div>
+
+          <div>
+            <label htmlFor="nq-email" className={LABEL_CLS}>Contact Email *</label>
+            <input id="nq-email" type="email" required title="Contact Email"
+              value={form.contactEmail}
+              onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))}
+              placeholder="contact@company.com"
+              className={INPUT_CLS} />
+          </div>
+
+          <div>
+            <label htmlFor="nq-contact-name" className={LABEL_CLS}>Contact Name</label>
+            <input id="nq-contact-name" type="text" title="Contact Name"
+              value={form.contactName}
+              onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))}
+              placeholder="John Smith"
+              className={INPUT_CLS} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="nq-employees" className={LABEL_CLS}>Employees</label>
+              <input id="nq-employees" type="number" min="1" title="Number of Employees"
+                value={form.numEmployees}
+                onChange={e => setForm(f => ({ ...f, numEmployees: e.target.value }))}
+                placeholder="200"
+                className={INPUT_CLS} />
+            </div>
+            <div>
+              <label htmlFor="nq-amount" className={LABEL_CLS}>Est. Monthly ($)</label>
+              <input id="nq-amount" type="number" min="0" step="0.01" title="Estimated Monthly Amount"
+                value={form.estimatedMonthlyAmount}
+                onChange={e => setForm(f => ({ ...f, estimatedMonthlyAmount: e.target.value }))}
+                placeholder="0.00"
+                className={INPUT_CLS} />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="nq-notes" className={LABEL_CLS}>Notes</label>
+            <textarea id="nq-notes" rows={3}
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Any additional context…"
+              className={`${INPUT_CLS} resize-none`} />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 border border-white/10 text-slate-400 rounded-lg py-2 text-sm transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 bg-sapphire hover:bg-blue-500 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-40">
+              {saving ? 'Creating…' : 'Create Quote'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function PlatformPricingPage() {
   const router = useRouter();
   const [tab, setTab]             = useState<Tab>('modules');
@@ -45,6 +163,7 @@ export default function PlatformPricingPage() {
   const [saving, setSaving]       = useState(false);
   const [expandedQuote, setExpandedQuote] = useState<string | null>(null);
   const [msg, setMsg]             = useState<{ text: string; ok: boolean } | null>(null);
+  const [showNewQuote, setShowNewQuote] = useState(false);
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
@@ -114,10 +233,17 @@ export default function PlatformPricingPage() {
             Configure plan prices, module add-ons, and manage quote requests
           </p>
         </div>
-        <button type="button" onClick={loadAll} disabled={loading}
-          className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors disabled:opacity-40">
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={loadAll} disabled={loading} title="Refresh" aria-label="Refresh"
+            className="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-white border border-white/10 rounded-lg transition-colors disabled:opacity-40">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button type="button" onClick={() => { setTab('quotes'); setShowNewQuote(true); }}
+            className="flex items-center gap-1.5 bg-sapphire hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors">
+            <Plus className="h-3.5 w-3.5" />
+            New Quote
+          </button>
+        </div>
       </div>
 
       {msg && (
@@ -409,6 +535,18 @@ export default function PlatformPricingPage() {
             </div>
           )}
         </>
+      )}
+
+      {showNewQuote && (
+        <NewQuoteModal
+          onClose={() => setShowNewQuote(false)}
+          onSaved={async () => {
+            const q = await platformApi.listQuotes();
+            setQuotes(q.items);
+            setQuoteTotal(q.total);
+            setTab('quotes');
+          }}
+        />
       )}
     </div>
   );
