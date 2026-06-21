@@ -61,6 +61,13 @@ services:
       - key: SeedAdmin__SeedDemoData
         value: "false"
 
+      # Web service never runs migrations on startup in Production.
+      # Migrations are applied via a Render one-off job:
+      #   dotnet Zayra.Api.dll --migrate
+      # Set to "true" ONLY for local development convenience.
+      - key: Database__RunMigrationsOnStartup
+        value: "false"
+
       # CORS — add your real Vercel/frontend URL here (comma-separated for multiple).
       # appsettings.json already whitelists https://kynexone.vercel.app.
       # If your Vercel URL differs, add it here:

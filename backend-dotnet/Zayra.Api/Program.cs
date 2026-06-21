@@ -447,28 +447,44 @@ app.MapGet("/health", async (ZayraDbContext db) =>
 // NOTE: employee endpoints live exclusively in EmployeesController — the former
 // minimal-API duplicates here caused AmbiguousMatchException on /api/employees/reports/*.
 
+// ── Migration mode ────────────────────────────────────────────────────────────
+// In Production the web process NEVER runs migrations on startup to avoid crashing
+// the web service when TiDB or network is unavailable.
+// Migrations run via a one-off command:
+//   dotnet Zayra.Api.dll --migrate
+// or via Render pre-deploy job. Set Database__RunMigrationsOnStartup=true ONLY
+// for local dev convenience (it defaults false in Production).
+var isMigrateMode = args.Contains("--migrate");
+var runMigrationsOnStartup = !app.Environment.IsProduction()
+    || string.Equals(app.Configuration["Database:RunMigrationsOnStartup"], "true", StringComparison.OrdinalIgnoreCase);
+
 using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     var dbContext = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
 
-    // ── Boot assertions (fatal) ───────────────────────────────────────────────
+    // Boot assertions — model-level only, no DB I/O
     TenantOwnershipBootAssertion.Assert(dbContext);
     ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
 
-    // ── Schema migrations (fatal) ────────────────────────────────────────────
-    // TiDbMigrationCommandExecutor runs each command without a transaction wrapper
-    // because TiDB Serverless rejects DDL inside START TRANSACTION / COMMIT blocks.
-    // If migrations fail the app must not start — do not catch here.
-    logger.LogInformation("Running EF Core migrations...");
-    await dbContext.Database.MigrateAsync();
-    await MissingTableCreator.EnsureAsync(dbContext, logger);
-    await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
-    logger.LogInformation("Migrations complete.");
+    if (isMigrateMode || runMigrationsOnStartup)
+    {
+        // Migrations are FATAL in this path — if they fail, the one-off job exits non-zero
+        // so Render reports the deploy as failed before the web process starts.
+        logger.LogInformation("Running EF Core migrations (TiDbMigrationCommandExecutor — no transaction wrapping)...");
+        await dbContext.Database.MigrateAsync();
+        await MissingTableCreator.EnsureAsync(dbContext, logger);
+        await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
+        logger.LogInformation("EF Core migrations complete.");
+    }
+    else
+    {
+        logger.LogInformation(
+            "Production web start — schema migrations skipped. " +
+            "Run 'dotnet Zayra.Api.dll --migrate' to apply pending migrations.");
+    }
 
-    // ── Seed data (non-fatal) ────────────────────────────────────────────────
-    // Seeding failures log a warning but do not crash the app; the schema is
-    // already in place and a redeploy can re-run the seeder.
+    // Seed data — always non-fatal; logs on failure but never crashes the web process.
     try
     {
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
@@ -493,7 +509,13 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Seed step failed — schema is intact, seeder will retry on next deploy.");
+        logger.LogError(ex, "Seed step failed — schema may be missing. Run '--migrate' job first.");
+    }
+
+    if (isMigrateMode)
+    {
+        logger.LogInformation("--migrate mode complete. Exiting.");
+        return; // exit 0 — Render one-off job succeeds
     }
 }
 
