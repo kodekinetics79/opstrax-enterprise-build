@@ -78,7 +78,7 @@ echo "  password : [hidden]"
 echo "  client   : docker run mysql:8.0"
 echo ""
 read -r -p "Proceed? [y/N] " CONFIRM
-[[ "${CONFIRM,,}" == "y" ]] || { warn "Aborted."; exit 0; }
+[[ "$(printf "%s" "$CONFIRM" | tr "[:upper:]" "[:lower:]")" == "y" ]] || { warn "Aborted."; exit 0; }
 echo ""
 
 # ── Pull mysql:8.0 if not already cached ─────────────────────────────────────
@@ -88,19 +88,12 @@ if ! docker image inspect mysql:8.0 >/dev/null 2>&1; then
 fi
 
 # ── Helper: run a SQL file via Docker ─────────────────────────────────────────
-run_sql_file() {
+run_sql_stream() {
     local label="$1"
-    local file="$2"
-    local filesize
-    filesize=$(wc -c < "$file" | tr -d ' ')
-
-    info "Importing $label ($filesize bytes)..."
-
-    # MYSQL_PWD is used by the mysql client; it is passed as an env var inside
-    # the container and never printed. The password is NOT in the docker run args.
-    docker run --rm \
-        -e MYSQL_PWD="$TIDB_PASS" \
-        -v "$file:/import.sql:ro" \
+    # Reads SQL from stdin, passes to mysql inside Docker.
+    # MYSQL_PWD is passed as an env var — never appears in docker ps or process args.
+    MYSQL_PWD="$TIDB_PASS" docker run --rm -i \
+        -e MYSQL_PWD \
         mysql:8.0 \
         mysql \
             --protocol=TCP \
@@ -109,22 +102,103 @@ run_sql_file() {
             --port=4000 \
             --user="$TIDB_USER" \
             "$TIDB_DB" \
-            < /import.sql || die "$label failed. Fix the error above and re-run."
+        || die "$label failed. Fix the error above and re-run."
 
     success "$label imported."
+}
+
+run_sql_file() {
+    local label="$1"
+    local file="$2"
+    local filesize
+    filesize=$(wc -c < "$file" | tr -d ' ')
+
+    info "Importing $label ($filesize bytes, patching collation)..."
+    # TiDB Cloud new-collation mode rejects ascii_general_ci — replace with ascii_bin.
+    sed 's/ascii_general_ci/ascii_bin/g' "$file" | run_sql_stream "$label"
+}
+
+# ── Missing tables (not in any migration — created at runtime by MissingTableCreator) ──
+inject_missing_tables() {
+    info "Injecting tables missing from migrations (gosi_contribution_rules, mfa_challenge_tokens, statutory_rules)..."
+    run_sql_stream "missing tables" <<'MISSING_SQL'
+USE `zayra`;
+
+CREATE TABLE IF NOT EXISTS `gosi_contribution_rules` (
+    `id` char(36) COLLATE ascii_bin NOT NULL,
+    `tenant_id` char(36) COLLATE ascii_bin NOT NULL,
+    `country_code` varchar(5) CHARACTER SET utf8mb4 NOT NULL,
+    `classification` varchar(20) CHARACTER SET utf8mb4 NOT NULL,
+    `branch` varchar(30) CHARACTER SET utf8mb4 NOT NULL,
+    `payer` varchar(20) CHARACTER SET utf8mb4 NOT NULL,
+    `rate` decimal(7,4) NOT NULL,
+    `min_contributory_wage` decimal(12,2) NULL,
+    `max_contributory_wage` decimal(12,2) NULL,
+    `effective_from` date NOT NULL,
+    `effective_to` date NULL,
+    `is_active` tinyint(1) NOT NULL DEFAULT 1,
+    `source_reference` varchar(200) CHARACTER SET utf8mb4 NULL,
+    `notes` varchar(500) CHARACTER SET utf8mb4 NULL,
+    `created_at_utc` datetime(6) NOT NULL,
+    `created_by` char(36) COLLATE ascii_bin NULL,
+    CONSTRAINT `PK_gosi_contribution_rules` PRIMARY KEY (`id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE INDEX IF NOT EXISTS `IX_gosi_contribution_rules_tenant_classification_branch_payer`
+ON `gosi_contribution_rules` (`tenant_id`, `classification`, `branch`, `payer`, `is_active`);
+
+CREATE TABLE IF NOT EXISTS `mfa_challenge_tokens` (
+    `id` char(36) COLLATE ascii_bin NOT NULL,
+    `user_id` char(36) COLLATE ascii_bin NULL,
+    `platform_user_id` char(36) COLLATE ascii_bin NULL,
+    `tenant_id` char(36) COLLATE ascii_bin NULL,
+    `token_hash` varchar(128) CHARACTER SET utf8mb4 NOT NULL,
+    `expires_at_utc` datetime(6) NOT NULL,
+    `created_by_ip` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+    `used_at_utc` datetime(6) NULL,
+    `created_at_utc` datetime(6) NOT NULL,
+    CONSTRAINT `PK_mfa_challenge_tokens` PRIMARY KEY (`id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE UNIQUE INDEX IF NOT EXISTS `IX_mfa_challenge_tokens_token_hash`
+ON `mfa_challenge_tokens` (`token_hash`);
+
+CREATE INDEX IF NOT EXISTS `IX_mfa_challenge_tokens_expires_at_utc`
+ON `mfa_challenge_tokens` (`expires_at_utc`);
+
+CREATE TABLE IF NOT EXISTS `statutory_rules` (
+    `id` char(36) COLLATE ascii_bin NOT NULL,
+    `tenant_id` char(36) COLLATE ascii_bin NULL,
+    `country_code` varchar(5) CHARACTER SET utf8mb4 NOT NULL,
+    `jurisdiction` varchar(30) CHARACTER SET utf8mb4 NOT NULL,
+    `rule_key` varchar(120) CHARACTER SET utf8mb4 NOT NULL,
+    `rule_value` longtext CHARACTER SET utf8mb4 NOT NULL,
+    `data_type` varchar(20) CHARACTER SET utf8mb4 NOT NULL,
+    `description` longtext CHARACTER SET utf8mb4 NOT NULL,
+    `effective_from` datetime(6) NOT NULL,
+    `effective_to` datetime(6) NULL,
+    `created_at_utc` datetime(6) NOT NULL,
+    `created_by` char(36) COLLATE ascii_bin NULL,
+    CONSTRAINT `PK_statutory_rules` PRIMARY KEY (`id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE UNIQUE INDEX IF NOT EXISTS `IX_statutory_rules_tenant_id_country_code_jurisdiction_rule_key~`
+ON `statutory_rules` (`tenant_id`, `country_code`, `jurisdiction`, `rule_key`, `effective_from`);
+MISSING_SQL
 }
 
 # ── Import parts in order ─────────────────────────────────────────────────────
 run_sql_file "Part 1 (core tables — migration 1)" "$PART1"
 run_sql_file "Part 2 (modules — migrations 2–8)"   "$PART2"
+inject_missing_tables
 run_sql_file "Part 3 (payroll/RBAC — migrations 9–20)" "$PART3"
 
 echo ""
 echo -e "${CYAN}─── Verification ────────────────────────────────────────${NC}"
 
 # ── Table count ───────────────────────────────────────────────────────────────
-TABLE_COUNT=$(docker run --rm \
-    -e MYSQL_PWD="$TIDB_PASS" \
+TABLE_COUNT=$(MYSQL_PWD="$TIDB_PASS" docker run --rm -i \
+    -e MYSQL_PWD \
     mysql:8.0 \
     mysql \
         --protocol=TCP \
@@ -138,8 +212,8 @@ TABLE_COUNT=$(docker run --rm \
         --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE();")
 
 # ── Migration history count ───────────────────────────────────────────────────
-MIGRATION_COUNT=$(docker run --rm \
-    -e MYSQL_PWD="$TIDB_PASS" \
+MIGRATION_COUNT=$(MYSQL_PWD="$TIDB_PASS" docker run --rm -i \
+    -e MYSQL_PWD \
     mysql:8.0 \
     mysql \
         --protocol=TCP \
