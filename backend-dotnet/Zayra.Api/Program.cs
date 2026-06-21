@@ -105,7 +105,13 @@ builder.Services.AddCors(options => options.AddPolicy("kynexone", policy => poli
     .AllowAnyMethod()
     .AllowAnyHeader()));
 
-var connectionString = builder.Configuration.GetConnectionString("Default") ?? "server=localhost;port=3306;database=zayra;user=root;password=password";
+var connectionString = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    if (builder.Environment.IsProduction())
+        throw new InvalidOperationException("Missing required env var: ConnectionStrings__Default");
+    connectionString = "server=localhost;port=3306;database=zayra;user=root;password=password";
+}
 builder.Services.AddDbContextPool<ZayraDbContext>(options => options
     .UseMySql(connectionString, ServerVersion.Create(new Version(8, 0, 0), Pomelo.EntityFrameworkCore.MySql.Infrastructure.ServerType.MySql),
         mySqlOptions => mySqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null))
@@ -425,12 +431,17 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapGet("/health", async (ZayraDbContext db) =>
 {
-    bool dbOk;
-    try { dbOk = await db.Database.CanConnectAsync(); }
-    catch { dbOk = false; }
-    return dbOk
-        ? Results.Ok(new { status = "healthy", utc = DateTime.UtcNow, db = "connected" })
-        : Results.Problem("Database unreachable", statusCode: 503);
+    try
+    {
+        var tableCount = await db.Database
+            .SqlQueryRaw<int>("SELECT COUNT(*) as Value FROM information_schema.tables WHERE table_schema = DATABASE()")
+            .FirstOrDefaultAsync();
+        return Results.Ok(new { status = "healthy", utc = DateTime.UtcNow, db = "connected", tables = tableCount });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Database error: {ex.Message}", statusCode: 503);
+    }
 });
 
 // NOTE: employee endpoints live exclusively in EmployeesController — the former
@@ -438,58 +449,51 @@ app.MapGet("/health", async (ZayraDbContext db) =>
 
 using (var scope = app.Services.CreateScope())
 {
-    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("AuthSeeder");
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    var dbContext = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
+
+    // ── Boot assertions (fatal) ───────────────────────────────────────────────
+    TenantOwnershipBootAssertion.Assert(dbContext);
+    ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
+
+    // ── Schema migrations (fatal) ────────────────────────────────────────────
+    // TiDbMigrationCommandExecutor runs each command without a transaction wrapper
+    // because TiDB Serverless rejects DDL inside START TRANSACTION / COMMIT blocks.
+    // If migrations fail the app must not start — do not catch here.
+    logger.LogInformation("Running EF Core migrations...");
+    await dbContext.Database.MigrateAsync();
+    await MissingTableCreator.EnsureAsync(dbContext, logger);
+    await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
+    logger.LogInformation("Migrations complete.");
+
+    // ── Seed data (non-fatal) ────────────────────────────────────────────────
+    // Seeding failures log a warning but do not crash the app; the schema is
+    // already in place and a redeploy can re-run the seeder.
     try
     {
-        var dbContext = scope.ServiceProvider.GetRequiredService<ZayraDbContext>();
-
-        // ── P3 boot assertions ────────────────────────────────────────────────────
-        // Run BEFORE EnsureCreated so a bad entity or controller fails the boot,
-        // not just a future request.
-        TenantOwnershipBootAssertion.Assert(dbContext);
-        ControllerEntityReturnBootAssertion.Assert(dbContext, typeof(Program).Assembly);
-        // ─────────────────────────────────────────────────────────────────────────
-
-        // Use MigrateAsync() instead of EnsureCreatedAsync(): MigrateAsync runs the explicit
-        // migration SQL files which are fully TiDB-compatible. EnsureCreatedAsync generates
-        // bulk DDL from the model that TiDB rejects. MigrateAsync also handles pre-existing
-        // empty databases and only applies pending migrations, so it is safe on every boot.
-        await dbContext.Database.MigrateAsync();
-        // MissingTableCreator adds tables for any entities added to the model without a
-        // corresponding migration (e.g. rapid prototyping). On a fresh DB this is a no-op
-        // because MigrateAsync already applied everything.
-        await MissingTableCreator.EnsureAsync(dbContext, logger);
-        await scope.ServiceProvider.GetRequiredService<IEmployeeModuleSchemaBootstrapper>().EnsureAsync();
         var authSeeder = scope.ServiceProvider.GetRequiredService<IAuthSeeder>();
         await authSeeder.SeedAsync();
 
-        // Demo data seeding — DISABLED by default in all environments.
-        // Enable only for local dev or staging by setting SEED_DEMO_DATA=true
-        // (or SeedAdmin:SeedDemoData=true in appsettings).  Never enable in production.
         var seedDemoData =
             string.Equals(Environment.GetEnvironmentVariable("SEED_DEMO_DATA"), "true", StringComparison.OrdinalIgnoreCase)
             || string.Equals(app.Configuration["SeedAdmin:SeedDemoData"], "true", StringComparison.OrdinalIgnoreCase);
 
-        logger.LogInformation(
-            "Demo data seeding: {State} (environment={Env})",
-            seedDemoData ? "ENABLED" : "DISABLED",
-            app.Environment.EnvironmentName);
+        logger.LogInformation("Demo data seeding: {State} (environment={Env})",
+            seedDemoData ? "ENABLED" : "DISABLED", app.Environment.EnvironmentName);
 
         if (seedDemoData)
-        {
             await DemoDataSeeder.SeedAsync(
                 dbContext,
                 scope.ServiceProvider.GetRequiredService<IPasswordHasher>(),
                 authSeeder,
                 logger);
-        }
 
         await GosiRuleSeeder.SeedDefaultsAsync(dbContext, logger);
         await Zayra.Api.Infrastructure.Seed.StatutoryRuleSeeder.SeedAsync(dbContext, logger);
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Auth seed failed. Verify the MySQL connection string and database permissions.");
+        logger.LogError(ex, "Seed step failed — schema is intact, seeder will retry on next deploy.");
     }
 }
 
