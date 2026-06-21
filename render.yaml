@@ -55,11 +55,12 @@ services:
       - key: SeedAdmin__TenantSlug
         value: zayra
 
-      # Demo data seeder — keep "false" until the schema is confirmed healthy.
-      # Set to "true" and redeploy once to seed the IntelliFlow KSA tenant.
-      # Seeder is idempotent: safe to leave "true" after the first run.
+      # Demo data seeder — idempotent: safe to leave "true" permanently.
+      # Seeds IntelliFlow Systems (SAU/KSA-mainland, Enterprise/Active) +
+      # Evostel LLC (ARE/UAE-DIFC, Starter/PastDue) with 19+3 employees,
+      # 7 months of payroll, 90 days of attendance, leave types, and balances.
       - key: SeedAdmin__SeedDemoData
-        value: "false"
+        value: "true"
 
       # Web service never runs migrations on startup in Production.
       # Migrations are applied via a Render one-off job:

@@ -18,13 +18,23 @@ public class AIAssistantController : ControllerBase
     private readonly ZayraDbContext _db;
     private readonly IAiAdvisoryService _aiAdvisoryService;
     private readonly IDataScopeService _scopeService;
+    private readonly AiOptions _aiOptions;
 
-    public AIAssistantController(ZayraDbContext db, IAiAdvisoryService aiAdvisoryService, IDataScopeService scopeService)
+    public AIAssistantController(ZayraDbContext db, IAiAdvisoryService aiAdvisoryService, IDataScopeService scopeService, AiOptions aiOptions)
     {
         _db = db;
         _aiAdvisoryService = aiAdvisoryService;
         _scopeService = scopeService;
+        _aiOptions = aiOptions;
     }
+
+    // ── AI provider status — checked by the frontend before showing the UI ───
+    // Returns enabled=false when AI_PROVIDER=none or no API key is configured.
+    // No special permission required; any authenticated user may query this.
+    [HttpGet("status")]
+    [AllowAnonymous]  // front-end fetches this before the auth redirect cycle completes in some flows
+    public IActionResult Status() =>
+        Ok(new { enabled = _aiOptions.HasAnyProviderKey && _aiOptions.EffectiveProvider != "fallback", provider = _aiOptions.EffectiveProvider });
 
     // ── AI HR Query (live DB context, advisory only) ─────────────────────────
 

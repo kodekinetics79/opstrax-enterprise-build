@@ -23,7 +23,7 @@ public class AiAdvisoryServiceTests
     public async Task Query_RequiresAuthenticationTenantClaim()
     {
         await using var db = CreateDb();
-        var controller = new AIAssistantController(db, CreateService(db), new StubUnrestrictedScopeService());
+        var controller = new AIAssistantController(db, CreateService(db), new StubUnrestrictedScopeService(), new AiOptions("fallback", "", "", "", "", 4096, true, false));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) }

@@ -10,6 +10,7 @@ using Zayra.Api.Application.CountryPack;
 using Zayra.Api.Application.Finance;
 using Zayra.Api.Data;
 using Zayra.Api.Infrastructure.CountryPack;
+using Zayra.Api.Infrastructure.Documents.Letters;
 using Zayra.Api.Infrastructure.Notifications;
 using Zayra.Api.Infrastructure.Payroll;
 using Zayra.Api.Models;
@@ -26,15 +27,17 @@ public class PayrollController : ControllerBase
     private readonly IHttpContextAccessor _http;
     private readonly INotificationService _notifications;
     private readonly ICountryPackResolver _packResolver;
+    private readonly ILetterService _letters;
 
     public PayrollController(ZayraDbContext db, IDataScopeService scopeService, IHttpContextAccessor http,
-        INotificationService notifications, ICountryPackResolver packResolver)
+        INotificationService notifications, ICountryPackResolver packResolver, ILetterService letters)
     {
         _db = db;
         _scopeService = scopeService;
         _http = http;
         _notifications = notifications;
         _packResolver = packResolver;
+        _letters = letters;
     }
 
     [HttpGet("salary-structures")]
@@ -2061,6 +2064,66 @@ public class PayrollController : ControllerBase
         await PayrollAudit("payroll.employee_salary.imported", "EmployeeSalary", "bulk", new { received = rows.Count, created, skipped, errors = errors.Count }, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { received = rows.Count, created, updated, skipped, errors = errors.Take(20) });
+    }
+
+    // ── Admin payslip PDF download ─────────────────────────────────────────────
+    // HR/Finance/Admin can download a PDF for any payslip by slip ID.
+    // Salary figures are included only when the caller has payroll.export permission;
+    // otherwise each monetary line is replaced with "***" to honour masking rules.
+    [HttpGet("slips/{id:guid}/pdf")]
+    [Authorize(Roles = "Admin,HR Manager,Finance Approver,Payroll Manager,Payroll Officer")]
+    public async Task<IActionResult> DownloadSlipPdf(Guid id, CancellationToken ct)
+    {
+        var tenantId = GetTenantId();
+        var slip = await _db.PayrollSlips.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Id == id, ct);
+        if (slip is null) return NotFound();
+
+        var payslip = await _db.Payslips.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.PayrollRunId == slip.RunId && x.EmployeeId == slip.EmployeeId, ct);
+        var components = payslip is not null
+            ? await _db.PayslipComponents.AsNoTracking().Where(x => x.TenantId == tenantId && x.PayslipId == payslip.Id).ToListAsync(ct)
+            : new List<PayslipComponent>();
+
+        var canSeeSalary = HasPermission("payroll.export");
+
+        var items = components.Count > 0
+            ? components.Select(c => new PayslipLineItem(c.ComponentName, canSeeSalary ? c.Amount : 0m, c.ComponentType)).ToList()
+            : new List<PayslipLineItem>
+            {
+                new("Basic Salary",       canSeeSalary ? slip.BasicSalary       : 0m, "Earning"),
+                new("Housing Allowance",  canSeeSalary ? slip.HousingAllowance  : 0m, "Earning"),
+                new("Transport Allowance",canSeeSalary ? slip.TransportAllowance: 0m, "Earning"),
+                new("Other Allowances",   canSeeSalary ? slip.OtherAllowances   : 0m, "Earning"),
+                new("Total Deductions",   canSeeSalary ? slip.Deductions        : 0m, "Deduction"),
+                new("Net Pay",            canSeeSalary ? slip.NetSalary         : 0m, "Net"),
+            }.Where(i => i.Amount != 0).ToList();
+
+        var run = await _db.PayrollRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == slip.RunId, ct);
+        var emp = await _db.Employees.AsNoTracking()
+            .Select(e => new { e.Id, e.Designation })
+            .FirstOrDefaultAsync(e => e.Id == slip.EmployeeId, ct);
+        var tenant = await _db.Tenants.AsNoTracking()
+            .Select(t => new { t.Id, t.Name })
+            .FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        var profile = await _db.EmployeePayrollProfiles.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.TenantId == tenantId && p.EmployeeId == slip.EmployeeId && !p.IsDeleted, ct);
+
+        var data = new PayslipData(
+            PayslipNumber: payslip?.PayslipNumber ?? $"PS-{slip.EmployeeCode}",
+            EmployeeCode:  slip.EmployeeCode,
+            EmployeeName:  slip.EmployeeName,
+            Department:    slip.Department,
+            Designation:   emp?.Designation ?? string.Empty,
+            PayYear:       run?.Year  ?? DateTime.UtcNow.Year,
+            PayMonth:      run?.Month ?? DateTime.UtcNow.Month,
+            Currency:      profile?.SalaryCurrency ?? "SAR",
+            Items:         items,
+            CompanyName:   tenant?.Name ?? "KynexOne"
+        );
+
+        var pdf = await _letters.GeneratePayslipPdfAsync(data, ct);
+        return File(pdf, "application/pdf", $"payslip-{slip.EmployeeCode}-{run?.Year}{run?.Month:00}.pdf");
     }
 
     private Guid GetTenantId() => Guid.Parse(User.FindFirstValue("tenant_id")!);

@@ -59,7 +59,8 @@ public class FinanceP1BonusGlTests
             new _P1UnrestrictedScope(),
             new _P1HttpAccessor(httpCtx),
             new _P1NullNotifications(),
-            new _P1NullPackResolver());
+            new _P1NullPackResolver(),
+            new _P1NullLetterService());
         ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
         return ctrl;
     }
@@ -94,7 +95,8 @@ public class FinanceP1BonusGlTests
             new _P1UnrestrictedScope(),
             new _P1HttpAccessor(httpCtx),
             new _P1NullNotifications(),
-            new _KsaPackResolver());
+            new _KsaPackResolver(),
+            new _P1NullLetterService());
         ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
         return ctrl;
     }
@@ -854,4 +856,12 @@ file sealed class _KsaPackResolver : ICountryPackResolver
         => new DefaultLocalizationProfile();
     public ICountryPackDescriptor ResolveDescriptor(string cc, string j)
         => new DefaultCountryPackDescriptor();
+}
+
+file sealed class _P1NullLetterService : Zayra.Api.Infrastructure.Documents.Letters.ILetterService
+{
+    public Task<byte[]> GeneratePayslipPdfAsync(Zayra.Api.Infrastructure.Documents.Letters.PayslipData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateAppointmentLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.LetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateExperienceLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.LetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateOfferLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.OfferLetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
 }

@@ -235,7 +235,7 @@ public class CrossTenantControllerTests
         // IHttpContextAccessor used only for IP address logging; null HttpContext is safe.
         // NullPackResolver (zero statutory deductions) is correct for cross-tenant isolation tests —
         // we're checking data ownership, not deduction accuracy.
-        var c = new PayrollController(db, new DataScopeService(db), new HttpContextAccessor(), new StubNotificationService(), new StubPackResolver());
+        var c = new PayrollController(db, new DataScopeService(db), new HttpContextAccessor(), new StubNotificationService(), new StubPackResolver(), new StubLetterService());
         c.ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(tenantId, "Admin") };
         return c;
     }

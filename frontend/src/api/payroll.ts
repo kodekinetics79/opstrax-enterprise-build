@@ -373,6 +373,16 @@ export const payrollApi = {
   listPayslips: (runId: string, params: { page?: number; pageSize?: number } = {}) =>
     client.get<PagedResult<Payslip>>(`/api/payroll/runs/${runId}/payslips`, { params }).then((r) => r.data),
 
+  downloadSlipPdf: (slipId: string) =>
+    client.get(`/api/payroll/slips/${slipId}/pdf`, { responseType: 'blob' }).then((r) => {
+      const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `payslip-${slipId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }),
+
   createPaymentBatch: (runId: string, paymentMethod = 'WPS', currency = 'AED') =>
     client.post<PayrollPaymentBatch>(`/api/payroll/runs/${runId}/payment-batches`, { paymentMethod, currency }).then((r) => r.data),
 

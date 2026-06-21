@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   aiAssistantApi,
+  type AIProviderStatus,
   type AIQueryResponse,
   type AIInsight,
   type EmployeeRiskScore,
@@ -56,7 +57,12 @@ export default function AIAssistantPage() {
   const [riskScores, setRiskScores] = useState<EmployeeRiskScore[]>([]);
   const [history, setHistory] = useState<AIHRQueryLog[]>([]);
   const [computing, setComputing] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<AIProviderStatus | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    aiAssistantApi.status().then(setProviderStatus).catch(() => setProviderStatus({ enabled: false, provider: 'unknown' }));
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,6 +178,18 @@ export default function AIAssistantPage() {
         ))}
       </div>
 
+      {/* Provider-unavailable banner */}
+      {providerStatus !== null && !providerStatus.enabled && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-800">
+          <span className="text-amber-500 text-lg leading-none mt-0.5">⚠</span>
+          <div>
+            <span className="font-semibold">AI provider not configured.</span>{' '}
+            The AI Assistant is disabled because no provider key is set (<code className="font-mono text-xs bg-amber-100 px-1 rounded">AI_PROVIDER=none</code>).
+            Set <code className="font-mono text-xs bg-amber-100 px-1 rounded">AI_PROVIDER</code> and an API key in Render to enable live responses.
+          </div>
+        </div>
+      )}
+
       {/* AI Assistant Chat */}
       {tab === 'assistant' && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -223,13 +241,13 @@ export default function AIAssistantPage() {
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(query); } }}
-                  placeholder="Ask anything about your workforce..."
-                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  disabled={loading}
+                  placeholder={providerStatus?.enabled === false ? 'AI provider not configured — see banner above' : 'Ask anything about your workforce...'}
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-50 disabled:text-gray-400"
+                  disabled={loading || providerStatus?.enabled === false}
                 />
                 <button
                   onClick={() => sendQuery(query)}
-                  disabled={loading || !query.trim()}
+                  disabled={loading || !query.trim() || providerStatus?.enabled === false}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-purple-700"
                 >
                   Send

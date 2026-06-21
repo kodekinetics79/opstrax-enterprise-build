@@ -182,7 +182,15 @@ export interface TenantAiUsageSummary {
 
 // ── AI Assistant API ──────────────────────────────────────────────────────────
 
+export interface AIProviderStatus {
+  enabled: boolean;
+  provider: string;
+}
+
 export const aiAssistantApi = {
+  status: () =>
+    client.get<AIProviderStatus>('/api/ai/status').then(r => r.data),
+
   query: (query: string, employeeId?: number) =>
     client.post<AIQueryResponse>('/api/ai/query', { query, employeeId }).then(r => r.data),
 

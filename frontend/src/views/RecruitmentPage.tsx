@@ -2140,8 +2140,8 @@ function RecruitmentAITab() {
 
 type Tab = 'overview' | 'requisitions' | 'openings' | 'candidates' | 'workforce' | 'interviews' | 'assessments' | 'offers' | 'onboarding' | 'reports' | 'ai';
 
-export function RecruitmentPage() {
-  const [tab, setTab] = useState<Tab>('overview');
+export function RecruitmentPage({ initialTab }: { initialTab?: Tab } = {}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'overview');
   const [selectedOpening, setSelectedOpening] = useState<JobOpening | null>(null);
   const [requisitionToOpen, setRequisitionToOpen] = useState<ManpowerRequisition | null>(null);
 

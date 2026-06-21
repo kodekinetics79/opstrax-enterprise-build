@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle, BarChart2, Bot, BookOpen, Building2, Calculator,
-  CheckCircle2, ChevronDown, ChevronRight, FileText, Landmark, Layers3,
+  CheckCircle2, ChevronDown, ChevronRight, Download, FileText, Landmark, Layers3,
   Lock, Play, Plus, RefreshCw, RotateCcw,
   Settings, TrendingUp, Users, WalletCards, X,
   Zap, Shield, Sparkles, ArrowUpRight, Circle,
@@ -1179,6 +1179,7 @@ function PayslipsTab() {
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   useEffect(() => { payrollApi.listRuns({ pageSize: 50 }).then(r => setRuns(r.items)).catch(() => {}); }, []);
 
@@ -1231,7 +1232,7 @@ function PayslipsTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-white/[0.07]">
-                {['Employee', 'Payslip #', 'Language', 'ESS Published', 'Published At', 'Generated'].map(h => (
+                {['Employee', 'Payslip #', 'Language', 'ESS Published', 'Published At', 'Generated', ''].map(h => (
                   <th key={h} className="px-4 py-2 text-left text-xs font-bold uppercase text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -1249,6 +1250,21 @@ function PayslipsTab() {
                   </td>
                   <td className="px-4 py-2 text-xs text-slate-400">{p.publishedAtUtc ? fmtDate(p.publishedAtUtc) : '—'}</td>
                   <td className="px-4 py-2 text-xs text-slate-400">{fmtDate(p.createdAtUtc)}</td>
+                  <td className="px-4 py-2">
+                    <button
+                      type="button"
+                      title="Download payslip PDF"
+                      disabled={downloadingId === p.id}
+                      onClick={() => {
+                        setDownloadingId(p.id);
+                        payrollApi.downloadSlipPdf(p.id).finally(() => setDownloadingId(null));
+                      }}
+                      className="flex items-center gap-1 text-xs text-sapphire hover:text-sapphire/80 disabled:opacity-40"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {downloadingId === p.id ? 'Downloading…' : 'PDF'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

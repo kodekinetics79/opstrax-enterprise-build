@@ -806,7 +806,107 @@ public static class DemoDataSeeder
             await db.SaveChangesAsync(ct);
         }
 
+        // ── Payroll profiles (IBAN, MolId, bank details) ────────────────────────
+        await SeedPayrollProfilesAsync(db, tenantId, employees, logger, ct);
+
         logger.LogInformation("DemoDataSeeder: seeded operational data (leave + payroll + attendance) for tenant {TenantId}.", tenantId);
+    }
+
+    // ── Payroll profiles ──────────────────────────────────────────────────────
+    // Seeds EmployeePayrollProfile for every active demo employee so the
+    // People → Payroll tab shows real data and WPS SIF exports have populated
+    // IBAN / MolId / BankCode identifiers (not blank strings).
+    // Idempotent — only inserts rows that don't already exist.
+    private static async Task SeedPayrollProfilesAsync(
+        ZayraDbContext db, Guid tenantId, IReadOnlyList<Employee> employees,
+        ILogger logger, CancellationToken ct)
+    {
+        // Detect country from company record to pick correct IBAN format.
+        var company = await db.Companies.AsNoTracking()
+            .Where(c => c.TenantId == tenantId && !c.IsDeleted)
+            .FirstOrDefaultAsync(ct);
+        var isKsa = (company?.CountryCode ?? "SAU") == "SAU";
+
+        // Load existing profile employee IDs to skip already-seeded profiles.
+        var seededIds = await db.EmployeePayrollProfiles
+            .AsNoTracking()
+            .Where(p => p.TenantId == tenantId && !p.IsDeleted)
+            .Select(p => p.EmployeeId)
+            .ToListAsync(ct);
+        var seededSet = new HashSet<int>(seededIds);
+
+        var added = 0;
+        foreach (var emp in employees)
+        {
+            if (seededSet.Contains(emp.Id)) continue;
+
+            var isSaudiNational = (emp.Nationality ?? "").StartsWith("Saudi", StringComparison.OrdinalIgnoreCase);
+            // Derive a deterministic 16-digit account number from the employee's
+            // integer ID so each profile is unique but reproducible across re-seeds.
+            var account16 = emp.Id.ToString().PadLeft(16, '0');
+
+            string iban, bankName, bankCode, currency;
+            if (isKsa)
+            {
+                // Saudi Mudad WPS — Al Rajhi Bank IBAN (BBAN: 4-digit bank + 16-digit acct)
+                iban      = BuildIban("SA", "8000" + account16);
+                bankName  = "Al Rajhi Bank";
+                bankCode  = "RJHISARI";
+                currency  = "SAR";
+            }
+            else
+            {
+                // UAE — Emirates NBD (BBAN: 3-digit bank + 16-digit acct = 19 chars)
+                iban      = BuildIban("AE", "033" + account16);
+                bankName  = "Emirates NBD";
+                bankCode  = "EBILAEAD";
+                currency  = "AED";
+            }
+
+            // MolId: Saudi national 10-digit ID starting "1", expat starting "2".
+            // Digits 2-10 are the employee's int ID padded to 9 characters.
+            var molId = (isSaudiNational ? "1" : "2") + emp.Id.ToString().PadLeft(9, '0');
+
+            db.EmployeePayrollProfiles.Add(new EmployeePayrollProfile
+            {
+                TenantId               = tenantId,
+                EmployeeId             = emp.Id,
+                BankName               = bankName,
+                Iban                   = iban,
+                AccountNumber          = account16,
+                PaymentMethod          = isKsa ? "WPS" : "BankTransfer",
+                SalaryCurrency         = currency,
+                PayrollGroup           = "Default",
+                WpsEligible            = true,
+                EosbEligible           = true,
+                MolId                  = molId,
+                BankRoutingCode        = bankCode,
+                SocialInsuranceReference = molId,  // GOSI reference mirrors MolId for demo
+            });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "DemoDataSeeder: seeded {Count} payroll profiles for tenant {TenantId} ({Country}).",
+                added, tenantId, isKsa ? "KSA/SAR" : "UAE/AED");
+        }
+    }
+
+    // Computes a standards-compliant IBAN check digit (MOD97) for any country+BBAN.
+    // BBAN must contain only digits (letters not needed for SA/AE demo IBANs).
+    private static string BuildIban(string country, string bban)
+    {
+        // Rearrange to: BBAN + country-in-digits + "00", then MOD 97.
+        // Letter-to-digit: A=10, B=11 … Z=35 → S=28, A=10, E=14.
+        static string LetterToDigit(char c) =>
+            char.IsLetter(c) ? (c - 'A' + 10).ToString() : c.ToString();
+        var numeric = string.Concat((bban + country + "00").Select(LetterToDigit));
+        var rem = 0;
+        foreach (var ch in numeric) rem = (rem * 10 + (ch - '0')) % 97;
+        return country + (98 - rem).ToString("D2") + bban;
     }
 
     private static decimal GetSalaryForEmployee(Employee emp) => emp.Grade switch

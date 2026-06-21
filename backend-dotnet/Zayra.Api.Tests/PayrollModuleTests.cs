@@ -63,7 +63,8 @@ public class PayrollModuleTests
             new _UnrestrictedScope(),
             new _HttpAccessor(httpCtx),
             new _NullNotifications(),
-            new _NullPackResolver());
+            new _NullPackResolver(),
+            new _NullLetterService());
         ctrl.ControllerContext = new ControllerContext { HttpContext = httpCtx };
         return ctrl;
     }
@@ -688,4 +689,12 @@ file sealed class _TestProvider : IServiceProvider
         // ILlmClient is optional in the engine (GetService, not GetRequiredService)
         return null;
     }
+}
+
+file sealed class _NullLetterService : Zayra.Api.Infrastructure.Documents.Letters.ILetterService
+{
+    public Task<byte[]> GeneratePayslipPdfAsync(Zayra.Api.Infrastructure.Documents.Letters.PayslipData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateAppointmentLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.LetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateExperienceLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.LetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<byte[]> GenerateOfferLetterAsync(Zayra.Api.Infrastructure.Documents.Letters.OfferLetterData d, CancellationToken ct = default) => Task.FromResult(Array.Empty<byte>());
 }
