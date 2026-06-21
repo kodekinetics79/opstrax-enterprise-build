@@ -431,6 +431,7 @@ public class PlatformController : ControllerBase
     {
         var tenants = await _db.Tenants
             .AsNoTracking()
+            .Where(t => t.IsActive)
             .OrderBy(t => t.Name)
             .ToListAsync(ct);
 
