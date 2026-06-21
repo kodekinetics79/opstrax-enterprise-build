@@ -174,7 +174,7 @@ export default function TenantUsersPage() {
   async function impersonate(u: TenantUser) {
     try {
       const { token } = await platformApi.impersonate(id, u.id);
-      window.open(`${window.location.protocol}//${window.location.hostname}:3000/login?impersonate=${token}`, '_blank');
+      window.open(`${window.location.origin}/login?impersonate=${token}`, '_blank');
       notify(`Impersonating ${u.email} — new tab opened.`);
     } catch { notify('Impersonation failed.', false); }
   }

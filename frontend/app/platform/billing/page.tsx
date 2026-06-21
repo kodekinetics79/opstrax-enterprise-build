@@ -67,7 +67,7 @@ export default function PlatformBillingPage() {
       platformApi.listTenants(),
     ]);
     if (sum.status === 'fulfilled') setSummary(sum.value);
-    else setSummaryErr('Billing summary endpoint not yet implemented.');
+    else setSummaryErr('Could not load billing summary. Check your connection and try again.');
     if (inv.status === 'fulfilled') { setInvoices(inv.value.invoices); setTotal(inv.value.total); }
     if (ten.status === 'fulfilled') setTenants(ten.value);
     setLoading(false);

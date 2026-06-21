@@ -98,7 +98,7 @@ function StartSessionModal({ onClose, onStarted }: { onClose: () => void; onStar
 
 function SessionResultModal({ result, onClose }: { result: StartSupportAccessResult; onClose: () => void }) {
   function openTab() {
-    window.open(`${window.location.protocol}//${window.location.hostname}:3000/login?impersonate=${result.token}`, '_blank');
+    window.open(`${window.location.origin}/login?impersonate=${result.token}`, '_blank');
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

@@ -110,7 +110,7 @@ export default function PlatformSettingsPage() {
         <h1 className="text-lg font-bold text-white">Platform Settings</h1>
         <div className="px-5 py-6 bg-amber-500/5 border border-amber-500/20 rounded-xl">
           <p className="text-sm text-amber-400">{loadErr}</p>
-          <p className="text-xs text-slate-600 mt-2">TODO: Implement GET /api/platform/settings in backend</p>
+          <p className="text-xs text-slate-500 mt-2">SMTP and maintenance settings can still be configured below.</p>
         </div>
         {/* Show SMTP form anyway for configuration */}
         <SmtpForm smtp={smtp} setSmtp={setSmtp} onSave={saveSmtp} saving={savingSmtp} onTest={testSmtp} testing={testingSmtp} />

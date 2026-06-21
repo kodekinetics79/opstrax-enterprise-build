@@ -28,7 +28,7 @@ export default function SecurityCenterPage() {
   const load = useCallback(async () => {
     setLoading(true); setErr('');
     try { setPostures(await platformApi.getSecuritySummary()); }
-    catch { setErr('Security summary endpoint not yet implemented. (GET /api/platform/security/summary)'); }
+    catch { setErr('Could not load security summary. Check your connection and try again.'); }
     finally { setLoading(false); }
   }, []);
 
