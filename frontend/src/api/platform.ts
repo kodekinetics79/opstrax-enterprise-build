@@ -775,4 +775,103 @@ export const platformApi = {
     maxAdminUsers?: number; billingCycle?: string; expiresAtUtc?: string | null;
   }) =>
     platform.post<{ tenantId: string }>(`/api/platform/quotes/${id}/convert`, body).then(r => r.data),
+
+  // ── Compliance ────────────────────────────────────────────────────────────────
+  listComplianceControls: () =>
+    platform.get<ComplianceControl[]>('/api/platform/compliance/controls').then(r => r.data),
+  createComplianceControl: (body: ComplianceControlBody) =>
+    platform.post<{ id: string }>('/api/platform/compliance/controls', body).then(r => r.data),
+  updateComplianceControl: (id: string, body: Partial<ComplianceControlBody>) =>
+    platform.patch(`/api/platform/compliance/controls/${id}`, body),
+  listSecurityIncidents: () =>
+    platform.get<SecurityIncident[]>('/api/platform/compliance/incidents').then(r => r.data),
+  createSecurityIncident: (body: SecurityIncidentBody) =>
+    platform.post<{ id: string }>('/api/platform/compliance/incidents', body).then(r => r.data),
+  updateSecurityIncident: (id: string, body: Partial<SecurityIncidentBody>) =>
+    platform.patch(`/api/platform/compliance/incidents/${id}`, body),
+  getComplianceSummary: () =>
+    platform.get<ComplianceSummary>('/api/platform/compliance/summary').then(r => r.data),
+
+  // ── Settings Diagnostics & Maintenance ───────────────────────────────────────
+  getDiagnostics: () =>
+    platform.get<PlatformDiagnostics>('/api/platform/settings/diagnostics').then(r => r.data),
+  setMaintenanceMode: (enabled: boolean, message?: string) =>
+    platform.put('/api/platform/settings/maintenance', { enabled, message }).then(r => r.data),
 };
+
+// ── Compliance types ──────────────────────────────────────────────────────────
+
+export interface ComplianceControl {
+  id: string;
+  category: string;
+  controlId: string;
+  title: string;
+  description?: string;
+  status: string;
+  owner?: string;
+  evidenceNote?: string;
+  evidenceUrl?: string;
+  reviewedAtUtc?: string;
+  updatedAtUtc?: string;
+  createdAtUtc: string;
+}
+
+export interface ComplianceControlBody {
+  category: string;
+  controlId: string;
+  title: string;
+  description?: string;
+  status?: string;
+  owner?: string;
+  evidenceNote?: string;
+  evidenceUrl?: string;
+  reviewed?: boolean;
+}
+
+export interface SecurityIncident {
+  id: string;
+  title: string;
+  description?: string;
+  severity: string;
+  status: string;
+  reporter?: string;
+  affectedSystems?: string;
+  occurredAtUtc: string;
+  resolvedAtUtc?: string;
+  resolution?: string;
+  createdAtUtc: string;
+}
+
+export interface SecurityIncidentBody {
+  title?: string;
+  description?: string;
+  severity?: string;
+  status?: string;
+  reporter?: string;
+  affectedSystems?: string;
+  resolution?: string;
+  occurredAtUtc?: string;
+}
+
+export interface ComplianceSummary {
+  totalControls: number;
+  implemented: number;
+  inProgress: number;
+  notStarted: number;
+  waived: number;
+  implementationPct: number;
+  openIncidents: number;
+  criticalIncidents: number;
+}
+
+export interface PlatformDiagnostics {
+  tenantCount: number;
+  activeTenants: number;
+  employeeCount: number;
+  databaseOk: boolean;
+  aiProvider: string;
+  aiConfigured: boolean;
+  maintenance: boolean;
+  maintenanceMsg: string;
+  serverTimeUtc: string;
+}

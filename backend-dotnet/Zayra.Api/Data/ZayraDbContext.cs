@@ -265,6 +265,9 @@ public class ZayraDbContext : DbContext
     public DbSet<MfaChallengeToken> MfaChallengeTokens => Set<MfaChallengeToken>();
     public DbSet<PlatformAnnouncement> PlatformAnnouncements => Set<PlatformAnnouncement>();
     public DbSet<PlatformLead> PlatformLeads => Set<PlatformLead>();
+    public DbSet<PlatformComplianceControl> PlatformComplianceControls => Set<PlatformComplianceControl>();
+    public DbSet<PlatformSecurityIncident> PlatformSecurityIncidents => Set<PlatformSecurityIncident>();
+    public DbSet<PlatformConfigEntry> PlatformConfigEntries => Set<PlatformConfigEntry>();
     // ── AI Intelligence ────────────────────────────────────────────────────────
     public DbSet<AIModelConfig> AIModelConfigs => Set<AIModelConfig>();
     public DbSet<AIInsight> AIInsights => Set<AIInsight>();
@@ -1652,6 +1655,40 @@ public class ZayraDbContext : DbContext
             entity.Ignore(x => x.IsActive);
             entity.HasIndex(x => new { x.TenantId, x.StartedAtUtc });
             entity.HasIndex(x => x.TargetUserId);
+        });
+
+        modelBuilder.Entity<PlatformComplianceControl>(entity =>
+        {
+            entity.ToTable("platform_compliance_controls");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Category).HasMaxLength(120);
+            entity.Property(x => x.ControlId).HasMaxLength(20);
+            entity.Property(x => x.Title).HasMaxLength(300);
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Owner).HasMaxLength(256);
+            entity.Property(x => x.EvidenceUrl).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.Category, x.ControlId }).IsUnique();
+        });
+
+        modelBuilder.Entity<PlatformSecurityIncident>(entity =>
+        {
+            entity.ToTable("platform_security_incidents");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Title).HasMaxLength(300);
+            entity.Property(x => x.Severity).HasMaxLength(20);
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Reporter).HasMaxLength(256);
+            entity.Property(x => x.AffectedSystems).HasMaxLength(500);
+            entity.HasIndex(x => new { x.Status, x.Severity });
+        });
+
+        modelBuilder.Entity<PlatformConfigEntry>(entity =>
+        {
+            entity.ToTable("platform_config_entries");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Key).HasMaxLength(100);
+            entity.Property(x => x.Value).HasMaxLength(2000);
+            entity.HasIndex(x => x.Key).IsUnique();
         });
 
         // ── AI Intelligence ────────────────────────────────────────────────────

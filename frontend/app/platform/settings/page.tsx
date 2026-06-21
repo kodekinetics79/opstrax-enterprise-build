@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, Send, CheckCircle, AlertTriangle, X } from 'lucide-react';
-import { platformApi, type PlatformSettings } from '@/src/api/platform';
+import { RefreshCw, Send, CheckCircle, AlertTriangle, X, Activity, ShieldAlert, Wrench } from 'lucide-react';
+import { platformApi, type PlatformSettings, type PlatformDiagnostics } from '@/src/api/platform';
 
 export default function PlatformSettingsPage() {
   const router = useRouter();
@@ -17,12 +17,22 @@ export default function PlatformSettingsPage() {
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [testingSmtp, setTestingSmtp] = useState(false);
 
+  // Diagnostics
+  const [diagnostics, setDiagnostics] = useState<PlatformDiagnostics | null>(null);
+  const [loadingDiag, setLoadingDiag] = useState(false);
+
+  // Maintenance mode
+  const [maintenance, setMaintenance] = useState(false);
+  const [maintenanceMsg, setMaintenanceMsg] = useState('');
+  const [savingMaintenance, setSavingMaintenance] = useState(false);
+
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('platform_access_token') : null;
     if (!token) { router.replace('/platform/login'); return; }
     load();
+    loadDiagnostics();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []);  // load + loadDiagnostics are stable (useCallback with no deps)
 
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
@@ -45,6 +55,17 @@ export default function PlatformSettingsPage() {
     } finally { setLoading(false); }
   }, []);
 
+  const loadDiagnostics = useCallback(async () => {
+    setLoadingDiag(true);
+    try {
+      const d = await platformApi.getDiagnostics();
+      setDiagnostics(d);
+      setMaintenance(d.maintenance);
+      setMaintenanceMsg(d.maintenanceMsg ?? '');
+    } catch { /* diagnostics are non-critical */ }
+    finally { setLoadingDiag(false); }
+  }, []);
+
   async function saveSmtp(e: React.FormEvent) {
     e.preventDefault();
     setSavingSmtp(true);
@@ -54,6 +75,16 @@ export default function PlatformSettingsPage() {
       await load();
     } catch { setMsg({ text: 'Save failed.', ok: false }); }
     finally { setSavingSmtp(false); }
+  }
+
+  async function saveMaintenance() {
+    setSavingMaintenance(true);
+    try {
+      await platformApi.setMaintenanceMode(maintenance, maintenanceMsg);
+      setMsg({ text: `Maintenance mode ${maintenance ? 'enabled' : 'disabled'}.`, ok: true });
+      await loadDiagnostics();
+    } catch { setMsg({ text: 'Could not update maintenance mode.', ok: false }); }
+    finally { setSavingMaintenance(false); }
   }
 
   async function testSmtp() {
@@ -124,23 +155,105 @@ export default function PlatformSettingsPage() {
 
       <SmtpForm smtp={smtp} setSmtp={setSmtp} onSave={saveSmtp} saving={savingSmtp} onTest={testSmtp} testing={testingSmtp} />
 
-      {/* Planned settings (TODO) */}
-      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden opacity-40">
-        <div className="px-5 py-3 border-b border-white/[0.06]">
-          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Planned Settings</p>
+      {/* AI Provider status */}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">AI Provider</p>
+          <Activity className="h-3.5 w-3.5 text-slate-600" />
         </div>
-        {[
-          { label: 'AI Gateway API Key', note: 'PUT /api/platform/settings/ai' },
-          { label: 'Default Trial Duration', note: 'PUT /api/platform/settings/trial' },
-          { label: 'Platform Branding', note: 'PUT /api/platform/settings/branding' },
-          { label: 'Webhook Endpoints', note: 'PUT /api/platform/settings/webhooks' },
-          { label: 'Maintenance Mode', note: 'POST /api/platform/settings/maintenance' },
-        ].map(s => (
-          <div key={s.label} className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.04] last:border-0">
-            <span className="text-sm text-slate-400">{s.label}</span>
-            <span className="text-[11px] text-slate-700 font-mono">{s.note}</span>
+        <div className="px-5 py-4 flex items-center gap-3">
+          {diagnostics ? (
+            <>
+              <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${diagnostics.aiConfigured ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              <div>
+                <p className="text-sm text-white font-medium capitalize">{diagnostics.aiProvider}</p>
+                <p className={`text-xs ${diagnostics.aiConfigured ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {diagnostics.aiConfigured ? 'Connected — AI features available' : 'Not configured — AI features disabled'}
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">{loadingDiag ? 'Loading…' : 'Unavailable'}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Environment diagnostics */}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Environment Diagnostics</p>
+          <button
+            type="button"
+            onClick={loadDiagnostics}
+            disabled={loadingDiag}
+            className="text-xs text-slate-500 hover:text-white flex items-center gap-1"
+          >
+            <RefreshCw className={`h-3 w-3 ${loadingDiag ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+        {diagnostics ? (
+          <div className="divide-y divide-white/[0.04]">
+            {[
+              { label: 'Database', value: diagnostics.databaseOk ? 'Connected' : 'Error', ok: diagnostics.databaseOk },
+              { label: 'Total tenants', value: String(diagnostics.tenantCount) },
+              { label: 'Active tenants', value: String(diagnostics.activeTenants) },
+              { label: 'Active employees', value: String(diagnostics.employeeCount) },
+              { label: 'Server time (UTC)', value: new Date(diagnostics.serverTimeUtc).toLocaleString() },
+            ].map(row => (
+              <div key={row.label} className="flex items-center justify-between px-5 py-3">
+                <span className="text-sm text-slate-400">{row.label}</span>
+                <span className={`text-sm font-medium ${'ok' in row ? (row.ok ? 'text-emerald-400' : 'text-red-400') : 'text-white'}`}>{row.value}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        ) : (
+          <div className="px-5 py-4 text-sm text-slate-500">{loadingDiag ? 'Loading diagnostics…' : 'Could not load diagnostics.'}</div>
+        )}
+      </div>
+
+      {/* Maintenance mode */}
+      <div className="bg-[#161b22] border border-white/[0.07] rounded-xl overflow-hidden">
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06]">
+          <Wrench className="h-3.5 w-3.5 text-slate-600" />
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Maintenance Mode</p>
+        </div>
+        <div className="px-5 py-5 space-y-4">
+          {maintenance && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2.5">
+              <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
+              <p className="text-sm text-amber-300">Maintenance mode is currently <strong>enabled</strong>. Tenants may see a downtime notice.</p>
+            </div>
+          )}
+          <label className="flex items-center gap-3 cursor-pointer">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={maintenance ? 'true' : 'false'}
+              onClick={() => setMaintenance(m => !m)}
+              className={`relative h-6 w-11 rounded-full transition-colors ${maintenance ? 'bg-amber-500' : 'bg-slate-700'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${maintenance ? 'translate-x-5' : ''}`} />
+            </button>
+            <span className="text-sm text-slate-300">{maintenance ? 'Maintenance mode ON' : 'Maintenance mode OFF'}</span>
+          </label>
+          <label className="block">
+            <span className="text-xs text-slate-400">Message shown to users (optional)</span>
+            <input
+              value={maintenanceMsg}
+              onChange={e => setMaintenanceMsg(e.target.value)}
+              placeholder="We'll be back shortly. Scheduled maintenance window."
+              className="mt-1 w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/60"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={saveMaintenance}
+            disabled={savingMaintenance}
+            className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            {savingMaintenance ? 'Saving…' : 'Save Maintenance Settings'}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -194,8 +194,7 @@ export interface EmployeeTransferRequest {
   createdAtUtc: string;
 }
 
-export interface EmployeeDetail {
-  employee: EmployeeEntity;
+export interface EmployeeDetail extends EmployeeEntity {
   payrollProfile?: EmployeePayrollProfileRequest;
   complianceRecords: EmployeeComplianceRecordRequest[];
   documents: EmployeeDocument[];

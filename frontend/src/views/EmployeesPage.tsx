@@ -231,12 +231,12 @@ export function EmployeesPage() {
     }
   }, [searchParams, selectedId]);
 
-  const selectedEmployee = useMemo(() => detail?.employee, [detail]);
+  const selectedEmployee = useMemo(() => detail ?? null, [detail]);
 
-  const openDetail = async (id: number) => {
+  const openDetail = async (id: number, preserveTab = false) => {
     setSelectedId(id);
     setDetailLoading(true);
-    setActiveTab('personal');
+    if (!preserveTab) setActiveTab('personal');
     try {
       setDetail(await employeesApi.get(id));
     } catch {
@@ -244,6 +244,11 @@ export function EmployeesPage() {
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const refreshAll = () => {
+    load();
+    if (selectedId) openDetail(selectedId, true);
   };
 
   const setField = (key: keyof EmployeeCreateRequest, value: string | boolean | number | undefined) =>
@@ -274,7 +279,7 @@ export function EmployeesPage() {
       setFormOpen(false);
       setForm(emptyEmployee());
       await load();
-      await openDetail(created.employee.id);
+      await openDetail(created.id);
     } catch (e: unknown) {
       const status = (e as { response?: { status?: number; data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.status;
       const data = (e as { response?: { data?: { error?: string; message?: string; current?: number; limit?: number } } })?.response?.data;
@@ -331,7 +336,7 @@ export function EmployeesPage() {
         setEditOriginal({ ...editForm });
       } else {
         setEditOpen(false);
-        await openDetail(selectedId);
+        await openDetail(selectedId, true);
         await load();
       }
     } catch (e: unknown) {
@@ -345,7 +350,7 @@ export function EmployeesPage() {
 
   const deleteEmployee = async () => {
     if (!selectedId || !detail) return;
-    if (!confirm(`Delete ${detail.employee.fullName}'s record? It will be hidden from all lists; history is kept for audit.`)) return;
+    if (!confirm(`Delete ${detail.fullName}'s record? It will be hidden from all lists; history is kept for audit.`)) return;
     try {
       await employeesApi.remove(selectedId);
       setSelectedId(null);
@@ -448,7 +453,7 @@ export function EmployeesPage() {
             <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)} className="select sm:w-56" aria-label="Status filter">
               {statusOptions.map((item) => <option key={item || 'all'} value={item}>{item || 'All statuses'}</option>)}
             </select>
-            <button type="button" onClick={load} className="btn-secondary">
+            <button type="button" onClick={refreshAll} className="btn-secondary">
               <RefreshCw className="h-4 w-4" />
               Refresh
             </button>

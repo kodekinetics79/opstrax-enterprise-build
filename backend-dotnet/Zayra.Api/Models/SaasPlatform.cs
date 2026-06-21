@@ -397,3 +397,79 @@ public static class LoginEventTypes
     public const string PlatformLoginSuccess     = "platform_login_success";
     public const string PlatformLoginFailed      = "platform_login_failed";
 }
+
+// ── Platform Compliance Controls ────────────────────────────────────────────────
+
+/// <summary>
+/// Tracks a single SOC 2 / security control for the KynexOne platform itself.
+/// Covers all SOC 2 TSCs: Security (CC), Availability (A), Confidentiality (C),
+/// Processing Integrity (PI), Privacy (P).
+/// </summary>
+public class PlatformComplianceControl
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>e.g. "CC6 — Logical & Physical Access"</summary>
+    public string Category { get; set; } = string.Empty;
+    /// <summary>Control ID from the TSC framework, e.g. "CC6.1"</summary>
+    public string ControlId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    /// <summary>NotStarted | InProgress | Implemented | Waived | NotApplicable</summary>
+    public string Status { get; set; } = ComplianceControlStatus.NotStarted;
+    public string? Owner { get; set; }
+    public string? EvidenceNote { get; set; }
+    public string? EvidenceUrl { get; set; }
+    public DateTime? ReviewedAtUtc { get; set; }
+    public Guid? ReviewedByPlatformUserId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+}
+
+public static class ComplianceControlStatus
+{
+    public const string NotStarted    = "NotStarted";
+    public const string InProgress    = "InProgress";
+    public const string Implemented   = "Implemented";
+    public const string Waived        = "Waived";
+    public const string NotApplicable = "NotApplicable";
+}
+
+// ── Platform Security Incidents ──────────────────────────────────────────────────
+
+public class PlatformSecurityIncident
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    /// <summary>Low | Medium | High | Critical</summary>
+    public string Severity { get; set; } = "Low";
+    /// <summary>Open | Investigating | Resolved | Closed</summary>
+    public string Status { get; set; } = "Open";
+    public string? Reporter { get; set; }
+    public string? AffectedSystems { get; set; }
+    public DateTime OccurredAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ResolvedAtUtc { get; set; }
+    public string? Resolution { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAtUtc { get; set; }
+    public Guid? CreatedByPlatformUserId { get; set; }
+}
+
+// ── Platform Configuration Entries ──────────────────────────────────────────────
+// Persistent key-value store for mutable platform settings (e.g. maintenance mode).
+// Keys are simple ASCII strings; values are free-form strings (booleans as "true"/"false").
+
+public class PlatformConfigEntry
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Key { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public Guid? UpdatedByPlatformUserId { get; set; }
+}
+
+public static class PlatformConfigKeys
+{
+    public const string MaintenanceMode    = "maintenance_mode";
+    public const string MaintenanceMessage = "maintenance_message";
+}

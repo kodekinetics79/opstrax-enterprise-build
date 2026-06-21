@@ -344,6 +344,16 @@ public class PlatformController : ControllerBase
             CreatedAtUtc = DateTime.UtcNow
         };
         _db.PlatformUsers.Add(user);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformUser",
+            EntityId        = user.Id.ToString(),
+            Action          = "PlatformUserCreated",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { user.Email, user.Role }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
 
         return Ok(new { user.Id, user.Email, user.FullName, user.Role, user.IsActive, user.CreatedAtUtc });
@@ -356,6 +366,9 @@ public class PlatformController : ControllerBase
         var user = await _db.PlatformUsers.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return NotFound(new { message = "Platform user not found." });
 
+        var oldRole   = user.Role;
+        var oldActive = user.IsActive;
+
         if (req.Role is not null)
         {
             if (!PlatformRoles.All.Contains(req.Role))
@@ -367,6 +380,17 @@ public class PlatformController : ControllerBase
         if (!string.IsNullOrWhiteSpace(req.FullName)) user.FullName = req.FullName.Trim();
 
         user.UpdatedAtUtc = DateTime.UtcNow;
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformUser",
+            EntityId        = id.ToString(),
+            Action          = "PlatformUserUpdated",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { Role = oldRole, IsActive = oldActive }),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { user.Role, user.IsActive }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
 
         return Ok(new { user.Id, user.Email, user.FullName, user.Role, user.IsActive, user.UpdatedAtUtc });
@@ -383,6 +407,17 @@ public class PlatformController : ControllerBase
         // Soft deactivate — never hard-delete platform users
         user.IsActive = false;
         user.UpdatedAtUtc = DateTime.UtcNow;
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformUser",
+            EntityId        = id.ToString(),
+            Action          = "PlatformUserDeactivated",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { user.Email }),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { IsActive = false }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
 
         return Ok(new { user.Id, user.Email, isActive = false, message = "Platform user deactivated." });
@@ -2251,6 +2286,16 @@ public class PlatformController : ControllerBase
             CreatedByEmail = creatorEmail
         };
         _db.PlatformAnnouncements.Add(announcement);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformAnnouncement",
+            EntityId        = announcement.Id.ToString(),
+            Action          = "AnnouncementCreated",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { announcement.Title, announcement.Status, announcement.TargetPlan }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(announcement);
     }
@@ -2271,6 +2316,16 @@ public class PlatformController : ControllerBase
         if (ann.Status == "Published" && ann.PublishedAtUtc is null)
             ann.PublishedAtUtc = DateTime.UtcNow;
 
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformAnnouncement",
+            EntityId        = id.ToString(),
+            Action          = ann.Status == "Published" ? "AnnouncementPublished" : "AnnouncementUpdated",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { ann.Status, ann.Title }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(ann);
     }
@@ -2285,6 +2340,17 @@ public class PlatformController : ControllerBase
         // Soft delete: archive
         ann.Status = "Archived";
         ann.UpdatedAtUtc = DateTime.UtcNow;
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformAnnouncement",
+            EntityId        = id.ToString(),
+            Action          = "AnnouncementArchived",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { ann.Title }),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { Status = "Archived" }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(new { id, status = "Archived" });
     }
@@ -2322,6 +2388,16 @@ public class PlatformController : ControllerBase
             Source = string.IsNullOrWhiteSpace(req.Source) ? "Manual" : req.Source.Trim()
         };
         _db.PlatformLeads.Add(lead);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformLead",
+            EntityId        = lead.Id.ToString(),
+            Action          = "LeadCreated",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { lead.CompanyName, lead.ContactEmail, lead.Source }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(lead);
     }
@@ -2333,11 +2409,23 @@ public class PlatformController : ControllerBase
         var lead = await _db.PlatformLeads.FirstOrDefaultAsync(l => l.Id == id, ct);
         if (lead is null) return NotFound();
 
+        var oldStatus = lead.Status;
         if (req.Status is not null) lead.Status = req.Status.Trim();
         if (req.Notes is not null) lead.Notes = req.Notes.Trim();
         if (req.AssignedTo is not null) lead.AssignedTo = req.AssignedTo.Trim();
         lead.UpdatedAtUtc = DateTime.UtcNow;
 
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformLead",
+            EntityId        = id.ToString(),
+            Action          = "LeadUpdated",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { Status = oldStatus }),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { lead.Status, lead.AssignedTo }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
         await _db.SaveChangesAsync(ct);
         return Ok(lead);
     }
@@ -3039,9 +3127,267 @@ public class PlatformController : ControllerBase
 
         return createResult;
     }
+
+    // ── Compliance Controls ───────────────────────────────────────────────────────
+
+    [HttpGet("compliance/controls")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Auditor)]
+    public async Task<IActionResult> ListComplianceControls(CancellationToken ct)
+    {
+        var controls = await _db.PlatformComplianceControls
+            .AsNoTracking()
+            .OrderBy(x => x.Category).ThenBy(x => x.ControlId)
+            .Select(x => new {
+                x.Id, x.Category, x.ControlId, x.Title, x.Description,
+                x.Status, x.Owner, x.EvidenceNote, x.EvidenceUrl,
+                x.ReviewedAtUtc, x.UpdatedAtUtc, x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+        return Ok(controls);
+    }
+
+    [HttpPost("compliance/controls")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> CreateComplianceControl([FromBody] ComplianceControlRequest req, CancellationToken ct)
+    {
+        var control = new PlatformComplianceControl
+        {
+            Category    = req.Category.Trim(),
+            ControlId   = req.ControlId.Trim().ToUpperInvariant(),
+            Title       = req.Title.Trim(),
+            Description = req.Description?.Trim(),
+            Status      = req.Status ?? ComplianceControlStatus.NotStarted,
+            Owner       = req.Owner?.Trim(),
+        };
+        _db.PlatformComplianceControls.Add(control);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId         = Guid.Empty,
+            EntityType       = "PlatformComplianceControl",
+            EntityId         = control.Id.ToString(),
+            Action           = "ControlCreated",
+            NewValuesJson    = System.Text.Json.JsonSerializer.Serialize(new { control.ControlId, control.Title, control.Status }),
+            PerformedByName  = "platform_admin",
+            IpAddress        = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
+        await _db.SaveChangesAsync(ct);
+        return Created($"/api/platform/compliance/controls/{control.Id}", new { control.Id });
+    }
+
+    [HttpPatch("compliance/controls/{id:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> UpdateComplianceControl(Guid id, [FromBody] ComplianceControlRequest req, CancellationToken ct)
+    {
+        var control = await _db.PlatformComplianceControls.FindAsync([id], ct);
+        if (control is null) return NotFound();
+        var oldSnap = new { control.Status, control.Owner, control.EvidenceNote };
+        if (req.Status  is not null) control.Status      = req.Status;
+        if (req.Owner   is not null) control.Owner       = req.Owner.Trim();
+        if (req.EvidenceNote is not null) control.EvidenceNote = req.EvidenceNote.Trim();
+        if (req.EvidenceUrl  is not null) control.EvidenceUrl  = req.EvidenceUrl.Trim();
+        if (req.Description  is not null) control.Description  = req.Description.Trim();
+        if (req.Title is { Length: > 0 }) control.Title = req.Title.Trim();
+        control.UpdatedAtUtc = DateTime.UtcNow;
+        if (req.Reviewed == true)
+        {
+            control.ReviewedAtUtc            = DateTime.UtcNow;
+            control.ReviewedByPlatformUserId = GetPlatformUserId();
+        }
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformComplianceControl",
+            EntityId        = id.ToString(),
+            Action          = "ControlUpdated",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(oldSnap),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { control.Status, control.Owner, control.EvidenceNote }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpGet("compliance/summary")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Auditor)]
+    public async Task<IActionResult> GetComplianceSummary(CancellationToken ct)
+    {
+        var controls  = await _db.PlatformComplianceControls.AsNoTracking().ToListAsync(ct);
+        var incidents = await _db.PlatformSecurityIncidents.AsNoTracking().ToListAsync(ct);
+        var summary = new
+        {
+            TotalControls      = controls.Count,
+            Implemented        = controls.Count(c => c.Status == ComplianceControlStatus.Implemented),
+            InProgress         = controls.Count(c => c.Status == ComplianceControlStatus.InProgress),
+            NotStarted         = controls.Count(c => c.Status == ComplianceControlStatus.NotStarted),
+            Waived             = controls.Count(c => c.Status == ComplianceControlStatus.Waived),
+            ImplementationPct  = controls.Count == 0 ? 0 :
+                                 (int)Math.Round(controls.Count(c => c.Status == ComplianceControlStatus.Implemented) * 100.0 / controls.Count),
+            OpenIncidents      = incidents.Count(i => i.Status == "Open" || i.Status == "Investigating"),
+            CriticalIncidents  = incidents.Count(i => i.Severity == "Critical" && (i.Status == "Open" || i.Status == "Investigating")),
+        };
+        return Ok(summary);
+    }
+
+    // ── Security Incidents ────────────────────────────────────────────────────────
+
+    [HttpGet("compliance/incidents")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Auditor)]
+    public async Task<IActionResult> ListSecurityIncidents(CancellationToken ct)
+    {
+        var incidents = await _db.PlatformSecurityIncidents
+            .AsNoTracking()
+            .OrderByDescending(x => x.OccurredAtUtc)
+            .Select(x => new {
+                x.Id, x.Title, x.Description, x.Severity, x.Status,
+                x.Reporter, x.AffectedSystems, x.OccurredAtUtc,
+                x.ResolvedAtUtc, x.Resolution, x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+        return Ok(incidents);
+    }
+
+    [HttpPost("compliance/incidents")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin, PlatformRoles.Support)]
+    public async Task<IActionResult> CreateSecurityIncident([FromBody] SecurityIncidentRequest req, CancellationToken ct)
+    {
+        var incident = new PlatformSecurityIncident
+        {
+            Title           = (req.Title ?? string.Empty).Trim(),
+            Description     = req.Description?.Trim(),
+            Severity        = req.Severity ?? "Low",
+            Reporter        = req.Reporter?.Trim(),
+            AffectedSystems = req.AffectedSystems?.Trim(),
+            OccurredAtUtc   = req.OccurredAtUtc ?? DateTime.UtcNow,
+            CreatedByPlatformUserId = GetPlatformUserId(),
+        };
+        _db.PlatformSecurityIncidents.Add(incident);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformSecurityIncident",
+            EntityId        = incident.Id.ToString(),
+            Action          = "IncidentCreated",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { incident.Title, incident.Severity }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
+        await _db.SaveChangesAsync(ct);
+        return Created($"/api/platform/compliance/incidents/{incident.Id}", new { incident.Id });
+    }
+
+    [HttpPatch("compliance/incidents/{id:guid}")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> UpdateSecurityIncident(Guid id, [FromBody] SecurityIncidentRequest req, CancellationToken ct)
+    {
+        var incident = await _db.PlatformSecurityIncidents.FindAsync([id], ct);
+        if (incident is null) return NotFound();
+        var oldStatus = incident.Status;
+        if (req.Status   is not null) incident.Status   = req.Status;
+        if (req.Severity is not null) incident.Severity = req.Severity;
+        if (req.Resolution      is not null) incident.Resolution      = req.Resolution.Trim();
+        if (req.AffectedSystems is not null) incident.AffectedSystems = req.AffectedSystems.Trim();
+        if (req.Status is "Resolved" or "Closed" && incident.ResolvedAtUtc is null)
+            incident.ResolvedAtUtc = DateTime.UtcNow;
+        incident.UpdatedAtUtc = DateTime.UtcNow;
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformSecurityIncident",
+            EntityId        = id.ToString(),
+            Action          = "IncidentUpdated",
+            OldValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { Status = oldStatus }),
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { incident.Status, incident.Severity }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    // ── Settings: Diagnostics & Maintenance ──────────────────────────────────────
+
+    [HttpGet("settings/diagnostics")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> GetDiagnostics(CancellationToken ct)
+    {
+        var tenantCount   = await _db.Tenants.CountAsync(ct);
+        var activeCount   = await _db.Tenants.CountAsync(t => t.IsActive, ct);
+        var employeeCount = await _db.Employees.CountAsync(e => !e.IsDeleted && e.Status == "Active", ct);
+        var aiProvider    = _config["AI_PROVIDER"] ?? "none";
+        var maintenanceEntry = await _db.PlatformConfigEntries
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Key == PlatformConfigKeys.MaintenanceMode, ct);
+        var diagnostics = new
+        {
+            TenantCount    = tenantCount,
+            ActiveTenants  = activeCount,
+            EmployeeCount  = employeeCount,
+            DatabaseOk     = true,
+            AiProvider     = aiProvider,
+            AiConfigured   = aiProvider != "none" && aiProvider != "fallback",
+            Maintenance    = maintenanceEntry?.Value == "true",
+            MaintenanceMsg = (await _db.PlatformConfigEntries.AsNoTracking()
+                                .FirstOrDefaultAsync(e => e.Key == PlatformConfigKeys.MaintenanceMessage, ct))?.Value ?? "",
+            ServerTimeUtc  = DateTime.UtcNow,
+        };
+        return Ok(diagnostics);
+    }
+
+    [HttpPut("settings/maintenance")]
+    [RequirePlatformRole(PlatformRoles.Owner, PlatformRoles.Admin)]
+    public async Task<IActionResult> SetMaintenanceMode([FromBody] MaintenanceModeRequest req, CancellationToken ct)
+    {
+        await UpsertConfigAsync(PlatformConfigKeys.MaintenanceMode, req.Enabled ? "true" : "false", ct);
+        if (req.Message is not null)
+            await UpsertConfigAsync(PlatformConfigKeys.MaintenanceMessage, req.Message.Trim(), ct);
+        _db.AdminAuditLogs.Add(new AdminAuditLog
+        {
+            TenantId        = Guid.Empty,
+            EntityType      = "PlatformConfig",
+            EntityId        = PlatformConfigKeys.MaintenanceMode,
+            Action          = req.Enabled ? "MaintenanceModeEnabled" : "MaintenanceModeDisabled",
+            NewValuesJson   = System.Text.Json.JsonSerializer.Serialize(new { req.Enabled, req.Message }),
+            PerformedByName = "platform_admin",
+            IpAddress       = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new { enabled = req.Enabled });
+    }
+
+    private async Task UpsertConfigAsync(string key, string value, CancellationToken ct)
+    {
+        var entry = await _db.PlatformConfigEntries.FirstOrDefaultAsync(e => e.Key == key, ct);
+        if (entry is null)
+        {
+            _db.PlatformConfigEntries.Add(new PlatformConfigEntry
+            {
+                Key = key, Value = value,
+                UpdatedByPlatformUserId = GetPlatformUserId(),
+            });
+        }
+        else
+        {
+            entry.Value = value;
+            entry.UpdatedAtUtc = DateTime.UtcNow;
+            entry.UpdatedByPlatformUserId = GetPlatformUserId();
+        }
+    }
 }
 
 public record PlatformLoginRequest(string Email, string Password);
+
+public record ComplianceControlRequest(
+    string Category, string ControlId, string Title,
+    string? Description, string? Status, string? Owner,
+    string? EvidenceNote, string? EvidenceUrl, bool? Reviewed);
+
+public record SecurityIncidentRequest(
+    string? Title, string? Description, string? Severity, string? Status,
+    string? Reporter, string? AffectedSystems, string? Resolution,
+    DateTime? OccurredAtUtc);
+
+public record MaintenanceModeRequest(bool Enabled, string? Message);
 public record ImpersonateRequest(Guid UserId);
 
 public record CreateTenantRequest(
