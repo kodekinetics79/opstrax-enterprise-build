@@ -423,7 +423,15 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", utc = DateTime.UtcNow }));
+app.MapGet("/health", async (ZayraDbContext db) =>
+{
+    bool dbOk;
+    try { dbOk = await db.Database.CanConnectAsync(); }
+    catch { dbOk = false; }
+    return dbOk
+        ? Results.Ok(new { status = "healthy", utc = DateTime.UtcNow, db = "connected" })
+        : Results.Problem("Database unreachable", statusCode: 503);
+});
 
 // NOTE: employee endpoints live exclusively in EmployeesController — the former
 // minimal-API duplicates here caused AmbiguousMatchException on /api/employees/reports/*.

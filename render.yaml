@@ -14,36 +14,59 @@ services:
       - key: PORT
         value: 8080
 
-      # --- Required secrets: set these in the Render dashboard ---
-      # ConnectionStrings__Default  → TiDB Serverless connection string
+      # ── REQUIRED SECRETS: set these in the Render dashboard (Environment → Secret Files / Env Vars) ──
+      #
+      # ConnectionStrings__Default
+      #   TiDB Serverless connection string.
       #   Format: Server=<host>;Port=4000;Database=zayra;Uid=<user>;Pwd=<pass>;SslMode=Required;AllowPublicKeyRetrieval=True;
       - key: ConnectionStrings__Default
         sync: false
 
-      # Jwt__SigningKey → generate: openssl rand -base64 64
+      # Jwt__SigningKey
+      #   ≥64-char random secret. Generate: openssl rand -base64 64
       - key: Jwt__SigningKey
         sync: false
 
-      # Platform admin bootstrap credentials
-      - key: PLATFORM_ADMIN_EMAIL
-        sync: false
-      - key: PLATFORM_ADMIN_PASSWORD
+      # Jwt__TenantAudience
+      #   Audience claim for tenant (non-platform) JWTs. Must NOT equal "kynexone-tenant" (dev default).
+      #   Example: KynexOneTenantProd
+      - key: Jwt__TenantAudience
         sync: false
 
-      # --- Non-secret config (can stay here or override in dashboard) ---
+      # Jwt__PlatformAudience
+      #   Audience claim for platform-admin JWTs. Must NOT equal "kynexone-platform" (dev default).
+      #   Example: KynexOnePlatformProd
+      - key: Jwt__PlatformAudience
+        sync: false
+
+      # SeedAdmin__Email / SeedAdmin__Password
+      #   Credentials for the bootstrap admin account created on first boot.
+      - key: SeedAdmin__Email
+        sync: false
+      - key: SeedAdmin__Password
+        sync: false
+
+      # ── NON-SECRET CONFIG ───────────────────────────────────────────────────────────
       - key: Jwt__Issuer
         value: Zayra.Api
-      - key: Jwt__Audience
-        value: Zayra.Client
+
       - key: SeedAdmin__TenantName
         value: KynexOne
       - key: SeedAdmin__TenantSlug
         value: zayra
-      # Set to "true" after the first successful boot to seed the KSA demo tenant.
-      # Keep "false" until the app is confirmed healthy — reduces startup memory spike.
+
+      # Demo data seeder — keep "false" until the schema is confirmed healthy.
+      # Set to "true" and redeploy once to seed the IntelliFlow KSA tenant.
+      # Seeder is idempotent: safe to leave "true" after the first run.
       - key: SeedAdmin__SeedDemoData
         value: "false"
 
-      # AI provider — set to "none" to disable AI features, or configure as needed
+      # CORS — add your real Vercel/frontend URL here (comma-separated for multiple).
+      # appsettings.json already whitelists https://kynexone.vercel.app.
+      # If your Vercel URL differs, add it here:
+      - key: CORS_EXTRA_ORIGINS
+        value: ""
+
+      # AI provider — set to "none" to disable AI features entirely.
       - key: AI_PROVIDER
         value: none
