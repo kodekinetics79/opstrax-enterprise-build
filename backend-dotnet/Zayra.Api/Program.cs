@@ -431,11 +431,16 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapGet("/health", async (ZayraDbContext db) =>
 {
+    // Use raw ADO.NET to bypass EF Core's retry execution strategy in the health path.
+    // Retries on a health check amplify load on TiDB serverless; a single fast ping suffices.
     try
     {
-        var tableCount = await db.Database
-            .SqlQueryRaw<int>("SELECT COUNT(*) as Value FROM information_schema.tables WHERE table_schema = DATABASE()")
-            .FirstOrDefaultAsync();
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()";
+        var tableCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         return Results.Ok(new { status = "healthy", utc = DateTime.UtcNow, db = "connected", tables = tableCount });
     }
     catch (Exception ex)
