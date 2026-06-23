@@ -14,3 +14,4 @@ appsettings.json
 appsettings.*.json
 frontend/tsconfig.tsbuildinfo
 tsconfig.tsbuildinfo
+/package-lock.json
