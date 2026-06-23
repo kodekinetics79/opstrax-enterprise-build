@@ -1,0 +1,292 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Opstrax.Api.Data;
+
+namespace Opstrax.Api.Services;
+
+// Runs every 5 minutes.
+// 1. Converts unprocessed telemetry_alerts → safety_events (with duplicate prevention via UNIQUE KEY).
+// 2. Detects repeated-speeding patterns and upgrades severity.
+// 3. Recomputes driver_safety_scores for all drivers with recent events.
+public sealed class SafetyBackgroundService(
+    IServiceScopeFactory scopeFactory,
+    ILogger<SafetyBackgroundService> logger,
+    ServiceRunTracker tracker) : BackgroundService
+{
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
+    private const string SvcName = "SafetyBackgroundService";
+
+    // Severity → default score impact (deducted from 100)
+    private static readonly Dictionary<string, decimal> SeverityWeights = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Critical"] = 25m,
+        ["High"]     = 15m,
+        ["Medium"]   = 8m,
+        ["Warning"]  = 5m,
+        ["Low"]      = 3m,
+    };
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Startup delay — schema migrations and telemetry service must complete first.
+        await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken).ContinueWith(_ => { }, stoppingToken);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var sw    = System.Diagnostics.Stopwatch.StartNew();
+            var runId = await tracker.BeginAsync(SvcName, stoppingToken);
+            try
+            {
+                await ProcessTelemetryAlertsAsync(stoppingToken);
+                await DetectRepeatedSpeedingAsync(stoppingToken);
+                await RecomputeDriverScoresAsync(stoppingToken);
+                sw.Stop();
+                await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, stoppingToken);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                logger.LogError(ex, "{Svc} tick failed", SvcName);
+                await tracker.FailAsync(runId, SvcName, ex, (int)sw.ElapsedMilliseconds, stoppingToken);
+            }
+
+            try { await Task.Delay(Interval, stoppingToken); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    // Converts new telemetry_alerts into safety_events.
+    // UNIQUE KEY uq_se_telemetry_alert prevents double-creation.
+    private async Task ProcessTelemetryAlertsAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+
+        // Fetch unprocessed alerts (no corresponding safety_event yet)
+        var alerts = await db.QueryAsync(
+            @"SELECT ta.id, ta.company_id, ta.vehicle_id, ta.device_id, ta.driver_id,
+                     ta.alert_type, ta.severity, ta.message, ta.source_event_id, ta.created_at,
+                     le.lat, le.lng, le.speed_mph
+              FROM telemetry_alerts ta
+              LEFT JOIN location_events le ON le.id = ta.source_event_id
+              LEFT JOIN safety_events se ON se.source_telemetry_alert_id = ta.id
+              WHERE se.id IS NULL
+                AND ta.alert_type IN ('speeding','geofence_breach','stale_device')
+              ORDER BY ta.created_at
+              LIMIT 200",
+            ct: ct);
+
+        foreach (var alert in alerts)
+        {
+            var alertId   = Convert.ToInt64(alert["id"]);
+            var companyId = Convert.ToInt64(alert["companyId"]);
+            var severity  = alert["severity"]?.ToString() ?? "High";
+            var alertType = alert["alertType"]?.ToString() ?? "speeding";
+            var vehicleId = alert["vehicleId"] is { } v && v is not DBNull ? (long?)Convert.ToInt64(v) : null;
+            var deviceId  = alert["deviceId"]  is { } d && d is not DBNull ? (long?)Convert.ToInt64(d) : null;
+            var driverId  = alert["driverId"]  is { } dr && dr is not DBNull ? (long?)Convert.ToInt64(dr) : null;
+            var eventSrcId = alert["sourceEventId"] is { } s && s is not DBNull ? (long?)Convert.ToInt64(s) : null;
+
+            // Fetch tenant score weight for this event type
+            var weightRuleType = $"safety_weight_{alertType.Replace("-", "_")}";
+            var scoreImpact = await db.ScalarDecimalAsync(
+                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@rt AND enabled=1 LIMIT 1",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@rt", weightRuleType); }, ct)
+                ?? SeverityWeights.GetValueOrDefault(severity, 10m);
+
+            // Build evidence hash from source event location + speed
+            var lat    = alert["lat"] is { } la && la is not DBNull ? Convert.ToString(la) : "0";
+            var lng    = alert["lng"] is { } lo && lo is not DBNull ? Convert.ToString(lo) : "0";
+            var speed  = alert["speedMph"] is { } sp && sp is not DBNull ? Convert.ToString(sp) : "0";
+            var evHash = TelemetryHmacHelper.Sha256Hex($"{alertId}:{lat}:{lng}:{speed}");
+
+            // Build meta_json
+            var meta = $"{{\"source\":\"telemetry_alert\",\"alertId\":{alertId},\"alertType\":\"{alertType}\",\"severity\":\"{severity}\"}}";
+
+            try
+            {
+                await db.ExecuteAsync(
+                    @"INSERT INTO safety_events
+                        (company_id, driver_id, vehicle_id, device_id,
+                         source_telemetry_alert_id, source_location_event_id,
+                         event_type, severity, score_impact, status,
+                         event_time, evidence_hash, meta_json)
+                      VALUES
+                        (@cid, @did, @vid, @devId,
+                         @alertId, @srcId,
+                         @evType, @sev, @impact, 'open',
+                         @evTime, @hash, @meta)",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid",    companyId);
+                        c.Parameters.AddWithValue("@did",    driverId  ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@vid",    vehicleId ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@devId",  deviceId  ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@alertId", alertId);
+                        c.Parameters.AddWithValue("@srcId",  eventSrcId ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@evType", alertType);
+                        c.Parameters.AddWithValue("@sev",    severity);
+                        c.Parameters.AddWithValue("@impact", scoreImpact);
+                        c.Parameters.AddWithValue("@evTime", alert["createdAt"] ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@hash",   evHash);
+                        c.Parameters.AddWithValue("@meta",   meta);
+                    }, ct);
+
+                logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);
+            }
+            catch (MySqlConnector.MySqlException ex) when (ex.Number == 1062)
+            {
+                // UNIQUE KEY on source_telemetry_alert_id — already processed
+            }
+        }
+    }
+
+    // Detect repeated speeding: driver with >= threshold speeding events in 24h.
+    // Creates a 'repeated_speeding' safety event linked to no single alert.
+    private async Task DetectRepeatedSpeedingAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+
+        // Find driver+company combos that have recent speeding events at or above threshold
+        var repeats = await db.QueryAsync(
+            @"SELECT se.company_id, se.driver_id,
+                     COUNT(*) event_count,
+                     COALESCE(tr.threshold_value, 3) repeat_threshold
+              FROM safety_events se
+              LEFT JOIN telemetry_rules tr
+                ON tr.company_id=se.company_id AND tr.rule_type='safety_repeated_speeding_threshold' AND tr.enabled=1
+              WHERE se.event_type='speeding'
+                AND se.status != 'dismissed'
+                AND se.driver_id IS NOT NULL
+                AND se.event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
+              GROUP BY se.company_id, se.driver_id, repeat_threshold
+              HAVING COUNT(*) >= COALESCE(tr.threshold_value, 3)",
+            ct: ct);
+
+        foreach (var row in repeats)
+        {
+            var companyId = Convert.ToInt64(row["companyId"]);
+            var driverId  = Convert.ToInt64(row["driverId"]);
+            var count     = Convert.ToInt64(row["eventCount"]);
+
+            // Only create one open repeated_speeding event per driver per day
+            var existing = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND driver_id=@did AND event_type='repeated_speeding' AND status='open' AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+
+            if (existing > 0) continue;
+
+            var weight = await db.ScalarDecimalAsync(
+                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='safety_weight_repeated_speeding' AND enabled=1 LIMIT 1",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 25m;
+
+            await db.ExecuteAsync(
+                @"INSERT INTO safety_events
+                    (company_id, driver_id, event_type, severity, score_impact, status, meta_json)
+                  VALUES
+                    (@cid, @did, 'repeated_speeding', 'Critical', @impact, 'open',
+                     JSON_OBJECT('count', @count, 'window_hours', 24))",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid",    companyId);
+                    c.Parameters.AddWithValue("@did",    driverId);
+                    c.Parameters.AddWithValue("@impact", weight);
+                    c.Parameters.AddWithValue("@count",  count);
+                }, ct);
+
+            logger.LogInformation("Repeated speeding event created: company={CompanyId} driver={DriverId} count={Count}", companyId, driverId, count);
+        }
+    }
+
+    // Recomputes driver_safety_scores for all drivers with safety events in the last 90 days.
+    private async Task RecomputeDriverScoresAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+
+        // Find all company+driver pairs with events in the last 90 days
+        var drivers = await db.QueryAsync(
+            @"SELECT DISTINCT company_id, driver_id
+              FROM safety_events
+              WHERE driver_id IS NOT NULL
+                AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 90 DAY)",
+            ct: ct);
+
+        foreach (var row in drivers)
+        {
+            var companyId = Convert.ToInt64(row["companyId"]);
+            var driverId  = Convert.ToInt64(row["driverId"]);
+
+            // Compute deductions for each time window
+            var (score7d, events7d, breakdown7d)   = await ComputeScoreAsync(db, companyId, driverId, 7, ct);
+            var (score30d, events30d, breakdown30d) = await ComputeScoreAsync(db, companyId, driverId, 30, ct);
+            var (score90d, events90d, _)            = await ComputeScoreAsync(db, companyId, driverId, 90, ct);
+
+            // Upsert driver_safety_scores
+            await db.ExecuteAsync(
+                @"INSERT INTO driver_safety_scores
+                    (company_id, driver_id, score_7d, score_30d, score_90d,
+                     events_7d, events_30d, events_90d, breakdown_json, computed_at)
+                  VALUES
+                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, UTC_TIMESTAMP())
+                  ON DUPLICATE KEY UPDATE
+                    score_7d=VALUES(score_7d), score_30d=VALUES(score_30d), score_90d=VALUES(score_90d),
+                    events_7d=VALUES(events_7d), events_30d=VALUES(events_30d), events_90d=VALUES(events_90d),
+                    breakdown_json=VALUES(breakdown_json), computed_at=UTC_TIMESTAMP()",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid",  companyId);
+                    c.Parameters.AddWithValue("@did",  driverId);
+                    c.Parameters.AddWithValue("@s7",   score7d);
+                    c.Parameters.AddWithValue("@s30",  score30d);
+                    c.Parameters.AddWithValue("@s90",  score90d);
+                    c.Parameters.AddWithValue("@e7",   events7d);
+                    c.Parameters.AddWithValue("@e30",  events30d);
+                    c.Parameters.AddWithValue("@e90",  events90d);
+                    c.Parameters.AddWithValue("@bd",   breakdown30d);
+                }, ct);
+        }
+    }
+
+    // Returns (score, event_count, breakdown_json) for a driver in a given day window.
+    // Score = 100 - Σ(score_impact) for non-dismissed events, clamped to [0,100].
+    internal static async Task<(decimal Score, int Events, string Breakdown)> ComputeScoreAsync(
+        Database db, long companyId, long driverId, int days, CancellationToken ct)
+    {
+        var events = await db.QueryAsync(
+            @"SELECT event_type, severity, score_impact
+              FROM safety_events
+              WHERE company_id=@cid AND driver_id=@did
+                AND status NOT IN ('dismissed')
+                AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL @days DAY)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid",  companyId);
+                c.Parameters.AddWithValue("@did",  driverId);
+                c.Parameters.AddWithValue("@days", days);
+            }, ct);
+
+        decimal deductions  = 0;
+        var byType = new Dictionary<string, (int Count, decimal Impact)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ev in events)
+        {
+            var impact   = ev["scoreImpact"] is { } si && si is not DBNull ? Convert.ToDecimal(si) : 10m;
+            var evType   = ev["eventType"]?.ToString() ?? "unknown";
+            deductions  += impact;
+
+            if (!byType.TryGetValue(evType, out var existing))
+                byType[evType] = (1, impact);
+            else
+                byType[evType] = (existing.Count + 1, existing.Impact + impact);
+        }
+
+        var score = Math.Max(0m, Math.Min(100m, 100m - deductions));
+        var parts = byType.Select(kv => $"\"{kv.Key}\":{{\"count\":{kv.Value.Count},\"impact\":{kv.Value.Impact:F2}}}");
+        var breakdown = $"{{{string.Join(",", parts)}}}";
+
+        return (Math.Round(score, 2), events.Count, breakdown);
+    }
+}
