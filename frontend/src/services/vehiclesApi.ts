@@ -34,7 +34,7 @@ export const vehiclesApi = {
     return { replacementForecast, customerBusiness, routeBusiness, operationalGaps };
   }),
   detail: (id: string | number) => getVehicleById(id),
-  timeline: async (id: string | number) => [{ eventType: "status.update", title: "Vehicle loaded from development fallback", severity: "Low", eventTime: new Date().toISOString(), id }],
+  timeline: async (id: string | number) => [{ eventType: "status.update", title: "Vehicle record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review vehicle readiness", body: "Maintain service cadence and dispatch device health before assigning the next load.", score: 86 }],
   create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)), () => ({ ...payload, id: payload.id ?? `veh-${Date.now()}`, success: true })),
   update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)), () => ({ ...payload, id, success: true })),

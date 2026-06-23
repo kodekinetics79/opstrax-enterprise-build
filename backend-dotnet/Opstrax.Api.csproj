@@ -8,4 +8,9 @@
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Opstrax.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

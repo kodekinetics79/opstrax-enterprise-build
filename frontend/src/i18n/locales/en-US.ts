@@ -25,7 +25,7 @@ const enUS = {
   notes: "Notes",
   view_all: "View All",
   no_data: "No data available",
-  ai_recommendations: "AI Recommendations",
+  ai_recommendations: "Recommendations",
   disclaimer: "OpsTrax provides compliance management, monitoring, and audit-readiness tools. Final regulatory compliance remains the carrier's responsibility. ELD certification depends on the connected ELD provider/device and applicable country requirements.",
 
   // Compliance
@@ -38,7 +38,7 @@ const enUS = {
   compliance_cross_border: "Cross-Border Watch",
   compliance_driver_status: "Driver Compliance Status",
   compliance_vehicle_status: "Vehicle Compliance Status",
-  compliance_ai_advisor: "Compliance AI Advisor",
+  compliance_ai_advisor: "Compliance Advisor",
   violation_code: "Violation Code",
   violation_description: "Description",
   violation_category: "Category",

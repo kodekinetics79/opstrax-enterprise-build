@@ -204,6 +204,23 @@ public sealed class Batch7SchemaService(Database db)
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             completed_at TIMESTAMP NULL
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+
+        // Workforce shift scheduling — one row per driver per week
+        @"CREATE TABLE IF NOT EXISTS workforce_schedules (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            driver_id BIGINT NOT NULL,
+            week_start DATE NOT NULL,
+            monday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            tuesday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            wednesday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            thursday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            friday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            saturday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            sunday VARCHAR(40) NOT NULL DEFAULT 'Off',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_workforce_driver_week (driver_id, week_start)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
     ];
 
     private static readonly string[] Indexes =

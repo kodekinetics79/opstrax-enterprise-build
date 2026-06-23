@@ -56,7 +56,7 @@ const mapLayers = [
   "Trailers",
   "Assets",
   "Cold chain sensors",
-  "AI dashcam events",
+  "Dashcam Events",
   "Incidents",
   "Geofences",
   "Routes",
@@ -94,7 +94,7 @@ const liveEvents = [
   { time: "04:10", severity: "Critical", type: "temperature.breach", entity: "KSA-REEFER-119", body: "Reefer temperature exceeded threshold for 6 minutes.", action: "Open evidence" },
   { time: "04:08", severity: "Medium", type: "driver.hos", entity: "DRV-KSA-302", body: "Bilal Ansari has 42 minutes HOS buffer remaining.", action: "Review HOS" },
   { time: "04:06", severity: "Low", type: "pod.uploaded", entity: "SHP-6203", body: "POD uploaded for DesertCart final-mile delivery.", action: "Invoice" },
-  { time: "04:04", severity: "High", type: "device.offline", entity: "CAM-VA-106", body: "AI dashcam has not uploaded since 08:10.", action: "Create task" },
+  { time: "04:04", severity: "High", type: "device.offline", entity: "CAM-VA-106", body: "Dashcam has not uploaded since 08:10.", action: "Create task" },
 ];
 
 const whatIfCandidates = [
@@ -192,29 +192,21 @@ function markerColor(entity: FleetEntity) {
 
 function FleetTopKpiBar({ entities, setQuickFilter }: { entities: FleetEntity[]; setQuickFilter: (filter: string) => void }) {
   const activeShipments = entities.filter((entity) => entity.shipment && entity.shipment.currentStatus !== "Delivered");
+  const delayedShipments = entities.filter((entity) => entity.isDelayed);
+  const criticalAlerts = entities.filter((entity) => entity.severity === "Critical");
   const revenueAtRisk = entities.filter((entity) => entity.marginRisk || entity.isDelayed).reduce((sum, entity) => sum + Number(entity.shipment?.revenue ?? 0), 0);
-  const kpis = [
-    ["Total Fleet", entities.length, "All"],
-    ["Active Vehicles", entities.filter((entity) => String(entity.vehicle.status).match(/Active/i)).length, "Active"],
-    ["Idle Vehicles", entities.filter((entity) => String(entity.vehicle.status).match(/Idle/i)).length, "Idle"],
-    ["In Maintenance", entities.filter((entity) => String(entity.vehicle.status).match(/Maintenance/i)).length, "Maintenance"],
-    ["Out of Service", 0, "Out of Service"],
-    ["Active Shipments", activeShipments.length, "Active Shipments"],
-    ["Delayed Shipments", entities.filter((entity) => entity.isDelayed).length, "Delayed"],
-    ["Available Drivers", drivers.filter((driver) => String(driver.availability).match(/Available|Idle/i)).length, "Available Drivers"],
-    ["HOS Risk Drivers", entities.filter((entity) => entity.hosRisk).length, "HOS Risk"],
-    ["Critical Alerts", entities.filter((entity) => entity.severity === "Critical").length, "Critical"],
-    ["Temperature Breaches", entities.filter((entity) => entity.isColdChain && entity.violations.some((violation) => violation.includes("Temperature"))).length, "Cold Chain"],
-    ["Safety Events", incidents.length, "Safety"],
-    ["Devices Offline", entities.filter((entity) => entity.deviceOffline).length, "Device Risk"],
-    ["Revenue at Risk", formatCurrency(revenueAtRisk, "SAR"), "Margin Risk"],
-    ["On-Time Delivery %", "94.6%", "On Time"],
+  const kpis: [string, string, string, string, string][] = [
+    ["Active Shipments", String(activeShipments.length), "3 in transit", "Active", "Active Shipments"],
+    ["Delayed Shipments", String(delayedShipments.length), delayedShipments.length > 0 ? `${delayedShipments.length} vs yesterday` : "On track", delayedShipments.length > 0 ? "Risk" : "Active", "Delayed"],
+    ["Critical Exceptions", String(criticalAlerts.length), criticalAlerts.length > 0 ? "Action required" : "All clear", criticalAlerts.length > 0 ? "Critical" : "Active", "Critical"],
+    ["Revenue at Risk", formatCurrency(revenueAtRisk, "SAR"), revenueAtRisk > 0 ? "SLA exposure" : "Margin protected", revenueAtRisk > 0 ? "Risk" : "Active", "Margin Risk"],
+    ["On-Time Delivery", "94.6%", "This week", "Active", "On Time"],
   ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      {kpis.map(([label, value, filter]) => (
-        <button key={String(label)} className="text-left" onClick={() => setQuickFilter(String(filter))}>
-          <KpiCard label={String(label)} value={String(value)} status={String(label).match(/Risk|Critical|Delayed|Offline|Breach|Maintenance/) ? "Risk" : "Active"} />
+    <div className="grid gap-3 xl:grid-cols-5">
+      {kpis.map(([label, value, trend, status, filter]) => (
+        <button key={label} className="text-left" onClick={() => setQuickFilter(filter)}>
+          <KpiCard label={label} value={value} trend={trend} status={status} />
         </button>
       ))}
     </div>
@@ -306,9 +298,9 @@ function MapFilterPanel({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input className="field pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Vehicle, driver, shipment, customer..." />
         </div>
-        <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 p-3">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">Natural language search</p>
-          <p className="mt-1 text-xs text-violet-700/80">Try: “Show delayed cold-chain loads near Riyadh” or “Find vehicles with offline devices”.</p>
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-600">Search tips</p>
+          <p className="mt-1 text-xs text-slate-500">Search by vehicle ID, driver name, shipment, customer, or location.</p>
         </div>
       </div>
       {filterGroups.map(([title, items]) => (
@@ -533,9 +525,9 @@ function Vehicle360Drawer({ entity, mode }: { entity: FleetEntity; mode: ViewMod
               <PublicField label="Harsh braking" value={entity.incident ? 2 : 0} />
               <PublicField label="Speeding" value={entity.severity === "High" ? 1 : 0} />
               <PublicField label="Distracted driving" value="No active event" />
-              <PublicField label="AI dashcam clip" value={entity.incident ? "Available" : "No clip"} />
-              <PublicField label="Driver-facing camera" value={entity.device?.type === "AI Dashcam" ? entity.device.status : "Linked"} />
-              <PublicField label="Road-facing camera" value={entity.device?.type === "AI Dashcam" ? entity.device.status : "Linked"} />
+              <PublicField label="Dashcam clip" value={entity.incident ? "Available" : "No clip"} />
+              <PublicField label="Driver-facing camera" value={entity.device?.type === "AI Dashcam" || entity.device?.type === "Dashcam" ? entity.device.status : "Linked"} />
+              <PublicField label="Road-facing camera" value={entity.device?.type === "AI Dashcam" || entity.device?.type === "Dashcam" ? entity.device.status : "Linked"} />
               <PublicField label="ELD sync" value={entity.hosRisk ? "Stale sync" : "Synced"} />
               <PublicField label="Firmware" value={entity.device?.firmware ?? "--"} />
               <PublicField label="Signal" value={entity.device?.signal ?? "--"} />
@@ -631,7 +623,7 @@ function Shipment360Drawer({ entity, customerMode, margin }: { entity: FleetEnti
   );
 }
 
-function AIRecommendationPanel({ selected }: { selected: FleetEntity }) {
+function RecommendationPanel({ selected }: { selected: FleetEntity }) {
   const actions = [
     selected.isDelayed ? "Notify customer with updated ETA and reason code." : "Keep ETA confidence active and monitor next stop variance.",
     selected.maintenanceRisk ? "Schedule maintenance immediately after delivery and block new dispatch." : "No maintenance block; eligible for next load after delivery.",
@@ -641,14 +633,14 @@ function AIRecommendationPanel({ selected }: { selected: FleetEntity }) {
   ];
   return (
     <div className="panel p-5">
-      <p className="section-title">Next Best Action Panel</p>
+      <p className="section-title">Recommended Actions</p>
       <div className="mt-4 space-y-3">
         {actions.map((action, index) => (
-          <div key={action} className="rounded-xl border border-violet-100 bg-violet-50/70 p-3">
+          <div key={action} className="rounded-xl border border-teal-100 bg-teal-50/60 p-3">
             <div className="flex items-start gap-2">
-              <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-violet-600" />
+              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-teal-500" />
               <div>
-                <p className="text-sm font-bold text-slate-900">AI suggestion {index + 1}</p>
+                <p className="text-sm font-bold text-slate-900">Recommendation {index + 1}</p>
                 <p className="mt-1 text-sm text-slate-600">{action}</p>
               </div>
             </div>
@@ -659,10 +651,10 @@ function AIRecommendationPanel({ selected }: { selected: FleetEntity }) {
   );
 }
 
-function WhatIfDispatchSimulation() {
+function AssignmentPlanner() {
   return (
     <div className="panel p-5">
-      <p className="section-title">What-If Dispatch Simulation</p>
+      <p className="section-title">Assignment Planner</p>
       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
         <p className="text-sm font-bold text-slate-900">Unassigned booking: BK-8102 · Al Noor Pharma</p>
         <p className="mt-1 text-xs text-slate-500">Compare top candidate vehicles by ETA, cost, risk and margin.</p>
@@ -683,10 +675,10 @@ function WhatIfDispatchSimulation() {
   );
 }
 
-function LiveIncidentReplay() {
+function TripReplay() {
   return (
     <div className="panel p-5">
-      <p className="section-title">Live Incident Replay</p>
+      <p className="section-title">Trip Replay</p>
       <div className="mt-4 h-2 rounded-full bg-slate-100">
         <div className="h-2 w-[68%] rounded-full bg-gradient-to-r from-blue-600 via-amber-400 to-red-500" />
       </div>
@@ -704,7 +696,7 @@ function AlertFeed() {
   return (
     <div className="panel p-4">
       <div className="flex items-center justify-between">
-        <p className="section-title">Bottom Live Activity Timeline</p>
+        <p className="section-title">Operations Timeline</p>
         <StatusBadge status="Live" />
       </div>
       <div className="mt-4 grid gap-3 xl:grid-cols-5">
@@ -772,7 +764,7 @@ export function Fleet360MapView() {
   const [quickFilter, setQuickFilter] = useState("All");
   const [activeTab, setActiveTab] = useState("Vehicle 360");
   const [toggles, setToggles] = useState<Set<string>>(new Set());
-  const [layers, setLayers] = useState<Set<string>>(new Set(["Vehicles", "Drivers", "Shipments", "Cold chain sensors", "AI dashcam events", "Incidents", "Geofences", "Routes", "Risk Heatmap", "Customer locations", "Warehouses / hubs"]));
+  const [layers, setLayers] = useState<Set<string>>(new Set(["Vehicles", "Drivers", "Shipments", "Cold chain sensors", "Dashcam Events", "Incidents", "Geofences", "Routes", "Risk Heatmap", "Customer locations", "Warehouses / hubs"]));
   const entities = useMemo(() => buildFleetEntities(), []);
   const visibleEntities = useMemo(() => entities.filter((entity) => passesFilter(entity, quickFilter, toggles, search, customerScope, mode)), [customerScope, entities, mode, quickFilter, search, toggles]);
   const [selectedId, setSelectedId] = useState(entities[0]?.id ?? "");
@@ -782,9 +774,9 @@ export function Fleet360MapView() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Control Tower"
-        title="Fleet 360 Command View"
+        title="Fleet 360"
         description="Real-time operational visibility across vehicles, drivers, shipments, sensors, alerts, compliance, customers and financial risk."
-        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export Command Snapshot</button><button className="btn-primary"><Sparkles className="h-4 w-4" /> Ask Fleet AI</button></>}
+        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export Snapshot</button><button className="btn-primary"><Sparkles className="h-4 w-4" /> Ask Fleet Assistant</button></>}
       />
 
       <FleetTopKpiBar entities={entities} setQuickFilter={setQuickFilter} />
@@ -816,7 +808,7 @@ export function Fleet360MapView() {
 
       <div className="panel overflow-hidden">
         <div className="flex gap-1 overflow-x-auto border-b border-slate-100 bg-white px-3 py-2">
-          {["Vehicle 360", "Filters & Layers", "AI Actions", "Dispatch Simulation", "Incident Replay", "Live Timeline"].map((tab) => (
+          {["Vehicle 360", "Filters & Layers", "Recommendations", "Assignment Planner", "Trip Replay", "Live Timeline"].map((tab) => (
             <button
               key={tab}
               className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-bold transition ${activeTab === tab ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
@@ -834,16 +826,16 @@ export function Fleet360MapView() {
           {activeTab === "Filters & Layers" && (
             <MapFilterPanel search={search} setSearch={setSearch} quickFilter={quickFilter} setQuickFilter={setQuickFilter} toggles={toggles} setToggles={setToggles} layers={layers} setLayers={setLayers} />
           )}
-          {activeTab === "AI Actions" && (
+          {activeTab === "Recommendations" && (
             selected ? (
               <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
-                <AIRecommendationPanel selected={selected} />
-                <AiInsightCard insight={{ title: "Fleet AI command brief", body: "Use the selected vehicle context plus map layers to decide whether to reroute, notify the customer, create service work, or protect margin.", score: 91, moduleKey: "map-view" }} />
+                <RecommendationPanel selected={selected} />
+                <AiInsightCard insight={{ title: "Fleet Operations Brief", body: "Use the selected vehicle context plus map layers to decide whether to reroute, notify the customer, create service work, or protect margin.", score: 91, moduleKey: "map-view" }} />
               </div>
-            ) : <EmptyState title="No AI context selected" subtitle="Select a vehicle or shipment marker to generate next-best actions." />
+            ) : <EmptyState title="No vehicle selected" subtitle="Select a vehicle or shipment marker to view recommended actions." />
           )}
-          {activeTab === "Dispatch Simulation" && <WhatIfDispatchSimulation />}
-          {activeTab === "Incident Replay" && <LiveIncidentReplay />}
+          {activeTab === "Assignment Planner" && <AssignmentPlanner />}
+          {activeTab === "Trip Replay" && <TripReplay />}
           {activeTab === "Live Timeline" && (
             mode === "Internal Operations View" ? (
               <AlertFeed />

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, Edit3, FileCheck2, Plus, RadioTower, Send, Sparkles, Trash2, X } from "lucide-react";
-import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
@@ -145,7 +145,7 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onDelete,
 function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
   const submit = (event: FormEvent) => { event.preventDefault(); onSave(form); };
-  return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4"><form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}><div className="flex justify-between"><h2 className="text-2xl font-semibold text-white">{form.id ? "Edit Job" : "Create Job"}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div><div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span><input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} required={["jobNumber","customerId","pickupAddress","dropoffAddress"].includes(key)} /></label>)}</div><div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button className="btn-primary" disabled={saving}>Save Job</button></div></form></div>;
+  return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4"><form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}><div className="flex justify-between"><h2 className="text-2xl font-semibold text-slate-900">{form.id ? "Edit Job" : "Create Job"}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div><div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span><input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} required={["jobNumber","customerId","pickupAddress","dropoffAddress"].includes(key)} /></label>)}</div><div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>Save Job</button></div></form></div>;
 }
 
 function Panel({ title, record, keys }: { title: string; record: AnyRecord; keys: string[] }) {
@@ -156,25 +156,16 @@ function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; colu
   return <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h3 className="section-title">{title}</h3>{!rows.length ? <p className="mt-3 text-sm text-slate-500">No records yet.</p> : <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs uppercase tracking-[0.16em] text-slate-500"><tr>{columns.map((c) => <th key={c} className="px-3 py-2">{labelize(c)}</th>)}</tr></thead><tbody className="divide-y divide-white/10">{rows.slice(0, 8).map((row, i) => <tr key={String(row.id || i)}>{columns.map((c) => <td key={c} className="px-3 py-2 text-slate-300">{String(row[c] ?? "--")}</td>)}</tr>)}</tbody></table></div>}</section>;
 }
 
-function exportCsv(name: string, rows: AnyRecord[]) {
-  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
-  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `opstrax-${name}.csv`;
-  a.click();
-}
-
 function exportJobRecordCsv(record?: AnyRecord | null, detail?: AnyRecord) {
   if (!record) return;
   const rows = [
-    { section: "Job", key: "jobNumber", value: String(record.jobNumber ?? record.jobCode ?? record.id ?? "") },
+    { section: "Job", key: "jobNumber",    value: String(record.jobNumber ?? record.jobCode ?? record.id ?? "") },
     { section: "Job", key: "customerName", value: String(record.customerName ?? record.customer ?? "") },
-    { section: "Job", key: "status", value: String(record.status ?? "") },
-    { section: "Job", key: "driverName", value: String(record.driverName ?? record.assignedDriver ?? "") },
-    { section: "Job", key: "vehicleCode", value: String(record.vehicleCode ?? record.assignedVehicle ?? "") },
-    { section: "Detail", key: "timeline", value: JSON.stringify(detail?.timeline ?? []) },
-    { section: "Detail", key: "proof", value: JSON.stringify(detail?.proof ?? []) },
+    { section: "Job", key: "status",       value: String(record.status ?? "") },
+    { section: "Job", key: "driverName",   value: String(record.driverName ?? record.assignedDriver ?? "") },
+    { section: "Job", key: "vehicleCode",  value: String(record.vehicleCode ?? record.assignedVehicle ?? "") },
+    { section: "Detail", key: "timeline",       value: JSON.stringify(detail?.timeline ?? []) },
+    { section: "Detail", key: "proof",          value: JSON.stringify(detail?.proof ?? []) },
     { section: "Detail", key: "communications", value: JSON.stringify(detail?.communications ?? []) },
   ];
   exportCsv(`job-${String(record.jobNumber ?? record.jobCode ?? record.id ?? "report")}`, rows);

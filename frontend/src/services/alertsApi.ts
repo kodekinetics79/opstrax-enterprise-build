@@ -1,31 +1,43 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getAlerts, withFallback } from "@/services/fleetDomainApi";
+import { getAlerts } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
-function fallbackAlert(id: string | number) {
-  return getAlerts().then((rows) => rows.find((row) => String(row.alertId ?? row.id) === String(id)));
+async function fallbackAlert(id: string | number) {
+  const rows = await getAlerts();
+  return rows.find((row) => String(row.alertId ?? row.id) === String(id));
 }
 
 export const alertsApi = {
   list: () => getAlerts(),
-  detail: (id: string | number) =>
-    withFallback(unwrap<AnyRecord>(apiClient.get(`/api/alerts/${id}`)), async () => {
+  detail: async (id: string | number) => {
+    try {
+      return await unwrap<AnyRecord>(apiClient.get(`/api/alerts/${id}`));
+    } catch {
       const record = await fallbackAlert(id);
       if (!record) throw new Error("Alert not found");
       return { record: { ...record } };
-    }),
-  acknowledge: (id: string | number, payload: AnyRecord = {}) =>
-    withFallback(unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/acknowledge`, payload)), async () => {
+    }
+  },
+  acknowledge: async (id: string | number, payload: AnyRecord = {}) => {
+    try {
+      return await unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/acknowledge`, payload));
+    } catch {
       const record = await fallbackAlert(id);
       return { ...(record || { id }), ...payload, id, alertId: String(record?.alertId ?? id), status: "Acknowledged", success: true };
-    }),
-  close: (id: string | number, payload: AnyRecord = {}) =>
-    withFallback(unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/close`, payload)), async () => {
+    }
+  },
+  close: async (id: string | number, payload: AnyRecord = {}) => {
+    try {
+      return await unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/close`, payload));
+    } catch {
       const record = await fallbackAlert(id);
       return { ...(record || { id }), ...payload, id, alertId: String(record?.alertId ?? id), status: "Closed", success: true };
-    }),
-  createTask: (id: string | number, payload: AnyRecord = {}) =>
-    withFallback(unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/tasks`, payload)), async () => {
+    }
+  },
+  createTask: async (id: string | number, payload: AnyRecord = {}) => {
+    try {
+      return await unwrap<AnyRecord>(apiClient.post(`/api/alerts/${id}/tasks`, payload));
+    } catch {
       const record = await fallbackAlert(id);
       return {
         taskId: `TASK-${Date.now()}`,
@@ -34,5 +46,6 @@ export const alertsApi = {
         ...payload,
         success: true,
       };
-    }),
+    }
+  },
 };

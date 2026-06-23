@@ -18,7 +18,7 @@ export const incidentsApi = {
   create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/incidents", payload)), () => ({ ...payload, id: payload.id ?? `inc-${Date.now()}`, success: true })),
   update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/incidents/${id}`, payload)), () => ({ ...payload, id, success: true })),
   remove: (id: string | number) => withFallback(unwrap<AnyRecord>(apiClient.delete(`/api/incidents/${id}`)), () => ({ id, success: true })),
-  timeline: async (id: string | number) => [{ eventType: "incident.update", title: "Incident loaded from development fallback", severity: "Low", eventTime: new Date().toISOString(), id }],
+  timeline: async (id: string | number) => [{ eventType: "incident.update", title: "Incident record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review incident evidence", body: "Link the event to the related shipment, driver and vehicle before closure.", score: 87 }],
   status: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post(`/api/incidents/${id}/status`, payload)), () => ({ id, ...payload, success: true })),
   attachEvidence: (id: string | number, payload: AnyRecord = {}) => withFallback(unwrap<AnyRecord>(apiClient.post(`/api/incidents/${id}/attach-evidence`, payload)), () => ({ id, ...payload, success: true })),

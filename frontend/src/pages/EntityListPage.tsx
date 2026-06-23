@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText, Plus, Save, Search, Sparkles, Target, Trash2, UserCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
@@ -82,7 +82,7 @@ const config: Record<EntityKind, EntityConfig> = {
       ["Maintenance Summary", "maintenance", ["title", "category", "status", "riskLevel", "dueDate"]],
       ["Compliance Summary", "compliance", ["documentName", "documentType", "status", "expiryDate"]],
       ["Documents", "documents", ["documentName", "documentType", "status", "expiryDate"]],
-      ["Trips Placeholder", "trips", ["status", "startedAt", "completedAt"]],
+      ["Trip Activity", "trips", ["status", "startedAt", "completedAt"]],
       ["Safety Events", "safetyEvents", ["eventType", "severity", "reviewStatus", "eventTime"]],
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
@@ -147,7 +147,7 @@ const config: Record<EntityKind, EntityConfig> = {
     ],
     wow: ["Customer SLA Health Score", "At-Risk Customer Watch", "Recommended Customer Update", "Customer Delivery Experience Score"],
     painPoints: ["SLA surprise escalations", "Manual customer update follow-up", "Contract/rate context separated from jobs", "ETA history hard to find", "At-risk account drift"],
-    competitiveEdges: ["SLA and delivery experience scored together", "ETA history and communications tied to each customer", "Contracts, active jobs and contacts in one view", "AI customer update recommendation", "Customer risk watch for service teams"],
+    competitiveEdges: ["SLA and delivery experience scored together", "ETA history and communications tied to each customer", "Contracts, active jobs and contacts in one view", "Customer update recommendation", "Customer risk watch for service teams"],
     decisionSignals: ["sla_health_score", "delivery_experience_score", "risk_score", "active_jobs", "sla_tier", "status"],
     detailSections: [
       ["Contact Info", "contacts", ["fullName", "title", "email", "phone", "isPrimary"]],
@@ -189,7 +189,7 @@ const config: Record<EntityKind, EntityConfig> = {
     decisionSignals: ["utilization_score", "risk_score", "geofence_status", "current_zone", "assigned_vehicle", "assigned_driver"],
     detailSections: [
       ["Documents", "documents", ["documentName", "documentType", "status", "expiryDate"]],
-      ["Movement History Placeholder", "movementHistory", ["eventType", "title", "severity", "eventTime", "createdAt"]],
+      ["Movement History", "movementHistory", ["eventType", "title", "severity", "eventTime", "createdAt"]],
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
   },
@@ -201,7 +201,7 @@ const config: Record<EntityKind, EntityConfig> = {
     api: jobsApi,
     fields: [],
     defaults: {},
-    kpis: [["Total Records", "total", ""], ["Active", "active", ""], ["At Risk", "atRisk", ""], ["AI Signals", "aiSignals", ""]],
+    kpis: [["Total Records", "total", ""], ["Active", "active", ""], ["At Risk", "atRisk", ""], ["Signals", "aiSignals", ""]],
     wow: [],
     painPoints: [],
     competitiveEdges: [],
@@ -328,7 +328,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         actions={
           <>
             {cfg.api.create ? <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ ...cfg.defaults }); } }}><Plus className="h-4 w-4" /> Create</button> : null}
-            <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportRows(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
+            <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportCsv(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
           </>
         }
       />
@@ -366,7 +366,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
         <div className="space-y-4">
           <div className="panel p-5">
-            <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Competitive Intelligence</span></div>
+            <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
             <div className="mt-4 flex flex-wrap gap-2">
               {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
             </div>
@@ -439,7 +439,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
         <div className="mt-4 flex flex-wrap gap-2">
           <StatusBadge status={record.status} />
           <RiskBadge risk={record.riskHeatScore || record.geofenceRiskBadge || record.riskScore || "Low"} />
-          <span className="badge"><Bot className="h-4 w-4" /> {String(record.recommendedAction || "AI monitoring active")}</span>
+          <span className="badge"><Bot className="h-4 w-4" /> {String(record.recommendedAction || "Monitoring active")}</span>
         </div>
         <div className="mt-5 flex gap-3">
           <button className="btn-primary" disabled={!canUpdate} title={!canUpdate ? "You do not have permission to perform this action." : undefined} onClick={() => canUpdate && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
@@ -506,7 +506,7 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
       ? Number(summary?.driverReadinessScore ?? summary?.driver_readiness_score ?? 0)
       : Number(summary?.utilizationScore ?? summary?.utilization_score ?? 0);
   const assignedPct = rows.length ? Math.round((assigned / rows.length) * 100) : 0;
-  const title = kind === "vehicles" ? "Fleet readiness cockpit" : kind === "drivers" ? "Driver bench cockpit" : "Asset control cockpit";
+  const title = kind === "vehicles" ? "Fleet Readiness" : kind === "drivers" ? "Driver Readiness" : "Asset Control";
   const sub = kind === "vehicles"
     ? "A live-feeling view of what can move, what is blocked, and what should be retired or fixed before it hurts dispatch."
     : kind === "drivers"
@@ -526,7 +526,7 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
         <div className="relative min-h-[280px] overflow-hidden bg-gradient-to-br from-blue-600 via-sky-500 to-teal-500 p-6 text-white">
           <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-white/20 blur-2xl" />
           <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-t from-blue-950/20 to-transparent" />
-          <p className="relative text-xs font-black uppercase tracking-[0.24em] text-blue-50">OpsTrax Intelligence</p>
+          <p className="relative text-xs font-black uppercase tracking-[0.24em] text-blue-50">Operations Intelligence</p>
           <h2 className="relative mt-3 text-2xl font-black leading-tight">{title}</h2>
           <p className="relative mt-3 text-sm leading-relaxed text-blue-50/90">{sub}</p>
           <div className="relative mt-8 grid grid-cols-[120px_1fr] items-center gap-5">
@@ -581,11 +581,11 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="section-title">Pain Points Covered</p>
+              <p className="section-title">Readiness Checks</p>
               <div className="mt-3 space-y-2">
                 {cfg.painPoints.map((point, index) => (
                   <div key={point} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                    <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-100 text-xs font-black text-blue-700">{index + 1}</span>
+                    <span className="grid h-6 w-6 place-items-center rounded-full bg-teal-100 text-xs font-black text-teal-700">{index + 1}</span>
                     <span className="text-sm font-semibold text-slate-700">{point}</span>
                   </div>
                 ))}
@@ -742,7 +742,7 @@ function BusinessPlanningPanel({ title, rows, entityLabel }: { title: string; ro
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span>
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span>
                     <p className="truncate font-black text-slate-950">{String(label)}</p>
                   </div>
                   <p className="mt-2 text-xs text-slate-500">{jobs} jobs · {String(row.revenueEstimate ?? row.revenue_estimate ?? "$0")} revenue · {String(row.marginEstimate ?? row.margin_estimate ?? "$0")} margin</p>
@@ -938,17 +938,6 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
   );
 }
 
-function exportRows(kind: string, rows: AnyRecord[]) {
-  const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
-  const csv = [columns.join(","), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column] ?? "")).join(","))].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `opstrax-${kind}-export.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
 
 function permissionMatrix(kind: EntityKind) {
   if (kind === "vehicles") return { create: "vehicles:create", update: "vehicles:update", delete: "vehicles:delete", assign: "vehicles:assign", export: "vehicles:export" };

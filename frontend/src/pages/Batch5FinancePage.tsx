@@ -2,10 +2,10 @@ import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, Download, Flame, Fuel, Landmark,
-  PenTool, Plus, Sparkles, TrendingDown, Truck, WalletCards, X, Zap,
+  Download, Fuel, Landmark,
+  PenTool, Plus, TrendingDown, Truck, WalletCards, X, Zap,
 } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import {
   useCarrierDetail, useCarriers, useCarriersSummary,
   useContractDetail, useContracts, useContractsSummary,
@@ -195,7 +195,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const s = summaryQ.data ?? {};
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Header */}
       <PageHeader
         eyebrow={config.eyebrow}
@@ -216,14 +216,13 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
       />
 
       {/* KPI Grid */}
-      <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
-        {config.kpis.map(([label, key]) => (
+      <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">
+        {config.kpis.slice(0, 5).map(([label, key]) => (
           <KpiCard
             key={key}
             label={label}
             value={String(s[key] ?? 0)}
-            icon={config.icon}
-            status={/risk|anomaly|missing|below|critical|expir|leakage|unusual|pending|rejected/i.test(label) ? "Review" : "Active"}
+            status={/anomaly|missing|critical|leakage|unusual|rejected/i.test(label) ? "Critical" : /pending|risk|expir/i.test(label) ? "pending" : undefined}
           />
         ))}
       </div>
@@ -232,7 +231,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
       <ModuleChart kind={kind} rows={rowsQ.data ?? []} vehicleSummary={vehicleAggQ.data as AnyRecord[] | undefined} />
 
       {/* Search + Filter bar */}
-      <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
         <input
           className="field xl:max-w-md"
           value={search}
@@ -243,9 +242,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
         </select>
         <div className="ml-auto flex items-center gap-2">
-          <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI intelligence active</span>
-          {kind === "fuel"    && <span className="badge"><AlertTriangle className="h-3.5 w-3.5 text-amber-400" /> Anomaly detection</span>}
-          {kind === "fuel"    && <span className="badge"><Flame className="h-3.5 w-3.5 text-orange-400" /> Idle cost radar</span>}
+          {kind === "fuel" && <span className="text-xs text-slate-400">Anomaly detection active</span>}
         </div>
       </div>
 
@@ -295,18 +292,19 @@ function TabBar({ tabs, active, onChange }: {
   onChange: (i: number) => void;
 }) {
   return (
-    <div className="flex items-center gap-1 border-b border-white/[0.07]">
+    <div className="flex items-center gap-1 border-b border-slate-200">
       {tabs.map((tab, i) => (
         <button
           key={tab.label}
+          type="button"
           onClick={() => onChange(i)}
           className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-            i === active ? "text-white" : "text-slate-400 hover:text-slate-200"
+            i === active ? "text-slate-900" : "text-slate-500 hover:text-slate-700"
           }`}
         >
           {tab.label}
           <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-            i === active ? "bg-teal-400/20 text-teal-300" : "bg-white/[0.06] text-slate-500"
+            i === active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-500"
           }`}>
             {tab.count}
           </span>
@@ -323,10 +321,10 @@ function TabBar({ tabs, active, onChange }: {
    MODULE CHART
 ────────────────────────────────────────────────────────── */
 const CHART_TOOLTIP_STYLE = {
-  background: "#0f172a",
-  border: "1px solid rgba(255,255,255,.1)",
+  background: "#fff",
+  border: "1px solid #e2e8f0",
   borderRadius: 8,
-  color: "#e2e8f0",
+  color: "#475569",
   fontSize: 12,
 };
 
@@ -347,7 +345,7 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <p className="section-title mb-4">Fuel Cost by Vehicle (Fleet Top 10)</p>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Fuel Cost"]} />
@@ -374,7 +372,7 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <p className="section-title mb-4">Margin % by Job (Lowest First)</p>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={40} unit="%" />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`${Number(v ?? 0).toFixed(1)}%`, "Margin"]} />
@@ -408,7 +406,7 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <p className="section-title mb-4">Estimated Leakage by Category</p>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={byCategory} layout="vertical" margin={{ top: 0, right: 24, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)" horizontal={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" horizontal={false} />
             <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
             <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={false} tickLine={false} width={130} />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Est. Leakage"]} />
@@ -452,7 +450,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
             <p className="text-[10px] font-extrabold uppercase tracking-[0.22em] text-teal-400">{config.eyebrow} · Detail</p>
             <h2 className="mt-1 text-xl font-bold text-white">{title}</h2>
           </div>
-          <button className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+          <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
 
         <div className="p-6 space-y-6">
@@ -465,23 +463,23 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
 
           <div className="flex flex-wrap gap-3">
             {!!config.createLabel && (
-              <button className="btn-primary" onClick={() => onEdit(record)}>
+              <button type="button" className="btn-primary" onClick={() => onEdit(record)}>
                 <PenTool className="h-4 w-4" /> Edit
               </button>
             )}
             {config.actions.map((type) => (
-              <button key={type} className="btn-ghost" onClick={() => onAction(type, record)}>
+              <button key={type} type="button" className="btn-ghost" onClick={() => onAction(type, record)}>
                 {actionLabel(type)}
               </button>
             ))}
-            <button className="btn-ghost"><Download className="h-4 w-4" /> Export Placeholder</button>
+            <button type="button" className="btn-ghost" onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Record</button>
           </div>
 
           {/* Info grid */}
           <div className="grid gap-4 lg:grid-cols-3">
             <Info title="Primary Details" record={record} keys={Object.keys(record).slice(0, 10)} />
             <Info title="Financial / Risk" record={record} keys={["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]} />
-            <Info title="AI Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
+            <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
           </div>
 
           {/* Sub-record sections */}
@@ -494,7 +492,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* AI recommendations */}
           {((detail?.recommendations as AnyRecord[]) ?? []).length > 0 && (
             <div>
-              <p className="section-title mb-4">AI Recommendations</p>
+              <p className="section-title mb-4">Recommendations</p>
               <div className="grid gap-4 lg:grid-cols-2">
                 {((detail?.recommendations as AnyRecord[]) ?? []).slice(0, 4).map((insight, i) => (
                   <AiInsightCard key={String(insight.id ?? i)} insight={insight} />
@@ -525,7 +523,7 @@ function Modal({ title, fields, initial, saving, onClose, onSave }: {
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/65 p-4 backdrop-blur-sm">
       <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}>
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-white">{title}</h2>
+          <h2 className="text-xl font-bold text-slate-900">{title}</h2>
           <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -643,13 +641,4 @@ async function runAction(kind: Kind, type: string, row: AnyRecord): Promise<AnyR
   return type === "acknowledge"
     ? costLeakageApi.acknowledge(id)
     : costLeakageApi.createAction(id, { actionTitle: "Cost recovery action", estimatedSavings: 500 });
-}
-
-function exportCsv(name: string, rows: AnyRecord[]) {
-  const cols = Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).slice(0, 24);
-  const csv  = [cols.join(","), ...rows.map((r) => cols.map((c) => JSON.stringify(r[c] ?? "")).join(","))].join("\n");
-  const a    = document.createElement("a");
-  a.href     = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `opstrax-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
 }

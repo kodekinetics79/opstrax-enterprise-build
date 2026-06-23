@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AnyRecord } from "@/types";
 import { reportsApi, kpiApi, slaApi, auditApi, executiveApi } from "@/services/batch7Api";
+import { tripApi } from "@/services/tripApi";
 
 // ── Reports ──────────────────────────────────────────────────────────────────
 export function useReportCatalog() {
@@ -97,15 +99,16 @@ export function useResolveSlaBreache() {
 }
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
-export function useAuditLogs(params?: Record<string, string>) {
+export function useAuditLogs(params?: Record<string, string>, enabled = true) {
   return useQuery({
     queryKey: ["audit-logs", params],
     queryFn: () => auditApi.logs(params),
     staleTime: 10_000,
+    enabled,
   });
 }
-export function useAuditExportRequests() {
-  return useQuery({ queryKey: ["audit-exports"], queryFn: auditApi.exportRequests, staleTime: 15_000 });
+export function useAuditExportRequests(enabled = true) {
+  return useQuery({ queryKey: ["audit-exports"], queryFn: auditApi.exportRequests, staleTime: 15_000, enabled });
 }
 export function useCreateAuditExport() {
   const qc = useQueryClient();
@@ -114,8 +117,8 @@ export function useCreateAuditExport() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["audit-exports"] }),
   });
 }
-export function useAuditAiRecs() {
-  return useQuery({ queryKey: ["audit-ai-recs"], queryFn: auditApi.aiRecommendations, staleTime: 60_000 });
+export function useAuditAiRecs(enabled = true) {
+  return useQuery({ queryKey: ["audit-ai-recs"], queryFn: auditApi.aiRecommendations, staleTime: 60_000, enabled });
 }
 
 // ── Executive ─────────────────────────────────────────────────────────────────
@@ -127,4 +130,45 @@ export function useExecutiveSummary() {
 }
 export function useExecutiveAiRecs() {
   return useQuery({ queryKey: ["executive-ai-recs"], queryFn: executiveApi.aiRecommendations, staleTime: 60_000 });
+}
+
+// ── Trips ─────────────────────────────────────────────────────────────────────
+export function useTrips(params?: { status?: string; vehicleId?: number; driverId?: number }) {
+  return useQuery<AnyRecord[]>({
+    queryKey: ["trips", params],
+    queryFn: () => tripApi.list(params),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+export function useTripDetail(id?: number | string) {
+  return useQuery<AnyRecord>({
+    queryKey: ["trips", "detail", id],
+    queryFn: () => tripApi.detail(id!),
+    enabled: Boolean(id),
+  });
+}
+export function useTripBreadcrumbs(id?: number | string) {
+  return useQuery<AnyRecord[]>({
+    queryKey: ["trips", "breadcrumbs", id],
+    queryFn: () => tripApi.breadcrumbs(id!),
+    enabled: Boolean(id),
+    staleTime: 10_000,
+  });
+}
+export function useTripCompliance(id?: number | string) {
+  return useQuery<AnyRecord>({
+    queryKey: ["trips", "compliance", id],
+    queryFn: () => tripApi.compliance(id!),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+  });
+}
+export function useTripActions() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["trips"] });
+  const start     = useMutation({ mutationFn: (id: number) => tripApi.start(id),     onSuccess: invalidate });
+  const complete  = useMutation({ mutationFn: (id: number) => tripApi.complete(id),  onSuccess: invalidate });
+  const exception = useMutation({ mutationFn: ({ id, notes }: { id: number; notes?: string }) => tripApi.exception(id, notes), onSuccess: invalidate });
+  return { start, complete, exception };
 }

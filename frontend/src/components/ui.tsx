@@ -11,6 +11,18 @@ import type { AnyRecord } from "@/types";
 /* ============================================================
    UTILITY
    ============================================================ */
+export function exportCsv(name: string, rows: AnyRecord[]) {
+  if (!rows.length) return;
+  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
+  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const now = new Date();
+  const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}`;
+  a.download = `${name}_${ts}.csv`;
+  a.click();
+}
+
 export function labelize(value: string) {
   return value
     .replace(/([A-Z])/g, " $1")
@@ -40,7 +52,7 @@ export function PageHeader({
         <p className="mt-2.5 text-sm leading-6 text-slate-400">{description}</p>
       </div>
       {actions && (
-        <div className="flex flex-shrink-0 flex-wrap items-center gap-2.5">{actions}</div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5">{actions}</div>
       )}
     </div>
   );
@@ -49,65 +61,31 @@ export function PageHeader({
 /* ============================================================
    KPI CARD
    ============================================================ */
-function kpiAccent(status?: string, label?: string): string {
-  const s = String(status || "").toLowerCase();
-  const l = String(label || "").toLowerCase();
-  if (/ai|intelligence|predict|copilot|machine/i.test(l)) return "kpi-ai";
-  if (/critical|risk|failed|error|missing|overdue|anomal|unusual|rejected|expired|breach/i.test(s + l)) return "kpi-danger";
-  if (/review|warning|pending|expir|near|overcharge|underp/i.test(s + l)) return "kpi-warning";
-  if (/active|healthy|complete|success|available|connected|approved|compliant/i.test(s)) return "kpi-success";
-  if (/teal|fuel|transaction|live/i.test(l)) return "kpi-teal";
-  return "kpi-info";
-}
-
-function kpiIconBg(status?: string, label?: string): string {
-  const s = String(status || "").toLowerCase();
-  const l = String(label || "").toLowerCase();
-  if (/ai|intelligence|predict/i.test(l)) return "border-violet-400/20 bg-violet-400/10 text-violet-300";
-  if (/critical|risk|failed|error|missing|overdue/i.test(s + l)) return "border-red-400/20 bg-red-400/8 text-red-300";
-  if (/review|warning|pending|expir/i.test(s + l)) return "border-amber-400/20 bg-amber-400/8 text-amber-300";
-  if (/active|healthy|complete|success|approved/i.test(s)) return "border-emerald-400/20 bg-emerald-400/8 text-emerald-300";
-  return "border-teal-400/20 bg-teal-400/8 text-teal-300";
-}
-
 export function KpiCard({
-  label, value, trend, status, icon, delta,
+  label, value, trend, status, delta,
 }: {
   label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string;
 }) {
-  const accent = kpiAccent(status, label);
-  const iconBg  = kpiIconBg(status, label);
-  const isUp    = delta?.startsWith("+") || /up|increase|improv/i.test(String(trend));
-  const isDown  = delta?.startsWith("-") || /down|decreas|drop/i.test(String(trend));
+  const isCritical = /critical|overdue|breach|rejected/i.test(String(label) + String(status));
+  const isWarning  = !isCritical && /missing|anomal|unusual|pending|risk/i.test(String(label) + String(status));
+  const isUp   = delta?.startsWith("+") || /up|increase|improv/i.test(String(trend));
+  const isDown = delta?.startsWith("-") || /down|decreas|drop/i.test(String(trend));
+  const valueColor = isCritical && Number(value) > 0
+    ? "text-red-600"
+    : isWarning && Number(value) > 0
+    ? "text-amber-700"
+    : "text-slate-900";
 
   return (
-    <div className={`panel card-hover flex flex-col justify-between p-5 ${accent} anim-count`}>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500 leading-tight">{label}</p>
-        {icon && (
-          <div className={`flex-shrink-0 rounded-xl border p-2 ${iconBg}`}>
-            <span className="block h-4 w-4 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
-          </div>
-        )}
-      </div>
-      <div className="mt-3 text-2xl font-bold tracking-tight text-slate-900">{value}</div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs">
-          {delta ? (
-            <>
-              {isDown
-                ? <ArrowDownRight className="h-3.5 w-3.5 text-red-400" />
-                : isUp
-                ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-400" />
-                : <Minus className="h-3 w-3 text-slate-500" />}
-              <span className={isDown ? "text-red-400" : isUp ? "text-emerald-400" : "text-slate-500"}>{delta}</span>
-            </>
-          ) : (
-            <span className="text-slate-600">{trend || "Live data"}</span>
-          )}
-        </div>
-        <StatusBadge status={status || "Active"} />
-      </div>
+    <div className="panel p-6">
+      <p className="text-sm font-medium text-slate-500">{label}</p>
+      <p className={`mt-3 text-3xl font-bold tracking-tight ${valueColor}`}>{value}</p>
+      {(delta || trend) && (
+        <p className="mt-3 flex items-center gap-1 text-xs text-slate-400">
+          {isDown ? <ArrowDownRight className="h-3 w-3 text-red-400" /> : isUp ? <ArrowUpRight className="h-3 w-3 text-emerald-500" /> : null}
+          {delta ?? trend}
+        </p>
+      )}
     </div>
   );
 }
@@ -243,16 +221,23 @@ export function DataTable({
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return rows;
+    const q = search.toLowerCase();
+    return rows.filter((row) => columns.some((col) => String(row[col] ?? "").toLowerCase().includes(q)));
+  }, [rows, columns, search]);
 
   const sorted = useMemo(() => {
-    if (!sortKey) return rows;
-    return [...rows].sort((a, b) => {
+    if (!sortKey) return filtered;
+    return [...filtered].sort((a, b) => {
       const va = String(a[sortKey] ?? "");
       const vb = String(b[sortKey] ?? "");
       const cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: "base" });
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [rows, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir]);
 
   const handleSort = (col: string) => {
     if (sortKey === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -265,11 +250,16 @@ export function DataTable({
       <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3.5 md:flex-row md:items-center md:justify-between">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-          <input className="field h-9 py-0 pl-9 pr-3 text-sm" placeholder="Search records..." />
+          <input
+            className="field h-9 py-0 pl-9 pr-3 text-sm"
+            placeholder="Search records..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
-            {rows.length} records
+            {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
           </span>
           <button className="btn-ghost h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
         </div>
@@ -285,7 +275,7 @@ export function DataTable({
                   <th
                     key={col}
                     onClick={() => handleSort(col)}
-                    className={`sortable px-5 py-3.5 text-[11px] font-bold uppercase tracking-[0.15em] transition ${
+                    className={`sortable px-5 py-3.5 text-xs font-semibold uppercase tracking-wider transition ${
                       isActive ? "sort-active text-slate-700" : "text-slate-500"
                     }`}
                   >
@@ -398,7 +388,7 @@ export function LoadingState() {
         </div>
         {[...Array(6)].map((_, i) => (
           <div key={i} className="flex items-center gap-4 rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-            <div className="skeleton h-4 w-24 flex-shrink-0" />
+            <div className="skeleton h-4 w-24 shrink-0" />
             <div className="skeleton h-4 flex-1" />
             <div className="skeleton h-4 w-16" />
             <div className="skeleton h-5 w-14 rounded-full" />
@@ -415,7 +405,7 @@ export function LoadingState() {
 export function ErrorState({ message }: { message?: string }) {
   return (
     <div className="panel flex items-center gap-3 border-red-400/25 bg-red-500/5 p-6 text-red-300">
-      <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+      <AlertTriangle className="h-5 w-5 shrink-0" />
       <div>
         <p className="font-semibold">Unable to load data</p>
         <p className="text-sm text-red-400/80">{message || "Check your connection and try again."}</p>
@@ -451,7 +441,7 @@ export function AiInsightCard({ insight }: { insight: AnyRecord }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
               <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600">OpsTrax AI</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600">System Fleet Insight</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
@@ -498,7 +488,7 @@ export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
           const dot = priorityDot[priority] || "bg-slate-500";
           return (
             <div key={String(action.id || i)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
-              <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dot}`} />
+              <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{String(action.title)}</p>
                 <p className="text-xs text-slate-500">{String(action.moduleKey || action.module_key || "operations")}</p>
@@ -538,7 +528,7 @@ export function Timeline({ items }: { items: AnyRecord[] }) {
           return (
             <div key={String(item.id || i)} className="flex gap-3">
               <div className="flex flex-col items-center">
-                <div className={`mt-0.5 h-2.5 w-2.5 flex-shrink-0 rounded-full ${dot} ring-2 ring-white`} />
+                <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot} ring-2 ring-white`} />
                 {!isLast && <div className="mt-1 w-px flex-1 bg-slate-200 min-h-[20px]" />}
               </div>
               <div className="pb-4 min-w-0">

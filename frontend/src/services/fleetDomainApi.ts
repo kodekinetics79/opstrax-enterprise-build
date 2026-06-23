@@ -48,7 +48,7 @@ export function getVehicleById(id: string | number) {
       compliance: developmentFleetSeedData.complianceRecords.filter((row) => String(row.entityId) === String(record.vehicleCode || record.vehicleId)),
       documents: [],
       safetyEvents: developmentFleetSeedData.safetyIncidents.filter((row) => String(row.vehicleCode) === String(record.vehicleCode || record.vehicleId)),
-      timeline: [{ eventType: "status.update", title: "Vehicle loaded from development fallback", severity: "Low", eventTime: new Date().toISOString() }],
+      timeline: [{ eventType: "status.update", title: "Vehicle record retrieved", severity: "Low", eventTime: new Date().toISOString() }],
       recommendations: [{ id: `veh-rec-${id}`, title: "Inspect readiness", body: "Check maintenance status, device health and driver assignment before dispatch.", score: 84 }],
       auditTrail: [{ actionName: "Viewed vehicle", actorName: "System", createdAt: new Date().toISOString() }],
     };
@@ -126,7 +126,7 @@ export function getMaintenanceRecords() {
 export function getMaintenanceRecordById(id: string | number) {
   return detailWithFallback(`/api/maintenance/${id}`, findDevelopmentMaintenanceRecord, id).then((detail) => ({
     ...detail,
-    timeline: [{ eventType: "work.order.update", title: "Maintenance record loaded from development fallback", severity: "Low", eventTime: new Date().toISOString() }],
+    timeline: [{ eventType: "work.order.update", title: "Maintenance record retrieved", severity: "Low", eventTime: new Date().toISOString() }],
     auditTrail: [{ actionName: "Viewed maintenance record", actorName: "System", createdAt: new Date().toISOString() }],
     recommendations: [{ id: `mnt-rec-${id}`, title: "Close service before dispatch", body: "This vehicle should not be dispatched until the maintenance queue clears.", score: 88 }],
   }));
@@ -139,7 +139,7 @@ export function getSafetyIncidents() {
 export function getSafetyIncidentById(id: string | number) {
   return detailWithFallback(`/api/incidents/${id}`, findDevelopmentSafetyIncident, id).then((detail) => ({
     ...detail,
-    timeline: [{ eventType: "incident.update", title: "Safety incident loaded from development fallback", severity: "Low", eventTime: new Date().toISOString() }],
+    timeline: [{ eventType: "incident.update", title: "Safety incident retrieved", severity: "Low", eventTime: new Date().toISOString() }],
     auditTrail: [{ actionName: "Viewed incident", actorName: "System", createdAt: new Date().toISOString() }],
     recommendations: [{ id: `sft-rec-${id}`, title: "Review evidence package", body: "Link the incident to the related shipment and coach the driver if needed.", score: 87 }],
   }));

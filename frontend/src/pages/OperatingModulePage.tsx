@@ -17,6 +17,7 @@ import {
   Search,
   Send,
   Sparkles,
+  X,
   Truck,
   Users,
 } from "lucide-react";
@@ -68,6 +69,20 @@ type ModuleDefinition = {
   columns: string[];
   kpis: { label: string; value: string | number; status?: string; trend?: string }[];
   insight: string;
+};
+
+type AlertRecord = AnyRecord & {
+  alertId: string;
+  category?: string;
+  type?: string;
+  entity?: string;
+  customer?: string;
+  severity?: string;
+  owner?: string;
+  location?: string;
+  age?: string;
+  recommendedAction?: string;
+  status?: string;
 };
 
 const routePlans = [
@@ -167,7 +182,7 @@ const moduleDefinitions: Record<string, ModuleDefinition> = {
       { label: "Critical Alerts", value: alerts.filter((a) => a.severity === "Critical").length, status: "Critical" },
       { label: "Open Alerts", value: alerts.filter((a) => a.status === "Open").length, status: "Open" },
       { label: "Customer Impact", value: "3 accounts", status: "Risk" },
-      { label: "AI Triage Confidence", value: "92%", status: "AI" },
+      { label: "Triage Confidence", value: "92%", status: "AI" },
     ],
     insight: "Temperature breach and camera outage are linked to customer-sensitive lanes. Prioritize customer communication before internal investigation closes.",
   },
@@ -597,7 +612,27 @@ function Fleet360MapPage() {
         eyebrow="Control Tower"
         title="Map View"
         description="360-degree fleet monitoring from total fleet posture down to individual vehicle job, stops, violations, telemetry, device health and dispatch action."
-        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export Vehicle Trail</button><button className="btn-primary"><Sparkles className="h-4 w-4" /> Run Fleet AI Scan</button></>}
+        actions={
+          <>
+            <button
+              className="btn-ghost"
+              onClick={() => exportCsv("vehicle-trail", filteredMonitors.map((item) => ({
+                vehicleId: item.vehicle.vehicleId,
+                driver: item.driver?.name ?? item.vehicle.assignedDriver,
+                location: item.vehicle.currentLocation,
+                speed: item.position.speed,
+                heading: item.position.heading,
+                risk: item.risk,
+                shipmentId: item.shipment?.shipmentId ?? "",
+              })))}
+            >
+              <Download className="h-4 w-4" /> Export Vehicle Trail
+            </button>
+            <button className="btn-primary" onClick={() => setMode("Violations")}>
+              <Sparkles className="h-4 w-4" /> Run Fleet AI Scan
+            </button>
+          </>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -800,7 +835,16 @@ function LiveDashboardPage() {
         eyebrow="Control Tower"
         title="Live Dashboard"
         description="A real operating cockpit for shipments, fleet availability, exceptions, customer risk, revenue and margin."
-        actions={<><button className="btn-ghost"><Download className="h-4 w-4" /> Export Watchlist</button><button className="btn-primary"><Sparkles className="h-4 w-4" /> Run AI Brief</button></>}
+        actions={
+          <>
+            <button className="btn-ghost" onClick={() => exportCsv("watchlist", activeShipments)}>
+              <Download className="h-4 w-4" /> Export Watchlist
+            </button>
+            <button className="btn-primary" onClick={() => window.location.assign("/reports")}>
+              <Sparkles className="h-4 w-4" /> Generate Operations Brief
+            </button>
+          </>
+        }
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -864,49 +908,50 @@ function AlertsPage() {
   const canExport = hasPermission("alerts:view");
   const canAct = hasPermission("alerts:acknowledge");
   const canClose = hasPermission("alerts:close");
-  const { data: alertRows = [], isLoading, isError } = useQuery({
+  const { data: alertRowsRaw = [], isLoading, isError } = useQuery<AlertRecord[]>({
     queryKey: ["alerts"],
-    queryFn: alertsApi.list,
+    queryFn: () => alertsApi.list() as Promise<AlertRecord[]>,
     staleTime: 15_000,
   });
+  const alertRows = alertRowsRaw as AlertRecord[];
   const qc = useQueryClient();
-  const [selected, setSelected] = useState<AnyRecord | null>(null);
+  const [selected, setSelected] = useState<AlertRecord | null>(null);
   const [activeTab, setActiveTab] = useState("All");
   const [triageRunAt, setTriageRunAt] = useState<string | null>(null);
-  const [taskFor, setTaskFor] = useState<AnyRecord | null>(null);
+  const [taskFor, setTaskFor] = useState<AlertRecord | null>(null);
   const tabs = ["All", "Critical", "SLA", "Telematics", "Cold Chain", "Maintenance", "Safety", "Finance"];
 
-  const updateCachedAlert = (updated: AnyRecord) => {
-    qc.setQueryData<AnyRecord[]>(["alerts"], (current = []) =>
+  const updateCachedAlert = (updated: AlertRecord) => {
+    qc.setQueryData<AlertRecord[]>(["alerts"], (current = []) =>
       current.map((alert) => (String(alert.alertId ?? alert.id) === String(updated.alertId ?? updated.id) ? { ...alert, ...updated } : alert)),
     );
     setSelected((current) => (current && String(current.alertId ?? current.id) === String(updated.alertId ?? updated.id) ? { ...current, ...updated } : current));
   };
 
-  const ackMut = useMutation({
-    mutationFn: (alertId: string) => alertsApi.acknowledge(alertId, { acknowledgedAt: new Date().toISOString() }),
+  const ackMut = useMutation<AlertRecord, Error, string>({
+    mutationFn: async (alertId: string) => alertsApi.acknowledge(alertId, { acknowledgedAt: new Date().toISOString() }) as Promise<AlertRecord>,
     onSuccess: (updated) => updateCachedAlert(updated),
   });
-  const closeMut = useMutation({
-    mutationFn: (alertId: string) => alertsApi.close(alertId, { closedAt: new Date().toISOString() }),
+  const closeMut = useMutation<AlertRecord, Error, string>({
+    mutationFn: async (alertId: string) => alertsApi.close(alertId, { closedAt: new Date().toISOString() }) as Promise<AlertRecord>,
     onSuccess: (updated) => updateCachedAlert(updated),
   });
-  const taskMut = useMutation({
-    mutationFn: ({ alertId, title, owner }: { alertId: string; title: string; owner: string }) =>
-      alertsApi.createTask(alertId, { title, owner, createdAt: new Date().toISOString() }),
+  const taskMut = useMutation<AlertRecord, Error, { alertId: string; title: string; owner: string }>({
+    mutationFn: async ({ alertId, title, owner }: { alertId: string; title: string; owner: string }) =>
+      alertsApi.createTask(alertId, { title, owner, createdAt: new Date().toISOString() }) as Promise<AlertRecord>,
     onSuccess: (updated) => {
       updateCachedAlert(updated);
       setTaskFor(null);
     },
   });
 
-  const visibleAlerts = useMemo(() => {
-    const triageSorted = [...alertRows].map((alert) => ({
+  const visibleAlerts = useMemo<AlertRecord[]>(() => {
+    const triageSorted: AlertRecord[] = [...alertRows].map((alert): AlertRecord => ({
       ...alert,
       status: String(alert.status ?? "").toLowerCase() === "closed" ? "Closed" : String(alert.status ?? ""),
     }));
     const severityRank = (severity: string) => ({ Critical: 4, High: 3, Medium: 2, Low: 1 }[severity] ?? 0);
-    const filtered = triageRunAt
+    const filtered: AlertRecord[] = triageRunAt
       ? triageSorted
           .filter((alert) => !["Closed", "Resolved"].includes(String(alert.status)))
           .sort((a, b) => severityRank(String(b.severity)) - severityRank(String(a.severity)))
@@ -947,7 +992,7 @@ function AlertsPage() {
         <KpiCard label="Open Alerts" value={visibleAlerts.filter((alert) => !/closed|resolved/i.test(String(alert.status))).length} status="Open" />
         <KpiCard label="Critical Alerts" value={visibleAlerts.filter((alert) => alert.severity === "Critical").length} status="Critical" />
         <KpiCard label="Customer Impact" value={`${new Set(visibleAlerts.map((alert) => alert.customer)).size} accounts`} status="Risk" />
-        <KpiCard label="AI Triage Confidence" value="92%" status="AI" />
+        <KpiCard label="Triage Confidence" value="92%" status="AI" />
       </div>
       {triageRunAt && (
         <div className="panel border-teal-400/20 bg-teal-400/5 px-4 py-3 text-sm text-teal-100">
@@ -965,7 +1010,7 @@ function AlertsPage() {
 
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         <div className="space-y-3">
-          {visibleAlerts.map((alert) => (
+          {visibleAlerts.map((alert: AlertRecord) => (
             <div key={alert.alertId} className="panel p-4 transition hover:border-blue-200 hover:shadow-md">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
@@ -1034,7 +1079,7 @@ function AlertsPage() {
               {["Dispatch", "Telematics", "Cold Chain Support", "Maintenance", "Safety", "Finance Ops"].map((owner) => (
                 <div key={owner} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white px-3 py-2">
                   <span className="text-sm font-semibold text-slate-700">{owner}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-500">{alerts.filter((alert) => alert.owner === owner).length}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-500">{visibleAlerts.filter((alert) => alert.owner === owner).length}</span>
                 </div>
               ))}
             </div>
@@ -1054,7 +1099,7 @@ function AlertsPage() {
   );
 }
 
-function AlertTaskModal({ alertRecord, saving, onClose, onSave }: { alertRecord: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: { title: string; owner: string }) => void }) {
+function AlertTaskModal({ alertRecord, saving, onClose, onSave }: { alertRecord: AlertRecord; saving: boolean; onClose: () => void; onSave: (payload: { title: string; owner: string }) => void }) {
   const [title, setTitle] = useState(`Task for ${String(alertRecord.type ?? alertRecord.alertId)}`);
   const [owner, setOwner] = useState(String(alertRecord.owner ?? "Dispatch"));
   return (
@@ -1176,8 +1221,8 @@ function PriceSimulationPage() {
             ))}
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
-            <button className="btn-primary"><FileText className="h-4 w-4" /> Convert to Quotation</button>
-            <button className="btn-ghost"><PackageCheck className="h-4 w-4" /> Convert to Load Booking</button>
+            <button className="btn-primary" onClick={() => window.location.assign("/quotations")}><FileText className="h-4 w-4" /> Convert to Quotation</button>
+            <button className="btn-ghost" onClick={() => window.location.assign("/load-bookings")}><PackageCheck className="h-4 w-4" /> Convert to Load Booking</button>
           </div>
           <AiInsightCard insight={{ title: "Margin guardrail", body: "The reefer lane remains profitable only if waiting time stays under 90 minutes. Add detention terms to the quote.", score: 91 }} />
         </div>
@@ -1216,9 +1261,9 @@ function DispatchBoardPage() {
                   <span>Deadline: {booking.deliveryDeadline}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary py-2 text-xs"><CheckCircle2 className="h-3.5 w-3.5" /> Assign recommended</button>
-                  <button className="btn-ghost py-2 text-xs">Override</button>
-                  <button className="btn-ghost py-2 text-xs">View route</button>
+                  <button className="btn-primary py-2 text-xs" onClick={() => window.location.assign("/jobs")}><CheckCircle2 className="h-3.5 w-3.5" /> Assign recommended</button>
+                  <button className="btn-ghost py-2 text-xs" onClick={() => window.location.assign("/vehicles")}>Override</button>
+                  <button className="btn-ghost py-2 text-xs" onClick={() => window.location.assign("/route-planning")}>View route</button>
                 </div>
               </div>
             ))}
@@ -1339,7 +1384,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
             </div>
           </div>
           <div className="panel p-5">
-            <p className="section-title">Client Pain Points Covered</p>
+            <p className="section-title">Decision Signals</p>
             <div className="mt-4 flex flex-wrap gap-2">
               {["SLA risk", "Margin leakage", "Customer retention", "Dispatch fit", "Document readiness", "Proof-to-cash"].map((item) => (
                 <span key={item} className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{item}</span>

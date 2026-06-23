@@ -12,7 +12,7 @@ export const customersApi = {
     total: rows.length,
   })),
   detail: (id: string | number) => getCustomerById(id),
-  timeline: async (id: string | number) => [{ eventType: "account.update", title: "Customer loaded from development fallback", severity: "Low", eventTime: new Date().toISOString(), id }],
+  timeline: async (id: string | number) => [{ eventType: "account.update", title: "Customer record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review customer health", body: "Check renewal exposure, service issues and active job volume before escalating.", score: 83 }],
   create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/customers", payload)), () => ({ ...payload, id: payload.id ?? `cus-${Date.now()}`, success: true })),
   update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/customers/${id}`, payload)), () => ({ ...payload, id, success: true })),

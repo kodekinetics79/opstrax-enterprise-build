@@ -45,6 +45,15 @@ public sealed class Database(IConfiguration configuration)
         return value is null or DBNull ? 0 : Convert.ToInt64(value);
     }
 
+    public async Task<decimal?> ScalarDecimalAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var command = new MySqlCommand(sql, connection);
+        bind?.Invoke(command);
+        var value = await command.ExecuteScalarAsync(ct);
+        return value is null or DBNull ? null : Convert.ToDecimal(value);
+    }
+
     public async Task<int> ExecuteAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
     {
         await using var connection = await OpenAsync(ct);

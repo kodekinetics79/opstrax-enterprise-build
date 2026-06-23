@@ -21,6 +21,7 @@ export type ModuleConfig = {
   title: string;
   route: string;
   group:
+    | "Operations"
     | "Control Tower"
     | "CRM & Growth"
     | "Commercial"

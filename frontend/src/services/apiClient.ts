@@ -44,14 +44,25 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor: Capture and store CSRF token
-apiClient.interceptors.response.use((response) => {
-  const csrfToken = response.headers["x-csrf-token"];
-  if (csrfToken) {
-    setGlobalCsrfToken(csrfToken);
+// Response interceptor: Capture and store CSRF token; redirect to /login on 401
+apiClient.interceptors.response.use(
+  (response) => {
+    const csrfToken = response.headers["x-csrf-token"];
+    if (csrfToken) {
+      setGlobalCsrfToken(csrfToken);
+    }
+    return response;
+  },
+  (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem("opstrax.session.v2");
+      localStorage.removeItem("opstrax.session");
+      window.alert("Your session has expired or is invalid. Please sign in again.");
+      window.location.href = "/login";
+    }
+    return Promise.reject(error);
   }
-  return response;
-});
+);
 
 export async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Promise<T> {
   const response = await request;

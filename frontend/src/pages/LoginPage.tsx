@@ -1,256 +1,465 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  ArrowRight,
-  BadgeCheck,
-  CheckCircle2,
-  Globe,
-  Layers3,
-  LogIn,
-  MapPinned,
-  ShieldCheck,
-  Sparkles,
-  Truck,
-  Users,
-  Wrench,
-} from "lucide-react";
+import { AlertCircle, ArrowRight, ChevronDown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
 import { demoUsers } from "@/auth/demoUsers";
+import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
-const heroStats = [
-  { value: "24/7", label: "operations visibility" },
-  { value: "1 tenant", label: "secure login surface" },
-  { value: "8 modules", label: "connected on load" },
+/* ── Telemetry particle canvas ──────────────────────────────────────────── */
+function TelemetryCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let raf = 0;
+    const W = canvas.width  = canvas.offsetWidth;
+    const H = canvas.height = canvas.offsetHeight;
+
+    type Particle = { x: number; y: number; speed: number; size: number; opacity: number; color: string; burst: boolean };
+
+    const COLORS = ["#2dd4bf", "#7dd3fc", "#a5f3fc", "#ffffff", "#2dd4bf", "#2dd4bf"];
+    const particles: Particle[] = Array.from({ length: 55 }, () => ({
+      x:       Math.random() * W,
+      y:       Math.random() * H,
+      speed:   0.3 + Math.random() * 0.9,
+      size:    Math.random() < 0.15 ? 2.2 : 1.1,
+      opacity: 0.05 + Math.random() * 0.4,
+      color:   COLORS[Math.floor(Math.random() * COLORS.length)],
+      burst:   Math.random() < 0.08,
+    }));
+
+    function draw() {
+      ctx!.clearRect(0, 0, W, H);
+      for (const p of particles) {
+        ctx!.beginPath();
+        ctx!.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx!.fillStyle = p.color;
+        ctx!.globalAlpha = p.opacity;
+        ctx!.fill();
+
+        // occasional connecting lines between nearby particles
+        if (p.burst) {
+          for (const q of particles) {
+            const d = Math.hypot(p.x - q.x, p.y - q.y);
+            if (d < 60 && d > 0) {
+              ctx!.beginPath();
+              ctx!.moveTo(p.x, p.y);
+              ctx!.lineTo(q.x, q.y);
+              ctx!.strokeStyle = "#2dd4bf";
+              ctx!.globalAlpha = 0.04 * (1 - d / 60);
+              ctx!.lineWidth = 0.5;
+              ctx!.stroke();
+            }
+          }
+        }
+
+        p.y -= p.speed;
+        if (p.y < -4) {
+          p.y = H + 4;
+          p.x = Math.random() * W;
+          p.opacity = 0.05 + Math.random() * 0.35;
+        }
+      }
+      ctx!.globalAlpha = 1;
+      raf = requestAnimationFrame(draw);
+    }
+
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <canvas
+      ref={ref}
+      className="absolute inset-0 h-full w-full"
+      style={{ opacity: 0.55 }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/* ── Floating live vehicle cards ────────────────────────────────────────── */
+const vehicleEvents = [
+  { code: "TRK-114", status: "On Route", detail: "87 mph · Dubai–Abu Dhabi E11", color: "#2dd4bf", dot: "●" },
+  { code: "BOX-106", status: "Arrived",  detail: "Manassas Depot · 09:44 AM",   color: "#4ade80", dot: "✓" },
+  { code: "VAN-211", status: "Alert",    detail: "Speed event · Jeddah Ring Rd", color: "#fbbf24", dot: "⚠" },
+  { code: "KSA-119", status: "En Route", detail: "ETA 14 min · Riyadh N Gate",   color: "#7dd3fc", dot: "●" },
 ];
 
-const trustPoints = [
-  { icon: Truck, title: "Fleet operations", body: "Vehicles, drivers, routes, and jobs in one control plane." },
-  { icon: MapPinned, title: "Live telemetry", body: "Location, ETA, and event signals surfaced with tenant scoping." },
-  { icon: Wrench, title: "Maintenance readiness", body: "Service, DVIR, and work-order workflows tied to real entities." },
-  { icon: ShieldCheck, title: "Audit and access", body: "RBAC, CSRF, and session validation built for operator confidence." },
+function FloatingStatusCards() {
+  return (
+    <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-none" aria-hidden="true">
+      {vehicleEvents.map((v, i) => (
+        <div
+          key={v.code}
+          className="login-float-card rounded-xl border px-3.5 py-2.5"
+          style={{
+            animationDelay: `${i * 0.9}s`,
+            borderColor: `${v.color}30`,
+            background: `rgba(12,21,38,0.72)`,
+            backdropFilter: "blur(8px)",
+            minWidth: 188,
+          }}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-[11px] font-bold text-white/80">{v.code}</span>
+            <span className="text-[10px] font-semibold" style={{ color: v.color }}>
+              {v.dot} {v.status}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[10px] text-slate-500">{v.detail}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Live event ticker ──────────────────────────────────────────────────── */
+const tickerItems = [
+  "TRK-114 · En route Dubai–Abu Dhabi · ETA 14 min",
+  "BOX-106 · Arrived Manassas Depot · 09:44 AM",
+  "VAN-211 · Speed alert · 87 mph Jeddah Ring Rd",
+  "KSA-REEFER-119 · Departed Riyadh North · Load confirmed",
+  "KSA-REEFER-214 · Checkpoint clear · Jubail Gate 3",
+  "DISPATCH · JOB-0520 assigned to TRK-114 · Priority High",
 ];
 
-const accessShortcuts = demoUsers.slice(0, 4);
+function LiveTicker() {
+  const text = tickerItems.join("   ·   ");
+  return (
+    <div className="relative overflow-hidden border-t border-white/6 py-2" aria-hidden="true">
+      <div className="flex gap-0 whitespace-nowrap login-ticker-track">
+        {[text, text].map((t, i) => (
+          <span key={i} className="inline-block shrink-0 pr-16 text-[10px] font-medium text-slate-500">
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
+/* ── Route SVG with animated vehicles ──────────────────────────────────── */
+function RouteMap() {
+  return (
+    <svg
+      viewBox="0 0 600 480"
+      fill="none"
+      className="absolute inset-0 h-full w-full"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+    >
+      <defs>
+        {/* Glow filter for vehicle dots */}
+        <filter id="vglow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="sglow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="7" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+
+        {/* Scanning-line gradient */}
+        <linearGradient id="scanGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="transparent" />
+          <stop offset="35%"  stopColor="#2dd4bf" stopOpacity="0.25" />
+          <stop offset="50%"  stopColor="#2dd4bf" stopOpacity="0.55" />
+          <stop offset="65%"  stopColor="#2dd4bf" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="transparent" />
+        </linearGradient>
+
+        {/* Route paths (referenced by animateMotion) */}
+        <path id="r1" d="M 20 400 Q 160 300 320 210 L 510 120" />
+        <path id="r2" d="M 50 450 Q 220 370 390 330 L 570 270" />
+        <path id="r3" d="M 10 190 Q 150 145 300 160 Q 430 175 550 115" />
+      </defs>
+
+      {/* Visible route strokes */}
+      <use href="#r1" stroke="#2dd4bf"  strokeWidth="1.4" strokeDasharray="7 5"  opacity="0.28" />
+      <use href="#r2" stroke="#7dd3fc"  strokeWidth="1"   strokeDasharray="5 7"  opacity="0.2" />
+      <use href="#r3" stroke="#a5f3fc"  strokeWidth="0.8"                        opacity="0.12" />
+      {/* fourth subtle route */}
+      <path d="M 120 460 Q 280 400 440 390 L 590 360" stroke="#64748b" strokeWidth="0.7" strokeDasharray="3 9" opacity="0.15" />
+
+      {/* ── Moving vehicle 1 (teal) — primary route ── */}
+      {/* Ghost trail dot 2 */}
+      <circle r="1.5" fill="#2dd4bf">
+        <animateMotion dur="9s" begin="-1.4s" repeatCount="indefinite">
+          <mpath href="#r1" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;0.22;0.22;0" dur="9s" begin="-1.4s" repeatCount="indefinite" />
+      </circle>
+      {/* Ghost trail dot 1 */}
+      <circle r="2.5" fill="#2dd4bf">
+        <animateMotion dur="9s" begin="-0.7s" repeatCount="indefinite">
+          <mpath href="#r1" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;0.45;0.45;0" dur="9s" begin="-0.7s" repeatCount="indefinite" />
+      </circle>
+      {/* Main vehicle dot with glow */}
+      <circle r="5" filter="url(#vglow)" fill="#2dd4bf">
+        <animateMotion dur="9s" repeatCount="indefinite">
+          <mpath href="#r1" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;1;1;0.8;0" dur="9s" repeatCount="indefinite" />
+        <animate attributeName="r" values="5;6;5" dur="1.8s" repeatCount="indefinite" />
+      </circle>
+
+      {/* ── Moving vehicle 2 (sky blue) — second route ── */}
+      <circle r="1.5" fill="#7dd3fc">
+        <animateMotion dur="13s" begin="-7.5s" repeatCount="indefinite">
+          <mpath href="#r2" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;0.3;0.3;0" dur="13s" begin="-7.5s" repeatCount="indefinite" />
+      </circle>
+      <circle r="4" filter="url(#vglow)" fill="#7dd3fc">
+        <animateMotion dur="13s" begin="-6s" repeatCount="indefinite">
+          <mpath href="#r2" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;0.85;0.85;0" dur="13s" begin="-6s" repeatCount="indefinite" />
+      </circle>
+
+      {/* ── Moving vehicle 3 (cyan soft) — upper route ── */}
+      <circle r="3" filter="url(#vglow)" fill="#a5f3fc">
+        <animateMotion dur="16s" begin="-9s" repeatCount="indefinite">
+          <mpath href="#r3" />
+        </animateMotion>
+        <animate attributeName="opacity" values="0;0.6;0.6;0" dur="16s" begin="-9s" repeatCount="indefinite" />
+      </circle>
+
+      {/* ── Static endpoint nodes ── */}
+      {/* Primary terminus — teal */}
+      <g filter="url(#sglow)">
+        <circle cx="510" cy="120" r="6" fill="#2dd4bf" opacity="0.95" />
+      </g>
+      <circle cx="510" cy="120" r="13" stroke="#2dd4bf" strokeWidth="1"   fill="none" opacity="0" className="login-dot-ping" />
+      <circle cx="510" cy="120" r="20" stroke="#2dd4bf" strokeWidth="0.5" fill="none" opacity="0" className="login-dot-ping-outer" />
+
+      {/* Secondary terminus */}
+      <circle cx="570" cy="270" r="4.5" fill="#7dd3fc" opacity="0.8" filter="url(#vglow)" />
+      <circle cx="570" cy="270" r="10"  stroke="#7dd3fc" strokeWidth="0.8" fill="none" opacity="0" className="login-dot-ping-2" />
+
+      {/* Waypoint labels */}
+      <circle cx="20" cy="400" r="3" fill="#2dd4bf" opacity="0.5" />
+      <text x="28" y="404" fill="#2dd4bf" fontSize="8" opacity="0.45" fontFamily="Inter, sans-serif">Riyadh</text>
+
+      <circle cx="50" cy="450" r="2.5" fill="#7dd3fc" opacity="0.4" />
+      <text x="58" y="454" fill="#7dd3fc" fontSize="8" opacity="0.35" fontFamily="Inter, sans-serif">Jeddah</text>
+
+      <circle cx="10" cy="190" r="2.5" fill="#a5f3fc" opacity="0.35" />
+      <text x="18" y="194" fill="#a5f3fc" fontSize="7" opacity="0.3" fontFamily="Inter, sans-serif">Dubai</text>
+
+      {/* ── Horizontal scanning sweep ── */}
+      <rect x="0" y="0" width="600" height="2" fill="url(#scanGrad)" className="login-scan-line" />
+    </svg>
+  );
+}
+
+/* ── Live metrics ───────────────────────────────────────────────────────── */
+const metrics = [
+  { value: "12",  label: "vehicles active" },
+  { value: "94%", label: "on-time rate"    },
+  { value: "3",   label: "open exceptions" },
+];
+
+/* ── Demo accounts ──────────────────────────────────────────────────────── */
+const demoRoles = demoUsers.filter((u) =>
+  ["fleet_manager", "dispatcher", "safety_manager", "super_admin", "tenant_admin", "maintenance_manager"].includes(u.roleKey)
+);
+
+/* ── Main component ─────────────────────────────────────────────────────── */
 export function LoginPage() {
   const { setSession } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail]           = useState("");
+  const [password, setPassword]     = useState("");
+  const [showPassword, setShowPass] = useState(false);
+  const [showDemo, setShowDemo]     = useState(false);
 
   const login = useMutation({
-    mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => authApi.login(e, p),
-    onSuccess: (session) => {
-      setSession(session);
-      navigate("/command-center", { replace: true });
-    },
+    mutationFn: ({ email: e, password: p }: { email: string; password: string }) => authApi.login(e, p),
+    onSuccess: (session) => { setSession(session); navigate("/command-center", { replace: true }); },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password) return;
-    login.mutate({ email: email.trim(), password });
-  };
-
-  const fillAccess = (accessEmail: string, accessPassword: string) => {
-    setEmail(accessEmail);
-    setPassword(accessPassword);
-  };
+  const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
+  const signInAs = (u: (typeof demoUsers)[0]) => login.mutate({ email: u.email, password: u.password });
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#07111f] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(45,212,191,0.24),_transparent_26%),radial-gradient(circle_at_right,_rgba(59,130,246,0.18),_transparent_22%),linear-gradient(135deg,_#06111d_0%,_#0a1a2c_52%,_#07111f_100%)]" />
-      <div className="absolute left-[-5rem] top-24 h-72 w-72 rounded-full bg-teal-400/15 blur-3xl" />
-      <div className="absolute right-[-6rem] top-44 h-96 w-96 rounded-full bg-blue-500/15 blur-3xl" />
-      <div className="absolute bottom-[-8rem] left-1/3 h-96 w-96 rounded-full bg-sky-400/10 blur-3xl" />
+    <div className="flex min-h-screen">
 
-      <div className="relative mx-auto grid min-h-screen max-w-7xl items-center gap-10 px-6 py-8 lg:grid-cols-[1.1fr_0.9fr] lg:px-8 xl:px-12">
-        <section className="flex flex-col justify-center">
-          <div className="mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/80 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur">
-            <Sparkles className="h-4 w-4 text-teal-300" />
-            Enterprise fleet intelligence for dispatch, safety, and operations
+      {/* ── LEFT — animated brand panel ───────────────────── */}
+      <div className="login-brand-panel login-panel-enter relative hidden lg:flex lg:w-[58%] xl:w-[62%] flex-col overflow-hidden">
+
+        {/* Dot-grid texture */}
+        <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle,rgba(255,255,255,0.05) 1px,transparent 1px)", backgroundSize: "32px 32px", opacity: 0.45 }} />
+
+        {/* Ambient glow — breathing */}
+        <div className="login-glow-1 absolute -left-32 top-1/4 h-80 w-80 rounded-full bg-teal-500/12 blur-[96px]" />
+        <div className="login-glow-2 absolute right-0 bottom-1/3 h-64 w-64 rounded-full bg-sky-500/8 blur-[80px]"  />
+        <div className="login-glow-1 absolute left-1/3 bottom-0  h-48 w-48 rounded-full bg-teal-400/7 blur-[60px]"  style={{ animationDelay: "2s" }} />
+
+        {/* Canvas particle stream */}
+        <TelemetryCanvas />
+
+        {/* Animated route map */}
+        <RouteMap />
+
+        {/* Floating live vehicle cards */}
+        <FloatingStatusCards />
+
+        {/* Content layer */}
+        <div className="relative flex h-full flex-col px-12 py-10 xl:px-16">
+
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <OpsTraxLogo size={40} />
+            <span className="text-xl font-semibold tracking-tight text-white">OpsTrax</span>
           </div>
 
-          <div className="max-w-2xl">
-            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
-              OpsTrax
-              <span className="block bg-gradient-to-r from-teal-200 via-cyan-200 to-blue-200 bg-clip-text text-transparent">
-                Command center for live fleet operations.
-              </span>
+          {/* Hero */}
+          <div className="flex flex-1 flex-col justify-center">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-teal-400">Fleet Management Platform</p>
+            <h1 className="mt-4 text-5xl font-bold leading-[1.08] tracking-tight text-white xl:text-6xl">
+              Fleet intelligence,
+              <br />
+              <span className="text-teal-400">live.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
-              Track vehicles, dispatches, compliance, maintenance, and customer commitments from one secure platform
-              built to feel like a real enterprise operations suite on first load.
+            <p className="mt-5 max-w-sm text-base leading-7 text-slate-400">
+              Dispatch, safety, compliance, and maintenance — unified for operations teams.
+            </p>
+
+            {/* Live metrics */}
+            <div className="mt-10 flex items-start gap-10">
+              {metrics.map((m, i) => (
+                <div key={m.label} className={`${i !== 0 ? "border-l border-white/10 pl-10" : ""} login-metric-${i + 1}`}>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold text-white">{m.value}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-teal-400">live</span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-500">{m.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Live ticker strip */}
+          <div className="mb-3">
+            <LiveTicker />
+          </div>
+
+          {/* Bottom bar */}
+          <div className="flex items-end justify-between gap-4">
+            <p className="text-xs text-slate-700">Northshore Fleet Logistics · Enterprise</p>
+            <div className="text-right">
+              <p className="text-[11px] text-slate-600">Engineered by</p>
+              <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"
+                className="mt-0.5 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition hover:text-teal-400">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-teal-500/20 text-[9px] font-bold text-teal-400">KK</span>
+                Kode Kinetics
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── RIGHT — sign-in form ───────────────────────────── */}
+      <div className="flex flex-1 flex-col items-center justify-center bg-white px-8 py-12 lg:px-12">
+
+        {/* Mobile logo */}
+        <div className="mb-10 flex items-center gap-2.5 lg:hidden">
+          <OpsTraxLogo size={32} />
+          <span className="text-lg font-bold text-slate-900">OpsTrax</span>
+        </div>
+
+        <div className="login-form-enter w-full max-w-sm">
+
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-slate-900">Sign in</h2>
+            <p className="mt-1.5 text-sm text-slate-500">Access your fleet operations dashboard</p>
+          </div>
+
+          {login.isError && (
+            <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              Invalid email or password. Try a demo account below.
+            </div>
+          )}
+
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
+                placeholder="you@company.com"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Password</label>
+              <div className="relative">
+                <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                  placeholder="••••••••"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 pr-14 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" />
+                <button type="button" onClick={() => setShowPass((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 transition hover:text-slate-700">
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" disabled={login.isPending || !email.trim() || !password}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-500/30 disabled:cursor-not-allowed disabled:opacity-50">
+              {login.isPending
+                ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
+                : <>Sign in <ArrowRight className="h-4 w-4" /></>}
+            </button>
+          </form>
+
+          {/* Demo accounts */}
+          <div className="mt-8 border-t border-slate-100 pt-6">
+            <button type="button" onClick={() => setShowDemo((v) => !v)}
+              className="flex w-full items-center justify-between text-sm text-slate-500 transition hover:text-slate-700">
+              <span>Try a demo account</span>
+              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${showDemo ? "rotate-180" : ""}`} />
+            </button>
+
+            {showDemo && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {demoRoles.map((user) => (
+                  <button key={user.email} type="button" onClick={() => signInAs(user)} disabled={login.isPending}
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50">
+                    <p className="text-xs font-semibold leading-snug text-slate-800">{user.roleLabel}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{user.email.split("@")[0]}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="mt-8 space-y-1.5 text-center">
+            <p className="text-[11px] text-slate-300">Protected by CSRF · RBAC · Session isolation</p>
+            <p className="text-[11px] text-slate-300">
+              Built by{" "}
+              <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"
+                className="font-medium text-slate-400 transition hover:text-teal-500">Kode Kinetics</a>
+              {" · "}
+              <a href="mailto:info@kodekinetics.com" className="text-slate-400 transition hover:text-teal-500">info@kodekinetics.com</a>
             </p>
           </div>
-
-          <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            {heroStats.map((stat) => (
-              <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/6 p-4 backdrop-blur">
-                <div className="text-2xl font-semibold text-white">{stat.value}</div>
-                <div className="mt-1 text-sm text-slate-300">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-8 grid gap-4 md:grid-cols-2">
-            {trustPoints.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.title}
-                  className="rounded-2xl border border-white/10 bg-slate-950/35 p-5 shadow-2xl shadow-black/15 backdrop-blur"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-xl border border-teal-400/20 bg-teal-400/10 p-2 text-teal-200">
-                      <Icon className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-semibold text-white">{item.title}</h3>
-                      <p className="mt-1 text-sm leading-6 text-slate-300">{item.body}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-8 flex flex-wrap items-center gap-3 text-sm text-slate-300">
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2">
-              <Layers3 className="h-4 w-4 text-cyan-300" />
-              Multi-tenant access
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2">
-              <Users className="h-4 w-4 text-cyan-300" />
-              Role-based entry
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2">
-              <Globe className="h-4 w-4 text-cyan-300" />
-              Browser-ready deployment
-            </div>
-          </div>
-        </section>
-
-        <section className="relative">
-          <div className="absolute -inset-3 rounded-[2rem] bg-gradient-to-br from-white/10 to-white/5 blur-xl" />
-          <div className="relative overflow-hidden rounded-[2rem] border border-white/12 bg-slate-950/70 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-            <div className="border-b border-white/10 px-8 py-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-blue-500 shadow-lg shadow-cyan-500/20">
-                  <LogIn className="h-6 w-6 text-white" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Secure access</p>
-                  <h2 className="text-2xl font-semibold text-white">Sign in to OpsTrax</h2>
-                </div>
-              </div>
-              <p className="mt-3 max-w-md text-sm leading-6 text-slate-300">
-                Enter a tenant account to open the live command center. The same backend-auth path is used in
-                production mode and in the local seeded environment.
-              </p>
-            </div>
-
-            <div className="grid gap-6 px-8 py-8">
-              {login.isError && (
-                <div className="flex items-start gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                  <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-300" />
-                  <div className="flex-1">
-                    <p className="font-semibold text-red-100">Login failed</p>
-                    <p className="text-sm text-red-200/80">Invalid email or password. Try one of the accounts below.</p>
-                  </div>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-200">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. admin@northshore-fleet.com"
-                    autoComplete="email"
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50 focus:bg-white/8 focus:ring-2 focus:ring-cyan-400/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-200">Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      autoComplete="current-password"
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 pr-16 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50 focus:bg-white/8 focus:ring-2 focus:ring-cyan-400/20"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
-                    >
-                      {showPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={login.isPending || !email.trim() || !password}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-400 via-cyan-400 to-blue-500 px-4 py-3.5 font-semibold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {login.isPending ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/30 border-t-slate-950" />
-                      Signing in
-                    </>
-                  ) : (
-                    <>
-                      Enter command center
-                      <ArrowRight className="h-4 w-4" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Seeded access</p>
-                    <p className="text-sm text-slate-200">Quick-fill a live account</p>
-                  </div>
-                  <BadgeCheck className="h-5 w-5 text-teal-300" />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {accessShortcuts.map((user) => (
-                    <button
-                      key={user.email}
-                      type="button"
-                    onClick={() => fillAccess(user.email, user.password)}
-                      className="rounded-xl border border-white/10 bg-slate-950/40 p-3 text-left transition hover:border-cyan-300/40 hover:bg-slate-900/70"
-                    >
-                    <p className="text-sm font-semibold text-white">{user.roleLabel}</p>
-                    <p className="mt-1 truncate text-xs text-slate-400">{user.email}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/35 p-4 text-sm text-slate-300">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-teal-300" />
-                <p>
-                  CSRF protected, RBAC-aware, and backed by the same session path that powers the live command
-                  center.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
     </div>
   );

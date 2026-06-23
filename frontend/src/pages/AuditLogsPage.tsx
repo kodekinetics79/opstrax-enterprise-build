@@ -2,13 +2,15 @@ import { useState } from "react";
 import {
   Bot, CheckCircle2, Download, Filter, Search, Shield, X,
 } from "lucide-react";
+import { PERMISSIONS } from "@/auth/rbacConfig";
+import { useHasPermission } from "@/hooks/usePermission";
 import {
   useAuditLogs, useAuditExportRequests, useCreateAuditExport, useAuditAiRecs,
 } from "@/hooks/useBatch7";
 
 type AnyRecord = Record<string, unknown>;
 
-const TABS = ["Audit Trail", "Export Requests", "AI Advisor"] as const;
+const TABS = ["Audit Trail", "Export Requests", "Operations Advisor"] as const;
 type Tab = typeof TABS[number];
 
 const MODULE_OPTIONS = [
@@ -19,10 +21,10 @@ const MODULE_OPTIONS = [
 const SEVERITY_OPTIONS = ["Info", "Warning", "High", "Critical"];
 
 const SEVERITY_COLOR: Record<string, string> = {
-  "Info":     "border-sky-400/20 bg-sky-400/10 text-sky-300",
-  "Warning":  "border-amber-400/20 bg-amber-400/10 text-amber-300",
-  "High":     "border-orange-400/20 bg-orange-400/10 text-orange-300",
-  "Critical": "border-red-400/20 bg-red-400/10 text-red-300",
+  "Info":     "border-sky-400/30 bg-sky-50 text-sky-700",
+  "Warning":  "border-amber-400/30 bg-amber-50 text-amber-700",
+  "High":     "border-orange-400/30 bg-orange-50 text-orange-700",
+  "Critical": "border-red-400/30 bg-red-50 text-red-700",
 };
 
 function SeverityBadge({ severity }: { severity: string }) {
@@ -32,16 +34,18 @@ function SeverityBadge({ severity }: { severity: string }) {
 
 function ExportStatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    Pending:   "border-amber-400/20 bg-amber-400/10 text-amber-300",
-    Processing:"border-sky-400/20 bg-sky-400/10 text-sky-300",
-    Completed: "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
-    Failed:    "border-red-400/20 bg-red-400/10 text-red-300",
+    Pending:   "border-amber-400/30 bg-amber-50 text-amber-700",
+    Processing:"border-sky-400/30 bg-sky-50 text-sky-700",
+    Completed: "border-emerald-400/30 bg-emerald-50 text-emerald-700",
+    Failed:    "border-red-400/30 bg-red-50 text-red-700",
   };
-  const cls = map[status] ?? "border-slate-400/20 bg-slate-400/10 text-slate-400";
+  const cls = map[status] ?? "border-slate-200 bg-slate-50 text-slate-600";
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>{status}</span>;
 }
 
 export function AuditLogsPage() {
+  const hasPermission = useHasPermission();
+  const canExportReports = hasPermission(PERMISSIONS.REPORTS_EXPORT);
   const [tab, setTab]                   = useState<Tab>("Audit Trail");
   const [search, setSearch]             = useState("");
   const [filterModule, setFilterModule] = useState("");
@@ -69,10 +73,15 @@ export function AuditLogsPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-extrabold text-white">Audit Logs</h1>
-          <p className="mt-0.5 text-sm text-slate-400">Immutable record of all system actions across all modules</p>
+          <h1 className="text-xl font-extrabold text-slate-900">Audit Logs</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Immutable record of all system actions across all modules</p>
         </div>
-        <button className="btn-primary flex items-center gap-2" onClick={() => setExportOpen(true)}>
+        <button
+          className="btn-primary flex items-center gap-2"
+          onClick={() => setExportOpen(true)}
+          disabled={!canExportReports}
+          title={!canExportReports ? "You do not have permission to perform this action." : undefined}
+        >
           <Download className="h-4 w-4" /> Export Audit Log
         </button>
       </div>
@@ -80,8 +89,8 @@ export function AuditLogsPage() {
       {/* Compliance disclaimer */}
       <div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
         <div className="flex items-start gap-2">
-          <Shield className="h-4 w-4 flex-shrink-0 text-amber-300 mt-0.5" />
-          <p className="text-xs text-amber-200/80">
+          <Shield className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
+          <p className="text-xs text-amber-700">
             OpsTrax audit logs provide an operational record of system activity for internal compliance and review purposes.
             They do not constitute a legally certified audit trail. For regulatory submissions, consult your compliance officer.
           </p>
@@ -89,12 +98,12 @@ export function AuditLogsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-white/[0.07] pb-px">
+      <div className="flex gap-1 border-b border-slate-200 pb-px">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-400/10 text-teal-300 border border-b-0 border-teal-400/20" : "text-slate-400 hover:text-slate-200"}`}
+            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-50 text-teal-700 border border-b-0 border-teal-300" : "text-slate-500 hover:text-slate-700"}`}
           >
             {t}
           </button>
@@ -136,31 +145,31 @@ export function AuditLogsPage() {
           <div className="panel overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.07]">
+                <tr className="border-b border-slate-200">
                   {["Timestamp", "Actor", "Action", "Entity", "Module", "Severity"].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.04]">
+              <tbody className="divide-y divide-slate-100">
                 {logs.map((log, i) => (
                   <tr
                     key={i}
-                    className="cursor-pointer transition hover:bg-white/[0.02]"
+                    className="cursor-pointer transition hover:bg-slate-50"
                     onClick={() => setDrawerLog(log)}
                   >
-                    <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
+                    <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
                       {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{String(log.actor_name ?? "system")}</td>
+                    <td className="px-4 py-3 text-slate-700">{String(log.actor_name ?? "system")}</td>
                     <td className="px-4 py-3">
-                      <code className="rounded bg-white/[0.04] px-1.5 py-0.5 text-xs text-teal-300">{String(log.action_name ?? "")}</code>
+                      <code className="rounded bg-teal-50 px-1.5 py-0.5 text-xs text-teal-700">{String(log.action_name ?? "")}</code>
                     </td>
-                    <td className="px-4 py-3 text-slate-300">
+                    <td className="px-4 py-3 text-slate-700">
                       {String(log.entity_name ?? "")}
                       {!!log.entity_id && <span className="ml-1 text-slate-500 text-xs">#{String(log.entity_id)}</span>}
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{String(log.module_key ?? "—")}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{String(log.module_key ?? "—")}</td>
                     <td className="px-4 py-3"><SeverityBadge severity={String(log.severity ?? "Info")} /></td>
                   </tr>
                 ))}
@@ -182,22 +191,22 @@ export function AuditLogsPage() {
           <div className="panel overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.07]">
+                <tr className="border-b border-slate-200">
                   {["Requested By", "Date Range", "Format", "Status", "Requested At"].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.04]">
+              <tbody className="divide-y divide-slate-100">
                 {exports_.map((e, i) => (
-                  <tr key={i} className="transition hover:bg-white/[0.02]">
-                    <td className="px-4 py-3 text-slate-300">{String(e.requested_by_name ?? "")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
+                  <tr key={i} className="transition hover:bg-slate-50">
+                    <td className="px-4 py-3 text-slate-700">{String(e.requested_by_name ?? "")}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
                       {e.date_range_start ? new Date(String(e.date_range_start)).toLocaleDateString() : "—"}
                       {" – "}
                       {e.date_range_end ? new Date(String(e.date_range_end)).toLocaleDateString() : "—"}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-300">{String(e.export_format ?? "")}</td>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{String(e.export_format ?? "")}</td>
                     <td className="px-4 py-3"><ExportStatusBadge status={String(e.status ?? "")} /></td>
                     <td className="px-4 py-3 text-xs text-slate-400">{e.requested_at ? new Date(String(e.requested_at)).toLocaleString() : "—"}</td>
                   </tr>
@@ -209,19 +218,19 @@ export function AuditLogsPage() {
       )}
 
       {/* AI Advisor */}
-      {tab === "AI Advisor" && (
+      {tab === "Operations Advisor" && (
         <div className="space-y-3">
           {aiRecs.map((rec, i) => (
             <div key={i} className="panel flex items-start gap-4 p-4">
-              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-violet-400/10 border border-violet-400/20">
-                <Bot className="h-4 w-4 text-violet-300" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
+                <Bot className="h-4 w-4 text-violet-600" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <p className="font-semibold text-white">{String(rec.title ?? "")}</p>
-                  <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2 py-0.5 text-[10px] font-bold text-violet-300">Score {Number(rec.score ?? 0)}</span>
+                  <p className="font-semibold text-slate-900">{String(rec.title ?? "")}</p>
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Score {Number(rec.score ?? 0)}</span>
                 </div>
-                <p className="mt-1 text-sm text-slate-400">{String(rec.body ?? rec.description ?? "")}</p>
+                <p className="mt-1 text-sm text-slate-600">{String(rec.body ?? rec.description ?? "")}</p>
               </div>
             </div>
           ))}
@@ -253,7 +262,7 @@ export function AuditLogsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="panel w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-white">Export Audit Log</h2>
+              <h2 className="font-bold text-slate-900">Export Audit Log</h2>
               <button className="icon-btn" onClick={() => setExportOpen(false)}><X className="h-4 w-4" /></button>
             </div>
             <form
@@ -281,7 +290,9 @@ export function AuditLogsPage() {
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" className="btn-ghost flex-1" onClick={() => setExportOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-primary flex-1">Request Export</button>
+                <button type="submit" className="btn-primary flex-1" disabled={!canExportReports}>
+                  Request Export
+                </button>
               </div>
             </form>
           </div>

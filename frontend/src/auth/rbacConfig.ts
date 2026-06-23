@@ -68,7 +68,28 @@ export const PERMISSIONS = {
 
   AUDIT_VIEW: "audit:view",
 
+  TELEMATICS_DEVICES_VIEW: "telematics:devices:view",
+  TELEMATICS_DEVICES_CREATE: "telematics:devices:create",
+  TELEMATICS_DEVICES_UPDATE: "telematics:devices:update",
+  TELEMATICS_DEVICES_DELETE: "telematics:devices:delete",
+  TELEMATICS_DEVICES_ASSIGN: "telematics:devices:assign",
+  TELEMATICS_DEVICES_DIAGNOSTICS: "telematics:devices:diagnostics",
+  TELEMATICS_DEVICES_FIRMWARE: "telematics:devices:firmware",
+  TELEMATICS_DEVICES_EXPORT: "telematics:devices:export",
+  TELEMATICS_PROVIDERS_MANAGE: "telematics:providers:manage",
+  TELEMATICS_GPS_VIEW: "telematics:gps:view",
+  TELEMATICS_GPS_EXPORT: "telematics:gps:export",
+  TELEMATICS_DIAGNOSTICS_VIEW: "telematics:diagnostics:view",
+  TELEMATICS_DIAGNOSTICS_UPDATE: "telematics:diagnostics:update",
+  TELEMATICS_DIAGNOSTICS_EXPORT: "telematics:diagnostics:export",
+  TELEMATICS_SENSORS_VIEW: "telematics:sensors:view",
+  TELEMATICS_SENSORS_UPDATE: "telematics:sensors:update",
+  TELEMATICS_SENSORS_EXPORT: "telematics:sensors:export",
+
   CUSTOMER_PORTAL_VIEW: "customer_portal:view",
+
+  // P9 — Platform operations (admin/engineering access only)
+  OPS_VIEW: "ops:view",
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -145,7 +166,27 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
 
   [P.AUDIT_VIEW]: ["audit.view", "audit:view", "reports.manage", "reports:manage"],
 
+  [P.TELEMATICS_DEVICES_VIEW]: ["fleet.view", "fleet:view", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DEVICES_CREATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_UPDATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_DELETE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_ASSIGN]: ["fleet.manage", "fleet:manage", "dispatch.manage", "dispatch:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_DIAGNOSTICS]: ["maintenance.manage", "maintenance:manage", "compliance.manage", "compliance:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_EXPORT]: ["fleet.view", "fleet:view", "fleet.manage", "fleet:manage", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_GPS_VIEW]: ["fleet.view", "fleet:view", "telematics.gps.view", "telematics:gps:view", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_GPS_EXPORT]: ["fleet.view", "fleet:view", "telematics.gps.export", "telematics:gps:export", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DIAGNOSTICS_VIEW]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.view", "telematics:diagnostics:view", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DIAGNOSTICS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.diagnostics.update", "telematics:diagnostics:update", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DIAGNOSTICS_EXPORT]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.export", "telematics:diagnostics:export", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_SENSORS_VIEW]: ["fleet.view", "fleet:view", "telematics.sensors.view", "telematics:sensors:view", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_SENSORS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.sensors.update", "telematics:sensors:update", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
+
   [P.CUSTOMER_PORTAL_VIEW]: ["customer_portal.view", "customer-portal:view", "customer_portal:view"],
+
+  [P.OPS_VIEW]: ["ops.view", "ops:view", "platform.ops:view"],
 } satisfies Record<Permission, string[]>;
 
 const permissionAliasLookup = new Map<string, string[]>();
@@ -179,6 +220,12 @@ const TENANT_ADMIN_PERMISSIONS = [
   P.ROLES_VIEW, P.ROLES_UPDATE,
   P.SETTINGS_VIEW, P.SETTINGS_UPDATE,
   P.AUDIT_VIEW,
+  P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,
+  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_EXPORT,
+  P.TELEMATICS_PROVIDERS_MANAGE,
+  P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
+  P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
+  P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_UPDATE, P.TELEMATICS_SENSORS_EXPORT,
 ];
 
 const FLEET_MANAGER_PERMISSIONS = [
@@ -191,6 +238,11 @@ const FLEET_MANAGER_PERMISSIONS = [
   P.MAINTENANCE_VIEW, P.MAINTENANCE_CREATE, P.MAINTENANCE_UPDATE, P.MAINTENANCE_CLOSE,
   P.COMPLIANCE_VIEW, P.COMPLIANCE_UPDATE, P.COMPLIANCE_EXPORT,
   P.REPORTS_VIEW, P.REPORTS_EXPORT,
+  P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,
+  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_EXPORT,
+  P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
+  P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
+  P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_UPDATE, P.TELEMATICS_SENSORS_EXPORT,
 ];
 
 const DISPATCHER_PERMISSIONS = [
@@ -202,6 +254,8 @@ const DISPATCHER_PERMISSIONS = [
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE,
   P.CUSTOMERS_VIEW,
   P.REPORTS_VIEW,
+  P.TELEMATICS_DEVICES_VIEW,
+  P.TELEMATICS_GPS_VIEW,
 ];
 
 const SAFETY_MANAGER_PERMISSIONS = [
@@ -210,6 +264,10 @@ const SAFETY_MANAGER_PERMISSIONS = [
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE, P.ALERTS_CLOSE,
   P.COMPLIANCE_VIEW, P.COMPLIANCE_UPDATE, P.COMPLIANCE_EXPORT,
   P.REPORTS_VIEW,
+  P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_EXPORT,
+  P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
+  P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
+  P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_EXPORT,
 ];
 
 const MAINTENANCE_MANAGER_PERMISSIONS = [
@@ -219,6 +277,10 @@ const MAINTENANCE_MANAGER_PERMISSIONS = [
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE, P.ALERTS_CLOSE,
   P.COMPLIANCE_VIEW,
   P.REPORTS_VIEW,
+  P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE,
+  P.TELEMATICS_GPS_VIEW,
+  P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
+  P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_UPDATE, P.TELEMATICS_SENSORS_EXPORT,
 ];
 
 const DRIVER_PERMISSIONS = [
@@ -228,6 +290,9 @@ const DRIVER_PERMISSIONS = [
   P.SAFETY_VIEW,
   P.COMPLIANCE_VIEW,
   P.ALERTS_VIEW,
+  P.TELEMATICS_GPS_VIEW,
+  P.TELEMATICS_DIAGNOSTICS_VIEW,
+  P.TELEMATICS_SENSORS_VIEW,
 ];
 
 const CUSTOMER_PERMISSIONS = [
@@ -252,6 +317,10 @@ const READ_ONLY_AUDITOR_PERMISSIONS = [
   P.ROLES_VIEW,
   P.SETTINGS_VIEW,
   P.AUDIT_VIEW,
+  P.TELEMATICS_DEVICES_VIEW,
+  P.TELEMATICS_GPS_VIEW,
+  P.TELEMATICS_DIAGNOSTICS_VIEW,
+  P.TELEMATICS_SENSORS_VIEW,
 ];
 
 export const ROLE_PERMISSIONS = {

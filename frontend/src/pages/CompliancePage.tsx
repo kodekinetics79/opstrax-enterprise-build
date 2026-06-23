@@ -12,7 +12,7 @@ import {
   useResolveViolation,
   useVehicleComplianceStatus,
 } from "@/hooks/useBatch6";
-import { EmptyState, LoadingState } from "@/components/ui";
+import { EmptyState, LoadingState, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useI18n } from "@/i18n";
 import type { AnyRecord } from "@/types";
@@ -27,28 +27,28 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "vehicles",     label: "Vehicle Status" },
   { id: "audit",        label: "Audit Packages" },
   { id: "cross-border", label: "Cross-Border" },
-  { id: "ai",           label: "AI Advisor" },
+  { id: "ai",           label: "Compliance Advisor" },
 ];
 
 const SEV_COLOR: Record<string, string> = {
-  Critical: "text-red-400 bg-red-400/10 border-red-400/20",
-  High:     "text-amber-400 bg-amber-400/10 border-amber-400/20",
-  Medium:   "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
-  Low:      "text-sky-400 bg-sky-400/10 border-sky-400/20",
+  Critical: "text-red-700 bg-red-50 border-red-300",
+  High:     "text-amber-700 bg-amber-50 border-amber-300",
+  Medium:   "text-yellow-700 bg-yellow-50 border-yellow-300",
+  Low:      "text-sky-700 bg-sky-50 border-sky-300",
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  Compliant:    "text-emerald-400",
-  Warning:      "text-amber-400",
-  Violation:    "text-red-400",
-  Open:         "text-red-400",
-  Acknowledged: "text-amber-400",
-  Resolved:     "text-emerald-400",
-  Escalated:    "text-red-500",
-  "Under Review": "text-sky-400",
-  Active:       "text-emerald-400",
-  Malfunction:  "text-red-400",
-  Diagnostic:   "text-amber-400",
+  Compliant:    "text-emerald-700",
+  Warning:      "text-amber-700",
+  Violation:    "text-red-700",
+  Open:         "text-red-700",
+  Acknowledged: "text-amber-700",
+  Resolved:     "text-emerald-700",
+  Escalated:    "text-red-800",
+  "Under Review": "text-sky-700",
+  Active:       "text-emerald-700",
+  Malfunction:  "text-red-700",
+  Diagnostic:   "text-amber-700",
 };
 
 function StatusDot({ status }: { status: string }) {
@@ -57,28 +57,19 @@ function StatusDot({ status }: { status: string }) {
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${SEV_COLOR[severity] ?? "text-slate-400 border-white/10"}`}>{severity}</span>;
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${SEV_COLOR[severity] ?? "text-slate-600 border-slate-200"}`}>{severity}</span>;
 }
 
 function CountryBadge({ code }: { code: string }) {
   const labels: Record<string, string> = { US: "🇺🇸 US", CA: "🇨🇦 CA", SA: "🇸🇦 SA", AE: "🇦🇪 AE", PK: "🇵🇰 PK" };
-  return <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-bold text-slate-300">{labels[code] ?? code}</span>;
+  return <span className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">{labels[code] ?? code}</span>;
 }
 
-function exportCsv(name: string, rows: AnyRecord[]) {
-  if (!rows.length) return;
-  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
-  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `opstrax-${name}.csv`;
-  a.click();
-}
 
 function Disclaimer() {
   return (
-    <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-[11px] text-amber-200/80 leading-relaxed">
-      <span className="font-bold text-amber-300">Disclaimer: </span>
+    <div className="rounded-xl border border-amber-400/20 bg-amber-50 p-3 text-[11px] text-amber-700 leading-relaxed">
+      <span className="font-bold text-amber-700">Disclaimer: </span>
       OpsTrax provides compliance management, monitoring, and audit-readiness tools. Final regulatory compliance remains the carrier&apos;s responsibility. ELD certification depends on the connected ELD provider/device and applicable country requirements.
     </div>
   );
@@ -135,7 +126,7 @@ export function CompliancePage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-extrabold text-white flex items-center gap-2"><Shield className="h-5 w-5 text-emerald-400" />{t("compliance_center")}</h1>
+          <h1 className="text-xl font-extrabold text-slate-900 flex items-center gap-2"><Shield className="h-5 w-5 text-emerald-600" />{t("compliance_center")}</h1>
           <p className="text-xs text-slate-500 mt-0.5">Multi-country compliance monitoring, HOS tracking, and audit-readiness</p>
         </div>
         <div className="flex items-center gap-2">
@@ -174,15 +165,15 @@ export function CompliancePage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-0.5 border-b border-white/[0.07] overflow-x-auto pb-0">
+      <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto pb-0">
         {TABS.map(t2 => (
           <button
             key={t2.id}
             onClick={() => setTab(t2.id)}
             className={`px-3 py-2 text-[12px] font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${
               tab === t2.id
-                ? "border-emerald-400 text-emerald-300"
-                : "border-transparent text-slate-500 hover:text-slate-300"
+                ? "border-emerald-500 text-emerald-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
             {t2.label}
@@ -197,14 +188,14 @@ export function CompliancePage() {
           <div className="panel space-y-2">
             <p className="section-title flex items-center gap-2"><Globe className="h-3.5 w-3.5 text-emerald-400" />Active Compliance Profiles</p>
             {(summary?.profiles as AnyRecord[] | undefined)?.map(p => (
-              <div key={String(p.id)} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-2">
+              <div key={String(p.id)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
                 <div>
-                  <p className="text-sm font-semibold text-white">{String(p.profile_name)}</p>
+                  <p className="text-sm font-semibold text-slate-900">{String(p.profile_name)}</p>
                   <p className="text-xs text-slate-500">{String(p.authority ?? "—")} · {String(p.hos_ruleset ?? "—")}</p>
                 </div>
                 <div className="text-end">
                   <CountryBadge code={String(p.country_code)} />
-                  {!!p.eld_required && <p className="text-[10px] text-amber-400 mt-0.5">ELD Required</p>}
+                  {!!p.eld_required && <p className="text-[10px] text-amber-700 mt-0.5">ELD Required</p>}
                 </div>
               </div>
             ))}
@@ -214,10 +205,10 @@ export function CompliancePage() {
           <div className="panel space-y-2">
             <p className="section-title flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-red-400" />Recent Violations</p>
             {violations.slice(0, 5).map(v => (
-              <div key={String(v.id)} className="flex items-start gap-2 rounded-lg bg-white/[0.03] px-3 py-2 cursor-pointer hover:bg-white/[0.06]" onClick={() => setDrawer(v)}>
+              <div key={String(v.id)} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 cursor-pointer hover:bg-slate-100" onClick={() => setDrawer(v)}>
                 <SeverityBadge severity={String(v.severity)} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-200 truncate">{String(v.description ?? v.violation_code)}</p>
+                  <p className="text-xs text-slate-700 truncate">{String(v.description ?? v.violation_code)}</p>
                   <p className="text-[11px] text-slate-500">{String(v.violation_code)} · <StatusDot status={String(v.status)} /></p>
                 </div>
                 <CountryBadge code={String(v.country_code)} />
@@ -228,30 +219,31 @@ export function CompliancePage() {
       )}
 
       {tab === "violations" && (
+        !violations.length ? <EmptyState title="No compliance violations" subtitle="There are no active violations in the current tenant scope." /> : (
         <div className="panel overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/[0.07] text-left">
+              <tr className="border-b border-slate-200 text-left">
                 {["Code","Severity","Category","Driver","Vehicle","Status","Detected",""].map(h => (
                   <th key={h} className="pb-2 pr-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.04]">
+            <tbody className="divide-y divide-slate-100">
               {violations.map(v => (
-                <tr key={String(v.id)} className="hover:bg-white/[0.03] cursor-pointer" onClick={() => setDrawer(v)}>
-                  <td className="py-2 pr-4 font-mono text-xs text-teal-300">{String(v.violation_code)}</td>
+                <tr key={String(v.id)} className="hover:bg-slate-50 cursor-pointer" onClick={() => setDrawer(v)}>
+                  <td className="py-2 pr-4 font-mono text-xs text-teal-700">{String(v.violation_code)}</td>
                   <td className="py-2 pr-4"><SeverityBadge severity={String(v.severity)} /></td>
-                  <td className="py-2 pr-4 text-slate-300">{String(v.category)}</td>
-                  <td className="py-2 pr-4 text-slate-300">{String(v.driver_name ?? "—")}</td>
-                  <td className="py-2 pr-4 text-slate-300">{String(v.vehicle_code ?? "—")}</td>
+                  <td className="py-2 pr-4 text-slate-700">{String(v.category)}</td>
+                  <td className="py-2 pr-4 text-slate-700">{String(v.driver_name ?? "—")}</td>
+                  <td className="py-2 pr-4 text-slate-700">{String(v.vehicle_code ?? "—")}</td>
                   <td className="py-2 pr-4"><StatusDot status={String(v.status)} /></td>
                   <td className="py-2 pr-4 text-xs text-slate-500">{formatDate(String(v.detected_at))}</td>
                   <td className="py-2">
                     <div className="flex gap-1">
                       {String(v.status) === "Open" && (
                         <button
-                          className="rounded border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300 hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={!canUpdate}
                           title={!canUpdate ? "You do not have permission to perform this action." : "Acknowledge this violation."}
                           onClick={e => { e.stopPropagation(); ackMut.mutate(Number(v.id)); }}
@@ -261,7 +253,7 @@ export function CompliancePage() {
                       )}
                       {["Open","Acknowledged","Under Review"].includes(String(v.status)) && (
                         <button
-                          className="rounded border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={!canUpdate}
                           title={!canUpdate ? "You do not have permission to perform this action." : "Resolve this violation."}
                           onClick={e => { e.stopPropagation(); resolveMut.mutate(Number(v.id)); }}
@@ -276,28 +268,29 @@ export function CompliancePage() {
             </tbody>
           </table>
         </div>
+        )
       )}
 
       {tab === "drivers" && (
         <div className="panel overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/[0.07] text-left">
+              <tr className="border-b border-slate-200 text-left">
                 {["Driver","Country","Status","License Expiry","Med Cert","Drug Test","HOS","Violations"].map(h => (
                   <th key={h} className="pb-2 pr-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.04]">
+            <tbody className="divide-y divide-slate-100">
               {drivers.map(d => (
-                <tr key={String(d.id)} className="hover:bg-white/[0.03]">
+                <tr key={String(d.id)} className="hover:bg-slate-50">
                   <td className="py-2 pr-4">
-                    <p className="font-semibold text-white">{String(d.driver_name)}</p>
+                    <p className="font-semibold text-slate-900">{String(d.driver_name)}</p>
                     <p className="text-[11px] text-slate-500">{String(d.driver_code)}</p>
                   </td>
                   <td className="py-2 pr-4"><CountryBadge code={String(d.country_code)} /></td>
                   <td className="py-2 pr-4"><StatusDot status={String(d.overall_status)} /></td>
-                  <td className="py-2 pr-4 text-xs text-slate-300">{formatDate(String(d.license_expiry ?? ""))}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(d.license_expiry ?? ""))}</td>
                   <td className="py-2 pr-4"><span className={Number(d.medical_cert_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.medical_cert_valid) ? "✓" : "✗"} {formatDate(String(d.medical_cert_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4"><span className={Number(d.drug_test_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.drug_test_valid) ? "✓" : "✗"} {formatDate(String(d.drug_test_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4"><StatusDot status={String(d.hos_status)} /></td>
@@ -315,22 +308,22 @@ export function CompliancePage() {
         <div className="panel overflow-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/[0.07] text-left">
+              <tr className="border-b border-slate-200 text-left">
                 {["Vehicle","Country","Status","Reg. Expiry","Insurance","Inspection","ELD","Violations"].map(h => (
                   <th key={h} className="pb-2 pr-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.04]">
+            <tbody className="divide-y divide-slate-100">
               {vehicles.map(v => (
-                <tr key={String(v.id)} className="hover:bg-white/[0.03]">
+                <tr key={String(v.id)} className="hover:bg-slate-50">
                   <td className="py-2 pr-4">
-                    <p className="font-semibold text-white">{String(v.vehicle_code)}</p>
+                    <p className="font-semibold text-slate-900">{String(v.vehicle_code)}</p>
                     <p className="text-[11px] text-slate-500">{String(v.vehicle_type ?? "")}</p>
                   </td>
                   <td className="py-2 pr-4"><CountryBadge code={String(v.country_code)} /></td>
                   <td className="py-2 pr-4"><StatusDot status={String(v.overall_status)} /></td>
-                  <td className="py-2 pr-4 text-xs text-slate-300">{formatDate(String(v.registration_expiry ?? ""))}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(v.registration_expiry ?? ""))}</td>
                   <td className="py-2 pr-4"><span className={Number(v.insurance_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.insurance_valid) ? "✓" : "✗"} {formatDate(String(v.insurance_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4"><span className={Number(v.inspection_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.inspection_valid) ? "✓" : "✗"} {formatDate(String(v.inspection_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4">
@@ -347,14 +340,15 @@ export function CompliancePage() {
       )}
 
       {tab === "audit" && (
+        !audits.length ? <EmptyState title="No audit packages" subtitle="Create an audit package to prepare export-ready compliance records." /> : (
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {audits.map(a => (
               <div key={String(a.id)} className="panel space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="font-mono text-xs text-teal-300">{String(a.package_code)}</p>
-                    <p className="text-sm font-semibold text-white mt-0.5">{String(a.profile_name ?? "Fleet-Wide")}</p>
+                    <p className="font-mono text-xs text-teal-700">{String(a.package_code)}</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(a.profile_name ?? "Fleet-Wide")}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <CountryBadge code={String(a.country_code)} />
@@ -367,8 +361,8 @@ export function CompliancePage() {
                     { label: "Vehicles",   value: a.included_vehicles },
                     { label: "HOS Logs",   value: a.hos_logs_count },
                   ].map(m => (
-                    <div key={m.label} className="rounded bg-white/[0.03] py-1.5">
-                      <p className="text-base font-bold text-white">{String(m.value)}</p>
+                    <div key={m.label} className="rounded bg-slate-50 py-1.5">
+                      <p className="text-base font-bold text-slate-900">{String(m.value)}</p>
                       <p className="text-[10px] text-slate-500">{m.label}</p>
                     </div>
                   ))}
@@ -377,7 +371,7 @@ export function CompliancePage() {
                 {!!a.notes && <p className="text-xs text-slate-400 leading-snug">{String(a.notes)}</p>}
                 {String(a.status) === "Draft" || String(a.status) === "In Progress" ? (
                   <button
-                    className="w-full rounded-lg border border-emerald-400/20 bg-emerald-400/10 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-400/20 transition disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-lg border border-emerald-300 bg-emerald-50 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={!canUpdate}
                     title={!canUpdate ? "You do not have permission to perform this action." : "Finalize this audit package."}
                     onClick={() => finalizeMut.mutate(Number(a.id))}
@@ -385,7 +379,7 @@ export function CompliancePage() {
                     <Package className="h-3 w-3 inline-block mr-1" />Finalize Package
                   </button>
                 ) : (
-                  <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 py-1.5 text-center text-xs font-semibold text-emerald-300">
+                  <div className="rounded-lg border border-emerald-300 bg-emerald-50 py-1.5 text-center text-xs font-semibold text-emerald-700">
                     <CheckCircle className="h-3 w-3 inline-block mr-1" />{String(a.status)}
                   </div>
                 )}
@@ -393,6 +387,7 @@ export function CompliancePage() {
             ))}
           </div>
         </div>
+        )
       )}
 
       {tab === "cross-border" && (
@@ -403,13 +398,13 @@ export function CompliancePage() {
             <div className="space-y-2">
               {crossBorder.length === 0 && <p className="text-sm text-slate-500">No cross-border issues found.</p>}
               {crossBorder.map(v => (
-                <div key={String(v.id)} className="flex items-start gap-3 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-3">
+                <div key={String(v.id)} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                   <SeverityBadge severity={String(v.severity)} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-200">{String(v.description)}</p>
+                    <p className="text-sm text-slate-700">{String(v.description)}</p>
                     <p className="text-xs text-slate-500 mt-0.5">{String(v.violation_code)} · {String(v.profile_name ?? "—")} · {String(v.authority ?? "—")}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <div className="flex flex-col items-end gap-1 shrink-0">
                     <CountryBadge code={String(v.country_code)} />
                     <StatusDot status={String(v.status)} />
                   </div>
@@ -427,14 +422,14 @@ export function CompliancePage() {
             <p className="text-xs text-slate-500 mb-4">AI-generated compliance recommendations based on live fleet data. Not a substitute for legal counsel.</p>
             <div className="space-y-3">
               {aiRecs.map((rec, i) => (
-                <div key={i} className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-4 space-y-1.5">
+                <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-white">{String(rec.title)}</p>
+                    <p className="text-sm font-semibold text-slate-900">{String(rec.title)}</p>
                     <SeverityBadge severity={String(rec.priority)} />
                   </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">{String(rec.description)}</p>
+                  <p className="text-xs text-slate-600 leading-relaxed">{String(rec.description)}</p>
                   {!!rec.action_label && (
-                    <button className="mt-1 rounded border border-violet-400/25 bg-violet-400/10 px-3 py-1 text-xs font-semibold text-violet-300 hover:bg-violet-400/20 transition">
+                    <button className="mt-1 rounded border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition">
                       {String(rec.action_label)}
                     </button>
                   )}

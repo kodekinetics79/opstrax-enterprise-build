@@ -64,7 +64,17 @@ public sealed class Batch1SchemaService(Database db)
         new("assets", "utilization_score", "DECIMAL(6,2) NOT NULL DEFAULT 80"),
         new("assets", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
         new("assets", "deleted_at", "TIMESTAMP NULL"),
-        new("users", "password_hash", "VARCHAR(255) NULL")
+        new("users", "password_hash", "VARCHAR(255) NULL"),
+        new("ai_insights", "status", "VARCHAR(50) NOT NULL DEFAULT 'Open'"),
+        new("ai_insights", "category", "VARCHAR(120) NOT NULL DEFAULT 'Operations'"),
+        new("ai_insights", "alert_type", "VARCHAR(120) NULL"),
+        new("ai_insights", "entity_type", "VARCHAR(60) NULL"),
+        new("ai_insights", "entity_id", "BIGINT NULL"),
+        new("ai_insights", "acknowledged_at", "TIMESTAMP NULL"),
+        new("ai_insights", "closed_at", "TIMESTAMP NULL"),
+        new("ai_insights", "acknowledged_by", "VARCHAR(160) NULL"),
+        new("ai_insights", "recommended_action", "TEXT NULL"),
+        new("ai_insights", "company_id", "BIGINT NOT NULL DEFAULT 1")
     ];
 
     private static readonly string[] TableStatements =
@@ -142,7 +152,34 @@ public sealed class Batch1SchemaService(Database db)
             title VARCHAR(220) NOT NULL,
             body TEXT NULL,
             severity VARCHAR(50) NOT NULL DEFAULT 'Info',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+
+        @"CREATE TABLE IF NOT EXISTS location_events (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            company_id BIGINT NOT NULL DEFAULT 1,
+            vehicle_id BIGINT NULL,
+            vehicle_code VARCHAR(60) NULL,
+            driver_id BIGINT NULL,
+            lat DECIMAL(10,7) NOT NULL,
+            lng DECIMAL(10,7) NOT NULL,
+            speed_mph DECIMAL(6,2) NOT NULL DEFAULT 0,
+            heading SMALLINT NOT NULL DEFAULT 0,
+            accuracy_meters DECIMAL(8,2) NULL,
+            altitude_meters DECIMAL(8,2) NULL,
+            event_type VARCHAR(60) NOT NULL DEFAULT 'ping',
+            engine_status VARCHAR(40) NULL DEFAULT 'Running',
+            fuel_level DECIMAL(6,2) NULL,
+            odometer_miles DECIMAL(12,2) NULL,
+            battery_voltage DECIMAL(6,2) NULL,
+            dtc_codes JSON NULL,
+            geofence_id BIGINT NULL,
+            device_id VARCHAR(120) NULL,
+            event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_le_vehicle_time (vehicle_id, event_time),
+            INDEX idx_le_company_time (company_id, event_time),
+            INDEX idx_le_vehicle_code (vehicle_code)
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     ];
 
     private static readonly string[] SeedStatements =
@@ -200,6 +237,23 @@ public sealed class Batch1SchemaService(Database db)
             UNION ALL SELECT 'customers','customer','Send proactive updates for SLA-sensitive customers and watch at-risk accounts.'
             UNION ALL SELECT 'assets','asset','Review geofence status, utilization and assignment before route release.'
           ) m
-          WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations r WHERE r.module_key=m.module_key AND r.title LIKE 'Batch 1%')"
+          WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations r WHERE r.module_key=m.module_key AND r.title LIKE 'Batch 1%')",
+
+        // Seed one GPS position per vehicle so the live map shows real markers immediately
+        @"INSERT INTO location_events (company_id, vehicle_id, vehicle_code, driver_id, lat, lng, speed_mph, heading, event_type, engine_status, fuel_level, odometer_miles, event_time)
+          SELECT v.company_id, v.id, v.vehicle_code, v.assigned_driver_id,
+                 38.8951 + (v.id * 0.0412 % 0.65),
+                 -77.0364 - (v.id * 0.0387 % 0.58),
+                 CASE WHEN v.status='Active' THEN 35 + (v.id * 7 % 40)
+                      WHEN v.status='In Transit' THEN 45 + (v.id * 11 % 30)
+                      ELSE 0 END,
+                 (v.id * 37) % 360,
+                 CASE WHEN v.status IN ('Active','In Transit') THEN 'ping' ELSE 'parked' END,
+                 CASE WHEN v.status IN ('Active','In Transit') THEN 'Running' ELSE 'Off' END,
+                 60 + (v.id * 13 % 35),
+                 COALESCE(v.odometer_miles, 50000 + v.id * 3127),
+                 DATE_SUB(NOW(), INTERVAL (v.id % 8) MINUTE)
+          FROM vehicles v
+          WHERE NOT EXISTS (SELECT 1 FROM location_events le WHERE le.vehicle_id=v.id)"
     ];
 }

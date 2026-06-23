@@ -1,6 +1,7 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
 import { getComplianceRecords } from "@/services/fleetDomainApi";
+import { getHosDriverClocks } from "@/data/developmentFleetSeedData";
 
 type MaybePromise<T> = T | Promise<T>;
 type ComplianceFallbackPayload = {
@@ -58,18 +59,24 @@ export const complianceApi = {
 };
 
 export const hosApi = {
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/hos/summary")), async () => {
-    const fallback = await complianceFallback();
-    return { totalDrivers: fallback.summary.drivers?.length ?? 0 };
+  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/hos/summary")), () => {
+    const clocks = getHosDriverClocks();
+    return {
+      totalDrivers: clocks.length,
+      hosOk: clocks.filter(d => d.status === "OK").length,
+      hosWarning: clocks.filter(d => d.status === "Warning").length,
+      hosViolation: clocks.filter(d => d.status === "Vehicle Blocked").length,
+      eldMalfunction: 1,
+    } as AnyRecord;
   }),
-  drivers: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/hos/drivers")), async () => {
-    const fallback = await complianceFallback();
-    return fallback.summary.drivers ?? [];
-  }),
-  clocks: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/hos/clocks")), async () => {
-    const fallback = await complianceFallback();
-    return fallback.summary.drivers ?? [];
-  }),
+  drivers: () => withFallback(
+    unwrap<AnyRecord[]>(apiClient.get("/api/hos/drivers")),
+    () => getHosDriverClocks() as AnyRecord[],
+  ),
+  clocks: () => withFallback(
+    unwrap<AnyRecord[]>(apiClient.get("/api/hos/clocks")),
+    () => getHosDriverClocks() as AnyRecord[],
+  ),
   logs: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/hos/logs")), async () => []),
   driverLogs: (driverId: number) => withFallback(unwrap<AnyRecord[]>(apiClient.get(`/api/hos/logs/${driverId}`)), async () => []),
   certifyLog: (id: number) => withFallback(unwrap<AnyRecord>(apiClient.post(`/api/hos/logs/${id}/certify`, {})), async () => ({ id, status: "Certified", success: true })),

@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, Download, FilePlus2, Hammer, PenTool, Plus, Sparkles, Wrench, X } from "lucide-react";
-import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 import {
   useDocumentDetail,
@@ -156,6 +156,7 @@ function getBatch3Permission(kind: Batch3Kind, action: string) {
 export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const config = configs[kind];
   const { session } = useAuth();
+  const exportPermission = kind === "documents" ? "maintenance:update" : "maintenance:view";
   
   const hasPermission = (perm: string) => {
     if (!session?.permissions) return false;
@@ -231,7 +232,14 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
             >
               <Plus className="h-4 w-4" /> {config.createLabel}
             </button>
-            <button className="btn-ghost" onClick={() => exportCsv(kind, rows)}><Download className="h-4 w-4" /> Export Report</button>
+            <button
+              className="btn-ghost"
+              disabled={!hasPermission(exportPermission)}
+              title={!hasPermission(exportPermission) ? "You do not have permission to perform this action." : "Export the current filtered records."}
+              onClick={() => hasPermission(exportPermission) && exportCsv(kind, rows)}
+            >
+              <Download className="h-4 w-4" /> Export Report
+            </button>
           </>
         }
       />
@@ -255,6 +263,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         config={config}
         detail={detail.data}
         permissions={session?.permissions || []}
+        canExport={hasPermission(exportPermission)}
         loading={detail.isLoading}
         onClose={() => setSelected(null)}
         onEdit={(record) => setEditing(record)}
@@ -265,7 +274,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   );
 }
 
-function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction, permissions }: { kind: Batch3Kind; config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[] }) {
+function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction, permissions, canExport }: { kind: Batch3Kind; config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[]; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
@@ -303,7 +312,14 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
               </button>
             );
           })}
-          <button className="btn-ghost" onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Record</button>
+          <button
+            className="btn-ghost"
+            disabled={!canExport}
+            title={!canExport ? "You do not have permission to perform this action." : "Export this record."}
+            onClick={() => canExport && exportCsv(config.eyebrow, record ? [record] : [])}
+          >
+            <Download className="h-4 w-4" /> Export Record
+          </button>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <InfoPanel title="Primary Evidence" record={record} keys={Object.keys(record).slice(0, 12)} />
@@ -324,9 +340,9 @@ function RecordModal({ title, fields, initial, saving, onClose, onSave }: { titl
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
       <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}>
-        <div className="flex justify-between"><h2 className="text-2xl font-semibold text-white">{form.id ? `Edit ${title}` : title}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div>
+        <div className="flex justify-between"><h2 className="text-2xl font-semibold text-slate-900">{form.id ? `Edit ${title}` : title}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span><input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} /></label>)}</div>
-        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button className="btn-primary" disabled={saving}>Save</button></div>
+        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>Save</button></div>
       </form>
     </div>
   );
@@ -352,7 +368,7 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
   if (kind === "maintenance") {
     if (type === "schedule") return maintenanceApi.schedule(id);
     if (type === "defer") return maintenanceApi.defer(id);
-    return maintenanceApi.createWorkOrder(id);
+    return maintenanceApi.createWorkOrder({ vehicleId: Number(id) });
   }
   if (kind === "work-orders") {
     if (type === "assign") return workOrdersApi.assign(id, {});
@@ -371,11 +387,3 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
   return documentsApi.uploadPlaceholder(defaultForm("documents"));
 }
 
-function exportCsv(name: string, rows: AnyRecord[]) {
-  const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
-  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `opstrax-${name}.csv`;
-  a.click();
-}

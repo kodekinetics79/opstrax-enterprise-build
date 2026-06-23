@@ -43,4 +43,6 @@ function endpointFor(moduleKey: string) {
 export const modulesApi = {
   get: (moduleKey: string) => unwrap<ModulePayload>(apiClient.get(endpointFor(moduleKey))),
   detail: (moduleKey: string, id: string | number) => unwrap<AnyRecord>(apiClient.get(`${endpointFor(moduleKey)}/${id}`)),
+  create: (moduleKey: string, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(endpointFor(moduleKey), payload)),
+  update: (moduleKey: string, id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`${endpointFor(moduleKey)}/${id}`, payload)),
 };

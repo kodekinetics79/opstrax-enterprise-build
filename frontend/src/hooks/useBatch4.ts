@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
+import type { AnyRecord } from "@/types";
 import { coachingApi } from "@/services/coachingApi";
 import { dashcamApi } from "@/services/dashcamApi";
 import { evidenceApi } from "@/services/evidenceApi";
 import { incidentsApi } from "@/services/incidentsApi";
 import { safetyApi } from "@/services/safetyApi";
 
-export const useSafetySummary = () => useQuery({ queryKey: ["safety", "summary"], queryFn: safetyApi.summary });
-export const useSafetyEvents = () => useQuery({ queryKey: ["safety"], queryFn: safetyApi.events });
-export const useSafetyEventDetail = (id?: string | number) => useQuery({ queryKey: ["safety", "detail", id], queryFn: () => safetyApi.detail(id!), enabled: Boolean(id) });
+export const useSafetySummary   = () => useQuery<AnyRecord>      ({ queryKey: ["safety", "summary"], queryFn: () => safetyApi.summary() });
+export const useSafetyEvents    = () => useQuery<AnyRecord[]>    ({ queryKey: ["safety"],            queryFn: () => safetyApi.events() });
+export const useSafetyEventDetail = (id?: string | number) => useQuery<AnyRecord>({ queryKey: ["safety", "detail", id], queryFn: () => safetyApi.detail(id!), enabled: Boolean(id) });
 export const useDashcamSummary = () => useQuery({ queryKey: ["dashcam", "summary"], queryFn: dashcamApi.summary });
 export const useDashcamEvents = () => useQuery({ queryKey: ["dashcam"], queryFn: dashcamApi.events });
 export const useDashcamEventDetail = (id?: string | number) => useQuery({ queryKey: ["dashcam", "detail", id], queryFn: () => dashcamApi.detail(id!), enabled: Boolean(id) });

@@ -428,6 +428,129 @@ th.sort-active { color: var(--text-primary); }
   background: #ffffff;
 }
 
+/* Login brand panel — dark surface, exempt from light-mode overrides */
+.login-brand-panel {
+  background: #0c1526 !important;
+}
+.login-brand-panel .text-white     { color: #ffffff !important; }
+.login-brand-panel .text-slate-400 { color: #94a3b8 !important; }
+.login-brand-panel .text-slate-500 { color: #64748b !important; }
+.login-brand-panel .text-slate-600 { color: #475569 !important; }
+.login-brand-panel .text-slate-700 { color: #334155 !important; }
+.login-brand-panel .text-teal-400  { color: #2dd4bf !important; }
+.login-brand-panel .text-teal-500  { color: #14b8a6 !important; }
+
+/* ── Login animations ──────────────────────────────────────────── */
+@keyframes routeDraw {
+  from { stroke-dashoffset: 900; opacity: 0; }
+  to   { stroke-dashoffset: 0;   opacity: 1; }
+}
+@keyframes routeDrawSlow {
+  from { stroke-dashoffset: 700; opacity: 0; }
+  to   { stroke-dashoffset: 0;   opacity: 1; }
+}
+@keyframes pingFade {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  80%  { transform: scale(2.4);  opacity: 0; }
+  100% { transform: scale(2.4);  opacity: 0; }
+}
+@keyframes pingFadeSlow {
+  0%   { transform: scale(1);    opacity: 0.4; }
+  80%  { transform: scale(2.0);  opacity: 0; }
+  100% { transform: scale(2.0);  opacity: 0; }
+}
+@keyframes glowBreath {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50%       { opacity: 0.20; transform: scale(1.06); }
+}
+@keyframes loginFormEnter {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes loginPanelEnter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes metricCount {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-route-1 {
+  stroke-dasharray: 8 6;
+  animation: routeDraw 2s ease-out 0.4s both;
+}
+.login-route-2 {
+  stroke-dasharray: 5 7;
+  animation: routeDrawSlow 2.4s ease-out 0.8s both;
+}
+.login-route-3 {
+  animation: routeDrawSlow 2.8s ease-out 1.0s both;
+}
+.login-route-4 {
+  stroke-dasharray: 3 8;
+  animation: routeDrawSlow 2.2s ease-out 1.2s both;
+}
+.login-dot-ping {
+  transform-origin: center;
+  animation: pingFade 2.8s ease-out infinite;
+}
+.login-dot-ping-2 {
+  transform-origin: center;
+  animation: pingFadeSlow 3.2s ease-out 0.6s infinite;
+}
+.login-dot-ping-outer {
+  transform-origin: center;
+  animation: pingFade 2.8s ease-out 0.3s infinite;
+}
+.login-glow-1 { animation: glowBreath 4s ease-in-out infinite; }
+.login-glow-2 { animation: glowBreath 5s ease-in-out 1s infinite; }
+
+.login-form-enter {
+  animation: loginFormEnter 0.55s cubic-bezier(0.22,1,0.36,1) 0.15s both;
+}
+.login-panel-enter {
+  animation: loginPanelEnter 0.8s ease-out both;
+}
+.login-metric-1 { animation: metricCount 0.5s ease-out 1.2s both; }
+.login-metric-2 { animation: metricCount 0.5s ease-out 1.4s both; }
+.login-metric-3 { animation: metricCount 0.5s ease-out 1.6s both; }
+
+/* Scanning sweep line */
+@keyframes scanLine {
+  0%   { transform: translateY(0);     opacity: 0.9; }
+  70%  { opacity: 0.5; }
+  100% { transform: translateY(480px); opacity: 0; }
+}
+.login-scan-line {
+  animation: scanLine 6s linear infinite;
+  will-change: transform, opacity;
+}
+
+/* Floating vehicle status cards — stagger via inline animationDelay */
+@keyframes floatCardIn {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.login-float-card {
+  opacity: 0;
+  animation: floatCardIn 0.65s cubic-bezier(0.22,1,0.36,1) forwards;
+}
+
+/* Live ticker horizontal scroll */
+@keyframes tickerScroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.login-ticker-track {
+  display: inline-flex;
+  animation: tickerScroll 32s linear infinite;
+  will-change: transform;
+}
+.login-ticker-track:hover {
+  animation-play-state: paused;
+}
+
 .from-slate-900 {
   --tw-gradient-from: #f8fafc var(--tw-gradient-from-position);
   --tw-gradient-to: rgb(248 250 252 / 0) var(--tw-gradient-to-position);

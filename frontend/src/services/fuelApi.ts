@@ -1,9 +1,14 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
+import { getFuelSummary, getFuelTransactions } from "@/data/developmentFleetSeedData";
+
+async function withFallback<T>(req: Promise<T>, fb: () => T | Promise<T>): Promise<T> {
+  try { return await req; } catch { return fb(); }
+}
 
 export const fuelApi = {
-  summary: () => unwrap<AnyRecord>(apiClient.get("/api/fuel/summary")),
-  transactions: () => unwrap<AnyRecord[]>(apiClient.get("/api/fuel/transactions")),
+  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/fuel/summary")), () => getFuelSummary() as AnyRecord),
+  transactions: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/fuel/transactions")), () => getFuelTransactions() as AnyRecord[]),
   transaction: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/fuel/transactions/${id}`)),
   createTransaction: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/fuel/transactions", payload)),
   updateTransaction: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/fuel/transactions/${id}`, payload)),

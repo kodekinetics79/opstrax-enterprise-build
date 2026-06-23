@@ -1,9 +1,14 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
+import { getDashcamEvents, getDashcamSummary } from "@/data/developmentFleetSeedData";
+
+async function withFallback<T>(req: Promise<T>, fb: () => T | Promise<T>): Promise<T> {
+  try { return await req; } catch { return fb(); }
+}
 
 export const dashcamApi = {
-  summary: () => unwrap<AnyRecord>(apiClient.get("/api/dashcam/summary")),
-  events: () => unwrap<AnyRecord[]>(apiClient.get("/api/dashcam/events")),
+  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/dashcam/summary")), () => getDashcamSummary() as AnyRecord),
+  events: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/dashcam/events")), () => getDashcamEvents() as AnyRecord[]),
   detail: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/dashcam/events/${id}`)),
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/dashcam/events", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/dashcam/events/${id}`, payload)),

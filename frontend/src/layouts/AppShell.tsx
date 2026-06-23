@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, Bot, ChevronDown, Languages, LogOut,
-  Menu, Search, Sparkles, X, Zap,
+  Bell, ChevronDown, Languages, LogOut,
+  Menu, Search, X,
 } from "lucide-react";
+import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -12,64 +13,54 @@ import type { LocaleCode } from "@/i18n";
 
 const NAV_SECTIONS = [
   {
-    label: "Dashboard",
-    color: "text-blue-700",
-    items: ["command-center", "live-dashboard", "control-tower", "executive"],
+    label: "Operations",
+    color: "text-teal-600",
+    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "alerts"],
   },
   {
     label: "Fleet",
-    color: "text-indigo-700",
-    items: ["map-view", "assets", "iot-devices", "gps-tracking", "obd-j1939", "cold-chain", "sensor-health"],
+    color: "text-blue-600",
+    items: ["vehicles", "drivers", "fleet-utilization", "assignments"],
   },
   {
-    label: "Vehicles",
-    color: "text-sky-700",
-    items: ["vehicles"],
-  },
-  {
-    label: "Drivers",
-    color: "text-emerald-700",
-    items: ["drivers"],
-  },
-  {
-    label: "Dispatch / Trips",
+    label: "Dispatch",
     color: "text-cyan-700",
-    items: ["dispatch-board", "dispatch", "routes", "route-planning", "route-plans", "last-mile-delivery"],
+    items: ["dispatch-board", "jobs", "route-plans", "last-mile-delivery"],
   },
   {
-    label: "Shipments / Jobs",
+    label: "Shipments",
     color: "text-teal-700",
-    items: ["active-shipments", "jobs", "shipments", "load-bookings", "proof-of-delivery"],
-  },
-  {
-    label: "Customers",
-    color: "text-violet-700",
-    items: ["customers", "customer-portal", "customer-eta", "leads", "sales-pipeline", "opportunities", "follow-ups", "renewals", "upsell-opportunities", "campaigns", "account-health", "support-tickets"],
+    items: ["active-shipments", "shipments", "proof-of-delivery"],
   },
   {
     label: "Safety",
-    color: "text-red-700",
-    items: ["alerts", "safety", "incidents", "coaching", "dashcam", "evidence-packages"],
+    color: "text-red-600",
+    items: ["incidents", "coaching", "driver-scorecards", "dvir-inspections", "hos-eld"],
   },
   {
     label: "Maintenance",
     color: "text-amber-700",
-    items: ["maintenance", "work-orders", "service-history", "preventive-maintenance", "dvir-inspections", "downtime"],
+    items: ["work-orders", "preventive-maintenance", "service-history", "downtime"],
   },
   {
-    label: "Compliance",
-    color: "text-slate-600",
-    items: ["compliance", "hos-eld", "audit-logs"],
+    label: "Telematics",
+    color: "text-violet-700",
+    items: ["iot-devices", "gps-tracking", "obd-j1939"],
+  },
+  {
+    label: "Customers",
+    color: "text-indigo-600",
+    items: ["customers"],
   },
   {
     label: "Reports",
-    color: "text-purple-700",
-    items: ["reports", "reports-analytics", "sla-kpi"],
+    color: "text-purple-600",
+    items: ["reports-analytics", "predictive-analytics", "sla-kpi", "carbon-tracking"],
   },
   {
-    label: "Admin / Settings",
-    color: "text-slate-600",
-    items: ["settings", "user-management", "integrations", "feature-flags", "about"],
+    label: "Admin",
+    color: "text-slate-500",
+    items: ["user-management", "audit-logs", "integrations", "settings", "about"],
   },
 ] as const;
 
@@ -137,20 +128,18 @@ export function AppShell() {
     <div className="flex h-full flex-col gap-4">
 
       {/* Brand */}
-      <div className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-teal-50 p-4 shadow-sm">
-        <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-blue-100/80 blur-3xl" />
-        <div className="relative flex items-center gap-3">
-          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-blue-600 shadow-sm">
-            <Zap className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <p className="text-base font-extrabold tracking-tight text-slate-950">OpsTrax</p>
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-700/70">Enterprise TMS</p>
-          </div>
+      <div className="flex items-center gap-3 px-1 py-2">
+        <div className="shrink-0">
+          <OpsTraxLogo size={36} />
         </div>
-        <div className="relative mt-3 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-extrabold tracking-tight text-slate-950">OpsTrax</p>
+          <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+            {String(session?.company?.name || "Fleet Platform")}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
           <span className="live-dot" />
-          <span className="text-[11px] font-semibold text-emerald-700">Live tenant context active</span>
         </div>
       </div>
 
@@ -163,6 +152,7 @@ export function AppShell() {
             <div key={section.label}>
               {/* Group header */}
               <button
+                type="button"
                 className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition-colors hover:bg-slate-100"
                 onClick={() => toggleGroup(section.label)}
               >
@@ -198,7 +188,7 @@ export function AppShell() {
                             <>
                               {isActive && <span className="nav-active-bar" />}
                               <Icon
-                                className={`h-4 w-4 flex-shrink-0 transition-colors ${
+                                className={`h-4 w-4 shrink-0 transition-colors ${
                                 isActive ? section.color : "text-slate-400"
                                 }`}
                               />
@@ -218,7 +208,7 @@ export function AppShell() {
       {/* User footer */}
       <div className="border-t border-slate-200 pt-3 space-y-1">
         <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 transition hover:bg-slate-100">
-          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-teal-50 to-blue-50 border border-blue-200 text-sm font-extrabold text-blue-700">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-teal-50 to-blue-50 border border-blue-200 text-sm font-extrabold text-blue-700">
             {initials}
           </div>
           <div className="min-w-0 flex-1">
@@ -226,17 +216,16 @@ export function AppShell() {
             <p className="truncate text-xs text-slate-500">{String(session?.company?.name || "OpsTrax Tenant")}</p>
           </div>
           <button
-            className="icon-btn flex-shrink-0"
+            type="button"
+            className="icon-btn shrink-0"
             title="Sign out"
             onClick={logout}
           >
             <LogOut className="h-3.5 w-3.5" />
           </button>
         </div>
-        {/* Kode Kinetics attribution */}
-        <div className="rounded-lg px-3 py-2 text-center">
-          <p className="text-[10px] font-semibold text-slate-500">OpsTrax by Kode Kinetics</p>
-          <p className="text-[9px] text-slate-400 mt-0.5">Enterprise software · AI automation · connected operations</p>
+        <div className="px-3 py-1.5 text-center">
+          <p className="text-[10px] text-slate-400">OpsTrax · Kode Kinetics</p>
         </div>
       </div>
     </div>
@@ -259,6 +248,8 @@ export function AppShell() {
           />
           <aside className="anim-slide-left absolute inset-y-0 left-0 w-[264px] overflow-y-auto border-r border-slate-200 bg-white p-3 shadow-2xl">
             <button
+              type="button"
+              aria-label="Close navigation"
               className="absolute right-3 top-3 icon-btn"
               onClick={() => setMobileOpen(false)}
             >
@@ -278,7 +269,7 @@ export function AppShell() {
             <div className="flex h-[54px] items-center gap-3">
 
               {/* Mobile menu button */}
-              <button className="icon-btn xl:hidden flex-shrink-0" onClick={() => setMobileOpen(true)}>
+              <button type="button" aria-label="Open navigation" className="icon-btn xl:hidden shrink-0" onClick={() => setMobileOpen(true)}>
                 <Menu className="h-4 w-4" />
               </button>
 
@@ -297,22 +288,10 @@ export function AppShell() {
               {/* Right section */}
               <div className="ml-auto flex items-center gap-2">
 
-                {/* Live */}
-                <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-                  <span className="live-dot h-[6px] w-[6px]" />
+                {/* Live status */}
+                <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                  <span className="live-dot h-1.5 w-1.5" />
                   Live
-                </div>
-
-                {/* AI */}
-                <div className="hidden md:flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-700">
-                  <Sparkles className="h-3 w-3" />
-                  AI
-                </div>
-
-                {/* AI Copilot icon */}
-                <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600">
-                  <Bot className="h-3 w-3 text-violet-400" />
-                  <span className="max-w-[100px] truncate">{String(session?.company?.name || "OpsTrax Tenant")}</span>
                 </div>
 
                 {/* Language selector */}
@@ -345,6 +324,8 @@ export function AppShell() {
                 {/* Notifications */}
                 <div className="relative" ref={notifRef}>
                   <button
+                    type="button"
+                    aria-label="Notifications"
                     className="icon-btn relative h-8 w-8"
                     onClick={() => setNotifOpen((v) => !v)}
                   >
@@ -364,7 +345,7 @@ export function AppShell() {
                         {NOTIFS.map((n, i) => (
                           <div key={i} className="flex items-start gap-3 px-4 py-3 transition hover:bg-slate-50 cursor-pointer">
                             <span
-                              className={`mt-0.5 h-2 w-2 flex-shrink-0 rounded-full ${
+                              className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
                                 n.type === "danger" ? "bg-red-400" : n.type === "warning" ? "bg-amber-400" : "bg-sky-400"
                               }`}
                             />
@@ -390,7 +371,8 @@ export function AppShell() {
 
                 {/* Avatar / sign-out */}
                 <button
-                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
+                  type="button"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
                   title={`Signed in as ${session?.role || "Admin"} — click to sign out`}
                   onClick={logout}
                 >

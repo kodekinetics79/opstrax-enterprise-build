@@ -1,3 +1,4 @@
+using Opstrax.Api;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
@@ -19,6 +20,38 @@ builder.Services.AddSingleton<Batch4SchemaService>();
 builder.Services.AddSingleton<Batch5SchemaService>();
 builder.Services.AddSingleton<Batch6SchemaService>();
 builder.Services.AddSingleton<Batch7SchemaService>();
+builder.Services.AddSingleton<TelemetrySchemaService>();
+builder.Services.AddSingleton<SafetySchemaService>();
+builder.Services.AddSingleton<TripSchemaService>();
+builder.Services.AddSingleton<MaintenanceSchemaService>();
+builder.Services.AddSingleton<DispatchSchemaService>();
+builder.Services.AddSingleton<CustomerVisibilitySchemaService>();
+builder.Services.AddSingleton<DriverSchemaService>();
+builder.Services.AddSingleton<NotificationSchemaService>();
+builder.Services.AddScoped<NotificationService>();
+builder.Services.AddSingleton<ReportingSchemaService>();
+builder.Services.AddSingleton<ObservabilitySchemaService>();
+builder.Services.AddSingleton<ServiceRunTracker>();
+builder.Services.AddSingleton<ConfigValidationService>();
+builder.Services.AddScoped<IncidentService>();
+builder.Services.AddScoped<OpsMetricsService>();
+// P10 Security + Compliance
+builder.Services.AddSingleton<SecuritySchemaService>();
+builder.Services.AddScoped<SecuritySettingsService>();
+builder.Services.AddScoped<SecurityEventService>();
+builder.Services.AddScoped<SsoConnectionService>();
+builder.Services.AddScoped<AccessReviewService>();
+builder.Services.AddScoped<ComplianceService>();
+builder.Services.AddScoped<BackupVerificationService>();
+builder.Services.AddScoped<DataRetentionService>();
+builder.Services.AddScoped<ExportGovernanceService>();
+builder.Services.AddScoped<PasswordPolicyService>();
+builder.Services.AddHostedService<TelemetryBackgroundService>();
+builder.Services.AddHostedService<SafetyBackgroundService>();
+builder.Services.AddHostedService<TripBackgroundService>();
+builder.Services.AddHostedService<MaintenanceBackgroundService>();
+builder.Services.AddHostedService<EscalationBackgroundService>();
+builder.Services.AddHostedService<ScheduledReportBackgroundService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("OpsTraxCors", policy =>
@@ -43,6 +76,17 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Batch5", () => scope.ServiceProvider.GetRequiredService<Batch5SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch6", () => scope.ServiceProvider.GetRequiredService<Batch6SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch7", () => scope.ServiceProvider.GetRequiredService<Batch7SchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Telemetry", () => scope.ServiceProvider.GetRequiredService<TelemetrySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Safety",    () => scope.ServiceProvider.GetRequiredService<SafetySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Trips",       () => scope.ServiceProvider.GetRequiredService<TripSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Maintenance", () => scope.ServiceProvider.GetRequiredService<MaintenanceSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Dispatch",    () => scope.ServiceProvider.GetRequiredService<DispatchSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "CustomerVisibility", () => scope.ServiceProvider.GetRequiredService<CustomerVisibilitySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Driver",            () => scope.ServiceProvider.GetRequiredService<DriverSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Notification",      () => scope.ServiceProvider.GetRequiredService<NotificationSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Reporting",         () => scope.ServiceProvider.GetRequiredService<ReportingSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Observability",     () => scope.ServiceProvider.GetRequiredService<ObservabilitySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
 }
 
 app.Use(async (context, next) =>
@@ -68,8 +112,15 @@ app.UseWhen(
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
+                // P9 health probes — must be unauthenticated for k8s / load-balancer probes
+                path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
+                // Telemetry ingest — device-authenticated via X-Device-Key header, not user session
+                path.StartsWith("/api/telemetry/ingest", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)))
+                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
+                (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)))
             {
                 await next();
                 return;
@@ -91,7 +142,35 @@ app.UseWhen(
                 return;
             }
 
+            // SSE stream path: authenticate exclusively via short-lived stream ticket (?sst=).
+            // This avoids long-lived session tokens appearing in query strings (logs, proxies).
+            // The SST encodes {userId:companyId:exp} signed with HMAC-SHA256.
             var authHeader = context.Request.Headers.Authorization.ToString();
+            if (path.StartsWith("/api/telemetry/stream", StringComparison.OrdinalIgnoreCase))
+            {
+                var sst = context.Request.Query["sst"].FirstOrDefault() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(sst))
+                {
+                    var (sstOk, sstUserId, sstCompanyId) = TelemetryTicketHelper.Validate(TelemetryKeyStore.SseTicketKey, sst);
+                    if (!sstOk)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Invalid or expired stream ticket"));
+                        return;
+                    }
+                    context.Items[EndpointMappings.AuthUserIdItemKey]      = sstUserId;
+                    context.Items[EndpointMappings.AuthCompanyIdItemKey]   = sstCompanyId;
+                    context.Items[EndpointMappings.AuthRoleItemKey]        = "sst-client";
+                    context.Items[EndpointMappings.AuthPermissionsItemKey] = Array.Empty<string>();
+                    await next();
+                    return;
+                }
+                // No ?sst= present — reject; session tokens are no longer accepted in query string for SSE.
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Stream ticket required — call POST /api/telemetry/stream-ticket first"));
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(authHeader) ||
                 !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
@@ -167,23 +246,140 @@ app.UseWhen(
 app.MapGet("/swagger", () => Results.Content(SwaggerHtml(), "text/html"));
 app.MapGet("/swagger/index.html", () => Results.Content(SwaggerHtml(), "text/html"));
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "opstrax-api", utc = DateTime.UtcNow }));
+// ── Health probes ──────────────────────────────────────────────────────────────
+// /health/live  — always 200 if process is alive (kubernetes liveness probe)
+// /health/ready — DB connectivity (kubernetes readiness probe)
+// /health/deep  — comprehensive check; never exposes secrets
+// Legacy aliases kept for backward compatibility:
+//   /health  → same as /health/live
+//   /ready   → same as /health/ready
+
+app.MapGet("/health",       () => Results.Ok(new { status = "alive", service = "opstrax-api", utc = DateTime.UtcNow }));
+app.MapGet("/health/live",  () => Results.Ok(new { status = "alive", service = "opstrax-api", utc = DateTime.UtcNow }));
+
 app.MapGet("/ready", async (Database db, CancellationToken ct) =>
 {
     try
     {
-        await using var connection = await db.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1";
-        await command.ExecuteScalarAsync(ct);
-        return Results.Ok(new { status = "ready", service = "opstrax-api", db = "connected", utc = DateTime.UtcNow });
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd  = conn.CreateCommand();
+        cmd.CommandText      = "SELECT 1";
+        await cmd.ExecuteScalarAsync(ct);
+        return Results.Ok(new { status = "ready", service = "opstrax-api", database = "connected", utc = DateTime.UtcNow });
     }
-    catch (Exception ex)
+    catch
     {
-        return Results.Json(new { status = "degraded", service = "opstrax-api", db = "unavailable", message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return Results.Json(
+            new { status = "not_ready", service = "opstrax-api", database = "unavailable", utc = DateTime.UtcNow },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
+
+app.MapGet("/health/ready", async (Database db, CancellationToken ct) =>
+{
+    try
+    {
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd  = conn.CreateCommand();
+        cmd.CommandText      = "SELECT 1";
+        await cmd.ExecuteScalarAsync(ct);
+        return Results.Ok(new { status = "ready", service = "opstrax-api", database = "connected", utc = DateTime.UtcNow });
+    }
+    catch
+    {
+        return Results.Json(
+            new { status = "not_ready", service = "opstrax-api", database = "unavailable", utc = DateTime.UtcNow },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/health/deep", async (Database db, ConfigValidationService configValidator, CancellationToken ct) =>
+{
+    var checks   = new Dictionary<string, object>();
+    var dbOk     = false;
+    var dbLatMs  = -1;
+
+    // DB check
+    var dbSw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        await using var conn = await db.OpenAsync(ct);
+        await using var cmd  = conn.CreateCommand();
+        cmd.CommandText      = "SELECT 1";
+        await cmd.ExecuteScalarAsync(ct);
+        dbSw.Stop();
+        dbOk    = true;
+        dbLatMs = (int)dbSw.ElapsedMilliseconds;
+    }
+    catch
+    {
+        dbSw.Stop();
+    }
+    checks["database"] = new { status = dbOk ? "connected" : "unavailable", latency_ms = dbLatMs };
+
+    // Background service heartbeats (read from DB if available)
+    var serviceStatuses = new List<object>();
+    if (dbOk)
+    {
+        try
+        {
+            var heartbeatRows = await db.QueryAsync(
+                @"SELECT service_name, last_heartbeat_at, last_run_status, consecutive_failures
+                  FROM service_heartbeats ORDER BY service_name", ct: ct);
+
+            foreach (var row in heartbeatRows)
+            {
+                var name    = row["serviceName"]?.ToString() ?? "";
+                var lastBeat = row["lastHeartbeatAt"] as DateTime?;
+                var consec   = row["consecutiveFailures"] is { } cf ? Convert.ToInt32(cf) : 0;
+                var svcStatus = consec >= 3 ? "degraded" : consec > 0 ? "warning" : "healthy";
+
+                serviceStatuses.Add(new
+                {
+                    name,
+                    status              = svcStatus,
+                    last_heartbeat_utc  = lastBeat?.ToString("o"),
+                    consecutive_failures = consec,
+                });
+            }
+        }
+        catch { /* DB readable but heartbeats table not yet migrated — non-fatal */ }
+    }
+    checks["services"] = serviceStatuses;
+
+    // Config validation — no values exposed
+    var cfgResult = configValidator.Validate();
+    checks["config"] = new
+    {
+        status   = cfgResult.Status,
+        warnings = cfgResult.WarnCount,
+        failures = cfgResult.FailCount,
+        // Expose issue check names and levels but NOT values
+        issues   = cfgResult.Issues.Select(i => new { i.Check, i.Level, i.Message }).ToList()
+    };
+
+    // Determine overall status
+    var overallStatus =
+        !dbOk                                          ? "unhealthy" :
+        serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
+                                                       ? "degraded" :
+        cfgResult.FailCount > 0                       ? "degraded" :
+                                                         "healthy";
+
+    var statusCode = overallStatus == "unhealthy" ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status200OK;
+
+    return Results.Json(new
+    {
+        status  = overallStatus,
+        service = "opstrax-api",
+        utc     = DateTime.UtcNow,
+        checks
+    }, statusCode: statusCode);
+});
 app.MapOpsTraxEndpoints();
+EndpointMappings.MapP9OpsEndpoints(app);
+EndpointMappings.MapP10SecurityEndpoints(app);
+EndpointMappings.MapFleetHealthEndpoints(app);
 
 app.Run();
 
