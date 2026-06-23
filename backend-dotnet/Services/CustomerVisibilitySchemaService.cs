@@ -21,7 +21,7 @@ public sealed class CustomerVisibilitySchemaService(Database db, ILogger<Custome
         // public_tracking_token is 64-char hex (32 random bytes), unique, expiring, revocable.
         await TryCreate("customer_visibility", @"
 CREATE TABLE IF NOT EXISTS customer_visibility (
-    id                      BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    id                      BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id              BIGINT NOT NULL,
     customer_id             BIGINT NULL,
     shipment_id             BIGINT NULL,
@@ -29,30 +29,30 @@ CREATE TABLE IF NOT EXISTS customer_visibility (
     trip_id                 BIGINT NULL,
     public_tracking_token   VARCHAR(64) NOT NULL,
     visibility_status       VARCHAR(30) NOT NULL DEFAULT 'active',
-    share_enabled           TINYINT(1) NOT NULL DEFAULT 1,
-    expires_at              DATETIME NOT NULL,
+    share_enabled           BOOLEAN NOT NULL DEFAULT true,
+    expires_at              TIMESTAMPTZ NOT NULL,
     created_by              BIGINT NULL,
-    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_cv_token (public_tracking_token)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NULL,
+    UNIQUE (public_tracking_token)
+)");
 
         // ETA snapshots — one row per assignment, updated by background or API compute.
         await TryCreate("customer_eta_snapshots", @"
 CREATE TABLE IF NOT EXISTS customer_eta_snapshots (
-    id                      BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    id                      BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id              BIGINT NOT NULL,
     dispatch_assignment_id  BIGINT NOT NULL,
-    eta_at                  DATETIME NULL,
+    eta_at                  TIMESTAMPTZ NULL,
     confidence              VARCHAR(10) NOT NULL DEFAULT 'unknown',
     risk                    VARCHAR(20) NOT NULL DEFAULT 'unknown',
-    reason_codes            JSON NULL,
+    reason_codes            JSONB NULL,
     explanation             TEXT NULL,
-    telemetry_stale         TINYINT(1) NOT NULL DEFAULT 0,
-    last_position_at        DATETIME NULL,
-    computed_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_eta_assignment (dispatch_assignment_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    telemetry_stale         BOOLEAN NOT NULL DEFAULT false,
+    last_position_at        TIMESTAMPTZ NULL,
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (dispatch_assignment_id)
+)");
     }
 
     private async Task CreateIndexes()
@@ -70,9 +70,8 @@ CREATE TABLE IF NOT EXISTS customer_eta_snapshots (
         {
             try
             {
-                await db.ExecuteAsync($"ALTER TABLE `{table}` ADD INDEX `{name}` ({cols})");
+                await db.ExecuteAsync($"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{table}\" ({cols})");
             }
-            catch (MySqlConnector.MySqlException ex) when (ex.Number is 1061 or 1062) { /* exists */ }
             catch (Exception ex) { log.LogWarning(ex, "[CvSchema] Index {Name} failed", name); }
         }
     }

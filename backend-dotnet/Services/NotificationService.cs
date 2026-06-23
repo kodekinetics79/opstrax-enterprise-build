@@ -33,7 +33,7 @@ public sealed class NotificationService(Database db)
                 @"SELECT COUNT(*) FROM notifications
                   WHERE company_id=@cid AND dedupe_key=@key
                     AND status NOT IN ('read','acknowledged','suppressed')
-                    AND created_at > DATE_SUB(NOW(), INTERVAL @windowMinutes MINUTE)",
+                    AND created_at > NOW() - @windowMinutes * INTERVAL '1 minute'",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);

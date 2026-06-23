@@ -156,7 +156,7 @@ public sealed class MaintenanceBackgroundService(
                         (company_id, vehicle_id, service_type, title, category, priority, status,
                          due_date, estimated_cost, risk_score, description, recommended_action)
                       VALUES (@cid, @vid, @stype, @title, 'Preventive Maintenance', @pri, @status,
-                              CURDATE(), @cost, @risk, @desc, @action)",
+                              CURRENT_DATE, @cost, @risk, @desc, @action)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",    companyId);
@@ -186,49 +186,47 @@ public sealed class MaintenanceBackgroundService(
     {
         // Step 1 — Mark out-of-service where critical open defects exist.
         await db.ExecuteAsync(
-            @"UPDATE vehicles v
-              SET v.out_of_service=1, v.availability_status='out_of_service'
-              WHERE v.deleted_at IS NULL
+            @"UPDATE vehicles
+              SET out_of_service=1, availability_status='out_of_service'
+              WHERE deleted_at IS NULL
                 AND EXISTS (
                     SELECT 1 FROM dvir_defects dd
-                    WHERE dd.vehicle_id=v.id
+                    WHERE dd.vehicle_id=vehicles.id
                       AND dd.out_of_service=1
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
-                    LIMIT 1
                 )",
             ct: ct);
 
         // Step 2 — Mark in_maintenance where open work orders exist (but not out-of-service).
         await db.ExecuteAsync(
-            @"UPDATE vehicles v
-              SET v.availability_status='in_maintenance'
-              WHERE v.out_of_service=0 AND v.deleted_at IS NULL
+            @"UPDATE vehicles
+              SET availability_status='in_maintenance'
+              WHERE out_of_service=0 AND deleted_at IS NULL
                 AND EXISTS (
                     SELECT 1 FROM work_orders wo
-                    WHERE wo.vehicle_id=v.id
-                      AND wo.company_id=v.company_id
+                    WHERE wo.vehicle_id=vehicles.id
+                      AND wo.company_id=vehicles.company_id
                       AND wo.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
-                      AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')
-                    LIMIT 1
+                      AND wo.deleted_at IS NULL
                 )",
             ct: ct);
 
         // Step 3 — Restore to available when conditions are clear.
         await db.ExecuteAsync(
-            @"UPDATE vehicles v
-              SET v.out_of_service=0, v.availability_status='available'
-              WHERE v.deleted_at IS NULL
-                AND v.availability_status IN ('out_of_service','in_maintenance')
+            @"UPDATE vehicles
+              SET out_of_service=0, availability_status='available'
+              WHERE deleted_at IS NULL
+                AND availability_status IN ('out_of_service','in_maintenance')
                 AND NOT EXISTS (
                     SELECT 1 FROM dvir_defects dd
-                    WHERE dd.vehicle_id=v.id AND dd.out_of_service=1
+                    WHERE dd.vehicle_id=vehicles.id AND dd.out_of_service=1
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
                 )
                 AND NOT EXISTS (
                     SELECT 1 FROM work_orders wo
-                    WHERE wo.vehicle_id=v.id AND wo.company_id=v.company_id
+                    WHERE wo.vehicle_id=vehicles.id AND wo.company_id=vehicles.company_id
                       AND wo.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
-                      AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')
+                      AND wo.deleted_at IS NULL
                 )",
             ct: ct);
 
@@ -292,7 +290,7 @@ public sealed class MaintenanceBackgroundService(
                   VALUES
                     (@companyId, NULL, 'system', 'dispatch.assignment.maintenance_hold',
                      'DispatchAssignment', @assignmentId,
-                     JSON_OBJECT('trigger', 'vehicle_oos', 'previousStatus', @prevStatus))",
+                     jsonb_build_object('trigger', 'vehicle_oos', 'previousStatus', @prevStatus))",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);

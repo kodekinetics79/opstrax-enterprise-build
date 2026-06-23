@@ -15,7 +15,7 @@ public sealed class Batch5SchemaService(Database db)
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
     {
         var exists = await db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=@table AND column_name=@column",
+            @"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=@table AND column_name=@column",
             c => { c.Parameters.AddWithValue("@table", table); c.Parameters.AddWithValue("@column", column); }, ct);
         if (exists == 0) await db.ExecuteAsync($"ALTER TABLE {table} ADD COLUMN {column} {definition}", ct: ct);
     }
@@ -24,7 +24,6 @@ public sealed class Batch5SchemaService(Database db)
 
     private static readonly ColumnDefinition[] Columns =
     [
-        // fuel_transactions enhancements
         new("fuel_transactions", "transaction_number",  "VARCHAR(80) NULL"),
         new("fuel_transactions", "driver_id",           "BIGINT NULL"),
         new("fuel_transactions", "job_id",              "BIGINT NULL"),
@@ -42,10 +41,9 @@ public sealed class Batch5SchemaService(Database db)
         new("fuel_transactions", "anomaly_status",      "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
         new("fuel_transactions", "recommended_action",  "VARCHAR(260) NULL"),
         new("fuel_transactions", "notes",               "TEXT NULL"),
-        new("fuel_transactions", "updated_at",          "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-        new("fuel_transactions", "deleted_at",          "TIMESTAMP NULL"),
+        new("fuel_transactions", "updated_at",          "TIMESTAMPTZ NULL"),
+        new("fuel_transactions", "deleted_at",          "TIMESTAMPTZ NULL"),
 
-        // expenses enhancements
         new("expenses", "expense_number",       "VARCHAR(80) NULL"),
         new("expenses", "category_id",          "BIGINT NULL"),
         new("expenses", "category_name",        "VARCHAR(120) NULL"),
@@ -63,10 +61,9 @@ public sealed class Batch5SchemaService(Database db)
         new("expenses", "risk_score",           "DECIMAL(6,2) NOT NULL DEFAULT 20"),
         new("expenses", "recommended_action",   "VARCHAR(260) NULL"),
         new("expenses", "notes",                "TEXT NULL"),
-        new("expenses", "updated_at",           "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-        new("expenses", "deleted_at",           "TIMESTAMP NULL"),
+        new("expenses", "updated_at",           "TIMESTAMPTZ NULL"),
+        new("expenses", "deleted_at",           "TIMESTAMPTZ NULL"),
 
-        // carriers enhancements
         new("carriers", "carrier_number",       "VARCHAR(80) NULL"),
         new("carriers", "contact_name",         "VARCHAR(160) NULL"),
         new("carriers", "phone",                "VARCHAR(50) NULL"),
@@ -82,10 +79,9 @@ public sealed class Batch5SchemaService(Database db)
         new("carriers", "risk_score",           "DECIMAL(6,2) NOT NULL DEFAULT 20"),
         new("carriers", "recommended_action",   "VARCHAR(260) NULL"),
         new("carriers", "notes",                "TEXT NULL"),
-        new("carriers", "updated_at",           "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-        new("carriers", "deleted_at",           "TIMESTAMP NULL"),
+        new("carriers", "updated_at",           "TIMESTAMPTZ NULL"),
+        new("carriers", "deleted_at",           "TIMESTAMPTZ NULL"),
 
-        // contracts enhancements
         new("contracts", "contract_number",         "VARCHAR(80) NULL"),
         new("contracts", "carrier_id",              "BIGINT NULL"),
         new("contracts", "contract_type",           "VARCHAR(80) NOT NULL DEFAULT 'Customer'"),
@@ -97,69 +93,68 @@ public sealed class Batch5SchemaService(Database db)
         new("contracts", "sla_terms",               "TEXT NULL"),
         new("contracts", "margin_risk",             "VARCHAR(50) NOT NULL DEFAULT 'Low'"),
         new("contracts", "notes",                   "TEXT NULL"),
-        new("contracts", "updated_at",              "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-        new("contracts", "deleted_at",              "TIMESTAMP NULL"),
+        new("contracts", "updated_at",              "TIMESTAMPTZ NULL"),
+        new("contracts", "deleted_at",              "TIMESTAMPTZ NULL"),
 
-        // audit log compatibility for later batch seeds/actions
         new("audit_logs", "entity_type",            "VARCHAR(100) NULL"),
     ];
 
     private static readonly string[] Tables =
     [
         @"CREATE TABLE IF NOT EXISTS idling_events (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             event_number VARCHAR(80) NOT NULL, vehicle_id BIGINT NOT NULL, driver_id BIGINT NULL,
             job_id BIGINT NULL, route_id BIGINT NULL, location_description VARCHAR(220) NULL,
-            started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ended_at DATETIME NULL,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ended_at TIMESTAMPTZ NULL,
             duration_minutes DECIMAL(8,2) NOT NULL DEFAULT 0, estimated_fuel_burn DECIMAL(10,3) NOT NULL DEFAULT 0,
             estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0, currency VARCHAR(10) NOT NULL DEFAULT 'USD',
             threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
             recommended_action VARCHAR(260) NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS fuel_anomalies (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             fuel_transaction_id BIGINT NULL, vehicle_id BIGINT NULL, driver_id BIGINT NULL,
             anomaly_type VARCHAR(120) NOT NULL, severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             status VARCHAR(80) NOT NULL DEFAULT 'Open',
-            reviewed_at DATETIME NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            reviewed_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS expense_categories (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             category_name VARCHAR(120) NOT NULL, category_type VARCHAR(80) NOT NULL DEFAULT 'Operating',
             status VARCHAR(50) NOT NULL DEFAULT 'Active',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS contract_rates (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             contract_id BIGINT NOT NULL, rate_code VARCHAR(80) NOT NULL,
             rate_type VARCHAR(80) NOT NULL DEFAULT 'Per Mile', origin_zone VARCHAR(120) NULL,
             destination_zone VARCHAR(120) NULL, vehicle_type VARCHAR(80) NULL,
             base_rate DECIMAL(12,4) NOT NULL DEFAULT 0, minimum_charge DECIMAL(12,2) NULL,
             fuel_surcharge_percent DECIMAL(6,2) NULL, accessorial_type VARCHAR(120) NULL,
             effective_date DATE NOT NULL, expiry_date DATE NULL, status VARCHAR(50) NOT NULL DEFAULT 'Active',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS carrier_documents (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             carrier_id BIGINT NOT NULL, document_type VARCHAR(120) NOT NULL,
             document_number VARCHAR(120) NULL, expiry_date DATE NULL,
             status VARCHAR(50) NOT NULL DEFAULT 'Active', file_url VARCHAR(400) NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS carrier_performance (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             carrier_id BIGINT NOT NULL, period_start DATE NOT NULL, period_end DATE NOT NULL,
             jobs_handled INT NOT NULL DEFAULT 0, on_time_percent DECIMAL(6,2) NOT NULL DEFAULT 90,
             incident_count INT NOT NULL DEFAULT 0, expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
             performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS cost_margin_records (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             entity_type VARCHAR(80) NOT NULL, entity_id BIGINT NOT NULL,
             customer_id BIGINT NULL, job_id BIGINT NULL, route_id BIGINT NULL,
             vehicle_id BIGINT NULL, driver_id BIGINT NULL,
@@ -170,145 +165,133 @@ public sealed class Batch5SchemaService(Database db)
             idle_cost DECIMAL(12,2) NOT NULL DEFAULT 0, total_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
             margin_estimate DECIMAL(12,2) NOT NULL DEFAULT 0, margin_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
             margin_risk VARCHAR(50) NOT NULL DEFAULT 'Low',
-            calculated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS cost_margin_predictions (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             entity_type VARCHAR(80) NOT NULL, entity_id BIGINT NOT NULL,
             prediction_type VARCHAR(80) NOT NULL DEFAULT 'Margin Forecast',
             predicted_revenue DECIMAL(12,2) NOT NULL DEFAULT 0, predicted_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
             predicted_margin DECIMAL(12,2) NOT NULL DEFAULT 0, predicted_margin_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
             confidence_level VARCHAR(50) NOT NULL DEFAULT 'Medium', risk_level VARCHAR(50) NOT NULL DEFAULT 'Low',
             recommendation TEXT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS cost_leakage_items (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             leakage_number VARCHAR(80) NOT NULL, category VARCHAR(120) NOT NULL,
             entity_type VARCHAR(80) NULL, entity_id BIGINT NULL, title VARCHAR(220) NOT NULL,
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             projected_monthly_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             severity VARCHAR(50) NOT NULL DEFAULT 'Medium', status VARCHAR(80) NOT NULL DEFAULT 'Open',
             owner_role VARCHAR(120) NULL, recommended_action VARCHAR(260) NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS cost_leakage_actions (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT, company_id BIGINT NOT NULL DEFAULT 1,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             cost_leakage_item_id BIGINT NOT NULL, action_title VARCHAR(220) NOT NULL,
             action_description TEXT NULL, estimated_savings DECIMAL(12,2) NOT NULL DEFAULT 0,
             status VARCHAR(80) NOT NULL DEFAULT 'Open', assigned_to_user_id BIGINT NULL,
-            due_at DATETIME NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+            due_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL)",
     ];
 
     private static readonly string[] Indexes =
     [
-        "CREATE INDEX ix_b5_fuel_tx ON fuel_transactions(company_id, vehicle_id, driver_id, anomaly_status, fuel_date)",
-        "CREATE INDEX ix_b5_idling ON idling_events(company_id, vehicle_id, driver_id, threshold_status, started_at)",
-        "CREATE INDEX ix_b5_fuel_anomalies ON fuel_anomalies(company_id, vehicle_id, status, severity)",
-        "CREATE INDEX ix_b5_expenses ON expenses(company_id, vehicle_id, driver_id, approval_status, expense_date)",
-        "CREATE INDEX ix_b5_expense_categories ON expense_categories(company_id, status)",
-        "CREATE INDEX ix_b5_contracts ON contracts(company_id, customer_id, status, margin_risk)",
-        "CREATE INDEX ix_b5_contract_rates ON contract_rates(company_id, contract_id, status)",
-        "CREATE INDEX ix_b5_carriers ON carriers(company_id, status, compliance_status, risk_score)",
-        "CREATE INDEX ix_b5_carrier_docs ON carrier_documents(company_id, carrier_id, status, expiry_date)",
-        "CREATE INDEX ix_b5_carrier_perf ON carrier_performance(company_id, carrier_id, period_start)",
-        "CREATE INDEX ix_b5_cost_margin ON cost_margin_records(company_id, entity_type, entity_id, margin_risk)",
-        "CREATE INDEX ix_b5_cost_leakage ON cost_leakage_items(company_id, category, severity, status)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_fuel_tx ON fuel_transactions(company_id, vehicle_id, driver_id, anomaly_status, fuel_date)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_idling ON idling_events(company_id, vehicle_id, driver_id, threshold_status, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_fuel_anomalies ON fuel_anomalies(company_id, vehicle_id, status, severity)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_expenses ON expenses(company_id, vehicle_id, driver_id, approval_status, expense_date)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_expense_categories ON expense_categories(company_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_contracts ON contracts(company_id, customer_id, status, margin_risk)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_contract_rates ON contract_rates(company_id, contract_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_carriers ON carriers(company_id, status, compliance_status, risk_score)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_carrier_docs ON carrier_documents(company_id, carrier_id, status, expiry_date)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_carrier_perf ON carrier_performance(company_id, carrier_id, period_start)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_cost_margin ON cost_margin_records(company_id, entity_type, entity_id, margin_risk)",
+        "CREATE INDEX IF NOT EXISTS ix_b5_cost_leakage ON cost_leakage_items(company_id, category, severity, status)",
     ];
 
     private static readonly string[] Seeds =
     [
-        // ---------- FUEL TRANSACTIONS: backfill existing stubs ----------------
         @"UPDATE fuel_transactions
-          SET transaction_number = COALESCE(transaction_number, CONCAT('FT-', LPAD(id,5,'0'))),
+          SET transaction_number = COALESCE(transaction_number, 'FT-' || LPAD(id::TEXT,5,'0')),
               fuel_date          = COALESCE(fuel_date, DATE(transaction_time)),
-              quantity           = IF(quantity=0, gallons, quantity),
+              quantity           = CASE WHEN quantity=0 THEN gallons ELSE quantity END,
               unit               = COALESCE(unit, 'Gallons'),
-              fuel_type          = COALESCE(fuel_type, ELT((id%3)+1,'Diesel','Gasoline','DEF')),
-              unit_price         = IF(unit_price=0, ROUND(total_cost / NULLIF(gallons,0), 4), unit_price),
-              payment_method     = COALESCE(payment_method, ELT((id%3)+1,'Fleet Card','Credit Card','Cash')),
-              region             = COALESCE(region, ELT((id%5)+1,'Northern VA','DC Metro','Southern VA','Maryland','West VA')),
-              anomaly_status     = COALESCE(anomaly_status, IF(id%8=0,'Anomaly Detected','Normal')),
+              fuel_type          = COALESCE(fuel_type, (ARRAY['Diesel','Gasoline','DEF'])[(id%3)+1]),
+              unit_price         = CASE WHEN unit_price=0 THEN ROUND(total_cost / NULLIF(gallons,0), 4) ELSE unit_price END,
+              payment_method     = COALESCE(payment_method, (ARRAY['Fleet Card','Credit Card','Cash'])[(id%3)+1]),
+              region             = COALESCE(region, (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(id%5)+1]),
+              anomaly_status     = COALESCE(anomaly_status, CASE WHEN id%8=0 THEN 'Anomaly Detected' ELSE 'Normal' END),
               driver_id          = COALESCE(driver_id, ((id-1)%20)+1),
-              recommended_action = COALESCE(recommended_action, IF(id%8=0,'Investigate fuel quantity discrepancy','Normal operating transaction'))
+              recommended_action = COALESCE(recommended_action, CASE WHEN id%8=0 THEN 'Investigate fuel quantity discrepancy' ELSE 'Normal operating transaction' END)
           WHERE transaction_number IS NULL OR unit_price = 0",
 
-        // ---------- NEW FUEL TRANSACTIONS (50 records) ----------------------
         @"INSERT INTO fuel_transactions
             (company_id, transaction_number, vehicle_id, driver_id, job_id, route_id,
              fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost,
              currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<50)
           SELECT 1,
-            CONCAT('FT-B5-',1000+n),
-            ((n-1)%20)+1,
-            ((n-1)%20)+1,
-            ((n-1)%50)+1,
-            ((n-1)%12)+1,
-            DATE_SUB(CURDATE(), INTERVAL n DAY),
-            ELT((n%4)+1,'Diesel','Gasoline','DEF','Diesel'),
-            ROUND(12 + (n%38), 2),
-            ROUND(12 + (n%38), 2),
-            IF(n%4=0,'Liters','Gallons'),
-            ROUND(3.45 + (n%100)*0.012, 4),
-            ROUND((12+(n%38)) * (3.45+(n%100)*0.012), 2),
+            'FT-B5-' || (1000+n),
+            ((n-1)%20)+1, ((n-1)%20)+1, ((n-1)%50)+1, ((n-1)%12)+1,
+            CURRENT_DATE - n * INTERVAL '1 day',
+            (ARRAY['Diesel','Gasoline','DEF','Diesel'])[(n%4)+1],
+            ROUND((12 + (n%38))::NUMERIC, 2),
+            ROUND((12 + (n%38))::NUMERIC, 2),
+            CASE WHEN n%4=0 THEN 'Liters' ELSE 'Gallons' END,
+            ROUND((3.45 + (n%100)*0.012)::NUMERIC, 4),
+            ROUND(((12+(n%38)) * (3.45+(n%100)*0.012))::NUMERIC, 2),
             'USD',
-            ROUND(45000 + n*112, 2),
-            ELT((n%7)+1,'Shell - Manassas VA','BP - Woodbridge VA','Exxon - Alexandria VA','Pilot - Dulles VA','7-Eleven - Fairfax VA','Wawa - Arlington VA','Sunoco - DC'),
-            ELT((n%3)+1,'Fleet Card','Company Card','Cash'),
-            IF(n%3=0, CONCAT('FC-',LPAD(n,6,'0')), NULL),
-            ELT((n%5)+1,'Northern VA','DC Metro','Southern VA','Maryland','West VA'),
-            IF(n%9=0,'Anomaly Detected', IF(n%7=0,'Under Review','Normal')),
-            IF(n%9=0,'AI detected possible quantity discrepancy vs odometer reading.', NULL)
+            ROUND((45000 + n*112)::NUMERIC, 2),
+            (ARRAY['Shell - Manassas VA','BP - Woodbridge VA','Exxon - Alexandria VA','Pilot - Dulles VA','7-Eleven - Fairfax VA','Wawa - Arlington VA','Sunoco - DC'])[(n%7)+1],
+            (ARRAY['Fleet Card','Company Card','Cash'])[(n%3)+1],
+            CASE WHEN n%3=0 THEN 'FC-' || LPAD((n)::TEXT,6,'0') ELSE NULL END,
+            (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
+            CASE WHEN n%9=0 THEN 'Anomaly Detected' WHEN n%7=0 THEN 'Under Review' ELSE 'Normal' END,
+            CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_transactions WHERE transaction_number LIKE 'FT-B5-%') < 50",
 
-        // ---------- IDLING EVENTS (30 records) --------------------------------
         @"INSERT INTO idling_events
             (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
              location_description, started_at, ended_at, duration_minutes,
              estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
           SELECT 1,
-            CONCAT('IDLE-',1000+n),
-            ((n-1)%20)+1,
-            ((n-1)%20)+1,
-            ((n-1)%50)+1,
-            ((n-1)%12)+1,
-            ELT((n%7)+1,'Manassas Yard','Woodbridge I-95','Alexandria Medical Zone','Dulles Toll Road','Fairfax Delivery Zone','Arlington Urban Core','Washington DC Service Zone'),
-            DATE_SUB(NOW(), INTERVAL n*2 HOUR),
-            DATE_SUB(NOW(), INTERVAL n*2-1 HOUR),
-            ROUND(8 + (n%45), 1),
-            ROUND((8+(n%45)) * 0.006, 3),
-            ROUND((8+(n%45)) * 0.006 * 3.75, 2),
+            'IDLE-' || (1000+n),
+            ((n-1)%20)+1, ((n-1)%20)+1, ((n-1)%50)+1, ((n-1)%12)+1,
+            (ARRAY['Manassas Yard','Woodbridge I-95','Alexandria Medical Zone','Dulles Toll Road','Fairfax Delivery Zone','Arlington Urban Core','Washington DC Service Zone'])[(n%7)+1],
+            NOW() - n*2 * INTERVAL '1 hour',
+            NOW() - (n*2-1) * INTERVAL '1 hour',
+            ROUND((8 + (n%45))::NUMERIC, 1),
+            ROUND(((8+(n%45)) * 0.006)::NUMERIC, 3),
+            ROUND(((8+(n%45)) * 0.006 * 3.75)::NUMERIC, 2),
             'USD',
-            IF(n%3=0,'Excessive', IF(n%5=0,'Warning','Normal')),
-            IF(n%3=0, 72+(n%20), 18+(n%30)),
-            IF(n%3=0,'Idle cost leakage detected — coach driver on idling policy',IF(n%5=0,'Review idle duration — approaching threshold','Normal idle within policy'))
+            CASE WHEN n%3=0 THEN 'Excessive' WHEN n%5=0 THEN 'Warning' ELSE 'Normal' END,
+            CASE WHEN n%3=0 THEN 72+(n%20) ELSE 18+(n%30) END,
+            CASE WHEN n%3=0 THEN 'Idle cost leakage detected — coach driver on idling policy'
+                 WHEN n%5=0 THEN 'Review idle duration — approaching threshold'
+                 ELSE 'Normal idle within policy' END
           FROM seq
           WHERE (SELECT COUNT(*) FROM idling_events) < 30",
 
-        // ---------- FUEL ANOMALIES (12 records) --------------------------------
         @"INSERT INTO fuel_anomalies
             (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description, estimated_loss, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
-          SELECT 1,
-            ((n-1)%50)+1,
-            ((n-1)%20)+1,
-            ((n-1)%20)+1,
-            ELT((n%6)+1,'Quantity vs Odometer Mismatch','Unusual Station','High Unit Price','Repeated Fill-up','High Cost per Mile','Off-route Purchase'),
-            ELT((n%4)+1,'Low','Medium','High','Critical'),
-            CONCAT('AI fuel advisor detected anomaly: ', ELT((n%6)+1,'fuel quantity inconsistent with odometer delta','transaction at unusual station outside normal route corridor','unit price 18% above regional average — possible mis-key','duplicate fill-up within 4 hours of prior transaction','cost per mile significantly above fleet average','fuel purchase recorded outside active job route')),
-            ROUND(28 + (n%120), 2),
-            ELT((n%4)+1,'Open','Under Review','Resolved','Closed')
+          SELECT 1, ((n-1)%50)+1, ((n-1)%20)+1, ((n-1)%20)+1,
+            (ARRAY['Quantity vs Odometer Mismatch','Unusual Station','High Unit Price','Repeated Fill-up','High Cost per Mile','Off-route Purchase'])[(n%6)+1],
+            (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
+            'AI fuel advisor detected anomaly: ' || (ARRAY['fuel quantity inconsistent with odometer delta','transaction at unusual station outside normal route corridor','unit price 18% above regional average — possible mis-key','duplicate fill-up within 4 hours of prior transaction','cost per mile significantly above fleet average','fuel purchase recorded outside active job route'])[(n%6)+1],
+            ROUND((28 + (n%120))::NUMERIC, 2),
+            (ARRAY['Open','Under Review','Resolved','Closed'])[(n%4)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_anomalies) < 12",
 
-        // ---------- EXPENSE CATEGORIES (10) ------------------------------------
         @"INSERT INTO expense_categories (company_id, category_name, category_type, status)
           SELECT 1, x.n, x.t, 'Active' FROM (
             SELECT 'Fuel' n, 'Operating' t UNION ALL SELECT 'Maintenance','Operating' UNION ALL SELECT 'Toll','Operating'
@@ -318,14 +301,13 @@ public sealed class Batch5SchemaService(Database db)
             UNION ALL SELECT 'Miscellaneous','Other'
           ) x WHERE NOT EXISTS (SELECT 1 FROM expense_categories WHERE category_name=x.n AND company_id=1)",
 
-        // ---------- EXPENSES: backfill existing + NEW (40) --------------------
         @"UPDATE expenses
-          SET expense_number    = COALESCE(expense_number, CONCAT('EXP-', LPAD(id,5,'0'))),
+          SET expense_number    = COALESCE(expense_number, 'EXP-' || LPAD(id::TEXT,5,'0')),
               category_name     = COALESCE(category_name, category),
-              approval_status   = COALESCE(approval_status, IF(status='Approved','Approved', IF(id%4=0,'Rejected','Pending'))),
-              receipt_status    = COALESCE(receipt_status, IF(id%3=0,'Uploaded','Missing')),
-              risk_score        = IF(risk_score=20 AND id%5=0, 65+(id%25), risk_score),
-              recommended_action= COALESCE(recommended_action, IF(receipt_status='Missing','Upload receipt before approval','Review and approve expense'))
+              approval_status   = COALESCE(approval_status, CASE WHEN status='Approved' THEN 'Approved' WHEN id%4=0 THEN 'Rejected' ELSE 'Pending' END),
+              receipt_status    = COALESCE(receipt_status, CASE WHEN id%3=0 THEN 'Uploaded' ELSE 'Missing' END),
+              risk_score        = CASE WHEN risk_score=20 AND id%5=0 THEN 65+(id%25) ELSE risk_score END,
+              recommended_action= COALESCE(recommended_action, CASE WHEN receipt_status='Missing' THEN 'Upload receipt before approval' ELSE 'Review and approve expense' END)
           WHERE expense_number IS NULL",
 
         @"INSERT INTO expenses
@@ -334,38 +316,33 @@ public sealed class Batch5SchemaService(Database db)
              vendor_name, status, approval_status, receipt_status, risk_score, recommended_action, notes)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<40)
           SELECT 1,
-            CONCAT('EXP-B5-',2000+n),
-            ELT((n%10)+1,'Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'),
-            CONCAT(ELT((n%10)+1,'Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'), ' expense review ', n),
+            'EXP-B5-' || (2000+n),
+            (ARRAY['Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'])[(n%10)+1],
+            (ARRAY['Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'])[(n%10)+1] || ' expense review ' || n,
             ((n-1)%10)+1,
-            ELT((n%10)+1,'Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'),
-            ROUND(45 + (n%480), 2),
+            (ARRAY['Fuel','Maintenance','Toll','Parking','Driver Reimbursement','Carrier Charge','Insurance','Permit','Inspection','Miscellaneous'])[(n%10)+1],
+            ROUND((45 + (n%480))::NUMERIC, 2),
             'USD',
-            DATE_SUB(CURDATE(), INTERVAL n DAY),
-            ((n-1)%20)+1,
-            ((n-1)%20)+1,
-            ((n-1)%50)+1,
-            ((n-1)%12)+1,
-            ((n-1)%10)+1,
-            ELT((n%7)+1,'Shell Fuel Network','NOVA Fleet Care','E-ZPass VA','Diamond Parking','Driver Pool','FastFreight Logistics','AIG Fleet Insurance'),
-            IF(n%6=0,'Rejected', IF(n%4=0,'Approved','Pending')),
-            IF(n%6=0,'Rejected', IF(n%4=0,'Approved','Pending')),
-            IF(n%3=0,'Uploaded', IF(n%5=0,'Pending','Missing')),
-            IF(n%7=0, 70+(n%20), 15+(n%35)),
-            IF(n%7=0,'Anomaly detected — review amount and receipt','Review and approve expense'),
-            IF(n%7=0,'AI flagged as unusual amount for category.', NULL)
+            CURRENT_DATE - n * INTERVAL '1 day',
+            ((n-1)%20)+1, ((n-1)%20)+1, ((n-1)%50)+1, ((n-1)%12)+1, ((n-1)%10)+1,
+            (ARRAY['Shell Fuel Network','NOVA Fleet Care','E-ZPass VA','Diamond Parking','Driver Pool','FastFreight Logistics','AIG Fleet Insurance'])[(n%7)+1],
+            CASE WHEN n%6=0 THEN 'Rejected' WHEN n%4=0 THEN 'Approved' ELSE 'Pending' END,
+            CASE WHEN n%6=0 THEN 'Rejected' WHEN n%4=0 THEN 'Approved' ELSE 'Pending' END,
+            CASE WHEN n%3=0 THEN 'Uploaded' WHEN n%5=0 THEN 'Pending' ELSE 'Missing' END,
+            CASE WHEN n%7=0 THEN 70+(n%20) ELSE 15+(n%35) END,
+            CASE WHEN n%7=0 THEN 'Anomaly detected — review amount and receipt' ELSE 'Review and approve expense' END,
+            CASE WHEN n%7=0 THEN 'AI flagged as unusual amount for category.' ELSE NULL END
           FROM seq
           WHERE (SELECT COUNT(*) FROM expenses WHERE expense_number LIKE 'EXP-B5-%') < 40",
 
-        // ---------- CONTRACTS: backfill existing + NEW (12) -------------------
         @"UPDATE contracts
-          SET contract_number         = COALESCE(contract_number, CONCAT('CON-', LPAD(id,5,'0'))),
-              base_rate               = IF(base_rate=0, ROUND(1.85 + (id%40)*0.08, 4), base_rate),
+          SET contract_number         = COALESCE(contract_number, 'CON-' || LPAD(id::TEXT,5,'0')),
+              base_rate               = CASE WHEN base_rate=0 THEN ROUND((1.85 + (id%40)*0.08)::NUMERIC, 4) ELSE base_rate END,
               currency                = COALESCE(currency, 'USD'),
-              fuel_surcharge_enabled  = IF(id%3=0, TRUE, fuel_surcharge_enabled),
-              fuel_surcharge_percent  = IF(id%3=0, ROUND(3+(id%5),2), fuel_surcharge_percent),
-              margin_risk             = COALESCE(IF(base_rate < 2.2, 'High', IF(base_rate < 2.8, 'Medium', 'Low')), 'Low'),
-              contract_type           = COALESCE(contract_type, ELT((id%3)+1,'Customer','Carrier','Internal'))
+              fuel_surcharge_enabled  = CASE WHEN id%3=0 THEN TRUE ELSE fuel_surcharge_enabled END,
+              fuel_surcharge_percent  = CASE WHEN id%3=0 THEN ROUND((3+(id%5))::NUMERIC,2) ELSE fuel_surcharge_percent END,
+              margin_risk             = COALESCE(CASE WHEN base_rate < 2.2 THEN 'High' WHEN base_rate < 2.8 THEN 'Medium' ELSE 'Low' END, 'Low'),
+              contract_type           = COALESCE(contract_type, (ARRAY['Customer','Carrier','Internal'])[(id%3)+1])
           WHERE contract_number IS NULL",
 
         @"INSERT INTO contracts
@@ -374,61 +351,60 @@ public sealed class Batch5SchemaService(Database db)
              sla_terms, margin_risk, notes)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
           SELECT 1,
-            CONCAT('CON-B5-',3000+n),
-            CONCAT('CON-B5-',3000+n),
-            CONCAT(ELT((n%3)+1,'Customer','Carrier','Internal'), ' rate agreement ', n),
+            'CON-B5-' || (3000+n),
+            'CON-B5-' || (3000+n),
+            (ARRAY['Customer','Carrier','Internal'])[(n%3)+1] || ' rate agreement ' || n,
             ((n-1)%10)+1,
-            IF(n%3=0, ((n-1)%5)+1, NULL),
-            ELT((n%3)+1,'Customer','Carrier','Internal'),
-            DATE_SUB(CURDATE(), INTERVAL n*30 DAY),
-            IF(n%4=0, DATE_SUB(CURDATE(), INTERVAL 10 DAY), DATE_ADD(CURDATE(), INTERVAL (13-n)*30 DAY)),
-            IF(n%4=0,'Expired', IF(n%8=0,'Expiring Soon','Active')),
+            CASE WHEN n%3=0 THEN ((n-1)%5)+1 ELSE NULL END,
+            (ARRAY['Customer','Carrier','Internal'])[(n%3)+1],
+            CURRENT_DATE - n*30 * INTERVAL '1 day',
+            CASE WHEN n%4=0 THEN CURRENT_DATE - 10 * INTERVAL '1 day'
+                 ELSE CURRENT_DATE + (13-n)*30 * INTERVAL '1 day' END,
+            CASE WHEN n%4=0 THEN 'Expired' WHEN n%8=0 THEN 'Expiring Soon' ELSE 'Active' END,
             'USD',
-            ROUND(1.75 + (n%40)*0.09, 4),
-            ELT((n%6)+1,'Per Mile','Per Kilometer','Flat Rate','Hourly','Per Stop','Weight Based'),
+            ROUND((1.75 + (n%40)*0.09)::NUMERIC, 4),
+            (ARRAY['Per Mile','Per Kilometer','Flat Rate','Hourly','Per Stop','Weight Based'])[(n%6)+1],
             n%3=0,
-            IF(n%3=0, ROUND(3+(n%5),2), NULL),
-            IF(n%2=0,'On-time delivery 96%, 4h ETA window, damage liability per cargo value.', NULL),
-            IF(1.75+(n%40)*0.09 < 2.20, 'High', IF(1.75+(n%40)*0.09 < 2.80, 'Medium', 'Low')),
-            IF(n%4=0,'Contract nearing expiry — schedule renewal review.', NULL)
+            CASE WHEN n%3=0 THEN ROUND((3+(n%5))::NUMERIC,2) ELSE NULL END,
+            CASE WHEN n%2=0 THEN 'On-time delivery 96%, 4h ETA window, damage liability per cargo value.' ELSE NULL END,
+            CASE WHEN 1.75+(n%40)*0.09 < 2.20 THEN 'High'
+                 WHEN 1.75+(n%40)*0.09 < 2.80 THEN 'Medium' ELSE 'Low' END,
+            CASE WHEN n%4=0 THEN 'Contract nearing expiry — schedule renewal review.' ELSE NULL END
           FROM seq
           WHERE (SELECT COUNT(*) FROM contracts WHERE contract_number LIKE 'CON-B5-%') < 12",
 
-        // ---------- CONTRACT RATES (30 records) --------------------------------
         @"INSERT INTO contract_rates
             (company_id, contract_id, rate_code, rate_type, origin_zone, destination_zone,
              vehicle_type, base_rate, minimum_charge, fuel_surcharge_percent, accessorial_type,
              effective_date, expiry_date, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
-          SELECT 1,
-            ((n-1)%12)+1,
-            CONCAT('RATE-',LPAD(n,4,'0')),
-            ELT((n%6)+1,'Per Mile','Per Kilometer','Flat Rate','Hourly','Per Stop','Weight Based'),
-            ELT((n%5)+1,'Northern VA','DC Metro','Southern VA','Maryland','West VA'),
-            ELT((n%5)+1,'DC Metro','Northern VA','Maryland','West VA','Southern VA'),
-            ELT((n%4)+1,'Truck','Van','Reefer','Flatbed'),
-            ROUND(1.45 + (n%60)*0.045, 4),
-            ROUND(85 + (n%90), 2),
-            IF(n%3=0, ROUND(3+(n%5),2), NULL),
-            IF(n%4=0, ELT((n%3)+1,'Liftgate','Fuel Surcharge','Detention'), NULL),
-            DATE_SUB(CURDATE(), INTERVAL n*15 DAY),
-            DATE_ADD(CURDATE(), INTERVAL (31-n)*20 DAY),
-            IF(n%8=0,'Inactive','Active')
+          SELECT 1, ((n-1)%12)+1,
+            'RATE-' || LPAD(n::TEXT,4,'0'),
+            (ARRAY['Per Mile','Per Kilometer','Flat Rate','Hourly','Per Stop','Weight Based'])[(n%6)+1],
+            (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
+            (ARRAY['DC Metro','Northern VA','Maryland','West VA','Southern VA'])[(n%5)+1],
+            (ARRAY['Truck','Van','Reefer','Flatbed'])[(n%4)+1],
+            ROUND((1.45 + (n%60)*0.045)::NUMERIC, 4),
+            ROUND((85 + (n%90))::NUMERIC, 2),
+            CASE WHEN n%3=0 THEN ROUND((3+(n%5))::NUMERIC,2) ELSE NULL END,
+            CASE WHEN n%4=0 THEN (ARRAY['Liftgate','Fuel Surcharge','Detention'])[(n%3)+1] ELSE NULL END,
+            CURRENT_DATE - n*15 * INTERVAL '1 day',
+            CURRENT_DATE + (31-n)*20 * INTERVAL '1 day',
+            CASE WHEN n%8=0 THEN 'Inactive' ELSE 'Active' END
           FROM seq
           WHERE (SELECT COUNT(*) FROM contract_rates) < 30",
 
-        // ---------- CARRIERS: backfill existing + NEW (10) --------------------
         @"UPDATE carriers
-          SET carrier_number      = COALESCE(carrier_number, CONCAT('CAR-', LPAD(id,5,'0'))),
-              region              = COALESCE(region, ELT((id%5)+1,'Northern VA','DC Metro','Southern VA','Maryland','National')),
-              compliance_status   = COALESCE(compliance_status, IF(id%5=0,'Non-Compliant', IF(id%4=0,'At Risk','Compliant'))),
-              insurance_expiry    = COALESCE(insurance_expiry, DATE_ADD(CURDATE(), INTERVAL (id%18) MONTH)),
-              contract_status     = COALESCE(contract_status, IF(id%6=0,'Expired','Active')),
-              on_time_percent     = IF(on_time_percent=90, GREATEST(72,97-(id%3)*8), on_time_percent),
-              safety_score        = IF(safety_score=88, GREATEST(68,96-(id%4)*7), safety_score),
-              performance_score   = IF(performance_score=86, GREATEST(70,95-(id%4)*6), performance_score),
-              risk_score          = IF(risk_score=20, 12+(id%6)*10, risk_score),
-              recommended_action  = COALESCE(recommended_action, IF(compliance_status='Non-Compliant','Suspend carrier — compliance risk',IF(insurance_expiry<DATE_ADD(CURDATE(),INTERVAL 60 DAY),'Renew insurance immediately','Monitor performance')))
+          SET carrier_number      = COALESCE(carrier_number, 'CAR-' || LPAD(id::TEXT,5,'0')),
+              region              = COALESCE(region, (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','National'])[(id%5)+1]),
+              compliance_status   = COALESCE(compliance_status, CASE WHEN id%5=0 THEN 'Non-Compliant' WHEN id%4=0 THEN 'At Risk' ELSE 'Compliant' END),
+              insurance_expiry    = COALESCE(insurance_expiry, CURRENT_DATE + (id%18) * INTERVAL '1 month'),
+              contract_status     = COALESCE(contract_status, CASE WHEN id%6=0 THEN 'Expired' ELSE 'Active' END),
+              on_time_percent     = CASE WHEN on_time_percent=90 THEN GREATEST(72,97-(id%3)*8) ELSE on_time_percent END,
+              safety_score        = CASE WHEN safety_score=88 THEN GREATEST(68,96-(id%4)*7) ELSE safety_score END,
+              performance_score   = CASE WHEN performance_score=86 THEN GREATEST(70,95-(id%4)*6) ELSE performance_score END,
+              risk_score          = CASE WHEN risk_score=20 THEN 12+(id%6)*10 ELSE risk_score END,
+              recommended_action  = COALESCE(recommended_action, CASE WHEN compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END)
           WHERE carrier_number IS NULL",
 
         @"INSERT INTO carriers
@@ -437,142 +413,131 @@ public sealed class Batch5SchemaService(Database db)
              cost_score, performance_score, risk_score, recommended_action, notes)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
           SELECT 1,
-            CONCAT('CAR-B5-',4000+n),
-            CONCAT(ELT((n%5)+1,'FastLane','PrimeHaul','NovaTrans','BlueStar','EagleFreight'),' Logistics'),
-            CONCAT('MC-',100000+n*7),
-            ELT((n%5)+1,'Mike Harrison','Susan Park','David Wright','Amy Torres','James Clark'),
-            CONCAT('571-',LPAD(n*37,3,'0'),'-',LPAD(n*91,4,'0')),
-            LOWER(CONCAT(ELT((n%5)+1,'fastlane','primehavl','novatrans','bluestar','eaglefreight'),'@carrier.example.com')),
-            ELT((n%5)+1,'Northern VA','DC Metro','Southern VA','Maryland','National'),
-            IF(n%5=0,'Suspended', IF(n%4=0,'Pending','Active')),
-            IF(n%5=0,'Non-Compliant', IF(n%4=0,'At Risk','Compliant')),
-            DATE_ADD(CURDATE(), INTERVAL (n%18) MONTH),
-            IF(n%6=0,'Expired','Active'),
+            'CAR-B5-' || (4000+n),
+            (ARRAY['FastLane','PrimeHaul','NovaTrans','BlueStar','EagleFreight'])[(n%5)+1] || ' Logistics',
+            'MC-' || (100000+n*7),
+            (ARRAY['Mike Harrison','Susan Park','David Wright','Amy Torres','James Clark'])[(n%5)+1],
+            '571-' || LPAD((n*37)::TEXT,3,'0') || '-' || LPAD((n*91)::TEXT,4,'0'),
+            LOWER((ARRAY['fastlane','primehavl','novatrans','bluestar','eaglefreight'])[(n%5)+1] || '@carrier.example.com'),
+            (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','National'])[(n%5)+1],
+            CASE WHEN n%5=0 THEN 'Suspended' WHEN n%4=0 THEN 'Pending' ELSE 'Active' END,
+            CASE WHEN n%5=0 THEN 'Non-Compliant' WHEN n%4=0 THEN 'At Risk' ELSE 'Compliant' END,
+            CURRENT_DATE + (n%18) * INTERVAL '1 month',
+            CASE WHEN n%6=0 THEN 'Expired' ELSE 'Active' END,
             GREATEST(72, 97-(n%4)*7),
             GREATEST(68, 95-(n%4)*6),
             GREATEST(70, 94-(n%3)*6),
             GREATEST(70, 93-(n%4)*6),
             12+(n%6)*10,
-            IF(n%5=0,'Suspend carrier — compliance risk',IF(n%4=0,'Review carrier compliance before next tender','Monitor carrier performance quarterly')),
-            IF(n%5=0,'Carrier suspended pending compliance review.', NULL)
+            CASE WHEN n%5=0 THEN 'Suspend carrier — compliance risk'
+                 WHEN n%4=0 THEN 'Review carrier compliance before next tender'
+                 ELSE 'Monitor carrier performance quarterly' END,
+            CASE WHEN n%5=0 THEN 'Carrier suspended pending compliance review.' ELSE NULL END
           FROM seq
           WHERE (SELECT COUNT(*) FROM carriers WHERE carrier_number LIKE 'CAR-B5-%') < 10",
 
-        // ---------- CARRIER DOCUMENTS (15 records) ----------------------------
         @"INSERT INTO carrier_documents
             (company_id, carrier_id, document_type, document_number, expiry_date, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<15)
-          SELECT 1,
-            ((n-1)%10)+1,
-            ELT((n%5)+1,'Operating Authority','Insurance Certificate','Safety Rating','MC Number','DOT Registration'),
-            CONCAT('DOC-CAR-',LPAD(n,4,'0')),
-            DATE_ADD(CURDATE(), INTERVAL (n%18-3) MONTH),
-            IF(n%5=0,'Expired', IF(n%6=0,'Expiring','Active'))
+          SELECT 1, ((n-1)%10)+1,
+            (ARRAY['Operating Authority','Insurance Certificate','Safety Rating','MC Number','DOT Registration'])[(n%5)+1],
+            'DOC-CAR-' || LPAD(n::TEXT,4,'0'),
+            CURRENT_DATE + (n%18-3) * INTERVAL '1 month',
+            CASE WHEN n%5=0 THEN 'Expired' WHEN n%6=0 THEN 'Expiring' ELSE 'Active' END
           FROM seq
           WHERE (SELECT COUNT(*) FROM carrier_documents) < 15",
 
-        // ---------- CARRIER PERFORMANCE (10 records) -------------------------
         @"INSERT INTO carrier_performance
             (company_id, carrier_id, period_start, period_end, jobs_handled, on_time_percent, incident_count, expense_total, performance_score)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
-          SELECT 1,
-            ((n-1)%10)+1,
-            DATE_SUB(CURDATE(), INTERVAL n MONTH),
-            DATE_SUB(CURDATE(), INTERVAL n-1 MONTH),
-            12+(n%28),
-            GREATEST(70, 97-(n%4)*6),
-            n%4,
-            ROUND(2800+(n%3200), 2),
-            GREATEST(68, 95-(n%5)*5)
+          SELECT 1, ((n-1)%10)+1,
+            CURRENT_DATE - n * INTERVAL '1 month',
+            CURRENT_DATE - (n-1) * INTERVAL '1 month',
+            12+(n%28), GREATEST(70, 97-(n%4)*6), n%4, ROUND((2800+(n%3200))::NUMERIC, 2), GREATEST(68, 95-(n%5)*5)
           FROM seq
           WHERE (SELECT COUNT(*) FROM carrier_performance) < 10",
 
-        // ---------- COST MARGIN RECORDS (40 records) --------------------------
         @"INSERT INTO cost_margin_records
             (company_id, entity_type, entity_id, customer_id, job_id, route_id, vehicle_id, driver_id,
              revenue_estimate, fuel_cost, driver_cost, maintenance_cost, carrier_cost, expense_total,
              delay_cost, idle_cost, total_cost, margin_estimate, margin_percent, margin_risk)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<40)
           SELECT 1,
-            ELT((n%4)+1,'job','route','vehicle','customer'),
-            ((n-1)%50)+1,
-            ((n-1)%10)+1,
-            IF(n%4=1, ((n-1)%50)+1, NULL),
-            IF(n%4=2, ((n-1)%12)+1, NULL),
-            IF(n%4=3, ((n-1)%20)+1, NULL),
+            (ARRAY['job','route','vehicle','customer'])[(n%4)+1],
+            ((n-1)%50)+1, ((n-1)%10)+1,
+            CASE WHEN n%4=1 THEN ((n-1)%50)+1 ELSE NULL END,
+            CASE WHEN n%4=2 THEN ((n-1)%12)+1 ELSE NULL END,
+            CASE WHEN n%4=3 THEN ((n-1)%20)+1 ELSE NULL END,
             ((n-1)%20)+1,
-            ROUND(480 + (n%520), 2),
-            ROUND(88  + (n%120), 2),
-            ROUND(120 + (n%80),  2),
-            ROUND(22  + (n%55),  2),
-            ROUND(IF(n%3=0, 85+(n%120), 0), 2),
-            ROUND(38  + (n%75),  2),
-            ROUND(IF(n%5=0, 45+(n%80), 0), 2),
-            ROUND(IF(n%4=0, 18+(n%35), 0), 2),
-            ROUND((88+(n%120)) + (120+(n%80)) + (22+(n%55)) + (38+(n%75)), 2),
-            ROUND((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75))), 2),
-            ROUND(((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) * 100, 2),
-            IF(((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) < 0.15, 'High', IF(((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) < 0.28, 'Medium', 'Low'))
+            ROUND((480 + (n%520))::NUMERIC, 2),
+            ROUND((88  + (n%120))::NUMERIC, 2),
+            ROUND((120 + (n%80))::NUMERIC,  2),
+            ROUND((22  + (n%55))::NUMERIC,  2),
+            ROUND(CASE WHEN n%3=0 THEN (85+(n%120)) ELSE 0 END::NUMERIC, 2),
+            ROUND((38  + (n%75))::NUMERIC,  2),
+            ROUND(CASE WHEN n%5=0 THEN (45+(n%80)) ELSE 0 END::NUMERIC, 2),
+            ROUND(CASE WHEN n%4=0 THEN (18+(n%35)) ELSE 0 END::NUMERIC, 2),
+            ROUND(((88+(n%120)) + (120+(n%80)) + (22+(n%55)) + (38+(n%75)))::NUMERIC, 2),
+            ROUND(((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75))))::NUMERIC, 2),
+            ROUND((((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) * 100)::NUMERIC, 2),
+            CASE WHEN ((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) < 0.15 THEN 'High'
+                 WHEN ((480+(n%520)) - ((88+(n%120))+(120+(n%80))+(22+(n%55))+(38+(n%75)))) / NULLIF(480+(n%520),0) < 0.28 THEN 'Medium'
+                 ELSE 'Low' END
           FROM seq
           WHERE (SELECT COUNT(*) FROM cost_margin_records) < 40",
 
-        // ---------- COST MARGIN PREDICTIONS (20 records) ----------------------
         @"INSERT INTO cost_margin_predictions
             (company_id, entity_type, entity_id, prediction_type, predicted_revenue, predicted_cost,
              predicted_margin, predicted_margin_percent, confidence_level, risk_level, recommendation)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<20)
           SELECT 1,
-            ELT((n%4)+1,'job','route','vehicle','customer'),
-            ((n-1)%50)+1,
-            ELT((n%3)+1,'Margin Forecast','Cost Trend','Revenue Risk'),
-            ROUND(500+(n%480), 2),
-            ROUND(320+(n%280), 2),
-            ROUND((500+(n%480)) - (320+(n%280)), 2),
-            ROUND(((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) * 100, 2),
-            ELT((n%3)+1,'High','Medium','Low'),
-            IF(((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) < 0.12,'High', IF(((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) < 0.25,'Medium','Low')),
-            ELT((n%5)+1,'Review pricing with customer to recover margin','Reduce idle time to lower cost burden','Optimize route sequence to cut fuel spend','Renegotiate carrier rate for this lane','Review accessorial charges for unbilled items')
+            (ARRAY['job','route','vehicle','customer'])[(n%4)+1], ((n-1)%50)+1,
+            (ARRAY['Margin Forecast','Cost Trend','Revenue Risk'])[(n%3)+1],
+            ROUND((500+(n%480))::NUMERIC, 2),
+            ROUND((320+(n%280))::NUMERIC, 2),
+            ROUND(((500+(n%480)) - (320+(n%280)))::NUMERIC, 2),
+            ROUND((((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) * 100)::NUMERIC, 2),
+            (ARRAY['High','Medium','Low'])[(n%3)+1],
+            CASE WHEN ((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) < 0.12 THEN 'High'
+                 WHEN ((500+(n%480)) - (320+(n%280))) / NULLIF(500+(n%480),0) < 0.25 THEN 'Medium' ELSE 'Low' END,
+            (ARRAY['Review pricing with customer to recover margin','Reduce idle time to lower cost burden','Optimize route sequence to cut fuel spend','Renegotiate carrier rate for this lane','Review accessorial charges for unbilled items'])[(n%5)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM cost_margin_predictions) < 20",
 
-        // ---------- COST LEAKAGE ITEMS (25 records) ---------------------------
         @"INSERT INTO cost_leakage_items
             (company_id, leakage_number, category, entity_type, entity_id, title, description,
              estimated_loss, projected_monthly_loss, severity, status, owner_role, recommended_action)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<25)
           SELECT 1,
-            CONCAT('LEAK-',1000+n),
-            ELT((n%12)+1,'Idle Time','Fuel Anomaly','Delay / SLA Penalty','Repeated Maintenance','Underpriced Contract','Unbilled Accessorial','Carrier Overcharge','High-Cost Driver','High-Cost Vehicle','Route Inefficiency','Missing Customer Update','Document/Compliance Risk'),
-            ELT((n%4)+1,'vehicle','driver','job','route'),
+            'LEAK-' || (1000+n),
+            (ARRAY['Idle Time','Fuel Anomaly','Delay / SLA Penalty','Repeated Maintenance','Underpriced Contract','Unbilled Accessorial','Carrier Overcharge','High-Cost Driver','High-Cost Vehicle','Route Inefficiency','Missing Customer Update','Document/Compliance Risk'])[(n%12)+1],
+            (ARRAY['vehicle','driver','job','route'])[(n%4)+1],
             ((n-1)%20)+1,
-            CONCAT(ELT((n%12)+1,'Excessive idle on','Fuel anomaly on','Delay penalty on','Repeat brake job on','Underpriced contract — ','Missing liftgate fee on','Carrier overcharge on','High fuel cost driver — ','High maintenance cost — ','Inefficient stop sequence on','ETA update missing for','Expired document risk —'),' ',ELT((n%4)+1,'vehicle','driver','job','route'),' #',((n-1)%20)+1),
-            ELT((n%5)+1,'AI cost advisor identified leakage pattern from operational data — action recommended to recover margin.','Idle cost accumulation detected above threshold — coaching and scheduling adjustment advised.','Recurring charge pattern requires finance review and corrective pricing.','Carrier invoice variance exceeds contracted rate — dispute or renegotiation required.','Compliance document approaching expiry — potential fine risk and operational exposure.'),
-            ROUND(85+(n%820), 2),
-            ROUND((85+(n%820))*0.95, 2),
-            ELT((n%4)+1,'Low','Medium','High','Critical'),
-            ELT((n%4)+1,'Open','Acknowledged','In Progress','Resolved'),
-            ELT((n%5)+1,'Fleet Manager','Finance Manager','Compliance Manager','Dispatch Manager','Company Admin'),
-            ELT((n%6)+1,'Coach driver on idle policy and set threshold alerts','Investigate fuel transaction and review driver log','Dispute carrier invoice and update rate schedule','Review contract pricing against actual cost per mile','Add accessorial fee to next customer invoice','Schedule compliance renewal immediately')
+            (ARRAY['Excessive idle on','Fuel anomaly on','Delay penalty on','Repeat brake job on','Underpriced contract — ','Missing liftgate fee on','Carrier overcharge on','High fuel cost driver — ','High maintenance cost — ','Inefficient stop sequence on','ETA update missing for','Expired document risk —'])[(n%12)+1] || ' ' || (ARRAY['vehicle','driver','job','route'])[(n%4)+1] || ' #' || ((n-1)%20+1),
+            (ARRAY['AI cost advisor identified leakage pattern from operational data — action recommended to recover margin.','Idle cost accumulation detected above threshold — coaching and scheduling adjustment advised.','Recurring charge pattern requires finance review and corrective pricing.','Carrier invoice variance exceeds contracted rate — dispute or renegotiation required.','Compliance document approaching expiry — potential fine risk and operational exposure.'])[(n%5)+1],
+            ROUND((85+(n%820))::NUMERIC, 2),
+            ROUND(((85+(n%820))*0.95)::NUMERIC, 2),
+            (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
+            (ARRAY['Open','Acknowledged','In Progress','Resolved'])[(n%4)+1],
+            (ARRAY['Fleet Manager','Finance Manager','Compliance Manager','Dispatch Manager','Company Admin'])[(n%5)+1],
+            (ARRAY['Coach driver on idle policy and set threshold alerts','Investigate fuel transaction and review driver log','Dispute carrier invoice and update rate schedule','Review contract pricing against actual cost per mile','Add accessorial fee to next customer invoice','Schedule compliance renewal immediately'])[(n%6)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM cost_leakage_items) < 25",
 
-        // ---------- COST LEAKAGE ACTIONS (25 records) -------------------------
         @"INSERT INTO cost_leakage_actions
             (company_id, cost_leakage_item_id, action_title, action_description, estimated_savings,
              status, assigned_to_user_id, due_at)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<25)
-          SELECT 1,
-            ((n-1)%25)+1,
-            CONCAT('Recovery action ',n,' — ',ELT((n%6)+1,'Reduce idle time','Dispute overcharge','Renegotiate rate','Add accessorial fee','Schedule compliance renewal','Coach driver')),
-            CONCAT('Implement corrective action to recover estimated $',ROUND(120+(n%680),0),' monthly leakage. Review evidence and assign owner.'),
-            ROUND(120+(n%680), 2),
-            ELT((n%4)+1,'Open','In Progress','Completed','Cancelled'),
+          SELECT 1, ((n-1)%25)+1,
+            'Recovery action ' || n || ' — ' || (ARRAY['Reduce idle time','Dispute overcharge','Renegotiate rate','Add accessorial fee','Schedule compliance renewal','Coach driver'])[(n%6)+1],
+            'Implement corrective action to recover estimated $' || ROUND(120+(n%680),0)::TEXT || ' monthly leakage. Review evidence and assign owner.',
+            ROUND((120+(n%680))::NUMERIC, 2),
+            (ARRAY['Open','In Progress','Completed','Cancelled'])[(n%4)+1],
             1,
-            DATE_ADD(NOW(), INTERVAL n*3 DAY)
+            NOW() + n*3 * INTERVAL '1 day'
           FROM seq
           WHERE (SELECT COUNT(*) FROM cost_leakage_actions) < 25",
 
-        // ---------- AI RECOMMENDATIONS for Batch 5 modules --------------------
         @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
           SELECT 1, x.module_key, x.title, x.body, x.score, 'Recommended' FROM (
             SELECT 'fuel-idling' module_key, 'Fuel Cost Leakage Radar' title, 'AI detected 4 vehicles with fuel spend 18%+ above fleet average — investigate anomalies and review driver coaching queue.' body, 96 score
@@ -595,7 +560,6 @@ public sealed class Batch5SchemaService(Database db)
             UNION ALL SELECT 'cost-leakage','Accessorial Revenue Gap','Estimated $2,800/month in liftgate and detention charges going unbilled — update invoicing workflow.',94
           ) x WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations ar WHERE ar.module_key=x.module_key AND ar.title=x.title)",
 
-        // ---------- NOTIFICATIONS for Batch 5 --------------------------------
         @"INSERT INTO notifications (company_id, title, body, severity, module_key, status)
           SELECT 1, x.title, x.body, x.severity, x.module_key, 'Unread' FROM (
             SELECT 'Fuel anomaly detected' title,'AI detected possible fuel card misuse — review FT-B5-1009.' body,'High' severity,'fuel-idling' module_key
@@ -606,14 +570,13 @@ public sealed class Batch5SchemaService(Database db)
             UNION ALL SELECT 'Cost leakage detected','$12,400 recoverable leakage identified this month.','Warning','cost-leakage'
           ) x WHERE NOT EXISTS (SELECT 1 FROM notifications n WHERE n.title=x.title AND n.module_key=x.module_key)",
 
-        // ---------- AUDIT LOGS for Batch 5 seed actions ----------------------
         @"INSERT INTO audit_logs (company_id, action_name, entity_type, entity_id, actor_name, created_at)
           SELECT 1, x.action_name, x.entity_type, x.entity_id, 'OpsTrax System Seed', x.ts FROM (
-            SELECT 'fuel.transaction.created' action_name,'FuelTransaction' entity_type,1 entity_id, DATE_SUB(NOW(), INTERVAL 2 HOUR) ts
-            UNION ALL SELECT 'expense.created','Expense',1, DATE_SUB(NOW(), INTERVAL 3 HOUR)
-            UNION ALL SELECT 'contract.created','Contract',1, DATE_SUB(NOW(), INTERVAL 4 HOUR)
-            UNION ALL SELECT 'carrier.created','Carrier',1, DATE_SUB(NOW(), INTERVAL 5 HOUR)
-            UNION ALL SELECT 'cost.leakage.detected','CostLeakage',1, DATE_SUB(NOW(), INTERVAL 6 HOUR)
+            SELECT 'fuel.transaction.created' action_name,'FuelTransaction' entity_type,1 entity_id, NOW() - 2 * INTERVAL '1 hour' ts
+            UNION ALL SELECT 'expense.created','Expense',1, NOW() - 3 * INTERVAL '1 hour'
+            UNION ALL SELECT 'contract.created','Contract',1, NOW() - 4 * INTERVAL '1 hour'
+            UNION ALL SELECT 'carrier.created','Carrier',1, NOW() - 5 * INTERVAL '1 hour'
+            UNION ALL SELECT 'cost.leakage.detected','CostLeakage',1, NOW() - 6 * INTERVAL '1 hour'
           ) x WHERE (SELECT COUNT(*) FROM audit_logs WHERE action_name LIKE 'fuel.%' OR action_name LIKE 'expense.%') < 5",
     ];
 }

@@ -78,19 +78,19 @@ public sealed class DataRetentionService(Database db, AuditService audit)
                  @report, @sec, @soft,
                  @hold, @holdReason, @holdAt, @holdBy,
                  NOW(), NOW(), @upd)
-              ON DUPLICATE KEY UPDATE
-                audit_log_days        = VALUES(audit_log_days),
-                telemetry_days        = VALUES(telemetry_days),
-                notification_days     = VALUES(notification_days),
-                report_execution_days = VALUES(report_execution_days),
-                security_event_days   = VALUES(security_event_days),
-                soft_delete_only      = VALUES(soft_delete_only),
+              ON CONFLICT (company_id) DO UPDATE SET
+                audit_log_days        = EXCLUDED.audit_log_days,
+                telemetry_days        = EXCLUDED.telemetry_days,
+                notification_days     = EXCLUDED.notification_days,
+                report_execution_days = EXCLUDED.report_execution_days,
+                security_event_days   = EXCLUDED.security_event_days,
+                soft_delete_only      = EXCLUDED.soft_delete_only,
                 legal_hold_active     = @hold,
-                legal_hold_reason     = COALESCE(@holdReason, legal_hold_reason),
-                legal_hold_set_at     = IF(@hold = 1 AND legal_hold_active = 0, NOW(), legal_hold_set_at),
-                legal_hold_set_by     = IF(@hold = 1 AND legal_hold_active = 0, @upd, legal_hold_set_by),
+                legal_hold_reason     = COALESCE(@holdReason, data_retention_policies.legal_hold_reason),
+                legal_hold_set_at     = CASE WHEN @hold = 1 AND data_retention_policies.legal_hold_active = 0 THEN NOW() ELSE data_retention_policies.legal_hold_set_at END,
+                legal_hold_set_by     = CASE WHEN @hold = 1 AND data_retention_policies.legal_hold_active = 0 THEN @upd ELSE data_retention_policies.legal_hold_set_by END,
                 updated_at            = NOW(),
-                updated_by            = VALUES(updated_by)",
+                updated_by            = EXCLUDED.updated_by",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",        companyId);

@@ -86,7 +86,7 @@ public sealed class SecurityEventService(Database db)
                       metadata_json, created_at
                FROM security_events
                WHERE company_id = @cid
-                 AND created_at >= DATE_SUB(NOW(), INTERVAL @h HOUR)
+                 AND created_at >= NOW() - @h * INTERVAL '1 hour'
                  {typeFilter}
                ORDER BY created_at DESC
                LIMIT @lim",
@@ -108,7 +108,7 @@ public sealed class SecurityEventService(Database db)
             @"SELECT COUNT(*) FROM security_events
               WHERE company_id = @cid
                 AND success = 0
-                AND created_at >= DATE_SUB(NOW(), INTERVAL @m MINUTE)",
+                AND created_at >= NOW() - @m * INTERVAL '1 minute'",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);

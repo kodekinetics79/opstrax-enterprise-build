@@ -10,3 +10,7 @@ obj/
 .DS_Store
 npm-debug.log*
 .vercel
+appsettings.json
+appsettings.*.json
+frontend/tsconfig.tsbuildinfo
+tsconfig.tsbuildinfo

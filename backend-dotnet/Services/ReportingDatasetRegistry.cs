@@ -1,5 +1,5 @@
 using System.Text;
-using MySqlConnector;
+using Npgsql;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
@@ -12,7 +12,7 @@ namespace Opstrax.Api.Services;
 // 1. Only datasets defined here can be queried. No user-supplied table names.
 // 2. Only fields in AllowedFields can be selected. No user-supplied column names.
 // 3. Only operators in AllowedOperators per field. No raw SQL fragments.
-// 4. Every filter value is bound as a parameterized MySqlCommand parameter.
+// 4. Every filter value is bound as a parameterized NpgsqlCommand parameter.
 // 5. Tenant scope (company_id) is always injected server-side from the auth
 //    context; it cannot be overridden by the request body.
 // 6. Sensitive fields are excluded unless explicitly granted by permission.
@@ -666,7 +666,7 @@ public static class SecureQueryBuilder
         var offset   = (Math.Max(1, req.Page) - 1) * pageSize;
 
         // All field names come from the whitelist — safe to embed in SQL.
-        var selectCols = string.Join(", ", req.Fields.Select(f => $"`{f}`"));
+        var selectCols = string.Join(", ", req.Fields.Select(f => $"\"{f}\""));
 
         var paramList    = new List<(string Name, object? Value)>();
         var whereClauses = new List<string>();
@@ -682,7 +682,7 @@ public static class SecureQueryBuilder
         foreach (var fil in req.Filters ?? [])
         {
             // field key is whitelisted → safe in SQL
-            var col = $"`{fil.Field}`";
+            var col = $"\"{fil.Field}\"";
 
             switch (fil.Op.ToLowerInvariant())
             {
@@ -770,9 +770,9 @@ public static class SecureQueryBuilder
 
         var whereClause = "WHERE " + string.Join(" AND ", whereClauses);
 
-        var groupClause  = req.GroupBy is not null ? $"GROUP BY `{req.GroupBy}`" : "";
+        var groupClause  = req.GroupBy is not null ? $"GROUP BY \"{req.GroupBy}\"" : "";
         var sortDir      = req.Sort?.Dir?.ToLowerInvariant() == "desc" ? "DESC" : "ASC";
-        var orderClause  = req.Sort is not null ? $"ORDER BY `{req.Sort.Field}` {sortDir}" : "ORDER BY `id` DESC";
+        var orderClause  = req.Sort is not null ? $"ORDER BY \"{req.Sort.Field}\" {sortDir}" : "ORDER BY \"id\" DESC";
 
         // Wrap BaseQuery as a subquery so WHERE applies to aliased column names.
         var inner = dataset.BaseQuery.Trim();
@@ -809,8 +809,8 @@ public static class SecureQueryBuilder
         return !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-zA-Z_][a-zA-Z0-9_]*$");
     }
 
-    // Applies the param list to a MySqlCommand.
-    public static Action<MySqlCommand> BindParams(List<(string Name, object? Value)> parms) =>
+    // Applies the param list to a NpgsqlCommand.
+    public static Action<NpgsqlCommand> BindParams(List<(string Name, object? Value)> parms) =>
         cmd =>
         {
             foreach (var (name, value) in parms)

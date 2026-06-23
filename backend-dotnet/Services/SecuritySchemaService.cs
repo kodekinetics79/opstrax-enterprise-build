@@ -27,153 +27,197 @@ public sealed class SecuritySchemaService(Database db)
     {
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS company_security_settings (
-                id                              BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                              BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id                      BIGINT       NOT NULL UNIQUE,
-                mfa_required                    TINYINT(1)   NOT NULL DEFAULT 0,
-                mfa_required_roles              JSON         NULL,
+                mfa_required                    BOOLEAN      NOT NULL DEFAULT false,
+                mfa_required_roles              JSONB        NULL,
                 password_min_length             INT          NOT NULL DEFAULT 8,
-                password_requires_uppercase     TINYINT(1)   NOT NULL DEFAULT 0,
-                password_requires_number        TINYINT(1)   NOT NULL DEFAULT 0,
-                password_requires_symbol        TINYINT(1)   NOT NULL DEFAULT 0,
+                password_requires_uppercase     BOOLEAN      NOT NULL DEFAULT false,
+                password_requires_number        BOOLEAN      NOT NULL DEFAULT false,
+                password_requires_symbol        BOOLEAN      NOT NULL DEFAULT false,
                 password_expiry_days            INT          NOT NULL DEFAULT 0,
                 session_idle_timeout_minutes    INT          NOT NULL DEFAULT 60,
                 session_absolute_timeout_minutes INT         NOT NULL DEFAULT 480,
                 max_failed_login_attempts       INT          NOT NULL DEFAULT 5,
                 lockout_duration_minutes        INT          NOT NULL DEFAULT 30,
-                allowed_sso_providers           JSON         NULL,
-                export_approval_required        TINYINT(1)   NOT NULL DEFAULT 0,
+                allowed_sso_providers           JSONB        NULL,
+                export_approval_required        BOOLEAN      NOT NULL DEFAULT false,
                 audit_retention_days            INT          NOT NULL DEFAULT 90,
                 data_retention_days             INT          NOT NULL DEFAULT 365,
-                created_at                      DATETIME     NOT NULL DEFAULT NOW(),
-                updated_at                      DATETIME     NOT NULL DEFAULT NOW(),
-                updated_by                      VARCHAR(200) NULL,
-                INDEX idx_css_company (company_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_by                      VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_css_company ON company_security_settings (company_id)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS user_mfa_status (
                 user_id                         BIGINT       PRIMARY KEY,
-                mfa_enabled                     TINYINT(1)   NOT NULL DEFAULT 0,
+                mfa_enabled                     BOOLEAN      NOT NULL DEFAULT false,
                 mfa_provider                    VARCHAR(50)  NULL,
-                enrolled_at                     DATETIME     NULL,
-                last_used_at                    DATETIME     NULL,
-                recovery_codes_generated_at     DATETIME     NULL,
+                enrolled_at                     TIMESTAMPTZ  NULL,
+                last_used_at                    TIMESTAMPTZ  NULL,
+                recovery_codes_generated_at     TIMESTAMPTZ  NULL,
                 recovery_codes_remaining        INT          NOT NULL DEFAULT 0,
-                updated_at                      DATETIME     NOT NULL DEFAULT NOW()
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS security_events (
-                id                  BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id          BIGINT       NOT NULL,
                 user_id             BIGINT       NULL,
                 event_type          VARCHAR(100) NOT NULL,
-                severity            ENUM('critical','high','medium','low','info')
-                                    NOT NULL DEFAULT 'info',
+                severity            VARCHAR(20)
+                                    NOT NULL DEFAULT 'info'
+                                    CHECK (severity IN ('critical','high','medium','low','info')),
                 source_ip_truncated VARCHAR(30)  NULL,
                 user_agent_hash     VARCHAR(16)  NULL,
-                success             TINYINT(1)   NOT NULL DEFAULT 1,
+                success             BOOLEAN      NOT NULL DEFAULT true,
                 safe_message        VARCHAR(500) NOT NULL,
-                metadata_json       JSON         NULL,
-                created_at          DATETIME     NOT NULL DEFAULT NOW(),
-                INDEX idx_se_company (company_id),
-                INDEX idx_se_type    (event_type),
-                INDEX idx_se_created (created_at),
-                INDEX idx_se_user    (user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                metadata_json       JSONB        NULL,
+                created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_se_company ON security_events (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_se_type ON security_events (event_type)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_se_created ON security_events (created_at)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_se_user ON security_events (user_id)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS sso_connections (
-                id                    BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                    BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id            BIGINT       NOT NULL,
-                provider_type         ENUM('oidc','saml') NOT NULL,
+                provider_type         VARCHAR(10)
+                                      NOT NULL
+                                      CHECK (provider_type IN ('oidc','saml')),
                 display_name          VARCHAR(200) NOT NULL,
                 issuer_or_entity_id   VARCHAR(500) NOT NULL,
                 client_id             VARCHAR(500) NOT NULL,
                 client_secret_ref     VARCHAR(200) NULL,
                 certificate_thumbprint VARCHAR(200) NULL,
-                enabled               TINYINT(1)   NOT NULL DEFAULT 1,
-                domain_hints          JSON         NULL,
+                enabled               BOOLEAN      NOT NULL DEFAULT true,
+                domain_hints          JSONB        NULL,
                 metadata_url          VARCHAR(500) NULL,
-                created_at            DATETIME     NOT NULL DEFAULT NOW(),
-                updated_at            DATETIME     NOT NULL DEFAULT NOW(),
-                created_by            VARCHAR(200) NULL,
-                INDEX idx_sso_company (company_id),
-                INDEX idx_sso_enabled (enabled)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                created_by            VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_sso_company ON sso_connections (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_sso_enabled ON sso_connections (enabled)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS access_reviews (
-                id                  BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id          BIGINT       NOT NULL,
                 title               VARCHAR(500) NOT NULL,
                 description         TEXT         NULL,
                 reviewer_user_id    BIGINT       NOT NULL,
-                status              ENUM('pending','in_progress','completed','cancelled')
-                                    NOT NULL DEFAULT 'pending',
+                status              VARCHAR(20)
+                                    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN ('pending','in_progress','completed','cancelled')),
                 due_date            DATE         NULL,
-                started_at          DATETIME     NULL,
-                completed_at        DATETIME     NULL,
+                started_at          TIMESTAMPTZ  NULL,
+                completed_at        TIMESTAMPTZ  NULL,
                 total_items         INT          NOT NULL DEFAULT 0,
                 items_approved      INT          NOT NULL DEFAULT 0,
                 items_revoked       INT          NOT NULL DEFAULT 0,
                 items_pending       INT          NOT NULL DEFAULT 0,
-                created_at          DATETIME     NOT NULL DEFAULT NOW(),
-                created_by          VARCHAR(200) NULL,
-                INDEX idx_ar_company  (company_id),
-                INDEX idx_ar_status   (status),
-                INDEX idx_ar_reviewer (reviewer_user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                created_by          VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ar_company ON access_reviews (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ar_status ON access_reviews (status)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ar_reviewer ON access_reviews (reviewer_user_id)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS access_review_items (
-                id                      BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                      BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 review_id               BIGINT       NOT NULL,
                 company_id              BIGINT       NOT NULL,
                 target_user_id          BIGINT       NOT NULL,
                 target_user_name        VARCHAR(200) NULL,
                 target_user_email       VARCHAR(500) NULL,
                 role_name               VARCHAR(200) NULL,
-                permissions_snapshot    JSON         NULL,
-                status                  ENUM('pending','approved','revoked','remediated')
-                                        NOT NULL DEFAULT 'pending',
-                completed_at            DATETIME     NULL,
+                permissions_snapshot    JSONB        NULL,
+                status                  VARCHAR(20)
+                                        NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN ('pending','approved','revoked','remediated')),
+                completed_at            TIMESTAMPTZ  NULL,
                 completed_by            VARCHAR(200) NULL,
                 notes                   TEXT         NULL,
-                created_at              DATETIME     NOT NULL DEFAULT NOW(),
-                INDEX idx_ari_review  (review_id),
-                INDEX idx_ari_company (company_id),
-                INDEX idx_ari_status  (status),
-                INDEX idx_ari_user    (target_user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ari_review ON access_review_items (review_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ari_company ON access_review_items (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ari_status ON access_review_items (status)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ari_user ON access_review_items (target_user_id)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS compliance_controls (
-                id              BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id              BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 control_id      VARCHAR(50)  NOT NULL UNIQUE,
                 framework       VARCHAR(100) NOT NULL DEFAULT 'SOC2_readiness',
                 title           VARCHAR(500) NOT NULL,
                 description     TEXT         NULL,
                 owner           VARCHAR(200) NULL,
-                status          ENUM('implemented','partial','not_implemented','not_applicable')
-                                NOT NULL DEFAULT 'not_implemented',
+                status          VARCHAR(20)
+                                NOT NULL DEFAULT 'not_implemented'
+                                CHECK (status IN ('implemented','partial','not_implemented','not_applicable')),
                 category        VARCHAR(200) NULL,
-                created_at      DATETIME     NOT NULL DEFAULT NOW(),
-                updated_at      DATETIME     NOT NULL DEFAULT NOW(),
-                INDEX idx_cc_framework (framework),
-                INDEX idx_cc_status    (status)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_cc_framework ON compliance_controls (framework)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_cc_status ON compliance_controls (status)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS compliance_evidence (
-                id               BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id               BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 control_id       VARCHAR(50)  NOT NULL,
                 evidence_type    VARCHAR(100) NOT NULL,
                 source_system    VARCHAR(100) NOT NULL,
@@ -181,88 +225,118 @@ public sealed class SecuritySchemaService(Database db)
                 source_record_id BIGINT       NULL,
                 title            VARCHAR(500) NOT NULL,
                 safe_summary     TEXT         NULL,
-                generated_at     DATETIME     NOT NULL DEFAULT NOW(),
+                generated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
                 evidence_hash    VARCHAR(64)  NULL,
                 retention_until  DATE         NULL,
-                generated_by     VARCHAR(200) NULL,
-                INDEX idx_ce_control   (control_id),
-                INDEX idx_ce_type      (evidence_type),
-                INDEX idx_ce_generated (generated_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                generated_by     VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ce_control ON compliance_evidence (control_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ce_type ON compliance_evidence (evidence_type)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_ce_generated ON compliance_evidence (generated_at)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS backup_verifications (
-                id                      BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                      BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id              BIGINT       NULL,
                 backup_type             VARCHAR(100) NOT NULL,
-                status                  ENUM('passed','failed','warning','not_configured')
-                                        NOT NULL DEFAULT 'not_configured',
-                verified_at             DATETIME     NOT NULL DEFAULT NOW(),
-                restore_tested          TINYINT(1)   NOT NULL DEFAULT 0,
+                status                  VARCHAR(20)
+                                        NOT NULL DEFAULT 'not_configured'
+                                        CHECK (status IN ('passed','failed','warning','not_configured')),
+                verified_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                restore_tested          BOOLEAN      NOT NULL DEFAULT false,
                 duration_ms             INT          NULL,
                 storage_location_label  VARCHAR(200) NULL,
                 safe_error              TEXT         NULL,
-                evidence_hash           VARCHAR(64)  NULL,
-                INDEX idx_bv_company  (company_id),
-                INDEX idx_bv_type     (backup_type),
-                INDEX idx_bv_status   (status),
-                INDEX idx_bv_verified (verified_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                evidence_hash           VARCHAR(64)  NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_bv_company ON backup_verifications (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_bv_type ON backup_verifications (backup_type)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_bv_status ON backup_verifications (status)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_bv_verified ON backup_verifications (verified_at)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS data_retention_policies (
-                id                      BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                      BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id              BIGINT       NOT NULL UNIQUE,
                 audit_log_days          INT          NOT NULL DEFAULT 90,
                 telemetry_days          INT          NOT NULL DEFAULT 90,
                 notification_days       INT          NOT NULL DEFAULT 30,
                 report_execution_days   INT          NOT NULL DEFAULT 180,
                 security_event_days     INT          NOT NULL DEFAULT 365,
-                soft_delete_only        TINYINT(1)   NOT NULL DEFAULT 1,
-                legal_hold_active       TINYINT(1)   NOT NULL DEFAULT 0,
+                soft_delete_only        BOOLEAN      NOT NULL DEFAULT true,
+                legal_hold_active       BOOLEAN      NOT NULL DEFAULT false,
                 legal_hold_reason       TEXT         NULL,
-                legal_hold_set_at       DATETIME     NULL,
+                legal_hold_set_at       TIMESTAMPTZ  NULL,
                 legal_hold_set_by       VARCHAR(200) NULL,
-                created_at              DATETIME     NOT NULL DEFAULT NOW(),
-                updated_at              DATETIME     NOT NULL DEFAULT NOW(),
-                updated_by              VARCHAR(200) NULL,
-                INDEX idx_drp_company (company_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_by              VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_drp_company ON data_retention_policies (company_id)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS export_requests (
-                id                      BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                      BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id              BIGINT       NOT NULL,
                 requested_by_user_id    BIGINT       NOT NULL,
                 requested_by_name       VARCHAR(200) NULL,
                 export_type             VARCHAR(100) NOT NULL,
                 dataset_name            VARCHAR(200) NULL,
                 row_count_estimate      INT          NULL,
-                status                  ENUM('pending_approval','approved','rejected','completed','cancelled')
-                                        NOT NULL DEFAULT 'pending_approval',
+                status                  VARCHAR(30)
+                                        NOT NULL DEFAULT 'pending_approval'
+                                        CHECK (status IN ('pending_approval','approved','rejected','completed','cancelled')),
                 approved_by_user_id     BIGINT       NULL,
                 approved_by_name        VARCHAR(200) NULL,
-                reviewed_at             DATETIME     NULL,
+                reviewed_at             TIMESTAMPTZ  NULL,
                 review_notes            TEXT         NULL,
-                created_at              DATETIME     NOT NULL DEFAULT NOW(),
-                completed_at            DATETIME     NULL,
-                INDEX idx_er_company   (company_id),
-                INDEX idx_er_status    (status),
-                INDEX idx_er_requester (requested_by_user_id),
-                INDEX idx_er_created   (created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                completed_at            TIMESTAMPTZ  NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_er_company ON export_requests (company_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_er_status ON export_requests (status)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_er_requester ON export_requests (requested_by_user_id)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_er_created ON export_requests (created_at)
             """);
 
         // Safely add security columns to users table (ignore if already exist)
         foreach (var col in new[]
         {
-            "ALTER TABLE users ADD COLUMN failed_login_attempts INT NOT NULL DEFAULT 0",
-            "ALTER TABLE users ADD COLUMN locked_until DATETIME NULL",
-            "ALTER TABLE users ADD COLUMN force_password_change TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NULL",
         })
         {
             try { await db.ExecuteAsync(col); }
@@ -305,6 +379,6 @@ public sealed class SecuritySchemaService(Database db)
         ('INT-8', 'internal_security', 'Export Governance', 'Sensitive data exports require approval where configured', 'Data Governance', 'partial'),
         ('INT-9', 'internal_security', 'Data Retention Policies', 'Data retention and deletion policies are configured per tenant', 'Data Governance', 'partial'),
         ('INT-10', 'internal_security', 'Tenant Isolation', 'All data queries enforce company_id scoping', 'Data Isolation', 'implemented')
-        ON DUPLICATE KEY UPDATE title = VALUES(title)
+        ON CONFLICT (control_id) DO UPDATE SET title = EXCLUDED.title
         """);
 }

@@ -38,8 +38,8 @@ public sealed class ServiceRunTracker(
             var db = scope.ServiceProvider.GetRequiredService<Database>();
             return await db.ScalarLongAsync(
                 @"INSERT INTO service_run_history (service_name, status, started_at, heartbeat_at)
-                  VALUES (@sn, 'running', NOW(), NOW());
-                  SELECT LAST_INSERT_ID()",
+                  VALUES (@sn, 'running', NOW(), NOW())
+                  RETURNING id",
                 c => c.Parameters.AddWithValue("@sn", serviceName), ct);
         }
         catch (Exception ex)
@@ -93,7 +93,7 @@ public sealed class ServiceRunTracker(
                     (service_name, last_heartbeat_at, last_run_at, last_run_status,
                      consecutive_failures, last_error_safe, updated_at)
                   VALUES (@sn, NOW(), NOW(), 'succeeded', 0, NULL, NOW())
-                  ON DUPLICATE KEY UPDATE
+                  ON CONFLICT (service_name) DO UPDATE SET
                     last_heartbeat_at    = NOW(),
                     last_run_at          = NOW(),
                     last_run_status      = 'succeeded',
@@ -143,11 +143,11 @@ public sealed class ServiceRunTracker(
                     (service_name, last_heartbeat_at, last_run_at, last_run_status,
                      consecutive_failures, last_error_safe, updated_at)
                   VALUES (@sn, NOW(), NOW(), 'failed', 1, @em, NOW())
-                  ON DUPLICATE KEY UPDATE
+                  ON CONFLICT (service_name) DO UPDATE SET
                     last_heartbeat_at    = NOW(),
                     last_run_at          = NOW(),
                     last_run_status      = 'failed',
-                    consecutive_failures = consecutive_failures + 1,
+                    consecutive_failures = service_heartbeats.consecutive_failures + 1,
                     last_error_safe      = @em,
                     updated_at           = NOW()",
                 c =>

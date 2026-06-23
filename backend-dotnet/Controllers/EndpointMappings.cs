@@ -1,4 +1,4 @@
-using MySqlConnector;
+using Npgsql;
 using System.Security.Cryptography;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
@@ -347,8 +347,8 @@ public static class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : DriverHos(http, db, ct);
         });
 
-        app.MapGet("/api/geofences", (Database db, CancellationToken ct) => OkRows(db, @"SELECT g.*, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND DATE(ge.event_time)=CURDATE()) events_today FROM geofences g WHERE g.company_id=1 ORDER BY g.name", ct: ct));
-        app.MapGet("/api/geofences/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(@"SELECT COUNT(*) total, SUM(status='Active') active_count, SUM(status='Inactive') inactive_count, (SELECT COUNT(*) FROM geofence_events WHERE DATE(event_time)=CURDATE() AND event_type='Entry') entry_events_today, (SELECT COUNT(*) FROM geofence_events WHERE DATE(event_time)=CURDATE() AND event_type='Exit') exit_events_today, (SELECT COUNT(DISTINCT vehicle_id) FROM geofence_events WHERE DATE(event_time)=CURDATE()) vehicles_triggered FROM geofences WHERE company_id=1", ct: ct).ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
+        app.MapGet("/api/geofences", (Database db, CancellationToken ct) => OkRows(db, @"SELECT g.*, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND ge.event_time::date=CURRENT_DATE events_today FROM geofences g WHERE g.company_id=1 ORDER BY g.name", ct: ct));
+        app.MapGet("/api/geofences/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(@"SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_count, SUM(CASE WHEN status='Inactive' THEN 1 ELSE 0 END) inactive_count, (SELECT COUNT(*) FROM geofence_events WHERE event_time::date=CURRENT_DATE AND event_type='Entry') entry_events_today, (SELECT COUNT(*) FROM geofence_events WHERE event_time::date=CURRENT_DATE AND event_type='Exit') exit_events_today, (SELECT COUNT(DISTINCT vehicle_id) FROM geofence_events WHERE event_time::date=CURRENT_DATE) vehicles_triggered FROM geofences WHERE company_id=1", ct: ct).ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
         app.MapGet("/api/geofences/{id:long}/events", (long id, Database db, CancellationToken ct) => OkRows(db, @"SELECT ge.*, v.vehicle_code, d.full_name driver_name FROM geofence_events ge LEFT JOIN vehicles v ON v.id=ge.vehicle_id LEFT JOIN drivers d ON d.id=v.assigned_driver_id WHERE ge.geofence_id=@id ORDER BY ge.event_time DESC LIMIT 50", c => c.Parameters.AddWithValue("@id", id), ct: ct));
         app.MapPost("/api/geofences", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -376,8 +376,8 @@ public static class EndpointMappings
                      mr.assigned_to_name customer_name, mr.created_at invoice_date,
                      COALESCE(mr.numeric_value, 0) amount, COALESCE(mr.secondary_value, 0) tax,
                      COALESCE(mr.numeric_value + mr.secondary_value, 0) total_amount,
-                     COALESCE(mr.due_date, DATE_ADD(mr.created_at, INTERVAL 30 DAY)) due_date,
-                     DATEDIFF(CURDATE(), COALESCE(mr.due_date, DATE_ADD(mr.created_at, INTERVAL 30 DAY))) aging_days,
+                     COALESCE(mr.due_date, mr.created_at + 30 * INTERVAL '1 day') due_date,
+                     (CURRENT_DATE::date - COALESCE(mr.due_date, mr.created_at + 30 * INTERVAL '1 day')::date) aging_days,
                      COALESCE(mr.currency, 'USD') currency
               FROM module_records mr
               WHERE mr.company_id=GetCompanyId() AND mr.module_key='invoices' AND mr.deleted_at IS NULL
@@ -420,7 +420,7 @@ public static class EndpointMappings
                      CASE v.type WHEN 'Reefer' THEN 0.82 WHEN 'Van' THEN 0.34 ELSE 0.62 END co2_per_km,
                      'Stable' trend
               FROM vehicles v
-              LEFT JOIN fuel_transactions ft ON ft.vehicle_id=v.id AND ft.transaction_time >= DATE_SUB(NOW(),INTERVAL 30 DAY)
+              LEFT JOIN fuel_transactions ft ON ft.vehicle_id=v.id AND ft.transaction_time >= NOW() - 30 * INTERVAL '1 day'
               WHERE v.deleted_at IS NULL
               GROUP BY v.id, v.vehicle_code, v.type
               ORDER BY co2_this_month DESC", ct: ct));
@@ -516,14 +516,14 @@ public static class EndpointMappings
               LEFT JOIN drivers d ON d.id=se.driver_id
               LEFT JOIN vehicles v ON v.id=se.vehicle_id
               WHERE se.deleted_at IS NULL
-              ORDER BY FIELD(se.severity,'Critical','High','Medium','Low'), se.event_time DESC
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], se.severity), se.event_time DESC
               LIMIT 100", ct: ct));
         app.MapGet("/api/traffic-violations/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(
-            @"SELECT COUNT(*) total, SUM(severity IN ('Critical','High')) high_severity,
-                     SUM(event_type LIKE '%%Speeding%%' OR event_type='Speeding') speeding_count,
-                     SUM(event_type LIKE '%%Phone%%') phone_use_count,
-                     SUM(event_type LIKE '%%Seatbelt%%') seatbelt_count,
-                     SUM(review_status='New') pending_review
+            @"SELECT COUNT(*) total, SUM(CASE WHEN severity IN ('Critical','High') THEN 1 ELSE 0 END) high_severity,
+                     SUM(CASE WHEN event_type LIKE '%%Speeding%%' OR event_type='Speeding' THEN 1 ELSE 0 END) speeding_count,
+                     SUM(CASE WHEN event_type LIKE '%%Phone%%' THEN 1 ELSE 0 END) phone_use_count,
+                     SUM(CASE WHEN event_type LIKE '%%Seatbelt%%' THEN 1 ELSE 0 END) seatbelt_count,
+                     SUM(CASE WHEN review_status='New' THEN 1 ELSE 0 END) pending_review
               FROM safety_events WHERE deleted_at IS NULL", ct: ct)
             .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
 
@@ -554,9 +554,9 @@ public static class EndpointMappings
                      mi.due_date, mi.due_odometer, mi.service_interval_days,
                      COALESCE(mi.estimated_cost, 0) estimated_cost,
                      v.vehicle_code, v.odometer_miles current_odometer,
-                     DATEDIFF(mi.due_date, CURDATE()) days_until_due,
-                     CASE WHEN mi.due_date < CURDATE() THEN 'Overdue'
-                          WHEN mi.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 7 DAY) THEN 'Due Soon'
+                     (mi.due_date::date - CURRENT_DATE) days_until_due,
+                     CASE WHEN mi.due_date < CURRENT_DATE THEN 'Overdue'
+                          WHEN mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7 * INTERVAL '1 day' THEN 'Due Soon'
                           ELSE 'Scheduled' END pm_status
               FROM maintenance_items mi
               LEFT JOIN vehicles v ON v.id=mi.vehicle_id
@@ -578,16 +578,16 @@ public static class EndpointMappings
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
               LEFT JOIN (
                 SELECT vehicle_id, ROUND(SUM(duration_minutes),0) idle_minutes, COUNT(*) idle_events
-                FROM idling_events WHERE DATE(started_at)=CURDATE()
+                FROM idling_events WHERE started_at::date=CURRENT_DATE
                 GROUP BY vehicle_id
               ) idle ON idle.vehicle_id=v.id
               LEFT JOIN (
                 SELECT vehicle_id, ROUND(SUM(total_cost),2) fuel_cost_month, ROUND(SUM(quantity),1) gallons_month
-                FROM fuel_transactions WHERE fuel_date >= DATE_FORMAT(CURDATE(),'%%Y-%%m-01')
+                FROM fuel_transactions WHERE fuel_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01')
                 GROUP BY vehicle_id
               ) fuel ON fuel.vehicle_id=v.id
               LEFT JOIN (
-                SELECT assigned_vehicle_id vehicle_id, SUM(status NOT IN ('Completed','Delivered')) active_jobs, SUM(DATE(completed_at)=CURDATE()) completed_today
+                SELECT assigned_vehicle_id vehicle_id, SUM(CASE WHEN status NOT IN ('Completed','Delivered') THEN 1 ELSE 0 END) active_jobs, SUM(CASE WHEN completed_at::date=CURRENT_DATE THEN 1 ELSE 0 END) completed_today
                 FROM jobs WHERE deleted_at IS NULL
                 GROUP BY assigned_vehicle_id
               ) jobs ON jobs.vehicle_id=v.id
@@ -595,14 +595,14 @@ public static class EndpointMappings
               ORDER BY utilization_pct DESC", ct: ct));
         app.MapGet("/api/fleet/utilization/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(
             @"SELECT COUNT(*) total_vehicles,
-                     SUM(status='Active') active_vehicles,
-                     SUM(status='Available') available_vehicles,
-                     SUM(status IN ('Maintenance','Out of Service')) maintenance_vehicles,
+                     SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_vehicles,
+                     SUM(CASE WHEN status='Available' THEN 1 ELSE 0 END) available_vehicles,
+                     SUM(CASE WHEN status IN ('Maintenance','Out of Service') THEN 1 ELSE 0 END) maintenance_vehicles,
                      ROUND(AVG(readiness_score),1) avg_readiness,
                      ROUND(AVG(CASE WHEN status='Active' THEN GREATEST(55,85-(risk_score*0.3)) ELSE GREATEST(10,45-(risk_score*0.4)) END),1) avg_utilization_pct,
-                     (SELECT ROUND(SUM(duration_minutes)/60,1) FROM idling_events WHERE DATE(started_at)=CURDATE()) idle_hours_today,
-                     (SELECT CONCAT('$',FORMAT(SUM(estimated_cost),0)) FROM idling_events WHERE DATE(started_at)=CURDATE()) idle_cost_today,
-                     (SELECT CONCAT('$',FORMAT(SUM(total_cost),0)) FROM fuel_transactions WHERE fuel_date>=DATE_FORMAT(CURDATE(),'%%Y-%%m-01')) fuel_spend_month
+                     (SELECT ROUND(SUM(duration_minutes)/60,1) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_hours_today,
+                     (SELECT CONCAT('$',FORMAT(SUM(estimated_cost),0)) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_cost_today,
+                     (SELECT CONCAT('$',FORMAT(SUM(total_cost),0)) FROM fuel_transactions WHERE fuel_date>=TO_CHAR(CURRENT_DATE,'YYYY-MM-01')) fuel_spend_month
               FROM vehicles WHERE deleted_at IS NULL", ct: ct)
             .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
 
@@ -627,8 +627,8 @@ public static class EndpointMappings
         app.MapGet("/api/maintenance/fault-codes",              MaintFaultCodesList);
         // Legacy maintenance endpoints preserved below
         app.MapGet("/api/maintenance/summary", MaintenanceSummary);
-        app.MapGet("/api/maintenance/due", (Database db, CancellationToken ct) => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND mi.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 14 DAY) ORDER BY mi.due_date", ct: ct));
-        app.MapGet("/api/maintenance/overdue", (Database db, CancellationToken ct) => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND (mi.status='Overdue' OR mi.due_date < CURDATE()) ORDER BY mi.due_date", ct: ct));
+        app.MapGet("/api/maintenance/due", (Database db, CancellationToken ct) => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day' ORDER BY mi.due_date", ct: ct));
+        app.MapGet("/api/maintenance/overdue", (Database db, CancellationToken ct) => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE) ORDER BY mi.due_date", ct: ct));
         app.MapGet("/api/maintenance/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' ORDER BY score DESC LIMIT 8", ct: ct));
         app.MapGet("/api/maintenance", MaintenanceItems);
         app.MapGet("/api/maintenance/{id:long}", MaintenanceDetail);
@@ -754,7 +754,7 @@ public static class EndpointMappings
         app.MapGet("/api/dvir/reports/{id:long}/timeline", DvirTimeline);
 
         app.MapGet("/api/documents/summary", DocumentsSummary);
-        app.MapGet("/api/documents/expiring", (Database db, CancellationToken ct) => OkRows(db, DocumentsBaseSql + " WHERE d.deleted_at IS NULL AND (d.status IN ('Expiring','Expired') OR d.expires_at <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) ORDER BY d.expires_at", ct: ct));
+        app.MapGet("/api/documents/expiring", (Database db, CancellationToken ct) => OkRows(db, DocumentsBaseSql + " WHERE d.deleted_at IS NULL AND (d.status IN ('Expiring','Expired') OR d.expires_at <= CURRENT_DATE + 30 * INTERVAL '1 day') ORDER BY d.expires_at", ct: ct));
         app.MapGet("/api/documents/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='documents' ORDER BY score DESC LIMIT 8", ct: ct));
         app.MapGet("/api/documents", Documents);
         app.MapGet("/api/documents/{id:long}", DocumentDetail);
@@ -968,7 +968,7 @@ public static class EndpointMappings
             @"SELECT ft.vehicle_id, v.vehicle_code, v.type vehicle_type,
                      COUNT(*) transactions, ROUND(SUM(ft.quantity),2) total_quantity,
                      ROUND(SUM(ft.total_cost),2) total_cost, ROUND(AVG(ft.unit_price),4) avg_unit_price,
-                     SUM(IF(ft.anomaly_status='Anomaly Detected',1,0)) anomaly_count
+                     SUM(CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 1 ELSE 0 END) anomaly_count
               FROM fuel_transactions ft LEFT JOIN vehicles v ON v.id=ft.vehicle_id
               WHERE ft.deleted_at IS NULL GROUP BY ft.vehicle_id, v.vehicle_code, v.type
               ORDER BY total_cost DESC LIMIT 20", ct: ct));
@@ -976,7 +976,7 @@ public static class EndpointMappings
             @"SELECT ft.driver_id, d.full_name driver_name,
                      COUNT(*) transactions, ROUND(SUM(ft.quantity),2) total_quantity,
                      ROUND(SUM(ft.total_cost),2) total_cost, ROUND(AVG(ft.unit_price),4) avg_unit_price,
-                     SUM(IF(ft.anomaly_status='Anomaly Detected',1,0)) anomaly_count
+                     SUM(CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 1 ELSE 0 END) anomaly_count
               FROM fuel_transactions ft LEFT JOIN drivers d ON d.id=ft.driver_id
               WHERE ft.deleted_at IS NULL GROUP BY ft.driver_id, d.full_name
               ORDER BY total_cost DESC LIMIT 20", ct: ct));
@@ -1087,7 +1087,7 @@ public static class EndpointMappings
             await db.ExecuteAsync(
                 $@"INSERT INTO workforce_schedules (driver_id, week_start, {col})
                    VALUES (@driverId, @weekStart, @shift)
-                   ON DUPLICATE KEY UPDATE {col} = @shift",
+                   ON CONFLICT (driver_id, week_start) DO UPDATE SET {col} = EXCLUDED.{col}",
                 c => { c.Parameters.AddWithValue("@driverId", req.DriverId); c.Parameters.AddWithValue("@weekStart", weekStart); c.Parameters.AddWithValue("@shift", req.Shift ?? "Off"); }, ct);
             await audit.LogAsync(http, "workforce.assign", "WorkforceSchedule", req.DriverId, $"day:{req.Day} shift:{req.Shift}", ct);
             return Results.Ok();
@@ -1107,7 +1107,7 @@ public static class EndpointMappings
         app.MapGet("/api/compliance/summary", ComplianceSummary);
         app.MapGet("/api/compliance/profiles", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM compliance_profiles WHERE is_active=1 ORDER BY country_code, profile_name", ct: ct));
         app.MapGet("/api/compliance/rules", (Database db, CancellationToken ct) => OkRows(db, "SELECT cr.*, cp.profile_name, cp.country_code FROM compliance_rules cr JOIN compliance_profiles cp ON cp.id=cr.profile_id WHERE cr.is_active=1 ORDER BY cr.severity DESC, cr.profile_id", ct: ct));
-        app.MapGet("/api/compliance/violations", (Database db, CancellationToken ct) => OkRows(db, @"SELECT cv.*, d.full_name driver_name, d.driver_code, v.vehicle_code, cp.profile_name FROM compliance_violations cv LEFT JOIN drivers d ON d.id=cv.driver_id LEFT JOIN vehicles v ON v.id=cv.vehicle_id LEFT JOIN compliance_profiles cp ON cp.id=cv.profile_id ORDER BY FIELD(cv.severity,'Critical','High','Medium','Low'), cv.detected_at DESC LIMIT 50", ct: ct));
+        app.MapGet("/api/compliance/violations", (Database db, CancellationToken ct) => OkRows(db, @"SELECT cv.*, d.full_name driver_name, d.driver_code, v.vehicle_code, cp.profile_name FROM compliance_violations cv LEFT JOIN drivers d ON d.id=cv.driver_id LEFT JOIN vehicles v ON v.id=cv.vehicle_id LEFT JOIN compliance_profiles cp ON cp.id=cv.profile_id ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cv.severity), cv.detected_at DESC LIMIT 50", ct: ct));
         app.MapGet("/api/compliance/violations/{id:long}", (long id, Database db, CancellationToken ct) => OkRows(db, "SELECT cv.*, d.full_name driver_name, v.vehicle_code FROM compliance_violations cv LEFT JOIN drivers d ON d.id=cv.driver_id LEFT JOIN vehicles v ON v.id=cv.vehicle_id WHERE cv.id=@id", c => c.Parameters.AddWithValue("@id", id), ct: ct));
         app.MapPost("/api/compliance/violations/{id:long}/acknowledge", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("compliance_violations", id, "Acknowledged", "compliance.violation_acknowledged", db, audit, ct));
         app.MapPost("/api/compliance/violations/{id:long}/resolve", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("compliance_violations", id, "Resolved", "compliance.violation_resolved", db, audit, ct));
@@ -1116,21 +1116,21 @@ public static class EndpointMappings
         app.MapGet("/api/compliance/audit-packages/{id:long}", (long id, Database db, CancellationToken ct) => OkRows(db, "SELECT cap.*, cp.profile_name FROM compliance_audit_packages cap LEFT JOIN compliance_profiles cp ON cp.id=cap.profile_id WHERE cap.id=@id", c => c.Parameters.AddWithValue("@id", id), ct: ct));
         app.MapPost("/api/compliance/audit-packages", CreateAuditPackage);
         app.MapPost("/api/compliance/audit-packages/{id:long}/finalize", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("compliance_audit_packages", id, "Ready", "compliance.audit_package_finalized", db, audit, ct));
-        app.MapGet("/api/compliance/cross-border-watch", (Database db, CancellationToken ct) => OkRows(db, @"SELECT cv.*, cp.profile_name, cp.country_code, cp.authority FROM compliance_violations cv JOIN compliance_profiles cp ON cp.id=cv.profile_id WHERE cv.country_code != 'US' OR cv.status IN ('Open','Escalated') ORDER BY FIELD(cv.severity,'Critical','High','Medium','Low'), cv.detected_at DESC LIMIT 30", ct: ct));
-        app.MapGet("/api/compliance/driver-status", (Database db, CancellationToken ct) => OkRows(db, "SELECT dcs.*, d.full_name driver_name, d.driver_code, cp.profile_name FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id LEFT JOIN compliance_profiles cp ON cp.id=dcs.profile_id ORDER BY FIELD(dcs.overall_status,'Violation','Warning','Compliant'), d.full_name", ct: ct));
-        app.MapGet("/api/compliance/vehicle-status", (Database db, CancellationToken ct) => OkRows(db, "SELECT vcs.*, v.vehicle_code, v.type vehicle_type, cp.profile_name FROM vehicle_compliance_status vcs JOIN vehicles v ON v.id=vcs.vehicle_id LEFT JOIN compliance_profiles cp ON cp.id=vcs.profile_id ORDER BY FIELD(vcs.overall_status,'Violation','Warning','Compliant'), v.vehicle_code", ct: ct));
+        app.MapGet("/api/compliance/cross-border-watch", (Database db, CancellationToken ct) => OkRows(db, @"SELECT cv.*, cp.profile_name, cp.country_code, cp.authority FROM compliance_violations cv JOIN compliance_profiles cp ON cp.id=cv.profile_id WHERE cv.country_code != 'US' OR cv.status IN ('Open','Escalated') ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cv.severity), cv.detected_at DESC LIMIT 30", ct: ct));
+        app.MapGet("/api/compliance/driver-status", (Database db, CancellationToken ct) => OkRows(db, "SELECT dcs.*, d.full_name driver_name, d.driver_code, cp.profile_name FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id LEFT JOIN compliance_profiles cp ON cp.id=dcs.profile_id ORDER BY ARRAY_POSITION(ARRAY['Violation','Warning','Compliant'], dcs.overall_status), d.full_name", ct: ct));
+        app.MapGet("/api/compliance/vehicle-status", (Database db, CancellationToken ct) => OkRows(db, "SELECT vcs.*, v.vehicle_code, v.type vehicle_type, cp.profile_name FROM vehicle_compliance_status vcs JOIN vehicles v ON v.id=vcs.vehicle_id LEFT JOIN compliance_profiles cp ON cp.id=vcs.profile_id ORDER BY ARRAY_POSITION(ARRAY['Violation','Warning','Compliant'], vcs.overall_status), v.vehicle_code", ct: ct));
         app.MapGet("/api/compliance/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='compliance' ORDER BY score DESC LIMIT 10", ct: ct));
 
         // ===== BATCH 6: HOS / ELD ================================================
         app.MapGet("/api/hos/summary", HosSummary);
-        app.MapGet("/api/hos/drivers", (Database db, CancellationToken ct) => OkRows(db, @"SELECT hc.*, d.full_name driver_name, d.driver_code, d.status driver_status, cp.profile_name FROM hos_clocks hc JOIN drivers d ON d.id=hc.driver_id LEFT JOIN compliance_profiles cp ON cp.id=hc.profile_id ORDER BY FIELD(hc.status,'Violation','Warning','OK'), hc.drive_time_remaining_minutes ASC", ct: ct));
+        app.MapGet("/api/hos/drivers", (Database db, CancellationToken ct) => OkRows(db, @"SELECT hc.*, d.full_name driver_name, d.driver_code, d.status driver_status, cp.profile_name FROM hos_clocks hc JOIN drivers d ON d.id=hc.driver_id LEFT JOIN compliance_profiles cp ON cp.id=hc.profile_id ORDER BY ARRAY_POSITION(ARRAY['Violation','Warning','OK'], hc.status), hc.drive_time_remaining_minutes ASC", ct: ct));
         app.MapGet("/api/hos/clocks", (Database db, CancellationToken ct) => OkRows(db, "SELECT hc.*, d.full_name driver_name, d.driver_code FROM hos_clocks hc JOIN drivers d ON d.id=hc.driver_id ORDER BY hc.drive_time_remaining_minutes ASC", ct: ct));
         app.MapGet("/api/hos/logs", (Database db, CancellationToken ct) => OkRows(db, @"SELECT hl.*, d.full_name driver_name, d.driver_code, v.vehicle_code FROM hos_logs hl JOIN drivers d ON d.id=hl.driver_id LEFT JOIN vehicles v ON v.id=hl.vehicle_id WHERE hl.deleted_at IS NULL ORDER BY hl.log_date DESC, hl.start_time DESC LIMIT 50", ct: ct));
         app.MapGet("/api/hos/logs/{driverId:long}", (long driverId, Database db, CancellationToken ct) => OkRows(db, "SELECT hl.*, v.vehicle_code FROM hos_logs hl LEFT JOIN vehicles v ON v.id=hl.vehicle_id WHERE hl.driver_id=@id AND hl.deleted_at IS NULL ORDER BY hl.log_date DESC, hl.start_time DESC LIMIT 30", c => c.Parameters.AddWithValue("@id", driverId), ct: ct));
         app.MapPost("/api/hos/logs/{id:long}/certify", HosCertify);
         app.MapGet("/api/hos/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='hos-eld' ORDER BY score DESC LIMIT 10", ct: ct));
 
-        app.MapGet("/api/eld/devices", (Database db, CancellationToken ct) => OkRows(db, @"SELECT e.*, v.vehicle_code, d.full_name driver_name, d.driver_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.deleted_at IS NULL ORDER BY FIELD(e.status,'Malfunction','Diagnostic','Active'), e.device_serial", ct: ct));
+        app.MapGet("/api/eld/devices", (Database db, CancellationToken ct) => OkRows(db, @"SELECT e.*, v.vehicle_code, d.full_name driver_name, d.driver_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Malfunction','Diagnostic','Active'], e.status), e.device_serial", ct: ct));
         app.MapGet("/api/eld/devices/{id:long}", (long id, Database db, CancellationToken ct) => OkRows(db, "SELECT e.*, v.vehicle_code, d.full_name driver_name FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.id=@id", c => c.Parameters.AddWithValue("@id", id), ct: ct));
         app.MapPost("/api/eld/devices/{id:long}/mark-malfunction", EldMarkMalfunction);
         app.MapPost("/api/eld/devices/{id:long}/resolve-malfunction", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("eld_devices", id, "Active", "eld.malfunction.resolved", db, audit, ct));
@@ -1270,7 +1270,7 @@ public static class EndpointMappings
         app.MapGet("/api/kpi/summary", KpiSummary);
         app.MapGet("/api/kpi/targets", (Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code ORDER BY kt.effective_date DESC LIMIT 30", ct: ct));
         app.MapGet("/api/kpi/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='sla-kpi' ORDER BY score DESC LIMIT 10", ct: ct));
-        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sr.tenant_id=@tenantId ORDER BY FIELD(sr.status,'Breached','At Risk','Met'), sr.created_at DESC LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.created_at DESC LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
         app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/sla/breaches/{id:long}/acknowledge", (long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus("sla_breaches", id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct));
@@ -1658,8 +1658,8 @@ public static class EndpointMappings
             var companyId = Convert.ToInt64(user["companyId"]);
             await db.ExecuteAsync(
                 @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
-                  VALUES (@uid, @cid, @tok, DATE_ADD(NOW(), INTERVAL 8 HOUR))
-                  ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR)",
+                  VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
+                  ON CONFLICT (user_id) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
                 c =>
                 {
                     c.Parameters.AddWithValue("@uid", userId);
@@ -1704,11 +1704,11 @@ public static class EndpointMappings
     private static async Task<IResult> CommandCenterSummary(Database db, CancellationToken ct)
     {
         var kpis = await db.QueryAsync("SELECT * FROM kpi_records ORDER BY id LIMIT 8", ct: ct);
-        var actions = await db.QueryAsync("SELECT * FROM command_center_actions ORDER BY FIELD(priority,'Critical','High','Medium','Low'), id LIMIT 12", ct: ct);
+        var actions = await db.QueryAsync("SELECT * FROM command_center_actions ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority), id LIMIT 12", ct: ct);
         var timeline = await db.QueryAsync("SELECT * FROM operational_events ORDER BY event_time DESC LIMIT 12", ct: ct);
-        var alerts = await db.QueryAsync("SELECT * FROM ai_insights ORDER BY FIELD(severity,'Critical','High','Warning','Info'), created_at DESC LIMIT 8", ct: ct);
-        var fleet = await db.QuerySingleAsync("SELECT COUNT(*) total, SUM(status IN ('Available','Active','On Route')) ready, ROUND(AVG(readiness_score),1) readinessScore FROM vehicles", ct: ct);
-        var dispatch = await db.QuerySingleAsync("SELECT COUNT(*) totalJobs, SUM(status IN ('Delayed','At Risk')) exceptions, SUM(status='Completed') completed FROM jobs", ct: ct);
+        var alerts = await db.QueryAsync("SELECT * FROM ai_insights ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], severity), created_at DESC LIMIT 8", ct: ct);
+        var fleet = await db.QuerySingleAsync("SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Available','Active','On Route') THEN 1 ELSE 0 END) ready, ROUND(AVG(readiness_score),1) readinessScore FROM vehicles", ct: ct);
+        var dispatch = await db.QuerySingleAsync("SELECT COUNT(*) totalJobs, SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) completed FROM jobs", ct: ct);
         var map = await db.QueryAsync("SELECT id, vehicle_code, lat, lng, event_type, speed_mph FROM location_events ORDER BY event_time DESC LIMIT 12", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -1753,10 +1753,10 @@ public static class EndpointMappings
         var recommendations = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key='control-tower' ORDER BY score DESC LIMIT 6", ct: ct);
         var kpis = await db.QuerySingleAsync(
             @"SELECT (SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL) tracked_entities,
-                     SUM(v.device_status='Online') online_devices,
-                     SUM(v.camera_status='Online') online_cameras,
-                     SUM(v.status IN ('Available','Active','On Route','Idle')) active_units,
-                     SUM(v.risk_score >= 70) high_risk_units,
+                     SUM(CASE WHEN v.device_status='Online' THEN 1 ELSE 0 END) online_devices,
+                     SUM(CASE WHEN v.camera_status='Online' THEN 1 ELSE 0 END) online_cameras,
+                     SUM(CASE WHEN v.status IN ('Available','Active','On Route','Idle') THEN 1 ELSE 0 END) active_units,
+                     SUM(CASE WHEN v.risk_score >= 70 THEN 1 ELSE 0 END) high_risk_units,
                      (SELECT COUNT(*) FROM location_events le2 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events GROUP BY vehicle_id) latest ON le2.id=latest.max_id WHERE le2.speed_mph > 65) speed_alerts,
                      ROUND(AVG(v.data_quality_score),1) telemetry_quality,
                      ROUND(AVG(v.readiness_score),1) fleet_readiness
@@ -1933,12 +1933,12 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
-                     SUM(status IN ('Active','Available','On Route','At Stop','Idle')) active,
-                     SUM(status IN ('Delayed','Maintenance') OR risk_score >= 55) at_risk,
+                     SUM(CASE WHEN status IN ('Active','Available','On Route','At Stop','Idle') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status IN ('Delayed','Maintenance') OR risk_score >= 55 THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(readiness_score),1) fleet_readiness_score,
                      ROUND(AVG(data_quality_score),1) data_completeness_score,
                      ROUND(AVG(risk_score),1) average_risk_score,
-                     SUM(device_status <> 'Online' OR camera_status <> 'Online') device_exceptions
+                     SUM(CASE WHEN device_status <> 'Online' OR camera_status <> 'Online' THEN 1 ELSE 0 END) device_exceptions
               FROM vehicles WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -1948,23 +1948,23 @@ public static class EndpointMappings
         var replacementForecast = await db.QueryAsync(
             @"SELECT v.id, v.vehicle_code, v.type, v.make, v.model, v.year, v.odometer_miles, v.status,
                      v.readiness_score, v.data_quality_score, v.risk_score, v.device_status, v.camera_status,
-                     GREATEST(0, YEAR(CURDATE()) - COALESCE(v.year, YEAR(CURDATE()))) age_years,
+                     GREATEST(0, EXTRACT(YEAR FROM CURRENT_DATE)::INT - COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT)) age_years,
                      CASE
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 8 OR v.odometer_miles >= 250000 THEN 'Retire / replace now'
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 6 OR v.odometer_miles >= 180000 THEN 'Budget replacement'
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 4 OR v.odometer_miles >= 120000 THEN 'Monitor lifecycle'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 8 OR v.odometer_miles >= 250000 THEN 'Retire / replace now'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 6 OR v.odometer_miles >= 180000 THEN 'Budget replacement'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 4 OR v.odometer_miles >= 120000 THEN 'Monitor lifecycle'
                        ELSE 'Healthy lifecycle'
                      END lifecycle_status,
                      CASE
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 8 OR v.odometer_miles >= 250000 THEN '0-6 months'
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 6 OR v.odometer_miles >= 180000 THEN '6-18 months'
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 4 OR v.odometer_miles >= 120000 THEN '18-36 months'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 8 OR v.odometer_miles >= 250000 THEN '0-6 months'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 6 OR v.odometer_miles >= 180000 THEN '6-18 months'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 4 OR v.odometer_miles >= 120000 THEN '18-36 months'
                        ELSE '36+ months'
                      END replacement_window,
-                     ROUND((GREATEST(0, YEAR(CURDATE()) - COALESCE(v.year, YEAR(CURDATE()))) * 8) + (v.odometer_miles / 3500) + v.risk_score + IF(v.status='Maintenance',18,0), 1) capex_priority_score,
+                     ROUND((GREATEST(0, EXTRACT(YEAR FROM CURRENT_DATE)::INT - COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT)) * 8) + (v.odometer_miles / 3500) + v.risk_score + CASE WHEN v.status='Maintenance' THEN 18 ELSE 0 END, 1) capex_priority_score,
                      CASE
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 8 OR v.odometer_miles >= 250000 THEN 'Start replacement sourcing and avoid long-haul assignment'
-                       WHEN COALESCE(v.year, YEAR(CURDATE())) <= YEAR(CURDATE()) - 6 OR v.odometer_miles >= 180000 THEN 'Add to capital plan and reserve newer unit for SLA-sensitive lanes'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 8 OR v.odometer_miles >= 250000 THEN 'Start replacement sourcing and avoid long-haul assignment'
+                       WHEN COALESCE(v.year, EXTRACT(YEAR FROM CURRENT_DATE)::INT) <= EXTRACT(YEAR FROM CURRENT_DATE)::INT - 6 OR v.odometer_miles >= 180000 THEN 'Add to capital plan and reserve newer unit for SLA-sensitive lanes'
                        WHEN v.status='Maintenance' THEN 'Resolve maintenance before assigning to priority routes'
                        ELSE 'Keep in active rotation'
                      END recommended_action
@@ -2022,7 +2022,7 @@ public static class EndpointMappings
               FROM vehicles WHERE deleted_at IS NULL AND (device_status <> 'Online' OR camera_status <> 'Online')
               UNION ALL
               SELECT 'Expiring vehicle documents', COUNT(*), 'Registration, inspection, insurance or other vehicle documents needing renewal.'
-              FROM vehicle_documents WHERE status IN ('Expiring Soon','Expired','Review') OR expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+              FROM vehicle_documents WHERE status IN ('Expiring Soon','Expired','Review') OR expiry_date <= CURRENT_DATE + 30 * INTERVAL '1 day'
               UNION ALL
               SELECT 'Cost leakage by vehicle', COUNT(*), 'Vehicles with fuel, maintenance, or margin pressure signals.'
               FROM vehicles v
@@ -2044,12 +2044,12 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
-                     SUM(status IN ('Available','On Route','At Stop','Idle')) active,
-                     SUM(status IN ('Delayed','Suspended') OR risk_score >= 55) at_risk,
+                     SUM(CASE WHEN status IN ('Available','On Route','At Stop','Idle') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status IN ('Delayed','Suspended') OR risk_score >= 55 THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(readiness_score),1) driver_readiness_score,
                      ROUND(AVG(compliance_score),1) data_completeness_score,
                      ROUND(AVG(safety_score),1) safety_score,
-                     SUM(compliance_score < 85) compliance_exceptions
+                     SUM(CASE WHEN compliance_score < 85 THEN 1 ELSE 0 END) compliance_exceptions
               FROM drivers WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -2058,11 +2058,11 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
-                     SUM(status='Active') active,
-                     SUM(status='At Risk' OR risk_score >= 50 OR sla_health_score < 88) at_risk,
+                     SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status='At Risk' OR risk_score >= 50 OR sla_health_score < 88 THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(sla_health_score),1) sla_health_score,
                      ROUND(AVG(delivery_experience_score),1) delivery_experience_score,
-                     SUM(sla_tier='Platinum') platinum_accounts
+                     SUM(CASE WHEN sla_tier='Platinum' THEN 1 ELSE 0 END) platinum_accounts
               FROM customers WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -2071,10 +2071,10 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
-                     SUM(status IN ('Available','Assigned')) active,
-                     SUM(status='Maintenance' OR risk_score >= 55 OR geofence_status LIKE 'Outside%') at_risk,
+                     SUM(CASE WHEN status IN ('Available','Assigned') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status='Maintenance' OR risk_score >= 55 OR geofence_status LIKE 'Outside%' THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(utilization_score),1) utilization_score,
-                     SUM(geofence_status LIKE 'Outside%') geofence_exceptions,
+                     SUM(CASE WHEN geofence_status LIKE 'Outside%' THEN 1 ELSE 0 END) geofence_exceptions,
                      SUM(assigned_vehicle_id IS NULL) unassigned
               FROM assets WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -2169,7 +2169,7 @@ public static class EndpointMappings
     private static Task<IResult> Jobs(Database db, CancellationToken ct)
         => OkRows(db, @"SELECT j.*, v.vehicle_code, d.full_name driver_name, c.name customer_name
                              , COALESCE(j.job_number, j.job_code) job_number
-                             , CONCAT(DATE_FORMAT(j.scheduled_start, '%b %d %H:%i'), ' - ', DATE_FORMAT(j.scheduled_end, '%H:%i')) time_window
+                             , CONCAT(TO_CHAR(j.scheduled_start, 'Mon DD HH24:MI'), ' - ', TO_CHAR(j.scheduled_end, 'HH24:MI')) time_window
                              , CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'High' WHEN j.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score
                              , CASE WHEN j.assigned_driver_id IS NULL OR j.assigned_vehicle_id IS NULL THEN 'Assign driver and vehicle'
                                     WHEN j.sla_status='At Risk' THEN 'Send ETA and dispatch review'
@@ -2186,20 +2186,20 @@ public static class EndpointMappings
     {
         var summary = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_jobs_today,
-                     SUM(status='Unassigned') unassigned_jobs,
-                     SUM(status='Assigned') assigned_jobs,
-                     SUM(status='En Route' OR status='In Progress') en_route,
-                     SUM(status='At Stop') at_stop,
-                     SUM(status IN ('Completed','Delivered')) completed,
-                     SUM(status IN ('Delayed','At Risk')) `delayed`,
-                     SUM(sla_status='At Risk') sla_at_risk,
-                     SUM(proof_status='Pending') proof_pending,
-                     SUM(customer_update_status='Sent') customer_updates_sent,
+                     SUM(CASE WHEN status='Unassigned' THEN 1 ELSE 0 END) unassigned_jobs,
+                     SUM(CASE WHEN status='Assigned' THEN 1 ELSE 0 END) assigned_jobs,
+                     SUM(CASE WHEN status='En Route' OR status='In Progress' THEN 1 ELSE 0 END) en_route,
+                     SUM(CASE WHEN status='At Stop' THEN 1 ELSE 0 END) at_stop,
+                     SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END) completed,
+                     SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) `delayed`,
+                     SUM(CASE WHEN sla_status='At Risk' THEN 1 ELSE 0 END) sla_at_risk,
+                     SUM(CASE WHEN proof_status='Pending' THEN 1 ELSE 0 END) proof_pending,
+                     SUM(CASE WHEN customer_update_status='Sent' THEN 1 ELSE 0 END) customer_updates_sent,
                      '92%' average_eta_accuracy,
                      CONCAT('$', FORMAT(COALESCE(SUM(margin_estimate),0),0)) revenue_margin_placeholder,
                      COUNT(*) total,
-                     SUM(status IN ('Assigned','En Route','In Progress','At Stop')) active,
-                     SUM(risk_score >= 60 OR sla_status='At Risk') at_risk
+                     SUM(CASE WHEN status IN ('Assigned','En Route','In Progress','At Stop') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN risk_score >= 60 OR sla_status='At Risk' THEN 1 ELSE 0 END) at_risk
               FROM jobs WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(summary ?? new Dictionary<string, object?>()));
     }
@@ -2293,11 +2293,11 @@ public static class EndpointMappings
     private static async Task<IResult> DispatchSummary(Database db, CancellationToken ct)
     {
         var summary = await db.QuerySingleAsync(
-            @"SELECT COUNT(*) total, SUM(status='Unassigned') unassigned, SUM(status='Assigned') assigned,
-                     SUM(status IN ('En Route','In Progress')) en_route, SUM(status='At Stop') at_stop,
-                     SUM(status IN ('Delayed','At Risk')) exceptions, SUM(status IN ('Completed','Delivered')) completed,
+            @"SELECT COUNT(*) total, SUM(CASE WHEN status='Unassigned' THEN 1 ELSE 0 END) unassigned, SUM(CASE WHEN status='Assigned' THEN 1 ELSE 0 END) assigned,
+                     SUM(CASE WHEN status IN ('En Route','In Progress') THEN 1 ELSE 0 END) en_route, SUM(CASE WHEN status='At Stop' THEN 1 ELSE 0 END) at_stop,
+                     SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END) completed,
                      ROUND(AVG(100 - LEAST(risk_score, 95)),1) dispatch_readiness_score,
-                     SUM(sla_status='At Risk') sla_watch, SUM(customer_update_status <> 'Sent') eta_action_queue
+                     SUM(CASE WHEN sla_status='At Risk' THEN 1 ELSE 0 END) sla_watch, SUM(CASE WHEN customer_update_status <> 'Sent' THEN 1 ELSE 0 END) eta_action_queue
               FROM jobs WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(summary ?? new Dictionary<string, object?>()));
     }
@@ -2568,7 +2568,7 @@ public static class EndpointMappings
                                 required_vehicle_type, required_driver_certification, assigned_driver_id, assigned_vehicle_id, route_id, status, eta,
                                 sla_status, proof_status, customer_update_status, tracking_code, risk_score, revenue_estimate, cost_estimate, margin_estimate, notes)
               VALUES (@companyId, @customerId, @code, @code, @type, @priority, @pickup, @pickupLat, @pickupLng,
-                      @dropoff, @dropLat, @dropLng, COALESCE(@start, NOW()), COALESCE(@end, DATE_ADD(NOW(), INTERVAL 4 HOUR)),
+                      @dropoff, @dropLat, @dropLng, COALESCE(@start, NOW()), COALESCE(@end, NOW() + 4 * INTERVAL '1 hour'),
                       @slaStart, @slaEnd, @requiredVehicleType, @requiredDriverCertification, @driverId, @vehicleId, @routeId,
                       COALESCE(@status,'Unassigned'), COALESCE(@eta, @end), COALESCE(@slaStatus,'On Track'), COALESCE(@proofStatus,'Pending'),
                       COALESCE(@customerUpdateStatus,'Not Sent'), COALESCE(@trackingCode, CONCAT('ETA-', @code)), COALESCE(@riskScore, 24),
@@ -2684,7 +2684,7 @@ public static class EndpointMappings
         if (job is null) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         await db.ExecuteAsync(
             @"INSERT INTO eta_updates (company_id, job_id, customer_id, tracking_code, eta, confidence_level, message, channel, status)
-              VALUES (@companyId, @id, @customerId, @tracking, COALESCE(@eta, DATE_ADD(NOW(), INTERVAL 2 HOUR)), @confidence, @message, @channel, 'Sent')",
+              VALUES (@companyId, @id, @customerId, @tracking, COALESCE(@eta, NOW() + 2 * INTERVAL '1 hour'), @confidence, @message, @channel, 'Sent')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -2786,7 +2786,7 @@ public static class EndpointMappings
                      (SELECT COUNT(*) FROM work_orders wo2
                       WHERE wo2.vehicle_id=v.id AND wo2.company_id=@cid
                         AND wo2.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
-                        AND (wo2.deleted_at IS NULL OR wo2.deleted_at='0000-00-00 00:00:00')) blocking_wo_count,
+                        AND wo2.deleted_at IS NULL) blocking_wo_count,
                      (SELECT COUNT(*) FROM dispatch_assignments da2
                       WHERE da2.vehicle_id=v.id
                         AND da2.assignment_status NOT IN ('delivered','cancelled')
@@ -2823,7 +2823,7 @@ public static class EndpointMappings
         await audit.LogAsync("dispatch.auto_suggest.run", "Dispatch", null, ct: ct);
         var rows = await db.QueryAsync(
             @"SELECT dr.*, j.job_code, c.name customer_name,
-                     JSON_ARRAY('Same region','Available driver','Available vehicle','Required vehicle type match','Safety score in range','HOS risk placeholder','Proximity placeholder') match_reasons
+                     jsonb_build_array('Same region','Available driver','Available vehicle','Required vehicle type match','Safety score in range','HOS risk placeholder','Proximity placeholder') match_reasons
               FROM dispatch_recommendations dr
               LEFT JOIN jobs j ON j.id=dr.job_id
               LEFT JOIN customers c ON c.id=j.customer_id
@@ -2862,18 +2862,18 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_routes_today,
-                     SUM(status='Active') active_routes,
-                     SUM(status='Planned') planned_routes,
-                     SUM(status='Completed') completed_routes,
-                     SUM(status IN ('Delayed','At Risk')) delayed_routes,
+                     SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_routes,
+                     SUM(CASE WHEN status='Planned' THEN 1 ELSE 0 END) planned_routes,
+                     SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) completed_routes,
+                     SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) delayed_routes,
                      ROUND(AVG(total_stops),1) average_stops_per_route,
                      CONCAT(ROUND(AVG(estimated_duration_minutes)), ' min') average_route_eta,
                      ROUND(AVG(efficiency_score),1) route_efficiency_score,
-                     SUM(sla_risk='High' OR status IN ('Delayed','At Risk')) high_risk_routes,
+                     SUM(CASE WHEN sla_risk='High' OR status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) high_risk_routes,
                      CONCAT('$', FORMAT(COALESCE(SUM(cost_estimate),0),0)) route_cost_estimate,
                      COUNT(*) total,
-                     SUM(status IN ('Active','Planned')) active,
-                     SUM(sla_risk='High' OR status IN ('Delayed','At Risk')) at_risk
+                     SUM(CASE WHEN status IN ('Active','Planned') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN sla_risk='High' OR status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) at_risk
               FROM routes WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -3036,10 +3036,10 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_tracked,
-                     SUM(j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk') eta_risk,
-                     SUM(j.customer_update_status <> 'Sent') updates_needed,
-                     SUM(cc.status='Sent') communications_sent,
-                     SUM(cc.status <> 'Sent') pending_communications,
+                     SUM(CASE WHEN j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk' THEN 1 ELSE 0 END) eta_risk,
+                     SUM(CASE WHEN j.customer_update_status <> 'Sent' THEN 1 ELSE 0 END) updates_needed,
+                     SUM(CASE WHEN cc.status='Sent' THEN 1 ELSE 0 END) communications_sent,
+                     SUM(CASE WHEN cc.status <> 'Sent' THEN 1 ELSE 0 END) pending_communications,
                      ROUND(AVG(CASE WHEN j.status IN ('Completed','Delivered') THEN 96 WHEN j.status IN ('Delayed','At Risk') THEN 72 ELSE 88 END),1) customer_experience_score
               FROM jobs j
               LEFT JOIN customer_communications cc ON cc.job_id=j.id
@@ -3120,8 +3120,8 @@ public static class EndpointMappings
         @"SELECT mi.*, COALESCE(mi.service_type,mi.category,mi.title) service_type, mi.risk_score maintenance_risk_heat_score,
                  COALESCE(mi.recommended_action, 'Review maintenance timing') recommended_action,
                  v.vehicle_code, a.asset_code, a.name asset_name,
-                 CASE WHEN mi.due_date < CURDATE() OR mi.status='Overdue' THEN 'Overdue'
-                      WHEN mi.due_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY) THEN 'Due Soon'
+                 CASE WHEN mi.due_date < CURRENT_DATE OR mi.status='Overdue' THEN 'Overdue'
+                      WHEN mi.due_date <= CURRENT_DATE + 7 * INTERVAL '1 day' THEN 'Due Soon'
                       ELSE 'Scheduled' END downtime_risk_badge
           FROM maintenance_items mi
           LEFT JOIN vehicles v ON v.id=mi.vehicle_id
@@ -3158,23 +3158,23 @@ public static class EndpointMappings
           FROM documents d";
 
     private static Task<IResult> MaintenanceItems(Database db, CancellationToken ct)
-        => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL ORDER BY FIELD(mi.priority,'Critical','High','Medium','Low'), mi.due_date, mi.id DESC", ct: ct);
+        => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], mi.priority), mi.due_date, mi.id DESC", ct: ct);
 
     private static async Task<IResult> MaintenanceSummary(Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
-            @"SELECT SUM(mi.status IN ('Open','Scheduled','In Progress') OR mi.due_date <= DATE_ADD(CURDATE(), INTERVAL 14 DAY)) maintenance_due,
-                     SUM(mi.status='Overdue' OR mi.due_date < CURDATE()) overdue_services,
-                     SUM(mi.priority='Critical' OR mi.risk_score >= 80) critical_maintenance,
+            @"SELECT SUM(CASE WHEN mi.status IN ('Open','Scheduled','In Progress') OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day' THEN 1 ELSE 0 END) maintenance_due,
+                     SUM(CASE WHEN mi.status='Overdue' OR mi.due_date < CURRENT_DATE THEN 1 ELSE 0 END) overdue_services,
+                     SUM(CASE WHEN mi.priority='Critical' OR mi.risk_score >= 80 THEN 1 ELSE 0 END) critical_maintenance,
                      (SELECT COUNT(*) FROM vehicles WHERE status='Maintenance') vehicles_out_of_service,
                      CONCAT(ROUND(AVG(CASE WHEN wo.status='Completed' THEN wo.downtime_hours ELSE NULL END),1),'h') average_downtime,
-                     CONCAT(ROUND(100 * SUM(mi.status NOT IN ('Overdue','Deleted')) / NULLIF(COUNT(*),0),1),'%') pm_compliance,
+                     CONCAT(ROUND(100 * SUM(CASE WHEN mi.status NOT IN ('Overdue','Deleted') THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),1),'%') pm_compliance,
                      (SELECT COUNT(*) FROM work_orders WHERE deleted_at IS NULL AND status NOT IN ('Completed','Cancelled','Deleted')) open_work_orders,
                      CONCAT('$', FORMAT(COALESCE(SUM(mi.estimated_cost),0),0)) estimated_maintenance_cost,
-                     SUM(mi.service_type IN ('Brake Inspection','Tire Rotation')) repeat_issues,
-                     SUM(mi.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)) service_due_this_week,
-                     SUM(mi.asset_id IS NOT NULL) asset_maintenance_due,
-                     SUM(mi.risk_score >= 70) warranty_risk_placeholder,
+                     SUM(CASE WHEN mi.service_type IN ('Brake Inspection','Tire Rotation') THEN 1 ELSE 0 END) repeat_issues,
+                     SUM(CASE WHEN mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7 * INTERVAL '1 day' THEN 1 ELSE 0 END) service_due_this_week,
+                     SUM(CASE WHEN mi.asset_id IS NOT NULL THEN 1 ELSE 0 END) asset_maintenance_due,
+                     SUM(CASE WHEN mi.risk_score >= 70 THEN 1 ELSE 0 END) warranty_risk_placeholder,
                      ROUND(100 - AVG(LEAST(mi.risk_score,95)),1) maintenance_readiness_score
               FROM maintenance_items mi
               LEFT JOIN work_orders wo ON wo.maintenance_item_id=mi.id
@@ -3243,7 +3243,7 @@ public static class EndpointMappings
 
     private static async Task<IResult> MaintenanceDefer(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync("UPDATE maintenance_items SET status='Deferred', due_date=DATE_ADD(COALESCE(@date,due_date,CURDATE()), INTERVAL 7 DAY) WHERE id=@id AND company_id=@companyId", c =>
+        await db.ExecuteAsync("UPDATE maintenance_items SET status='Deferred', due_date=COALESCE(@date,due_date,CURRENT_DATE) + 7 * INTERVAL '1 day' WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
@@ -3260,7 +3260,7 @@ public static class EndpointMappings
         if (item is null) return Results.NotFound(ApiResponse<object>.Fail("Maintenance item not found"));
         var woId = await db.InsertAsync(
             @"INSERT INTO work_orders (company_id, vehicle_id, asset_id, maintenance_item_id, work_order_code, work_order_number, issue_type, title, description, priority, status, vendor_name, created_date, due_date, estimated_cost, cost_approval_status, risk_score, recommended_action)
-              VALUES (@companyId, @vehicleId, @assetId, @maintenanceId, CONCAT('WO-MNT-', @maintenanceId), CONCAT('WO-MNT-', @maintenanceId), @issue, @title, @description, @priority, 'Open', 'NOVA Fleet Care', NOW(), COALESCE(@dueDate, DATE_ADD(NOW(), INTERVAL 5 DAY)), @cost, 'Pending', @risk, 'Assign technician and reserve parts')",
+              VALUES (@companyId, @vehicleId, @assetId, @maintenanceId, CONCAT('WO-MNT-', @maintenanceId), CONCAT('WO-MNT-', @maintenanceId), @issue, @title, @description, @priority, 'Open', 'NOVA Fleet Care', NOW(), COALESCE(@dueDate, NOW() + 5 * INTERVAL '1 day'), @cost, 'Pending', @risk, 'Assign technician and reserve parts')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -3282,23 +3282,23 @@ public static class EndpointMappings
     }
 
     private static Task<IResult> WorkOrders(Database db, CancellationToken ct)
-        => OkRows(db, WorkOrdersBaseSql + " WHERE wo.deleted_at IS NULL ORDER BY FIELD(wo.priority,'Critical','High','Medium','Low'), FIELD(wo.status,'Open','Assigned','In Progress','Waiting Parts','Waiting Approval','Draft','Completed','Cancelled'), wo.due_date", ct: ct);
+        => OkRows(db, WorkOrdersBaseSql + " WHERE wo.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], wo.priority), ARRAY_POSITION(ARRAY['Open','Assigned','In Progress','Waiting Parts','Waiting Approval','Draft','Completed','Cancelled'], wo.status), wo.due_date", ct: ct);
 
     private static async Task<IResult> WorkOrdersSummary(Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
-            @"SELECT SUM(status NOT IN ('Completed','Cancelled','Deleted')) open_work_orders,
-                     SUM(priority='Critical' AND status NOT IN ('Completed','Cancelled','Deleted')) critical_work_orders,
-                     SUM(status='In Progress') in_progress,
-                     SUM(status='Waiting Parts') waiting_parts,
-                     SUM(status='Waiting Approval') waiting_approval,
-                     SUM(status='Completed' AND completed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) completed_this_week,
+            @"SELECT SUM(CASE WHEN status NOT IN ('Completed','Cancelled','Deleted') THEN 1 ELSE 0 END) open_work_orders,
+                     SUM(CASE WHEN priority='Critical' AND status NOT IN ('Completed','Cancelled','Deleted') THEN 1 ELSE 0 END) critical_work_orders,
+                     SUM(CASE WHEN status='In Progress' THEN 1 ELSE 0 END) in_progress,
+                     SUM(CASE WHEN status='Waiting Parts' THEN 1 ELSE 0 END) waiting_parts,
+                     SUM(CASE WHEN status='Waiting Approval' THEN 1 ELSE 0 END) waiting_approval,
+                     SUM(CASE WHEN status='Completed' AND completed_at >= NOW() - 7 * INTERVAL '1 day' THEN 1 ELSE 0 END) completed_this_week,
                      CONCAT(ROUND(AVG(CASE WHEN status='Completed' THEN downtime_hours ELSE NULL END),1),'h') average_resolution_time,
                      CONCAT('$', FORMAT(COALESCE(SUM(estimated_cost),0),0)) total_estimated_cost,
                      CONCAT('$', FORMAT(COALESCE(SUM(approved_cost),0),0)) total_approved_cost,
-                     SUM(issue_type IN ('Brakes','Tires','DVIR Defect')) repeat_repairs,
-                     SUM(status IN ('Open','Assigned','In Progress','Waiting Parts') AND priority IN ('High','Critical')) vehicles_down,
-                     SUM(vendor_name IS NOT NULL AND status IN ('Waiting Parts','Waiting Approval')) vendor_sla_risk
+                     SUM(CASE WHEN issue_type IN ('Brakes','Tires','DVIR Defect') THEN 1 ELSE 0 END) repeat_repairs,
+                     SUM(CASE WHEN status IN ('Open','Assigned','In Progress','Waiting Parts') AND priority IN ('High','Critical') THEN 1 ELSE 0 END) vehicles_down,
+                     SUM(CASE WHEN vendor_name IS NOT NULL AND status IN ('Waiting Parts','Waiting Approval') THEN 1 ELSE 0 END) vendor_sla_risk
               FROM work_orders WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -3422,16 +3422,16 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) inspections_today,
-                     SUM(inspection_type='Pre-Trip') pre_trip_completed,
-                     SUM(inspection_type='Post-Trip') post_trip_completed,
-                     SUM(defects_found > 0) defects_found,
-                     SUM(safe_to_operate=FALSE) unsafe_vehicles,
-                     SUM(mechanic_review_status='Pending') pending_mechanic_review,
-                     SUM(repair_certification_status='Pending' AND defects_found > 0) pending_repair_certification,
-                     SUM(driver_signature_status <> 'Signed') missing_driver_signatures,
-                     CONCAT(ROUND(100 * SUM(driver_signature_status='Signed' AND safe_to_operate=TRUE) / NULLIF(COUNT(*),0),1),'%') dvir_compliance,
-                     SUM(defects_found > 1) repeat_defects,
-                     SUM(risk_score >= 80) critical_defects,
+                     SUM(CASE WHEN inspection_type='Pre-Trip' THEN 1 ELSE 0 END) pre_trip_completed,
+                     SUM(CASE WHEN inspection_type='Post-Trip' THEN 1 ELSE 0 END) post_trip_completed,
+                     SUM(CASE WHEN defects_found > 0 THEN 1 ELSE 0 END) defects_found,
+                     SUM(CASE WHEN safe_to_operate=FALSE THEN 1 ELSE 0 END) unsafe_vehicles,
+                     SUM(CASE WHEN mechanic_review_status='Pending' THEN 1 ELSE 0 END) pending_mechanic_review,
+                     SUM(CASE WHEN repair_certification_status='Pending' AND defects_found > 0 THEN 1 ELSE 0 END) pending_repair_certification,
+                     SUM(CASE WHEN driver_signature_status <> 'Signed' THEN 1 ELSE 0 END) missing_driver_signatures,
+                     CONCAT(ROUND(100 * SUM(CASE WHEN driver_signature_status='Signed' AND safe_to_operate=TRUE THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),1),'%') dvir_compliance,
+                     SUM(CASE WHEN defects_found > 1 THEN 1 ELSE 0 END) repeat_defects,
+                     SUM(CASE WHEN risk_score >= 80 THEN 1 ELSE 0 END) critical_defects,
                      (SELECT COUNT(*) FROM work_orders WHERE dvir_report_id IS NOT NULL) work_orders_created
               FROM dvir_reports WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -3444,7 +3444,7 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            defects = await db.QueryAsync("SELECT * FROM dvir_defects WHERE dvir_report_id=@id ORDER BY FIELD(severity,'Critical','Major','Minor'), id", c => c.Parameters.AddWithValue("@id", id), ct),
+            defects = await db.QueryAsync("SELECT * FROM dvir_defects WHERE dvir_report_id=@id ORDER BY ARRAY_POSITION(ARRAY['Critical','Major','Minor'], severity), id", c => c.Parameters.AddWithValue("@id", id), ct),
             checklist = await db.QueryAsync("SELECT ici.* FROM inspection_checklist_items ici JOIN dvir_templates t ON t.id=ici.template_id WHERE t.inspection_type=@type ORDER BY ici.sort_order LIMIT 30", c => c.Parameters.AddWithValue("@type", record["inspectionType"]), ct),
             workOrders = await db.QueryAsync("SELECT * FROM work_orders WHERE dvir_report_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await DvirTimelineRows(id, db, ct),
@@ -3508,7 +3508,7 @@ public static class EndpointMappings
 
     private static async Task<IResult> DvirMechanicReview(long id, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync("UPDATE dvir_reports SET mechanic_review_status='Reviewed', mechanic_reviewed_at=NOW(), inspection_status=IF(defects_found>0,'Repair Required','Reviewed') WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+        await db.ExecuteAsync("UPDATE dvir_reports SET mechanic_review_status='Reviewed', mechanic_reviewed_at=NOW(), inspection_status=CASE WHEN defects_found>0 THEN 'Repair Required' ELSE 'Reviewed' END WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
         await audit.LogAsync("dvir.mechanic.reviewed", "DVIR", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Mechanic review completed"));
     }
@@ -3543,16 +3543,16 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_documents,
-                     SUM(status='Expiring' OR expires_at BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)) expiring_soon,
-                     SUM(status='Expired' OR expires_at < CURDATE()) expired,
-                     SUM(risk_score >= 80) missing_critical_documents,
-                     SUM(entity_type='vehicle') vehicle_documents,
-                     SUM(entity_type='driver') driver_documents,
-                     SUM(category LIKE '%Compliance%' OR document_type LIKE '%Inspection%') compliance_documents,
-                     SUM(renewal_status='Renewal Required') pending_renewal,
-                     SUM(created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) uploaded_this_month,
-                     SUM(category LIKE '%Audit%') audit_package_documents,
-                     SUM(country_code <> 'US') cross_border_missing_docs,
+                     SUM(CASE WHEN status='Expiring' OR expires_at BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) expiring_soon,
+                     SUM(CASE WHEN status='Expired' OR expires_at < CURRENT_DATE THEN 1 ELSE 0 END) expired,
+                     SUM(CASE WHEN risk_score >= 80 THEN 1 ELSE 0 END) missing_critical_documents,
+                     SUM(CASE WHEN entity_type='vehicle' THEN 1 ELSE 0 END) vehicle_documents,
+                     SUM(CASE WHEN entity_type='driver' THEN 1 ELSE 0 END) driver_documents,
+                     SUM(CASE WHEN category LIKE '%Compliance%' OR document_type LIKE '%Inspection%' THEN 1 ELSE 0 END) compliance_documents,
+                     SUM(CASE WHEN renewal_status='Renewal Required' THEN 1 ELSE 0 END) pending_renewal,
+                     SUM(CASE WHEN created_at >= NOW() - 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) uploaded_this_month,
+                     SUM(CASE WHEN category LIKE '%Audit%' THEN 1 ELSE 0 END) audit_package_documents,
+                     SUM(CASE WHEN country_code <> 'US' THEN 1 ELSE 0 END) cross_border_missing_docs,
                      CONCAT(ROUND(100 - AVG(LEAST(risk_score,95)),1),'%') data_completeness_score
               FROM documents WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -3641,9 +3641,9 @@ public static class EndpointMappings
     private static async Task<IResult> SafetySummary(Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(@"SELECT ROUND(100-AVG(LEAST(risk_score,95)),1) fleet_safety_score, COUNT(*) safety_events_today,
-            SUM(severity='Critical') critical_events, SUM(event_type='Harsh Braking') harsh_braking, SUM(event_type='Harsh Acceleration') harsh_acceleration,
-            SUM(event_type='Speeding') speeding_events, SUM(event_type='Route Deviation') route_deviation, SUM(event_type LIKE '%Distracted%') distracted_driving_placeholder,
-            SUM(coaching_status IN ('Needed','Created')) coaching_needed, SUM(incident_status='Open') open_incidents, SUM(review_status='Reviewed') reviewed_events,
+            SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_events, SUM(CASE WHEN event_type='Harsh Braking' THEN 1 ELSE 0 END) harsh_braking, SUM(CASE WHEN event_type='Harsh Acceleration' THEN 1 ELSE 0 END) harsh_acceleration,
+            SUM(CASE WHEN event_type='Speeding' THEN 1 ELSE 0 END) speeding_events, SUM(CASE WHEN event_type='Route Deviation' THEN 1 ELSE 0 END) route_deviation, SUM(CASE WHEN event_type LIKE '%Distracted%' THEN 1 ELSE 0 END) distracted_driving_placeholder,
+            SUM(CASE WHEN coaching_status IN ('Needed','Created') THEN 1 ELSE 0 END) coaching_needed, SUM(CASE WHEN incident_status='Open' THEN 1 ELSE 0 END) open_incidents, SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) reviewed_events,
             ROUND(AVG(risk_score),1) preventable_risk_score FROM safety_events WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -3702,11 +3702,11 @@ public static class EndpointMappings
 
     private static async Task<IResult> DashcamSummary(Database db, CancellationToken ct)
     {
-        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) dashcam_events_today, SUM(severity='Critical') critical_video_events, SUM(review_status LIKE '%Pending%') pending_review,
-            SUM(review_status='Reviewed') reviewed_events, SUM(false_positive=TRUE) false_positives, SUM(coaching_status='Created') coaching_created,
-            SUM(evidence_status='Packaged') evidence_packages, SUM(event_type LIKE '%Collision%' OR event_type LIKE '%Near Miss%') collision_near_miss,
-            SUM(event_type LIKE '%Distracted%') distracted_driving_placeholder, SUM(event_type LIKE '%Tailgating%') tailgating_placeholder,
-            SUM(event_type LIKE '%Speeding%') speeding_video_events, SUM(recommended_action LIKE '%exoneration%') driver_exoneration_placeholder FROM dashcam_events WHERE deleted_at IS NULL", ct: ct);
+        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) dashcam_events_today, SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_video_events, SUM(CASE WHEN review_status LIKE '%Pending%' THEN 1 ELSE 0 END) pending_review,
+            SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) reviewed_events, SUM(CASE WHEN false_positive=TRUE THEN 1 ELSE 0 END) false_positives, SUM(CASE WHEN coaching_status='Created' THEN 1 ELSE 0 END) coaching_created,
+            SUM(CASE WHEN evidence_status='Packaged' THEN 1 ELSE 0 END) evidence_packages, SUM(CASE WHEN event_type LIKE '%Collision%' OR event_type LIKE '%Near Miss%' THEN 1 ELSE 0 END) collision_near_miss,
+            SUM(CASE WHEN event_type LIKE '%Distracted%' THEN 1 ELSE 0 END) distracted_driving_placeholder, SUM(CASE WHEN event_type LIKE '%Tailgating%' THEN 1 ELSE 0 END) tailgating_placeholder,
+            SUM(CASE WHEN event_type LIKE '%Speeding%' THEN 1 ELSE 0 END) speeding_video_events, SUM(CASE WHEN recommended_action LIKE '%exoneration%' THEN 1 ELSE 0 END) driver_exoneration_placeholder FROM dashcam_events WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
     private static Task<IResult> DashcamEvents(Database db, CancellationToken ct) => OkRows(db, DashcamSql + " WHERE de.deleted_at IS NULL ORDER BY de.occurred_at DESC", ct: ct);
@@ -3770,14 +3770,14 @@ public static class EndpointMappings
 
     private static async Task<IResult> CoachingSummary(Database db, CancellationToken ct)
     {
-        var row = await db.QuerySingleAsync(@"SELECT SUM(status NOT IN ('Completed','Cancelled')) open_coaching_tasks, SUM(priority='Critical') critical_coaching,
-            SUM(status='Assigned') assigned_tasks, SUM(driver_acknowledged=TRUE) driver_acknowledged, SUM(status='Completed' AND completed_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) completed_this_month,
-            SUM(due_at < NOW() AND status NOT IN ('Completed','Cancelled')) overdue_coaching, COUNT(DISTINCT CASE WHEN risk.driver_count>1 THEN ct.driver_id END) repeat_coaching_drivers,
-            SUM(after_safety_score > before_safety_score) safety_score_improved, SUM(status='Escalated') escalated_coaching, CONCAT(ROUND(AVG(TIMESTAMPDIFF(HOUR, created_at, COALESCE(completed_at,NOW()))),1),'h') average_completion_time
+        var row = await db.QuerySingleAsync(@"SELECT SUM(CASE WHEN status NOT IN ('Completed','Cancelled') THEN 1 ELSE 0 END) open_coaching_tasks, SUM(CASE WHEN priority='Critical' THEN 1 ELSE 0 END) critical_coaching,
+            SUM(CASE WHEN status='Assigned' THEN 1 ELSE 0 END) assigned_tasks, SUM(CASE WHEN driver_acknowledged=TRUE THEN 1 ELSE 0 END) driver_acknowledged, SUM(CASE WHEN status='Completed' AND completed_at >= NOW() - 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) completed_this_month,
+            SUM(CASE WHEN due_at < NOW() AND status NOT IN ('Completed','Cancelled') THEN 1 ELSE 0 END) overdue_coaching, COUNT(DISTINCT CASE WHEN risk.driver_count>1 THEN ct.driver_id END) repeat_coaching_drivers,
+            SUM(CASE WHEN after_safety_score > before_safety_score THEN 1 ELSE 0 END) safety_score_improved, SUM(CASE WHEN status='Escalated' THEN 1 ELSE 0 END) escalated_coaching, CONCAT(ROUND(AVG((EXTRACT(EPOCH FROM (COALESCE(completed_at,NOW()) - created_at)) / 3600)::BIGINT),1),'h') average_completion_time
             FROM coaching_tasks ct LEFT JOIN (SELECT driver_id, COUNT(*) driver_count FROM coaching_tasks GROUP BY driver_id) risk ON risk.driver_id=ct.driver_id WHERE ct.deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
-    private static Task<IResult> CoachingTasks(Database db, CancellationToken ct) => OkRows(db, CoachingSql + " WHERE ct.deleted_at IS NULL ORDER BY FIELD(ct.priority,'Critical','High','Medium','Low'), ct.due_at", ct: ct);
+    private static Task<IResult> CoachingTasks(Database db, CancellationToken ct) => OkRows(db, CoachingSql + " WHERE ct.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], ct.priority), ct.due_at", ct: ct);
     private static async Task<IResult> CoachingTaskDetail(long id, Database db, CancellationToken ct)
     {
         var record = (await db.QueryAsync(CoachingSql + " WHERE ct.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
@@ -3813,9 +3813,9 @@ public static class EndpointMappings
 
     private static async Task<IResult> IncidentsSummary(Database db, CancellationToken ct)
     {
-        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_incidents, SUM(status NOT IN ('Closed','Deleted')) open_incidents, SUM(status='Closed') closed_incidents,
-            SUM(severity='Critical') critical_incidents, SUM(status='Insurance Report Ready') insurance_ready, SUM(status='Awaiting Driver Statement') awaiting_driver_statement,
-            SUM(insurance_report_status <> 'Not Created') insurance_reports, SUM(status='Evidence Collected') evidence_collected FROM incidents WHERE deleted_at IS NULL", ct: ct);
+        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_incidents, SUM(CASE WHEN status NOT IN ('Closed','Deleted') THEN 1 ELSE 0 END) open_incidents, SUM(CASE WHEN status='Closed' THEN 1 ELSE 0 END) closed_incidents,
+            SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_incidents, SUM(CASE WHEN status='Insurance Report Ready' THEN 1 ELSE 0 END) insurance_ready, SUM(CASE WHEN status='Awaiting Driver Statement' THEN 1 ELSE 0 END) awaiting_driver_statement,
+            SUM(CASE WHEN insurance_report_status <> 'Not Created' THEN 1 ELSE 0 END) insurance_reports, SUM(CASE WHEN status='Evidence Collected' THEN 1 ELSE 0 END) evidence_collected FROM incidents WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
     private static Task<IResult> Incidents(Database db, CancellationToken ct) => OkRows(db, IncidentSql + " WHERE i.deleted_at IS NULL ORDER BY i.occurred_at DESC", ct: ct);
@@ -3845,7 +3845,7 @@ public static class EndpointMappings
     private static async Task<IResult> IncidentStatus(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) { var status = Get(body, "status")?.ToString() ?? "Under Review"; await db.ExecuteAsync("UPDATE incidents SET status=@status WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@status", status); }, ct); await audit.LogAsync("incident.status.changed", "Incident", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id, status }, "Incident status updated")); }
     private static async Task<IResult> IncidentAttachEvidence(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        var evidenceId = await db.InsertAsync("INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, evidence_json, source_entity_type, source_entity_id) VALUES (@companyId,@id,COALESCE(@type,'Document'),COALESCE(@title,'Evidence placeholder'),@url,JSON_OBJECT('placeholder',true),@sourceType,@sourceId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "evidenceType")); c.Parameters.AddWithValue("@title", Get(body, "evidenceTitle")); c.Parameters.AddWithValue("@url", Get(body, "evidenceUrl")); c.Parameters.AddWithValue("@sourceType", Get(body, "sourceEntityType")); c.Parameters.AddWithValue("@sourceId", Get(body, "sourceEntityId")); }, ct);
+        var evidenceId = await db.InsertAsync("INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, evidence_json, source_entity_type, source_entity_id) VALUES (@companyId,@id,COALESCE(@type,'Document'),COALESCE(@title,'Evidence placeholder'),@url,jsonb_build_object('placeholder',true),@sourceType,@sourceId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "evidenceType")); c.Parameters.AddWithValue("@title", Get(body, "evidenceTitle")); c.Parameters.AddWithValue("@url", Get(body, "evidenceUrl")); c.Parameters.AddWithValue("@sourceType", Get(body, "sourceEntityType")); c.Parameters.AddWithValue("@sourceId", Get(body, "sourceEntityId")); }, ct);
         await audit.LogAsync("incident.evidence.attached", "Incident", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id = evidenceId }, "Evidence attached"));
     }
@@ -3855,8 +3855,8 @@ public static class EndpointMappings
 
     private static async Task<IResult> EvidenceSummary(Database db, CancellationToken ct)
     {
-        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_packages, SUM(status='Draft') draft_packages, SUM(status='Export Ready') export_ready,
-            SUM(locked=TRUE) locked_packages, SUM(package_type LIKE '%Insurance%') insurance_packages, SUM(export_url IS NOT NULL) exports_generated FROM evidence_packages WHERE deleted_at IS NULL", ct: ct);
+        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_packages, SUM(CASE WHEN status='Draft' THEN 1 ELSE 0 END) draft_packages, SUM(CASE WHEN status='Export Ready' THEN 1 ELSE 0 END) export_ready,
+            SUM(CASE WHEN locked=TRUE THEN 1 ELSE 0 END) locked_packages, SUM(CASE WHEN package_type LIKE '%Insurance%' THEN 1 ELSE 0 END) insurance_packages, SUM(CASE WHEN export_url IS NOT NULL THEN 1 ELSE 0 END) exports_generated FROM evidence_packages WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
     private static Task<IResult> EvidencePackages(Database db, CancellationToken ct) => OkRows(db, EvidenceSql + " WHERE ep.deleted_at IS NULL ORDER BY ep.created_at DESC", ct: ct);
@@ -3890,7 +3890,7 @@ public static class EndpointMappings
     {
         var prompt = Get(body, "prompt")?.ToString() ?? "Executive Summary";
         var evidence = await db.QueryAsync("SELECT title, body, severity FROM ai_insights ORDER BY created_at DESC LIMIT 4", ct: ct);
-        var actions = await db.QueryAsync("SELECT title, priority, status FROM command_center_actions ORDER BY FIELD(priority,'Critical','High','Medium','Low') LIMIT 4", ct: ct);
+        var actions = await db.QueryAsync("SELECT title, priority, status FROM command_center_actions ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority) LIMIT 4", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             summary = $"OpsTrax AI reviewed {prompt}. Current operational risk is concentrated around dispatch exceptions, idling cost, maintenance timing, and SLA-sensitive customer ETAs.",
@@ -4068,17 +4068,17 @@ public static class EndpointMappings
 
     private static async Task<IResult> Summary(Database db, string table, CancellationToken ct)
     {
-        var row = await db.QuerySingleAsync($"SELECT COUNT(*) total, SUM(status IN ('Active','Available','Open','In Progress','Assigned','On Route')) active, SUM(status IN ('Delayed','At Risk','Critical','Expiring Soon')) atRisk FROM {table}", ct: ct);
+        var row = await db.QuerySingleAsync($"SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Active','Available','Open','In Progress','Assigned','On Route') THEN 1 ELSE 0 END) active, SUM(CASE WHEN status IN ('Delayed','At Risk','Critical','Expiring Soon') THEN 1 ELSE 0 END) atRisk FROM {table}", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static async Task<IResult> OkRows(Database db, string sql, Action<MySqlCommand>? bind = null, string message = "", CancellationToken ct = default)
+    private static async Task<IResult> OkRows(Database db, string sql, Action<NpgsqlCommand>? bind = null, string message = "", CancellationToken ct = default)
         => Results.Ok(ApiResponse<object>.Ok(await db.QueryAsync(sql, bind, ct), message));
 
-    private static Action<MySqlCommand>? BindModule(string moduleKey, ModuleDefinition definition)
+    private static Action<NpgsqlCommand>? BindModule(string moduleKey, ModuleDefinition definition)
         => definition.RequiresModuleKey ? c => c.Parameters.AddWithValue("@key", moduleKey) : null;
 
-    private static void BindModuleRecord(MySqlCommand c, string moduleKey, Dictionary<string, object?> body, long companyId)
+    private static void BindModuleRecord(NpgsqlCommand c, string moduleKey, Dictionary<string, object?> body, long companyId)
     {
         c.Parameters.AddWithValue("@key", moduleKey);
         c.Parameters.AddWithValue("@companyId", companyId);
@@ -4112,36 +4112,36 @@ public static class EndpointMappings
               GROUP BY r.id, r.route_code, r.name, r.status, v.vehicle_code, d.full_name
               ORDER BY r.id DESC",
             @"SELECT r.*, v.vehicle_code, d.full_name driver_name FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id LEFT JOIN drivers d ON d.id=r.assigned_driver_id WHERE r.id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Active','Planned')) active, SUM(status IN ('At Risk','Delayed')) risk_items FROM routes",
-            CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (@companyId, CONCAT('RTE-', UUID_SHORT()), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Active','Planned') THEN 1 ELSE 0 END) active, SUM(CASE WHEN status IN ('At Risk','Delayed') THEN 1 ELSE 0 END) risk_items FROM routes",
+            CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (@companyId, CONCAT('RTE-', floor(extract(epoch from now()))::bigint), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
             UpdateSql: "UPDATE routes SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status) WHERE id=@id"),
 
         ["leads"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key='leads' ORDER BY id DESC",
             "SELECT * FROM module_records WHERE module_key='leads' AND id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Qualified','Proposal Needed','New')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='leads'",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Qualified','Proposal Needed','New') THEN 1 ELSE 0 END) active, SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM module_records WHERE module_key='leads'",
             RequiresModuleKey: true),
 
         ["sales-pipeline"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key='sales-pipeline' ORDER BY amount DESC",
             "SELECT * FROM module_records WHERE module_key='sales-pipeline' AND id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Negotiation','Contracting','Discovery')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='sales-pipeline'",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Negotiation','Contracting','Discovery') THEN 1 ELSE 0 END) active, SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM module_records WHERE module_key='sales-pipeline'",
             RequiresModuleKey: true),
 
         ["opportunities"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key='opportunities' ORDER BY id DESC",
             "SELECT * FROM module_records WHERE module_key='opportunities' AND id=@id",
-            "SELECT COUNT(*) total, SUM(status NOT IN ('Closed Won','Closed Lost')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key='opportunities'",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status NOT IN ('Closed Won','Closed Lost') THEN 1 ELSE 0 END) active, SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM module_records WHERE module_key='opportunities'",
             RequiresModuleKey: true),
 
         ["campaigns"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key='campaigns' ORDER BY id DESC",
             "SELECT * FROM module_records WHERE module_key='campaigns' AND id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, 0 risk_items FROM module_records WHERE module_key='campaigns'",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, 0 risk_items FROM module_records WHERE module_key='campaigns'",
             RequiresModuleKey: true),
 
         ["assets"] = new(
@@ -4149,8 +4149,8 @@ public static class EndpointMappings
             @"SELECT a.id, a.asset_code asset_code, a.name title, a.asset_type asset_type, a.status, a.current_location location_name, v.vehicle_code assigned_vehicle
               FROM assets a LEFT JOIN vehicles v ON v.id=a.assigned_vehicle_id ORDER BY a.asset_code",
             "SELECT a.*, v.vehicle_code assigned_vehicle FROM assets a LEFT JOIN vehicles v ON v.id=a.assigned_vehicle_id WHERE a.id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Available','Assigned')) active, SUM(status IN ('Maintenance','At Risk')) risk_items FROM assets",
-            CreateSql: @"INSERT INTO assets (company_id, asset_code, asset_type, name, status, current_location) VALUES (@companyId, CONCAT('AST-', UUID_SHORT()), 'Equipment', @title, COALESCE(NULLIF(@status,''),'Available'), @location)",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Available','Assigned') THEN 1 ELSE 0 END) active, SUM(CASE WHEN status IN ('Maintenance','At Risk') THEN 1 ELSE 0 END) risk_items FROM assets",
+            CreateSql: @"INSERT INTO assets (company_id, asset_code, asset_type, name, status, current_location) VALUES (@companyId, CONCAT('AST-', floor(extract(epoch from now()))::bigint), 'Equipment', @title, COALESCE(NULLIF(@status,''),'Available'), @location)",
             UpdateSql: "UPDATE assets SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status), current_location=COALESCE(NULLIF(@location,''), current_location) WHERE id=@id"),
 
         ["maintenance"] = new(
@@ -4158,17 +4158,17 @@ public static class EndpointMappings
             @"SELECT mi.id, mi.title, mi.category, mi.status, mi.risk_level risk_level, mi.due_date due_at, v.vehicle_code vehicle_code
               FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id ORDER BY mi.due_date, mi.id DESC",
             "SELECT mi.*, v.vehicle_code FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id WHERE mi.id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Open','Scheduled','In Progress')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM maintenance_items",
-            CreateSql: @"INSERT INTO maintenance_items (company_id, title, category, status, risk_level, due_date) VALUES (@companyId, @title, 'General', COALESCE(NULLIF(@status,''),'Open'), COALESCE(NULLIF(@risk,''),'Medium'), DATE_ADD(CURDATE(), INTERVAL 7 DAY))",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Open','Scheduled','In Progress') THEN 1 ELSE 0 END) active, SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM maintenance_items",
+            CreateSql: @"INSERT INTO maintenance_items (company_id, title, category, status, risk_level, due_date) VALUES (@companyId, @title, 'General', COALESCE(NULLIF(@status,''),'Open'), COALESCE(NULLIF(@risk,''),'Medium'), CURRENT_DATE + 7 * INTERVAL '1 day')",
             UpdateSql: "UPDATE maintenance_items SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), risk_level=COALESCE(NULLIF(@risk,''), risk_level) WHERE id=@id"),
 
         ["work-orders"] = new(
             "work_orders",
             @"SELECT wo.id, wo.work_order_code work_order_code, wo.title, wo.priority risk_level, wo.status, wo.due_date due_at, wo.estimated_cost amount, v.vehicle_code vehicle_code
-              FROM work_orders wo LEFT JOIN vehicles v ON v.id=wo.vehicle_id ORDER BY FIELD(wo.priority,'Critical','High','Normal','Low'), wo.due_date",
+              FROM work_orders wo LEFT JOIN vehicles v ON v.id=wo.vehicle_id ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Normal','Low'], wo.priority), wo.due_date",
             "SELECT wo.*, v.vehicle_code FROM work_orders wo LEFT JOIN vehicles v ON v.id=wo.vehicle_id WHERE wo.id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Open','Scheduled','In Progress','Waiting Parts')) active, SUM(priority IN ('High','Critical')) risk_items FROM work_orders",
-            CreateSql: @"INSERT INTO work_orders (company_id, work_order_code, title, priority, status, due_date, estimated_cost) VALUES (@companyId, CONCAT('WO-', UUID_SHORT()), @title, COALESCE(NULLIF(@risk,''),'Normal'), COALESCE(NULLIF(@status,''),'Open'), DATE_ADD(CURDATE(), INTERVAL 5 DAY), NULLIF(@amount,''))",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Open','Scheduled','In Progress','Waiting Parts') THEN 1 ELSE 0 END) active, SUM(CASE WHEN priority IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM work_orders",
+            CreateSql: @"INSERT INTO work_orders (company_id, work_order_code, title, priority, status, due_date, estimated_cost) VALUES (@companyId, CONCAT('WO-', floor(extract(epoch from now()))::bigint), @title, COALESCE(NULLIF(@risk,''),'Normal'), COALESCE(NULLIF(@status,''),'Open'), CURRENT_DATE + 5 * INTERVAL '1 day', NULLIF(@amount,''))",
             UpdateSql: "UPDATE work_orders SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), priority=COALESCE(NULLIF(@risk,''), priority), estimated_cost=COALESCE(NULLIF(@amount,''), estimated_cost) WHERE id=@id"),
 
         ["fuel-idling"] = new(
@@ -4176,28 +4176,28 @@ public static class EndpointMappings
             @"SELECT ft.id, CONCAT('Fuel transaction ', ft.id) title, 'Approved' status, v.vehicle_code vehicle_code, ft.fuel_station location_name, ft.gallons, ft.idle_minutes idle_minutes, ft.total_cost amount, ft.transaction_time due_at
               FROM fuel_transactions ft LEFT JOIN vehicles v ON v.id=ft.vehicle_id ORDER BY ft.transaction_time DESC",
             "SELECT ft.*, v.vehicle_code FROM fuel_transactions ft LEFT JOIN vehicles v ON v.id=ft.vehicle_id WHERE ft.id=@id",
-            "SELECT COUNT(*) total, COUNT(*) active, SUM(idle_minutes > 60) risk_items, COALESCE(SUM(total_cost),0) total_cost FROM fuel_transactions"),
+            "SELECT COUNT(*) total, COUNT(*) active, SUM(CASE WHEN idle_minutes > 60 THEN 1 ELSE 0 END) risk_items, COALESCE(SUM(total_cost),0) total_cost FROM fuel_transactions"),
 
         ["safety"] = new(
             "safety_events",
             @"SELECT se.id, se.event_type title, se.severity risk_level, se.review_status status, se.description, se.event_time due_at, v.vehicle_code vehicle_code, d.full_name driver_name
               FROM safety_events se LEFT JOIN vehicles v ON v.id=se.vehicle_id LEFT JOIN drivers d ON d.id=se.driver_id ORDER BY se.event_time DESC",
             "SELECT se.*, v.vehicle_code, d.full_name driver_name FROM safety_events se LEFT JOIN vehicles v ON v.id=se.vehicle_id LEFT JOIN drivers d ON d.id=se.driver_id WHERE se.id=@id",
-            "SELECT COUNT(*) total, SUM(review_status <> 'Resolved') active, SUM(severity IN ('High','Critical')) risk_items FROM safety_events"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN review_status <> 'Resolved' THEN 1 ELSE 0 END) active, SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM safety_events"),
 
         ["dashcam"] = new(
             "dashcam_events",
             "SELECT id, title, severity risk_level, coaching_status status, event_time due_at FROM dashcam_events ORDER BY event_time DESC",
             "SELECT * FROM dashcam_events WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(coaching_status <> 'Resolved') active, SUM(severity IN ('High','Critical')) risk_items FROM dashcam_events"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN coaching_status <> 'Resolved' THEN 1 ELSE 0 END) active, SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM dashcam_events"),
 
         ["compliance"] = new(
             "compliance_documents",
             @"SELECT id, document_name title, document_type, related_entity_type owner_name, status, expiry_date due_at,
-                     CASE WHEN status <> 'Valid' OR expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'High' ELSE 'Low' END risk_level
+                     CASE WHEN status <> 'Valid' OR expiry_date <= CURRENT_DATE + 30 * INTERVAL '1 day' THEN 'High' ELSE 'Low' END risk_level
               FROM compliance_documents ORDER BY expiry_date",
             "SELECT * FROM compliance_documents WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Valid') active, SUM(status <> 'Valid' OR expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) risk_items FROM compliance_documents"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Valid' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Valid' OR expiry_date <= CURRENT_DATE + 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) risk_items FROM compliance_documents"),
 
         ["hos-eld"] = new(
             "hos_logs",
@@ -4205,7 +4205,7 @@ public static class EndpointMappings
                      CASE WHEN hl.status='Near Limit' THEN 'High' ELSE 'Low' END risk_level
               FROM hos_logs hl JOIN drivers d ON d.id=hl.driver_id ORDER BY hl.log_date DESC",
             "SELECT hl.*, d.full_name driver_name FROM hos_logs hl JOIN drivers d ON d.id=hl.driver_id WHERE hl.id=@id",
-            "SELECT COUNT(*) total, SUM(status='Compliant') active, SUM(status <> 'Compliant') risk_items FROM hos_logs"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Compliant' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Compliant' THEN 1 ELSE 0 END) risk_items FROM hos_logs"),
 
         ["dvir-inspections"] = new(
             "inspections",
@@ -4213,21 +4213,21 @@ public static class EndpointMappings
                      CASE WHEN i.result IN ('Defect Found','Needs Review') THEN 'High' ELSE 'Low' END risk_level
               FROM inspections i LEFT JOIN vehicles v ON v.id=i.vehicle_id LEFT JOIN drivers d ON d.id=i.driver_id ORDER BY i.created_at DESC",
             "SELECT i.*, v.vehicle_code, d.full_name driver_name FROM inspections i LEFT JOIN vehicles v ON v.id=i.vehicle_id LEFT JOIN drivers d ON d.id=i.driver_id WHERE i.id=@id",
-            "SELECT COUNT(*) total, SUM(result='Passed') active, SUM(result <> 'Passed') risk_items FROM inspections"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN result='Passed' THEN 1 ELSE 0 END) active, SUM(CASE WHEN result <> 'Passed' THEN 1 ELSE 0 END) risk_items FROM inspections"),
 
         ["customer-portal"] = new(
             "customer_communications",
             @"SELECT cc.id, CONCAT('Customer update - ', c.name) title, cc.status, c.name owner_name, cc.channel, cc.sent_at due_at, j.job_code job_code
               FROM customer_communications cc LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN jobs j ON j.id=cc.job_id ORDER BY cc.sent_at DESC",
             "SELECT cc.*, c.name customer_name, j.job_code FROM customer_communications cc LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN jobs j ON j.id=cc.job_id WHERE cc.id=@id",
-            "SELECT COUNT(*) total, SUM(status='Sent') active, SUM(status <> 'Sent') risk_items FROM customer_communications"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Sent' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Sent' THEN 1 ELSE 0 END) risk_items FROM customer_communications"),
 
         ["customers"] = new(
             "customers",
             "SELECT id, customer_code customer_code, name title, contact_name owner_name, email, status, sla_tier risk_level FROM customers ORDER BY name",
             "SELECT * FROM customers WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, SUM(sla_tier='Platinum') risk_items FROM customers",
-            CreateSql: @"INSERT INTO customers (company_id, customer_code, name, contact_name, status, sla_tier) VALUES (@companyId, CONCAT('CUS-', UUID_SHORT()), @title, @owner, COALESCE(NULLIF(@status,''),'Active'), COALESCE(NULLIF(@risk,''),'Standard'))",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, SUM(CASE WHEN sla_tier='Platinum' THEN 1 ELSE 0 END) risk_items FROM customers",
+            CreateSql: @"INSERT INTO customers (company_id, customer_code, name, contact_name, status, sla_tier) VALUES (@companyId, CONCAT('CUS-', floor(extract(epoch from now()))::bigint), @title, @owner, COALESCE(NULLIF(@status,''),'Active'), COALESCE(NULLIF(@risk,''),'Standard'))",
             UpdateSql: "UPDATE customers SET name=COALESCE(NULLIF(@title,''), name), contact_name=COALESCE(NULLIF(@owner,''), contact_name), status=COALESCE(NULLIF(@status,''), status), sla_tier=COALESCE(NULLIF(@risk,''), sla_tier) WHERE id=@id"),
 
         ["contracts-rates"] = new(
@@ -4235,31 +4235,31 @@ public static class EndpointMappings
             @"SELECT c.id, c.contract_code contract_code, c.title, c.rate_type, c.status, c.expiration_date due_at, cu.name owner_name
               FROM contracts c JOIN customers cu ON cu.id=c.customer_id ORDER BY c.expiration_date",
             "SELECT c.*, cu.name customer_name FROM contracts c JOIN customers cu ON cu.id=c.customer_id WHERE c.id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, SUM(expiration_date <= DATE_ADD(CURDATE(), INTERVAL 60 DAY)) risk_items FROM contracts"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, SUM(CASE WHEN expiration_date <= CURRENT_DATE + 60 * INTERVAL '1 day' THEN 1 ELSE 0 END) risk_items FROM contracts"),
 
         ["carrier-management"] = new(
             "carriers",
             "SELECT id, name title, mc_number, safety_rating risk_level, status FROM carriers ORDER BY name",
             "SELECT * FROM carriers WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, SUM(safety_rating='Watchlist') risk_items FROM carriers"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, SUM(CASE WHEN safety_rating='Watchlist' THEN 1 ELSE 0 END) risk_items FROM carriers"),
 
         ["expenses"] = new(
             "expenses",
             "SELECT id, title, category, status, amount, expense_date due_at, CASE WHEN status='Review' THEN 'High' ELSE 'Low' END risk_level FROM expenses ORDER BY expense_date DESC",
             "SELECT * FROM expenses WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Approved') active, SUM(status <> 'Approved') risk_items, COALESCE(SUM(amount),0) total_amount FROM expenses"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Approved' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Approved' THEN 1 ELSE 0 END) risk_items, COALESCE(SUM(amount),0) total_amount FROM expenses"),
 
         ["documents"] = new(
             "documents",
             "SELECT id, title, document_type, owner_name, status, uploaded_at due_at, CASE WHEN status='Expiring' THEN 'High' ELSE 'Low' END risk_level FROM documents ORDER BY uploaded_at DESC",
             "SELECT * FROM documents WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, SUM(status='Expiring') risk_items FROM documents"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status='Expiring' THEN 1 ELSE 0 END) risk_items FROM documents"),
 
         ["reports-analytics"] = new(
             "kpi_records",
             "SELECT id, label title, value_text value_text, trend, trend_value, status FROM kpi_records ORDER BY id",
             "SELECT * FROM kpi_records WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Healthy') active, SUM(status <> 'Healthy') risk_items FROM kpi_records"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Healthy' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Healthy' THEN 1 ELSE 0 END) risk_items FROM kpi_records"),
 
         ["sla-kpi"] = new(
             "sla_records",
@@ -4267,13 +4267,13 @@ public static class EndpointMappings
                      CASE WHEN sr.status='At Risk' THEN 'High' ELSE 'Low' END risk_level
               FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id ORDER BY sr.id DESC",
             "SELECT sr.*, c.name customer_name FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id WHERE sr.id=@id",
-            "SELECT COUNT(*) total, SUM(status='On Track') active, SUM(status <> 'On Track') risk_items FROM sla_records"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='On Track' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'On Track' THEN 1 ELSE 0 END) risk_items FROM sla_records"),
 
         ["predictive-margin"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key=@key ORDER BY amount DESC, id DESC",
             "SELECT * FROM module_records WHERE module_key=@key AND id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Open','Active','In Progress')) active, SUM(risk_level IN ('High','Critical')) risk_items FROM module_records WHERE module_key=@key",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Open','Active','In Progress') THEN 1 ELSE 0 END) active, SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM module_records WHERE module_key=@key",
             RequiresModuleKey: true),
 
         ["audit-logs"] = new(
@@ -4286,33 +4286,33 @@ public static class EndpointMappings
             "integrations",
             "SELECT id, provider_name title, category, status FROM integrations ORDER BY provider_name",
             "SELECT * FROM integrations WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Connected') active, SUM(status <> 'Connected') risk_items FROM integrations"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Connected' THEN 1 ELSE 0 END) active, SUM(CASE WHEN status <> 'Connected' THEN 1 ELSE 0 END) risk_items FROM integrations"),
 
         ["user-management"] = new(
             "users",
             "SELECT u.id, u.full_name title, u.email, u.role_name risk_level, u.status, c.name owner_name FROM users u JOIN companies c ON c.id=u.company_id ORDER BY u.full_name",
             "SELECT u.*, c.name company_name FROM users u JOIN companies c ON c.id=u.company_id WHERE u.id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, 0 risk_items FROM users"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, 0 risk_items FROM users"),
 
         ["settings"] = new(
             "companies",
             "SELECT id, name title, company_code company_code, industry, timezone location_name, status FROM companies ORDER BY id",
             "SELECT * FROM companies WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(status='Active') active, 0 risk_items FROM companies"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active, 0 risk_items FROM companies"),
 
         ["billing"] = new(
             "subscription_plans",
             "SELECT id, plan_name title, billing_status status, seats, monthly_amount amount FROM subscription_plans ORDER BY id DESC",
             "SELECT * FROM subscription_plans WHERE id=@id",
-            "SELECT COUNT(*) total, SUM(billing_status='Active') active, SUM(billing_status <> 'Active') risk_items FROM subscription_plans"),
+            "SELECT COUNT(*) total, SUM(CASE WHEN billing_status='Active' THEN 1 ELSE 0 END) active, SUM(CASE WHEN billing_status <> 'Active' THEN 1 ELSE 0 END) risk_items FROM subscription_plans"),
 
         ["fallback"] = new(
             "module_records",
             "SELECT * FROM module_records WHERE module_key=@key ORDER BY id DESC",
             "SELECT * FROM module_records WHERE module_key=@key AND id=@id",
-            "SELECT COUNT(*) total, SUM(status IN ('Open','Active','In Progress')) active, SUM(status IN ('Open','At Risk','Critical','Delayed')) risk_items FROM module_records WHERE module_key=@key",
+            "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Open','Active','In Progress') THEN 1 ELSE 0 END) active, SUM(CASE WHEN status IN ('Open','At Risk','Critical','Delayed') THEN 1 ELSE 0 END) risk_items FROM module_records WHERE module_key=@key",
             RequiresModuleKey: true,
-            CreateSql: @"INSERT INTO module_records (module_key, title, status, owner_name, location_name, risk_level, amount, metadata_json) VALUES (@key, @title, COALESCE(NULLIF(@status,''),'Open'), @owner, @location, COALESCE(NULLIF(@risk,''),'Medium'), NULLIF(@amount,''), JSON_OBJECT('source','api'))",
+            CreateSql: @"INSERT INTO module_records (module_key, title, status, owner_name, location_name, risk_level, amount, metadata_json) VALUES (@key, @title, COALESCE(NULLIF(@status,''),'Open'), @owner, @location, COALESCE(NULLIF(@risk,''),'Medium'), NULLIF(@amount,''), jsonb_build_object('source','api'))",
             UpdateSql: "UPDATE module_records SET title=COALESCE(NULLIF(@title,''), title), status=COALESCE(NULLIF(@status,''), status), owner_name=COALESCE(NULLIF(@owner,''), owner_name), location_name=COALESCE(NULLIF(@location,''), location_name), risk_level=COALESCE(NULLIF(@risk,''), risk_level), amount=COALESCE(NULLIF(@amount,''), amount) WHERE id=@id AND module_key=@key")
     };
 
@@ -4434,7 +4434,7 @@ public static class EndpointMappings
 
     private static bool IsBlank(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value.ToString());
 
-    private static void BindVehicle(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindVehicle(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", Get(body, "vehicleCode"));
         c.Parameters.AddWithValue("@type", Get(body, "type"));
@@ -4446,7 +4446,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@status", Get(body, "status"));
     }
 
-    private static void BindDriver(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindDriver(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", Get(body, "driverCode"));
         c.Parameters.AddWithValue("@name", Get(body, "fullName"));
@@ -4456,7 +4456,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@status", Get(body, "status"));
     }
 
-    private static void BindCustomer(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindCustomer(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", Get(body, "customerCode"));
         c.Parameters.AddWithValue("@name", Get(body, "name"));
@@ -4469,7 +4469,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@slaTier", Get(body, "slaTier"));
     }
 
-    private static void BindAsset(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindAsset(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", Get(body, "assetCode"));
         c.Parameters.AddWithValue("@type", Get(body, "assetType"));
@@ -4485,7 +4485,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@risk", Get(body, "riskScore") is DBNull ? 12 : Get(body, "riskScore"));
     }
 
-    private static void BindJob(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindJob(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", !IsBlank(Get(body, "jobNumber")) ? Get(body, "jobNumber") : Get(body, "jobCode"));
         c.Parameters.AddWithValue("@customerId", Get(body, "customerId"));
@@ -4519,7 +4519,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@notes", Get(body, "notes"));
     }
 
-    private static void BindRoute(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindRoute(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", Get(body, "routeCode"));
         c.Parameters.AddWithValue("@name", !IsBlank(Get(body, "routeName")) ? Get(body, "routeName") : Get(body, "name"));
@@ -4535,7 +4535,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@notes", Get(body, "notes"));
     }
 
-    private static void BindRouteStop(MySqlCommand c, long routeId, Dictionary<string, object?> body)
+    private static void BindRouteStop(NpgsqlCommand c, long routeId, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@routeId", routeId);
         c.Parameters.AddWithValue("@jobId", Get(body, "jobId"));
@@ -4562,7 +4562,7 @@ public static class EndpointMappings
         return errors;
     }
 
-    private static void BindMaintenance(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindMaintenance(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@vehicleId", Get(body, "vehicleId"));
         c.Parameters.AddWithValue("@assetId", Get(body, "assetId"));
@@ -4587,7 +4587,7 @@ public static class EndpointMappings
         return errors;
     }
 
-    private static void BindWorkOrder(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindWorkOrder(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         var number = !IsBlank(Get(body, "workOrderNumber")) ? Get(body, "workOrderNumber") : Get(body, "workOrderCode");
         c.Parameters.AddWithValue("@number", number);
@@ -4641,7 +4641,7 @@ public static class EndpointMappings
         return errors;
     }
 
-    private static void BindDvir(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindDvir(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "reportNumber")) ? Get(body, "reportNumber") : $"DVIR-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         c.Parameters.AddWithValue("@driverId", Get(body, "driverId"));
@@ -4659,7 +4659,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@notes", Get(body, "notes"));
     }
 
-    private static void BindDvirTemplate(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindDvirTemplate(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@name", Get(body, "templateName"));
         c.Parameters.AddWithValue("@country", Get(body, "countryCode"));
@@ -4677,7 +4677,7 @@ public static class EndpointMappings
         return errors;
     }
 
-    private static void BindDocument(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindDocument(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@title", Get(body, "title"));
         c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "documentNumber")) ? Get(body, "documentNumber") : $"DOC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
@@ -4716,7 +4716,7 @@ public static class EndpointMappings
             c.Parameters.AddWithValue("@id", id);
         }, ct);
 
-    private static void BindSafety(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindSafety(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "eventNumber")) ? Get(body, "eventNumber") : $"SAFE-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         c.Parameters.AddWithValue("@type", Get(body, "eventType"));
@@ -4737,7 +4737,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@action", Get(body, "recommendedAction"));
     }
 
-    private static void BindDashcam(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindDashcam(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "eventNumber")) ? Get(body, "eventNumber") : $"VID-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         c.Parameters.AddWithValue("@safety", Get(body, "safetyEventId"));
@@ -4757,7 +4757,7 @@ public static class EndpointMappings
         c.Parameters.AddWithValue("@occurred", Get(body, "occurredAt"));
     }
 
-    private static void BindCoaching(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindCoaching(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@assigned", Get(body, "assignedToUserId"));
         c.Parameters.AddWithValue("@type", Get(body, "coachingType"));
@@ -4771,7 +4771,7 @@ public static class EndpointMappings
 
     private static async Task<long> InsertCoaching(HttpContext http, Database db, object? driverId, object? safetyEventId, object? dashcamEventId, string type, object? priority, CancellationToken ct)
         => await db.InsertAsync(@"INSERT INTO coaching_tasks (company_id, task_number, driver_id, safety_event_id, dashcam_event_id, assigned_to_user_id, coaching_type, priority, status, title, description, ai_script, before_safety_score, due_at)
-            VALUES (@companyId, CONCAT('COACH-', UUID_SHORT()), @driver, @safety, @dashcam, @userId, @type, COALESCE(@priority,'High'), 'Assigned', CONCAT(@type, ' action'), 'Generated from OpsTrax safety intelligence.', 'Review following distance and braking patterns from the event. Focus on maintaining safe distance in high-traffic zones.', 82, DATE_ADD(NOW(), INTERVAL 7 DAY))",
+            VALUES (@companyId, CONCAT('COACH-', floor(extract(epoch from now()))::bigint), @driver, @safety, @dashcam, @userId, @type, COALESCE(@priority,'High'), 'Assigned', CONCAT(@type, ' action'), 'Generated from OpsTrax safety intelligence.', 'Review following distance and braking patterns from the event. Focus on maintaining safe distance in high-traffic zones.', 82, NOW() + 7 * INTERVAL '1 day')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
@@ -4783,7 +4783,7 @@ public static class EndpointMappings
                 c.Parameters.AddWithValue("@priority", priority ?? "High");
             }, ct);
 
-    private static void BindIncident(MySqlCommand c, Dictionary<string, object?> body)
+    private static void BindIncident(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "incidentNumber")) ? Get(body, "incidentNumber") : $"INC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         c.Parameters.AddWithValue("@safety", Get(body, "safetyEventId"));
@@ -4809,23 +4809,23 @@ public static class EndpointMappings
         var body = source ?? dashcam ?? new Dictionary<string, object?>();
         var type = !IsBlank(Get(body, "incidentType")) ? Get(body, "incidentType") : (dashcam is null ? Get(body, "eventType") : dashcam["eventType"]);
         return await db.InsertAsync(@"INSERT INTO incidents (company_id, incident_number, safety_event_id, dashcam_event_id, driver_id, vehicle_id, job_id, route_id, incident_type, severity, status, location_description, occurred_at, driver_statement, witness_statement, customer_statement, ai_summary, recommended_action, insurance_report_status)
-            VALUES (@companyId, CONCAT('INC-', UUID_SHORT()), @safety, @dashcam, @driver, @vehicle, @job, @route, @type, COALESCE(@severity,'Medium'), COALESCE(@status,'New'), @location, COALESCE(@occurred,NOW()), COALESCE(@driverStatement,'Driver statement placeholder pending.'), COALESCE(@witness,'Witness statement placeholder pending.'), COALESCE(@customer,'Customer statement placeholder pending.'), COALESCE(@summary,'AI incident report builder summarized what happened, involved units, evidence available and next step.'), COALESCE(@action,'Build evidence package and review insurance/legal placeholder.'), 'Not Created')",
+            VALUES (@companyId, CONCAT('INC-', floor(extract(epoch from now()))::bigint), @safety, @dashcam, @driver, @vehicle, @job, @route, @type, COALESCE(@severity,'Medium'), COALESCE(@status,'New'), @location, COALESCE(@occurred,NOW()), COALESCE(@driverStatement,'Driver statement placeholder pending.'), COALESCE(@witness,'Witness statement placeholder pending.'), COALESCE(@customer,'Customer statement placeholder pending.'), COALESCE(@summary,'AI incident report builder summarized what happened, involved units, evidence available and next step.'), COALESCE(@action,'Build evidence package and review insurance/legal placeholder.'), 'Not Created')",
             c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); BindIncident(c, body); c.Parameters["@type"].Value = type ?? "Safety Incident"; if (dashcam is not null) c.Parameters["@dashcam"].Value = dashcam["id"] ?? DBNull.Value; }, ct);
     }
 
     private static async Task<long> InsertEvidencePackage(HttpContext http, Database db, object? incidentId, object? safetyEventId, object? dashcamEventId, object? driverId, object? vehicleId, object? jobId, CancellationToken ct)
     {
         var id = await db.InsertAsync(@"INSERT INTO evidence_packages (company_id, package_number, incident_id, safety_event_id, dashcam_event_id, driver_id, vehicle_id, job_id, package_type, status, summary)
-            VALUES (@companyId, CONCAT('EVD-', UUID_SHORT()), @incident, @safety, @dashcam, @driver, @vehicle, @job, 'Insurance Evidence', 'Draft', 'GPS, speed, video, job, DVIR, maintenance and statement placeholders bundled.')",
+            VALUES (@companyId, CONCAT('EVD-', floor(extract(epoch from now()))::bigint), @incident, @safety, @dashcam, @driver, @vehicle, @job, 'Insurance Evidence', 'Draft', 'GPS, speed, video, job, DVIR, maintenance and statement placeholders bundled.')",
             c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@incident", incidentId ?? DBNull.Value); c.Parameters.AddWithValue("@safety", safetyEventId ?? DBNull.Value); c.Parameters.AddWithValue("@dashcam", dashcamEventId ?? DBNull.Value); c.Parameters.AddWithValue("@driver", driverId ?? DBNull.Value); c.Parameters.AddWithValue("@vehicle", vehicleId ?? DBNull.Value); c.Parameters.AddWithValue("@job", jobId ?? DBNull.Value); }, ct);
         await db.ExecuteAsync(@"INSERT INTO evidence_package_items (company_id,evidence_package_id,item_type,item_title,item_url,item_json,source_entity_type,source_entity_id)
-            VALUES (@companyId,@id,'Bundle','GPS + Speed + Video Evidence Bundle','/placeholder/evidence-bundle.dat',JSON_OBJECT('chainOfCustody','created'), 'package', @id)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); }, ct);
+            VALUES (@companyId,@id,'Bundle','GPS + Speed + Video Evidence Bundle','/placeholder/evidence-bundle.dat',jsonb_build_object('chainOfCustody','created'), 'package', @id)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); }, ct);
         return id;
     }
 
     private static async Task<long> InsertInsuranceReport(HttpContext http, Database db, long incidentId, long? packageId, CancellationToken ct)
         => await db.InsertAsync(@"INSERT INTO insurance_reports (company_id, report_number, incident_id, evidence_package_id, status, report_summary, export_url)
-            VALUES (@companyId, CONCAT('INS-', UUID_SHORT()), @incident, @package, 'Draft', 'Insurance/legal incident report placeholder generated by OpsTrax.', '/placeholder/insurance-report.pdf')",
+            VALUES (@companyId, CONCAT('INS-', floor(extract(epoch from now()))::bigint), @incident, @package, 'Draft', 'Insurance/legal incident report placeholder generated by OpsTrax.', '/placeholder/insurance-report.pdf')",
             c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@incident", incidentId); c.Parameters.AddWithValue("@package", packageId.HasValue ? packageId.Value : DBNull.Value); }, ct);
 
     // =====================================================================
@@ -4836,10 +4836,10 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN DATE(fuel_date)=CURDATE() THEN total_cost ELSE 0 END),0),2)) fuel_spend_today,
-                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN fuel_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01') THEN total_cost ELSE 0 END),0),2)) fuel_spend_this_month,
-                CONCAT('$', FORMAT(COALESCE((SELECT SUM(estimated_cost) FROM idling_events WHERE DATE(started_at)=CURDATE()),0),2)) idle_cost_today,
-                COALESCE((SELECT ROUND(SUM(duration_minutes),0) FROM idling_events WHERE DATE(started_at)=CURDATE()),0) idle_hours_today,
+                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN fuel_date::date=CURRENT_DATE THEN total_cost ELSE 0 END),0),2)) fuel_spend_today,
+                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN fuel_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01') THEN total_cost ELSE 0 END),0),2)) fuel_spend_this_month,
+                CONCAT('$', FORMAT(COALESCE((SELECT SUM(estimated_cost) FROM idling_events WHERE started_at::date=CURRENT_DATE),0),2)) idle_cost_today,
+                COALESCE((SELECT ROUND(SUM(duration_minutes),0) FROM idling_events WHERE started_at::date=CURRENT_DATE),0) idle_hours_today,
                 ROUND(AVG(quantity / NULLIF(total_cost,0) * unit_price),2) average_mpg_placeholder,
                 COUNT(*) fuel_transactions,
                 (SELECT COUNT(*) FROM fuel_anomalies WHERE status='Open') fuel_anomalies,
@@ -4895,7 +4895,7 @@ public static class EndpointMappings
                 fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost, currency,
                 odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes)
               VALUES (@companyId, @number, @vehicle, @driver, @job, @route,
-                COALESCE(@date, CURDATE()), COALESCE(@fuelType,'Diesel'), @qty, @qty, COALESCE(@unit,'Gallons'), @price, @total,
+                COALESCE(@date, CURRENT_DATE), COALESCE(@fuelType,'Diesel'), @qty, @qty, COALESCE(@unit,'Gallons'), @price, @total,
                 COALESCE(@currency,'USD'), @odometer, @station, COALESCE(@payment,'Fleet Card'), @card, @region,
                 COALESCE(@anomaly,'Normal'), @notes)",
             c =>
@@ -5042,7 +5042,7 @@ public static class EndpointMappings
               LEFT JOIN vehicles v ON v.id=fa.vehicle_id
               LEFT JOIN drivers d ON d.id=fa.driver_id
               LEFT JOIN fuel_transactions ft ON ft.id=fa.fuel_transaction_id
-              ORDER BY FIELD(fa.severity,'Critical','High','Medium','Low'), fa.created_at DESC", ct: ct);
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], fa.severity), fa.created_at DESC", ct: ct);
 
     private static async Task<IResult> FuelAnomalyReview(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -5070,17 +5070,17 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN expense_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01') THEN amount ELSE 0 END),0),2)) total_expenses_this_month,
-                SUM(approval_status='Pending') pending_approval,
-                SUM(approval_status='Approved') approved_expenses,
-                SUM(approval_status='Rejected') rejected_expenses,
+                CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN expense_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01') THEN amount ELSE 0 END),0),2)) total_expenses_this_month,
+                SUM(CASE WHEN approval_status='Pending' THEN 1 ELSE 0 END) pending_approval,
+                SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) approved_expenses,
+                SUM(CASE WHEN approval_status='Rejected' THEN 1 ELSE 0 END) rejected_expenses,
                 CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN category_name='Fuel' THEN amount ELSE 0 END),0),2)) fuel_expenses,
                 CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN category_name='Maintenance' THEN amount ELSE 0 END),0),2)) maintenance_expenses,
                 CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN category_name='Driver Reimbursement' THEN amount ELSE 0 END),0),2)) driver_expenses,
                 CONCAT('$', FORMAT(COALESCE(SUM(CASE WHEN category_name='Carrier Charge' THEN amount ELSE 0 END),0),2)) carrier_expenses,
-                SUM(risk_score >= 60) unusual_expenses,
+                SUM(CASE WHEN risk_score >= 60 THEN 1 ELSE 0 END) unusual_expenses,
                 CONCAT('$', FORMAT(COALESCE(AVG(amount),0),2)) average_expense_amount,
-                SUM(receipt_status='Missing') missing_receipts,
+                SUM(CASE WHEN receipt_status='Missing' THEN 1 ELSE 0 END) missing_receipts,
                 COUNT(*) total
               FROM expenses WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -5097,7 +5097,7 @@ public static class EndpointMappings
               LEFT JOIN jobs j ON j.id=e.job_id
               LEFT JOIN customers c ON c.id=e.customer_id
               WHERE e.deleted_at IS NULL
-              ORDER BY FIELD(e.approval_status,'Pending','Rejected','Approved'), e.expense_date DESC", ct: ct);
+              ORDER BY ARRAY_POSITION(ARRAY['Pending','Rejected','Approved'], e.approval_status), e.expense_date DESC", ct: ct);
 
     private static async Task<IResult> ExpenseDetail(long id, Database db, CancellationToken ct)
     {
@@ -5131,7 +5131,7 @@ public static class EndpointMappings
                 vehicle_id, driver_id, job_id, route_id, customer_id, carrier_id, vendor_name,
                 status, approval_status, receipt_status, risk_score, recommended_action, notes)
               VALUES (@companyId, @number, COALESCE(@category,'Miscellaneous'), @amount, COALESCE(@currency,'USD'),
-                COALESCE(@date, CURDATE()), @vehicle, @driver, @job, @route, @customer, @carrier, @vendor,
+                COALESCE(@date, CURRENT_DATE), @vehicle, @driver, @job, @route, @customer, @carrier, @vendor,
                 COALESCE(@status,'Pending'), COALESCE(@approval,'Pending'), COALESCE(@receipt,'Missing'),
                 COALESCE(@risk,20), @action, @notes)",
             c =>
@@ -5222,17 +5222,17 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
-                SUM(status='Active') active_contracts,
-                SUM(status='Expiring Soon' OR (expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY))) expiring_soon,
-                SUM(status='Expired' OR expiry_date < CURDATE()) expired_contracts,
+                SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_contracts,
+                SUM(CASE WHEN status='Expiring Soon' OR (expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day') THEN 1 ELSE 0 END) expiring_soon,
+                SUM(CASE WHEN status='Expired' OR expiry_date < CURRENT_DATE THEN 1 ELSE 0 END) expired_contracts,
                 COUNT(DISTINCT customer_id) customers_covered,
                 COUNT(DISTINCT carrier_id) carrier_agreements,
                 CONCAT('$', FORMAT(COALESCE(AVG(base_rate),0),4)) average_base_rate,
-                SUM(fuel_surcharge_enabled=TRUE) fuel_surcharge_active,
-                SUM(margin_risk='High') margin_risk_contracts,
-                SUM(base_rate < 2.20 AND status='Active') underpriced_contracts,
+                SUM(CASE WHEN fuel_surcharge_enabled=TRUE THEN 1 ELSE 0 END) fuel_surcharge_active,
+                SUM(CASE WHEN margin_risk='High' THEN 1 ELSE 0 END) margin_risk_contracts,
+                SUM(CASE WHEN base_rate < 2.20 AND status='Active' THEN 1 ELSE 0 END) underpriced_contracts,
                 CONCAT('$', FORMAT(COALESCE(SUM(base_rate * 1200),0),0)) contract_revenue_estimate,
-                SUM(status='Active' AND (expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY))) renewal_queue,
+                SUM(CASE WHEN status='Active' AND (expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day') THEN 1 ELSE 0 END) renewal_queue,
                 COUNT(*) total
               FROM contracts WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -5242,18 +5242,18 @@ public static class EndpointMappings
         => OkRows(db,
             @"SELECT con.*, c.name customer_name, car.name carrier_name,
                      CASE WHEN con.margin_risk='High' THEN 'High' WHEN con.margin_risk='Medium' THEN 'Medium' ELSE 'Low' END risk_heat_score,
-                     CASE WHEN con.status='Expired' OR con.expiry_date < CURDATE() THEN 'Renew contract immediately'
-                          WHEN con.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'Initiate renewal workflow'
+                     CASE WHEN con.status='Expired' OR con.expiry_date < CURRENT_DATE THEN 'Renew contract immediately'
+                          WHEN con.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 'Initiate renewal workflow'
                           WHEN con.margin_risk='High' THEN 'Renegotiate underpriced rate'
                           ELSE 'Monitor contract health' END recommended_action,
-                     CASE WHEN con.expiry_date < CURDATE() THEN 'Expired'
-                          WHEN con.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'Expiring Soon'
+                     CASE WHEN con.expiry_date < CURRENT_DATE THEN 'Expired'
+                          WHEN con.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 'Expiring Soon'
                           ELSE con.status END display_status
               FROM contracts con
               LEFT JOIN customers c ON c.id=con.customer_id
               LEFT JOIN carriers car ON car.id=con.carrier_id
               WHERE con.deleted_at IS NULL
-              ORDER BY FIELD(con.margin_risk,'High','Medium','Low'), con.expiry_date", ct: ct);
+              ORDER BY ARRAY_POSITION(ARRAY['High','Medium','Low'], con.margin_risk), con.expiry_date", ct: ct);
 
     private static async Task<IResult> ContractDetail(long id, Database db, CancellationToken ct)
     {
@@ -5363,7 +5363,7 @@ public static class EndpointMappings
                 effective_date, expiry_date, status)
               VALUES (@companyId, @contractId, @code, COALESCE(@type,'Per Mile'), @origin, @dest, @vehicleType,
                 @rate, @min, @fuelPct, @accessorial,
-                COALESCE(@effective, CURDATE()), @expiry, COALESCE(@status,'Active'))",
+                COALESCE(@effective, CURRENT_DATE), @expiry, COALESCE(@status,'Active'))",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -5431,7 +5431,7 @@ public static class EndpointMappings
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE contracts SET status='Expired', expiry_date=CURDATE() WHERE id=@id AND company_id=@companyId",
+        await db.ExecuteAsync("UPDATE contracts SET status='Expired', expiry_date=CURRENT_DATE WHERE id=@id AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
         await audit.LogAsync("contract.expired", "Contract", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Contract marked expired"));
@@ -5445,17 +5445,17 @@ public static class EndpointMappings
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
-                SUM(status='Active') active_carriers,
-                SUM(status='Pending') pending_carriers,
-                SUM(status='Suspended') suspended_carriers,
-                SUM(compliance_status IN ('Non-Compliant','At Risk')) compliance_risk_carriers,
-                SUM(insurance_expiry BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 60 DAY)) insurance_expiring,
+                SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_carriers,
+                SUM(CASE WHEN status='Pending' THEN 1 ELSE 0 END) pending_carriers,
+                SUM(CASE WHEN status='Suspended' THEN 1 ELSE 0 END) suspended_carriers,
+                SUM(CASE WHEN compliance_status IN ('Non-Compliant','At Risk') THEN 1 ELSE 0 END) compliance_risk_carriers,
+                SUM(CASE WHEN insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day' THEN 1 ELSE 0 END) insurance_expiring,
                 ROUND(AVG(performance_score),1) average_carrier_score,
                 ROUND(AVG(on_time_percent),1) on_time_performance,
-                CONCAT('$', FORMAT(COALESCE((SELECT SUM(expense_total) FROM carrier_performance WHERE period_start >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0),2)) carrier_cost_this_month,
+                CONCAT('$', FORMAT(COALESCE((SELECT SUM(expense_total) FROM carrier_performance WHERE period_start >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01')),0),2)) carrier_cost_this_month,
                 (SELECT COUNT(*) FROM carrier_documents WHERE status IN ('Expired','Expiring')) documents_missing,
-                SUM(contract_status='Active') contracts_active,
-                SUM(performance_score >= 90) preferred_carriers,
+                SUM(CASE WHEN contract_status='Active' THEN 1 ELSE 0 END) contracts_active,
+                SUM(CASE WHEN performance_score >= 90 THEN 1 ELSE 0 END) preferred_carriers,
                 COUNT(*) total
               FROM carriers WHERE deleted_at IS NULL", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -5467,10 +5467,10 @@ public static class EndpointMappings
                      CASE WHEN c.compliance_status='Non-Compliant' OR c.risk_score >= 70 THEN 'High'
                           WHEN c.compliance_status='At Risk' OR c.risk_score >= 40 THEN 'Medium'
                           ELSE 'Low' END risk_heat_score,
-                     COALESCE(c.recommended_action, IF(c.compliance_status='Non-Compliant','Suspend carrier — compliance risk',IF(c.insurance_expiry < DATE_ADD(CURDATE(), INTERVAL 60 DAY),'Renew insurance immediately','Monitor performance'))) recommended_action
+                     COALESCE(c.recommended_action, IF(c.compliance_status='Non-Compliant','Suspend carrier — compliance risk',IF(c.insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day','Renew insurance immediately','Monitor performance'))) recommended_action
               FROM carriers c
               WHERE c.deleted_at IS NULL
-              ORDER BY FIELD(c.compliance_status,'Non-Compliant','At Risk','Compliant'), c.performance_score DESC", ct: ct);
+              ORDER BY ARRAY_POSITION(ARRAY['Non-Compliant','At Risk','Compliant'], c.compliance_status), c.performance_score DESC", ct: ct);
 
     private static async Task<IResult> CarrierDetail(long id, Database db, CancellationToken ct)
     {
@@ -5586,8 +5586,8 @@ public static class EndpointMappings
                 CONCAT('$', FORMAT(COALESCE(SUM(total_cost),0),0)) cost_estimate,
                 CONCAT('$', FORMAT(COALESCE(SUM(margin_estimate),0),0)) gross_margin_estimate,
                 CONCAT(ROUND(COALESCE(AVG(margin_percent),0),1),'%') margin_pct,
-                SUM(margin_percent < 15) jobs_below_margin_target,
-                SUM(margin_risk='High') routes_below_margin_target,
+                SUM(CASE WHEN margin_percent < 15 THEN 1 ELSE 0 END) jobs_below_margin_target,
+                SUM(CASE WHEN margin_risk='High' THEN 1 ELSE 0 END) routes_below_margin_target,
                 (SELECT COUNT(DISTINCT vehicle_id) FROM cost_margin_records WHERE entity_type='vehicle' AND total_cost > 400) high_cost_vehicles,
                 (SELECT COUNT(DISTINCT driver_id) FROM cost_margin_records WHERE driver_id IS NOT NULL AND total_cost > 300) high_cost_drivers,
                 CONCAT('$', FORMAT(COALESCE(SUM(fuel_cost),0),0)) fuel_cost_impact,
@@ -5636,16 +5636,16 @@ public static class EndpointMappings
             @"SELECT
                 CONCAT('$', FORMAT(COALESCE(SUM(estimated_loss),0),2)) total_estimated_leakage,
                 CONCAT('$', FORMAT(COALESCE(SUM(projected_monthly_loss),0),2)) monthly_leakage_projection,
-                SUM(status='Open') open_items,
-                SUM(severity IN ('High','Critical')) critical_leakage_items,
-                SUM(status='Acknowledged') acknowledged_items,
-                SUM(status='In Progress') in_progress_items,
+                SUM(CASE WHEN status='Open' THEN 1 ELSE 0 END) open_items,
+                SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) critical_leakage_items,
+                SUM(CASE WHEN status='Acknowledged' THEN 1 ELSE 0 END) acknowledged_items,
+                SUM(CASE WHEN status='In Progress' THEN 1 ELSE 0 END) in_progress_items,
                 (SELECT COUNT(*) FROM cost_leakage_actions WHERE status='Open') open_actions,
                 CONCAT('$', FORMAT(COALESCE((SELECT SUM(estimated_savings) FROM cost_leakage_actions WHERE status='Open'),0),2)) recoverable_savings,
-                SUM(category='Idle Time') idle_leakage_count,
-                SUM(category='Fuel Anomaly') fuel_anomaly_count,
-                SUM(category='Carrier Overcharge') carrier_overcharge_count,
-                SUM(category='Underpriced Contract') underpriced_count,
+                SUM(CASE WHEN category='Idle Time' THEN 1 ELSE 0 END) idle_leakage_count,
+                SUM(CASE WHEN category='Fuel Anomaly' THEN 1 ELSE 0 END) fuel_anomaly_count,
+                SUM(CASE WHEN category='Carrier Overcharge' THEN 1 ELSE 0 END) carrier_overcharge_count,
+                SUM(CASE WHEN category='Underpriced Contract' THEN 1 ELSE 0 END) underpriced_count,
                 COUNT(*) total
               FROM cost_leakage_items", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
@@ -5657,7 +5657,7 @@ public static class EndpointMappings
                      (SELECT COUNT(*) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id AND a.status <> 'Cancelled') actions_count,
                      (SELECT ROUND(SUM(a.estimated_savings),2) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id) potential_savings
               FROM cost_leakage_items cli
-              ORDER BY FIELD(cli.severity,'Critical','High','Medium','Low'), cli.estimated_loss DESC", ct: ct);
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cli.severity), cli.estimated_loss DESC", ct: ct);
 
     private static async Task<IResult> CostLeakageAcknowledge(long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -5703,8 +5703,8 @@ public static class EndpointMappings
     {
         var clocks = await db.QueryAsync("SELECT status, COUNT(*) cnt FROM hos_clocks GROUP BY status", ct: ct);
         var logs = await db.QueryAsync("SELECT log_date, COUNT(*) entries, SUM(duration_minutes) total_minutes FROM hos_logs WHERE deleted_at IS NULL GROUP BY log_date ORDER BY log_date DESC LIMIT 7", ct: ct);
-        var violations = await db.QueryAsync("SELECT * FROM compliance_violations WHERE category='HOS' AND status IN ('Open','Escalated') ORDER BY FIELD(severity,'Critical','High','Medium','Low') LIMIT 10", ct: ct);
-        var eldDevices = await db.QueryAsync("SELECT e.*, v.vehicle_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id WHERE e.deleted_at IS NULL ORDER BY FIELD(e.status,'Malfunction','Diagnostic','Active') LIMIT 20", ct: ct);
+        var violations = await db.QueryAsync("SELECT * FROM compliance_violations WHERE category='HOS' AND status IN ('Open','Escalated') ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], severity) LIMIT 10", ct: ct);
+        var eldDevices = await db.QueryAsync("SELECT e.*, v.vehicle_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id WHERE e.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Malfunction','Diagnostic','Active'], e.status) LIMIT 20", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { clocks, logs, violations, eldDevices }, "HOS summary"));
     }
 
@@ -5761,7 +5761,7 @@ public static class EndpointMappings
         await db.ExecuteAsync(
             @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
               VALUES (@tenantId,@tenantId,@lang,@country,@tz,@fmt,@curr,@dist,@vol)
-              ON DUPLICATE KEY UPDATE default_language=@lang,default_country=@country,timezone=@tz,date_format=@fmt,currency=@curr,distance_unit=@dist,volume_unit=@vol,updated_at=NOW()",
+              ON CONFLICT (id) DO UPDATE SET default_language=EXCLUDED.default_language,default_country=EXCLUDED.default_country,timezone=EXCLUDED.timezone,date_format=EXCLUDED.date_format,currency=EXCLUDED.currency,distance_unit=EXCLUDED.distance_unit,volume_unit=EXCLUDED.volume_unit,updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", companyId);
@@ -5790,7 +5790,7 @@ public static class EndpointMappings
         await db.ExecuteAsync(
             @"INSERT INTO user_locale_preferences (id,user_id,language,country_code,timezone,date_format)
               VALUES (@userId,@userId,@lang,@country,@tz,@fmt)
-              ON DUPLICATE KEY UPDATE language=@lang,country_code=@country,timezone=@tz,date_format=@fmt,updated_at=NOW()",
+              ON CONFLICT (id) DO UPDATE SET language=EXCLUDED.language,country_code=EXCLUDED.country_code,timezone=EXCLUDED.timezone,date_format=EXCLUDED.date_format,updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@userId", userId > 0 ? userId : companyId);
@@ -5821,7 +5821,7 @@ public static class EndpointMappings
     {
         var tenantId = GetCompanyId(http);
         var catalogCount  = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_catalog WHERE status='Active' AND (tenant_id IS NULL OR tenant_id=@tenantId)", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
-        var runsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_runs WHERE tenant_id=@tenantId AND DATE(started_at)=CURDATE()", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
+        var runsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_runs WHERE tenant_id=@tenantId AND started_at::date=CURRENT_DATE", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
         var scheduled     = await db.ScalarLongAsync("SELECT COUNT(*) FROM scheduled_reports WHERE tenant_id=@tenantId AND status='Active'", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
         var exports       = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_exports WHERE tenant_id=@tenantId AND status='Pending'", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
         var categories    = await db.QueryAsync("SELECT report_category, COUNT(*) cnt FROM report_catalog WHERE status='Active' AND (tenant_id IS NULL OR tenant_id=@tenantId) GROUP BY report_category ORDER BY cnt DESC", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
@@ -5884,7 +5884,7 @@ public static class EndpointMappings
         var userId = http.Items[AuthUserIdItemKey] ?? 1;
         var id = await db.InsertAsync(
             @"INSERT INTO scheduled_reports (tenant_id,report_key,report_name,schedule_name,frequency,recipients_json,status,next_run_at,created_by_user_id)
-              VALUES (@tenantId,@key,@name,@sched,@freq,@rec,'Active',DATE_ADD(NOW(), INTERVAL 7 DAY),@userId)",
+              VALUES (@tenantId,@key,@name,@sched,@freq,@rec,'Active',NOW() + 7 * INTERVAL '1 day',@userId)",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", tenantId);
@@ -5930,13 +5930,13 @@ public static class EndpointMappings
         var driverTotal    = await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", companyId), ct);
         var avgSafety      = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", companyId), ct);
         var avgReadiness   = await db.ScalarDecimalAsync("SELECT AVG(readiness_score) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status != 'Inactive'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsTotal      = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsCompleted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsOnTime     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var jobsTotal      = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var jobsCompleted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var jobsOnTime     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
         var hosCompliant   = await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id WHERE d.company_id=@c AND dcs.overall_status='Compliant'", p => p.Parameters.AddWithValue("@c", companyId), ct);
         var hosTotal       = await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id WHERE d.company_id=@c", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var openIncidents  = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var maintenanceOverdue = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURDATE()", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var openIncidents  = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var maintenanceOverdue = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", companyId), ct);
 
         // If no real fleet data, serve stored kpi_metrics rows
         if (vehicleTotal == 0 && driverTotal == 0)
@@ -5975,8 +5975,8 @@ public static class EndpointMappings
         var onTarget   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='On Target'", ct: ct);
         var atRisk     = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='At Risk'", ct: ct);
         var critical   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical'", ct: ct);
-        var drifting   = await db.QueryAsync("SELECT * FROM kpi_metrics WHERE status IN ('At Risk','Critical') ORDER BY FIELD(status,'Critical','At Risk') LIMIT 10", ct: ct);
-        var byCategory = await db.QueryAsync("SELECT category, COUNT(*) total, SUM(status='On Target') on_target, SUM(status='At Risk') at_risk, SUM(status='Critical') critical FROM kpi_metrics GROUP BY category", ct: ct);
+        var drifting   = await db.QueryAsync("SELECT * FROM kpi_metrics WHERE status IN ('At Risk','Critical') ORDER BY ARRAY_POSITION(ARRAY['Critical','At Risk'], status) LIMIT 10", ct: ct);
+        var byCategory = await db.QueryAsync("SELECT category, COUNT(*) total, SUM(CASE WHEN status='On Target' THEN 1 ELSE 0 END) on_target, SUM(CASE WHEN status='At Risk' THEN 1 ELSE 0 END) at_risk, SUM(CASE WHEN status='Critical' THEN 1 ELSE 0 END) critical FROM kpi_metrics GROUP BY category", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { total, onTarget, atRisk, critical, drifting, byCategory }, "KPI summary"));
     }
 
@@ -5996,7 +5996,7 @@ public static class EndpointMappings
               ORDER BY sb.detected_at DESC LIMIT 10",
             p => p.Parameters.AddWithValue("@t", tenantId), ct);
         var byType = await db.QueryAsync(
-            "SELECT sla_type, COUNT(*) total, SUM(status='Met') met, SUM(status='Breached') breached FROM sla_records WHERE tenant_id=@t GROUP BY sla_type",
+            "SELECT sla_type, COUNT(*) total, SUM(CASE WHEN status='Met' THEN 1 ELSE 0 END) met, SUM(CASE WHEN status='Breached' THEN 1 ELSE 0 END) breached FROM sla_records WHERE tenant_id=@t GROUP BY sla_type",
             p => p.Parameters.AddWithValue("@t", tenantId), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { total, met, atRisk, breached, openBreaches = breaches, byType }, "SLA summary"));
     }
@@ -6075,7 +6075,7 @@ public static class EndpointMappings
         }, ct);
         var roles = await db.ScalarLongAsync("SELECT COUNT(*) FROM roles", ct: ct);
         var recentAuditEvents = await db.ScalarLongAsync(
-            $"SELECT COUNT(*) FROM audit_logs WHERE DATE(created_at)=CURDATE() {(allUsers ? string.Empty : "AND company_id=@companyId")}",
+            $"SELECT COUNT(*) FROM audit_logs WHERE created_at::date=CURRENT_DATE {(allUsers ? string.Empty : "AND company_id=@companyId")}",
             c =>
             {
                 if (!allUsers) c.Parameters.AddWithValue("@companyId", companyId);
@@ -6469,9 +6469,9 @@ public static class EndpointMappings
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
-                     SUM(pod.status='Captured') captured,
-                     SUM(pod.status='Pending') pending,
-                     SUM(pod.proof_type='Digital Signature') digital_signatures,
+                     SUM(CASE WHEN pod.status='Captured' THEN 1 ELSE 0 END) captured,
+                     SUM(CASE WHEN pod.status='Pending' THEN 1 ELSE 0 END) pending,
+                     SUM(CASE WHEN pod.proof_type='Digital Signature' THEN 1 ELSE 0 END) digital_signatures,
                      (SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND proof_status='Pending') jobs_pending_proof
               FROM proof_of_delivery pod WHERE pod.company_id=@cid",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
@@ -6504,7 +6504,7 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "alerts:view");
         if (denied is not null) return denied;
         var rows = await db.QueryAsync(
-            AlertsSql + " WHERE company_id=@cid ORDER BY FIELD(severity,'Critical','High','Warning','Info'), created_at DESC",
+            AlertsSql + " WHERE company_id=@cid ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], severity), created_at DESC",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(rows, "Alerts"));
     }
@@ -6567,7 +6567,7 @@ public static class EndpointMappings
         var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_health_score, safety_score, compliance_score, financial_score, overall_score FROM executive_snapshots WHERE deleted_at IS NULL ORDER BY snapshot_date DESC LIMIT 14", ct: ct);
         var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical' AND deleted_at IS NULL", ct: ct);
         var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE status='Open'", ct: ct);
-        var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE DATE(created_at)=CURDATE()", ct: ct);
+        var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE created_at::date=CURRENT_DATE", ct: ct);
         var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 5", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { latest, trend, kpiCritical = kpiCrit, openSlaBreaches = slaBreach, auditActionsToday = auditToday, aiRecommendations = aiRecs }, "Executive summary"));
     }
@@ -6609,7 +6609,7 @@ public static class EndpointMappings
         string dbStatus;
         try
         {
-            moduleCount = await db.ScalarLongAsync("SELECT COUNT(DISTINCT table_name) FROM information_schema.tables WHERE table_schema=DATABASE()", ct: ct);
+            moduleCount = await db.ScalarLongAsync("SELECT COUNT(DISTINCT table_name) FROM information_schema.tables WHERE table_schema=current_schema()", ct: ct);
             dbStatus    = "Connected";
         }
         catch
@@ -6750,7 +6750,7 @@ public static class EndpointMappings
         var device = await db.QuerySingleAsync(
             @"SELECT e.id, e.company_id, e.vehicle_id, e.driver_id, e.status, e.device_serial, e.hmac_secret
               FROM eld_devices e
-              WHERE e.api_key_hash = SHA2(@rawKey, 256) AND e.deleted_at IS NULL
+              WHERE e.api_key_hash = encode(sha256(@rawKey::bytea), 'hex') AND e.deleted_at IS NULL
               LIMIT 1",
             c => c.Parameters.AddWithValue("@rawKey", rawKey), ct);
 
@@ -6803,7 +6803,7 @@ public static class EndpointMappings
                 "INSERT INTO telemetry_nonces (device_id, nonce) VALUES (@did, @nonce)",
                 c => { c.Parameters.AddWithValue("@did", deviceId); c.Parameters.AddWithValue("@nonce", xNonce); }, ct);
         }
-        catch (MySqlConnector.MySqlException ex) when (ex.Number == 1062)
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
         {
             System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
@@ -6850,7 +6850,7 @@ public static class EndpointMappings
                  battery_voltage, nonce, source, event_time, received_at)
               VALUES
                 (@companyId, @vehicleId, @deviceId, @driverId, @lat, @lng, @speedMph, @heading,
-                 @acc, @eventType, @eng, @fuel, @odo, @batt, @nonce, 'device', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+                 @acc, @eventType, @eng, @fuel, @odo, @batt, @nonce, 'device', NOW(), NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -6880,14 +6880,14 @@ public static class EndpointMappings
                      event_time, received_at, event_count)
                   VALUES
                     (@companyId, @vehicleId, @deviceId, @driverId, @lat, @lng, @speedMph, @heading,
-                     @acc, @eng, @fuel, @odo, @batt, UTC_TIMESTAMP(), UTC_TIMESTAMP(), 1)
-                  ON DUPLICATE KEY UPDATE
-                    device_id=VALUES(device_id), driver_id=VALUES(driver_id),
-                    lat=VALUES(lat), lng=VALUES(lng), speed_mph=VALUES(speed_mph),
-                    heading=VALUES(heading), accuracy_meters=VALUES(accuracy_meters),
-                    engine_status=VALUES(engine_status), fuel_level=VALUES(fuel_level),
-                    odometer_miles=VALUES(odometer_miles), battery_voltage=VALUES(battery_voltage),
-                    event_time=VALUES(event_time), received_at=VALUES(received_at), event_count=event_count+1",
+                     @acc, @eng, @fuel, @odo, @batt, NOW(), NOW(), 1)
+                  ON CONFLICT (vehicle_id) DO UPDATE SET
+                    device_id=EXCLUDED.device_id, driver_id=EXCLUDED.driver_id,
+                    lat=EXCLUDED.lat, lng=EXCLUDED.lng, speed_mph=EXCLUDED.speed_mph,
+                    heading=EXCLUDED.heading, accuracy_meters=EXCLUDED.accuracy_meters,
+                    engine_status=EXCLUDED.engine_status, fuel_level=EXCLUDED.fuel_level,
+                    odometer_miles=EXCLUDED.odometer_miles, battery_voltage=EXCLUDED.battery_voltage,
+                    event_time=EXCLUDED.event_time, received_at=EXCLUDED.received_at, event_count=latest_vehicle_positions.event_count+1",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -6908,7 +6908,7 @@ public static class EndpointMappings
 
         // 15. Heartbeat
         await db.ExecuteAsync(
-            "UPDATE eld_devices SET last_seen_at=UTC_TIMESTAMP() WHERE id=@id",
+            "UPDATE eld_devices SET last_seen_at=NOW() WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", deviceId), ct);
 
         // 16. Alert: speeding (ingest-time, uses tenant threshold, no duplicate open alert)
@@ -7021,8 +7021,8 @@ public static class EndpointMappings
                                  lvp.received_at, lvp.event_count,
                                  v.vehicle_code, v.make, v.model, v.status vehicle_status,
                                  d.full_name driver_name,
-                                 TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) seconds_since_ping,
-                                 CASE WHEN TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) > 900 THEN 1 ELSE 0 END is_stale
+                                 EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
+                                 CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale
                           FROM latest_vehicle_positions lvp
                           LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
                           LEFT JOIN drivers  d ON d.id=lvp.driver_id
@@ -7059,8 +7059,8 @@ public static class EndpointMappings
                      lvp.event_count,
                      v.vehicle_code, v.make, v.model, v.year, v.status vehicle_status,
                      d.full_name driver_name,
-                     TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) seconds_since_ping,
-                     CASE WHEN TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) > 900 THEN 1 ELSE 0 END is_stale
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
+                     CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale
               FROM latest_vehicle_positions lvp
               LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
               LEFT JOIN drivers  d ON d.id=lvp.driver_id
@@ -7124,7 +7124,7 @@ public static class EndpointMappings
         var actor = http.Items[AuthUserIdItemKey]?.ToString() ?? "unknown";
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
-              SET status='Acknowledged', acknowledged_at=UTC_TIMESTAMP(), acknowledged_by=@actor
+              SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@actor
               WHERE id=@id AND company_id=@cid AND status='Open'",
             c =>
             {
@@ -7146,7 +7146,7 @@ public static class EndpointMappings
         var actor = http.Items[AuthUserIdItemKey]?.ToString() ?? "unknown";
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
-              SET status='Resolved', resolved_at=UTC_TIMESTAMP(), resolved_by=@actor
+              SET status='Resolved', resolved_at=NOW(), resolved_by=@actor
               WHERE id=@id AND company_id=@cid AND status IN ('Open','Acknowledged')",
             c =>
             {
@@ -7187,9 +7187,9 @@ public static class EndpointMappings
         await db.ExecuteAsync(
             @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by)
               VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid)
-              ON DUPLICATE KEY UPDATE
-                threshold_value=VALUES(threshold_value), severity=VALUES(severity),
-                enabled=VALUES(enabled), notes=VALUES(notes), updated_at=UTC_TIMESTAMP()",
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET
+                threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity,
+                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -7217,7 +7217,7 @@ public static class EndpointMappings
                      e.vehicle_id, e.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name,
-                     TIMESTAMPDIFF(SECOND, e.last_seen_at, UTC_TIMESTAMP()) seconds_since_ping
+                     EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
               FROM eld_devices e
               LEFT JOIN vehicles v ON v.id=e.vehicle_id
               LEFT JOIN drivers  d ON d.id=e.driver_id
@@ -7268,7 +7268,7 @@ public static class EndpointMappings
                      firmware_version, notes, api_key_hash, hmac_secret, status, created_at)
                   VALUES
                     (@cid, @serial, @model, @provider, @vid, @did, @fw, @notes,
-                     SHA2(@rawKey, 256), @hmac, 'Active', UTC_TIMESTAMP())",
+                     encode(sha256(@rawKey::bytea), 'hex'), @hmac, 'Active', NOW())",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",      companyId);
@@ -7283,7 +7283,7 @@ public static class EndpointMappings
                     c.Parameters.AddWithValue("@hmac",     rawHmacSec);
                 }, ct);
         }
-        catch (MySqlConnector.MySqlException ex) when (ex.Number == 1062)
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
         {
             return Results.Conflict(ApiResponse<object>.Fail("Device serial already registered"));
         }
@@ -7312,7 +7312,7 @@ public static class EndpointMappings
 
         var affected = await db.ExecuteAsync(
             @"UPDATE eld_devices
-              SET api_key_hash=SHA2(@rawKey, 256), hmac_secret=@hmac, updated_at=UTC_TIMESTAMP()
+              SET api_key_hash=encode(sha256(@rawKey::bytea), 'hex'), hmac_secret=@hmac, updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
             c =>
             {
@@ -7340,7 +7340,7 @@ public static class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET status='Revoked', revoked_at=UTC_TIMESTAMP(), updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            "UPDATE eld_devices SET status='Revoked', revoked_at=NOW(), updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
         await audit.LogAsync(http, "device.revoked", "EldDevice", id, null, ct);
@@ -7354,7 +7354,7 @@ public static class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET status='Suspended', updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            "UPDATE eld_devices SET status='Suspended', updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
         await audit.LogAsync(http, "device.suspended", "EldDevice", id, null, ct);
@@ -7368,7 +7368,7 @@ public static class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET status='Active', updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND status='Suspended'",
+            "UPDATE eld_devices SET status='Active', updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND status='Suspended'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found or not in Suspended state"));
         await audit.LogAsync(http, "device.activated", "EldDevice", id, null, ct);
@@ -7383,7 +7383,7 @@ public static class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET vehicle_id=@vid, driver_id=@did, updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            "UPDATE eld_devices SET vehicle_id=@vid, driver_id=@did, updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  id);
@@ -7529,8 +7529,8 @@ public static class EndpointMappings
 
         var affected = await db.ExecuteAsync(
             @"UPDATE safety_events
-              SET status='in_review', reviewed_by=@uid, reviewed_at=UTC_TIMESTAMP(),
-                  notes=COALESCE(@notes, notes), updated_at=UTC_TIMESTAMP()
+              SET status='in_review', reviewed_by=@uid, reviewed_at=NOW(),
+                  notes=COALESCE(@notes, notes), updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status='open'",
             c =>
             {
@@ -7555,8 +7555,8 @@ public static class EndpointMappings
 
         var affected = await db.ExecuteAsync(
             @"UPDATE safety_events
-              SET status='dismissed', reviewed_by=@uid, reviewed_at=UTC_TIMESTAMP(),
-                  notes=COALESCE(@notes, notes), updated_at=UTC_TIMESTAMP()
+              SET status='dismissed', reviewed_by=@uid, reviewed_at=NOW(),
+                  notes=COALESCE(@notes, notes), updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status IN ('open','in_review')",
             c =>
             {
@@ -7581,8 +7581,8 @@ public static class EndpointMappings
 
         var affected = await db.ExecuteAsync(
             @"UPDATE safety_events
-              SET status='resolved', resolved_by=@uid, resolved_at=UTC_TIMESTAMP(),
-                  notes=COALESCE(@notes, notes), updated_at=UTC_TIMESTAMP()
+              SET status='resolved', resolved_by=@uid, resolved_at=NOW(),
+                  notes=COALESCE(@notes, notes), updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status IN ('open','in_review','coaching_assigned','coached')",
             c =>
             {
@@ -7646,7 +7646,7 @@ public static class EndpointMappings
 
         // Advance safety event status
         await db.ExecuteAsync(
-            "UPDATE safety_events SET status='coaching_assigned', updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid",
+            "UPDATE safety_events SET status='coaching_assigned', updated_at=NOW() WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         await audit.LogAsync(http, "safety_event.coaching_assigned", "SafetyEvent", id, $"task_id:{taskId}", ct);
@@ -7666,7 +7666,7 @@ public static class EndpointMappings
         if (task is null) return Results.NotFound(ApiResponse<object>.Fail("Coaching task not found"));
 
         await db.ExecuteAsync(
-            "UPDATE safety_coaching_tasks SET status='completed', completed_at=UTC_TIMESTAMP(), outcome=@outcome, updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid",
+            "UPDATE safety_coaching_tasks SET status='completed', completed_at=NOW(), outcome=@outcome, updated_at=NOW() WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@outcome", body.Notes ?? (object)DBNull.Value); }, ct);
 
         // Advance safety event status if linked
@@ -7674,7 +7674,7 @@ public static class EndpointMappings
         {
             var evId = Convert.ToInt64(eid);
             await db.ExecuteAsync(
-                "UPDATE safety_events SET status='coached', updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND status='coaching_assigned'",
+                "UPDATE safety_events SET status='coached', updated_at=NOW() WHERE id=@id AND company_id=@cid AND status='coaching_assigned'",
                 c => { c.Parameters.AddWithValue("@id", evId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
 
@@ -7690,7 +7690,7 @@ public static class EndpointMappings
         var companyId = GetCompanyId(http);
 
         var affected = await db.ExecuteAsync(
-            "UPDATE safety_coaching_tasks SET driver_acknowledged_at=UTC_TIMESTAMP(), updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND driver_acknowledged_at IS NULL",
+            "UPDATE safety_coaching_tasks SET driver_acknowledged_at=NOW(), updated_at=NOW() WHERE id=@id AND company_id=@cid AND driver_acknowledged_at IS NULL",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Coaching task not found or already acknowledged"));
@@ -7747,10 +7747,10 @@ public static class EndpointMappings
                 SUM(CASE WHEN event_type='Harsh Braking' THEN 1 ELSE 0 END) repeated_speeding,
                 SUM(CASE WHEN event_type='Distracted Driving' THEN 1 ELSE 0 END) geofence_events,
                 SUM(CASE WHEN event_type='Tailgating' THEN 1 ELSE 0 END) stale_device_events,
-                SUM(CASE WHEN event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR) THEN 1 ELSE 0 END) events_24h
+                SUM(CASE WHEN event_time > NOW() - 24 * INTERVAL '1 hour' THEN 1 ELSE 0 END) events_24h
               FROM safety_events
               WHERE company_id=@cid
-                AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)",
+                AND event_time > NOW() - 30 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
         // Average fleet safety score (30d)
@@ -7765,16 +7765,16 @@ public static class EndpointMappings
 
         // Overdue coaching
         var overdueCoaching = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM safety_coaching_tasks WHERE company_id=@cid AND status='pending' AND due_date < CURDATE()",
+            "SELECT COUNT(*) FROM safety_coaching_tasks WHERE company_id=@cid AND status='pending' AND due_date < CURRENT_DATE",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
         // 30-day daily trend (events per day)
         var trend = await db.QueryAsync(
-            @"SELECT DATE(event_time) event_date, COUNT(*) event_count,
+            @"SELECT event_time::date event_date, COUNT(*) event_count,
                      SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_count
               FROM safety_events
-              WHERE company_id=@cid AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)
-              GROUP BY DATE(event_time)
+              WHERE company_id=@cid AND event_time > NOW() - 30 * INTERVAL '1 day'
+              GROUP BY event_time::date
               ORDER BY event_date",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
@@ -7837,9 +7837,9 @@ public static class EndpointMappings
         await db.ExecuteAsync(
             @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by)
               VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid)
-              ON DUPLICATE KEY UPDATE
-                threshold_value=VALUES(threshold_value), severity=VALUES(severity),
-                enabled=VALUES(enabled), notes=VALUES(notes), updated_at=UTC_TIMESTAMP()",
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET
+                threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity,
+                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -7994,8 +7994,8 @@ public static class EndpointMappings
         var companyId = GetCompanyId(http);
 
         var rows = await db.ExecuteAsync(
-            @"UPDATE trips SET status='active', actual_start_time=COALESCE(actual_start_time, UTC_TIMESTAMP()),
-                               updated_at=UTC_TIMESTAMP()
+            @"UPDATE trips SET status='active', actual_start_time=COALESCE(actual_start_time, NOW()),
+                               updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status='planned'",
             c =>
             {
@@ -8018,9 +8018,9 @@ public static class EndpointMappings
         var rows = await db.ExecuteAsync(
             @"UPDATE trips
               SET status='completed',
-                  actual_end_time=COALESCE(actual_end_time, UTC_TIMESTAMP()),
-                  actual_duration_minutes=TIMESTAMPDIFF(MINUTE, actual_start_time, UTC_TIMESTAMP()),
-                  updated_at=UTC_TIMESTAMP()
+                  actual_end_time=COALESCE(actual_end_time, NOW()),
+                  actual_duration_minutes=(EXTRACT(EPOCH FROM (NOW() - actual_start_time)) / 60)::BIGINT,
+                  updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status='active'",
             c =>
             {
@@ -8042,7 +8042,7 @@ public static class EndpointMappings
         var notes     = body?.Notes ?? "";
 
         var rows = await db.ExecuteAsync(
-            "UPDATE trips SET status='exception', updated_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid AND status='active'",
+            "UPDATE trips SET status='exception', updated_at=NOW() WHERE id=@id AND company_id=@cid AND status='active'",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  id);
@@ -8070,9 +8070,9 @@ public static class EndpointMappings
                 (SELECT COUNT(*) FROM vehicles v WHERE v.company_id=@cid AND v.availability_status='in_maintenance' AND v.deleted_at IS NULL) vehicles_in_maintenance,
                 (SELECT COUNT(*) FROM dvir_defects dd JOIN dvir_reports dr ON dr.id=dd.dvir_report_id WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved') AND dd.out_of_service=1) critical_open_defects,
                 (SELECT COUNT(*) FROM dvir_defects dd JOIN dvir_reports dr ON dr.id=dd.dvir_report_id WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved')) total_open_defects,
-                (SELECT COUNT(*) FROM work_orders wo WHERE wo.company_id=@cid AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled') AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')) open_work_orders,
-                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND (mi.status='Overdue' OR mi.due_date < CURDATE()) AND mi.deleted_at IS NULL) overdue_pm,
-                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND mi.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 14 DAY) AND mi.deleted_at IS NULL) pm_due_14d,
+                (SELECT COUNT(*) FROM work_orders wo WHERE wo.company_id=@cid AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled') AND wo.deleted_at IS NULL) open_work_orders,
+                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE) AND mi.deleted_at IS NULL) overdue_pm,
+                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day' AND mi.deleted_at IS NULL) pm_due_14d,
                 (SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=@cid AND fc.status='active') active_fault_codes,
                 (SELECT COUNT(*) FROM dvir_reports dr WHERE dr.company_id=@cid AND dr.inspection_status='defect_found') uninspected_defect_reports,
                 ROUND(100 * (SELECT COUNT(*) FROM vehicles v2 WHERE v2.company_id=@cid AND v2.availability_status='available' AND v2.deleted_at IS NULL)
@@ -8087,7 +8087,7 @@ public static class EndpointMappings
               LEFT JOIN vehicles v ON v.id=dr.vehicle_id
               LEFT JOIN drivers d ON d.id=dr.driver_id
               WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved')
-              ORDER BY dd.out_of_service DESC, FIELD(dd.severity,'Critical','Major','Minor'), dd.created_at ASC
+              ORDER BY dd.out_of_service DESC, ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.created_at ASC
               LIMIT 20",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
@@ -8095,8 +8095,8 @@ public static class EndpointMappings
             @"SELECT mi.*, v.vehicle_code
               FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id
               WHERE mi.company_id=@cid AND mi.deleted_at IS NULL
-                AND (mi.status='Overdue' OR mi.due_date <= DATE_ADD(CURDATE(), INTERVAL 14 DAY))
-              ORDER BY FIELD(mi.status,'Overdue','Open'), mi.due_date ASC LIMIT 10",
+                AND (mi.status='Overdue' OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day')
+              ORDER BY ARRAY_POSITION(ARRAY['Overdue','Open'], mi.status), mi.due_date ASC LIMIT 10",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
         var recentWos = await db.QueryAsync(
@@ -8104,8 +8104,8 @@ public static class EndpointMappings
               FROM work_orders wo
               LEFT JOIN vehicles v ON v.id=wo.vehicle_id
               LEFT JOIN users u ON u.id=wo.assigned_to_user_id
-              WHERE wo.company_id=@cid AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')
-              ORDER BY FIELD(wo.status,'in_progress','In Progress','waiting_parts','Waiting Parts','open','Open'), wo.created_date DESC
+              WHERE wo.company_id=@cid AND wo.deleted_at IS NULL
+              ORDER BY ARRAY_POSITION(ARRAY['in_progress','In Progress','waiting_parts','Waiting Parts','open','Open'], wo.status), wo.created_date DESC
               LIMIT 10",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
@@ -8190,7 +8190,7 @@ public static class EndpointMappings
                  odometer_miles, engine_hours, notes, submitted_at)
               VALUES (@cid, @rnum, @did, @vid, @tid,
                       @itype, @status, @defects, @safe,
-                      @odo, @hrs, @notes, UTC_TIMESTAMP())",
+                      @odo, @hrs, @notes, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",     companyId);
@@ -8265,7 +8265,7 @@ public static class EndpointMappings
 
         // Update vehicle last_inspection_at.
         await db.ExecuteAsync(
-            "UPDATE vehicles SET last_inspection_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid",
+            "UPDATE vehicles SET last_inspection_at=NOW() WHERE id=@id AND company_id=@cid",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  body.VehicleId);
@@ -8346,7 +8346,7 @@ public static class EndpointMappings
         var rows = await db.ExecuteAsync(
             @"UPDATE dvir_reports SET
                 inspection_status='reviewed', mechanic_review_status='Completed',
-                reviewed_by=@uid, reviewed_at=UTC_TIMESTAMP(), notes=COALESCE(@notes,notes)
+                reviewed_by=@uid, reviewed_at=NOW(), notes=COALESCE(@notes,notes)
               WHERE id=@id AND company_id=@cid
                 AND inspection_status IN ('submitted','defect_found')",
             c =>
@@ -8382,7 +8382,7 @@ public static class EndpointMappings
               WHERE COALESCE(dr.company_id, dd.company_id)=@cid
                 AND (@status IS NULL OR dd.status=@status)
                 AND (@vid IS NULL OR COALESCE(dd.vehicle_id, dr.vehicle_id)=@vid)
-              ORDER BY dd.out_of_service DESC, FIELD(dd.severity,'Critical','Major','Minor'), dd.created_at ASC
+              ORDER BY dd.out_of_service DESC, ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.created_at ASC
               LIMIT 100",
             c =>
             {
@@ -8404,7 +8404,7 @@ public static class EndpointMappings
         var rows = await db.ExecuteAsync(
             @"UPDATE dvir_defects dd
               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-              SET dd.status='acknowledged', dd.updated_at=UTC_TIMESTAMP()
+              SET dd.status='acknowledged', dd.updated_at=NOW()
               WHERE dd.id=@id AND dr.company_id=@cid AND dd.status='Open'",
             c =>
             {
@@ -8428,8 +8428,8 @@ public static class EndpointMappings
         var rows = await db.ExecuteAsync(
             @"UPDATE dvir_defects dd
               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-              SET dd.status='resolved', dd.resolved_at=UTC_TIMESTAMP(), dd.resolved_by=@uid,
-                  dd.updated_at=UTC_TIMESTAMP()
+              SET dd.status='resolved', dd.resolved_at=NOW(), dd.resolved_by=@uid,
+                  dd.updated_at=NOW()
               WHERE dd.id=@id AND dr.company_id=@cid
                 AND dd.status NOT IN ('resolved','rejected')",
             c =>
@@ -8464,10 +8464,10 @@ public static class EndpointMappings
               LEFT JOIN vehicles v ON v.id=wo.vehicle_id
               LEFT JOIN users u ON u.id=wo.assigned_to_user_id
               WHERE wo.company_id=@cid
-                AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')
+                AND wo.deleted_at IS NULL
                 AND (@status IS NULL OR wo.status=@status)
                 AND (@vid IS NULL OR wo.vehicle_id=@vid)
-              ORDER BY FIELD(wo.status,'in_progress','In Progress','open','Open','assigned','Assigned'), wo.created_date DESC
+              ORDER BY ARRAY_POSITION(ARRAY['in_progress','In Progress','open','Open','assigned','Assigned'], wo.status), wo.created_date DESC
               LIMIT @limit",
             c =>
             {
@@ -8505,7 +8505,7 @@ public static class EndpointMappings
                 @"SELECT COUNT(*) FROM work_orders
                   WHERE company_id=@cid AND vehicle_id=@vid
                     AND issue_type=@stype AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                    AND (deleted_at IS NULL OR deleted_at='0000-00-00 00:00:00')",
+                    AND deleted_at IS NULL",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",   companyId);
@@ -8552,10 +8552,10 @@ public static class EndpointMappings
 
         var rows = await db.ExecuteAsync(
             @"UPDATE work_orders
-              SET status='assigned', assigned_to_user_id=@uid, assigned_at=UTC_TIMESTAMP()
+              SET status='assigned', assigned_to_user_id=@uid, assigned_at=NOW()
               WHERE id=@id AND company_id=@cid
                 AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                AND (deleted_at IS NULL OR deleted_at='0000-00-00 00:00:00')",
+                AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  id);
@@ -8577,11 +8577,11 @@ public static class EndpointMappings
 
         var rows = await db.ExecuteAsync(
             @"UPDATE work_orders
-              SET status='Completed', completed_at=UTC_TIMESTAMP(),
+              SET status='Completed', completed_at=NOW(),
                   actual_cost=COALESCE(@cost, estimated_cost)
               WHERE id=@id AND company_id=@cid
                 AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                AND (deleted_at IS NULL OR deleted_at='0000-00-00 00:00:00')",
+                AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@id",   id);
@@ -8624,12 +8624,12 @@ public static class EndpointMappings
               VALUES (@cid, @name, @stype, @ttype,
                       @miles, @hrs, @days,
                       @warn, @pri, @cost, @ena)
-              ON DUPLICATE KEY UPDATE
-                rule_name=VALUES(rule_name), trigger_type=VALUES(trigger_type),
-                interval_miles=VALUES(interval_miles), interval_engine_hours=VALUES(interval_engine_hours),
-                interval_days=VALUES(interval_days), warning_threshold_pct=VALUES(warning_threshold_pct),
-                priority=VALUES(priority), estimated_cost=VALUES(estimated_cost),
-                enabled=VALUES(enabled), updated_at=UTC_TIMESTAMP()",
+              ON CONFLICT (company_id, service_type) DO UPDATE SET
+                rule_name=EXCLUDED.rule_name, trigger_type=EXCLUDED.trigger_type,
+                interval_miles=EXCLUDED.interval_miles, interval_engine_hours=EXCLUDED.interval_engine_hours,
+                interval_days=EXCLUDED.interval_days, warning_threshold_pct=EXCLUDED.warning_threshold_pct,
+                priority=EXCLUDED.priority, estimated_cost=EXCLUDED.estimated_cost,
+                enabled=EXCLUDED.enabled, updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -8662,7 +8662,7 @@ public static class EndpointMappings
         var device = (await db.QueryAsync(
             @"SELECT d.id, d.company_id, d.vehicle_id, d.device_id, d.status
               FROM eld_devices d
-              WHERE SHA2(@key, 256) = d.api_key_hash AND d.deleted_at IS NULL LIMIT 1",
+              WHERE encode(sha256(@key::bytea), 'hex') = d.api_key_hash AND d.deleted_at IS NULL LIMIT 1",
             c => c.Parameters.AddWithValue("@key", rawKey), ct)).FirstOrDefault();
 
         if (device is null)        return Results.Unauthorized();
@@ -8686,11 +8686,11 @@ public static class EndpointMappings
                     (company_id, device_id, vehicle_id, code_type, code, description,
                      severity, occurrence_count, status)
                   VALUES (@cid, @did, @vid, @ctype, @code, @desc, @sev, 1, 'active')
-                  ON DUPLICATE KEY UPDATE
-                    last_seen_at=UTC_TIMESTAMP(),
-                    occurrence_count=occurrence_count+1,
-                    description=COALESCE(VALUES(description), description),
-                    severity=VALUES(severity)",
+                  ON CONFLICT (company_id, device_id, code_type, code) DO UPDATE SET
+                    last_seen_at=NOW(),
+                    occurrence_count=fault_codes.occurrence_count+1,
+                    description=COALESCE(EXCLUDED.description, fault_codes.description),
+                    severity=EXCLUDED.severity",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",   companyId);
@@ -8702,7 +8702,7 @@ public static class EndpointMappings
                     c.Parameters.AddWithValue("@sev",   body.Severity ?? "Warning");
                 }, ct);
         }
-        catch (MySqlConnector.MySqlException ex) when (ex.Number == 1062) { /* concurrent upsert race, safe to ignore */ }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505") { /* concurrent upsert race, safe to ignore */ }
 
         // Critical fault code → create defect automatically.
         if ((body.Severity ?? "").Equals("Critical", StringComparison.OrdinalIgnoreCase) && vehicleId.HasValue)
@@ -8725,7 +8725,7 @@ public static class EndpointMappings
                     @"INSERT INTO dvir_reports
                         (company_id, report_number, driver_id, vehicle_id, inspection_type,
                          inspection_status, defects_found, safe_to_operate, submitted_at)
-                      VALUES (@cid, @rnum, 0, @vid, 'fault_code', 'defect_found', 1, 0, UTC_TIMESTAMP())",
+                      VALUES (@cid, @rnum, 0, @vid, 'fault_code', 'defect_found', 1, 0, NOW())",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",  companyId);
@@ -8773,7 +8773,7 @@ public static class EndpointMappings
               FROM fault_codes fc
               LEFT JOIN vehicles v ON v.id=fc.vehicle_id
               WHERE fc.company_id=@cid AND fc.status=@status
-              ORDER BY FIELD(fc.severity,'Critical','Warning','Info'), fc.last_seen_at DESC
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], fc.severity), fc.last_seen_at DESC
               LIMIT 100",
             c =>
             {
@@ -9060,7 +9060,7 @@ public static class EndpointMappings
                       @pickup, @delivery,
                       @uid, @notes, @override,
                       @safetyOvr, @hosOvr, @elig,
-                      UTC_TIMESTAMP())",
+                      NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",       companyId);
@@ -9123,7 +9123,7 @@ public static class EndpointMappings
 
         var rows = await db.ExecuteAsync(
             @"UPDATE dispatch_assignments
-              SET assignment_status='accepted', status='Accepted', accepted_at=UTC_TIMESTAMP()
+              SET assignment_status='accepted', status='Accepted', accepted_at=NOW()
               WHERE id=@id AND company_id=@cid AND assignment_status='assigned'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
@@ -9164,8 +9164,8 @@ public static class EndpointMappings
 
         var updateSql = to switch
         {
-            "in_transit"  => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_pickup_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid",
-            "delivered"   => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_delivery_at=UTC_TIMESTAMP(), completed_at=UTC_TIMESTAMP() WHERE id=@id AND company_id=@cid",
+            "in_transit"  => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_pickup_at=NOW() WHERE id=@id AND company_id=@cid",
+            "delivered"   => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_delivery_at=NOW(), completed_at=NOW() WHERE id=@id AND company_id=@cid",
             _             => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos WHERE id=@id AND company_id=@cid",
         };
 
@@ -9193,7 +9193,7 @@ public static class EndpointMappings
         {
             var tripId = Convert.ToInt64(current["tripId"]);
             await db.ExecuteAsync(
-                "UPDATE trips SET status='active', actual_start_time=UTC_TIMESTAMP() WHERE id=@tid AND status='planned'",
+                "UPDATE trips SET status='active', actual_start_time=NOW() WHERE id=@tid AND status='planned'",
                 c => c.Parameters.AddWithValue("@tid", tripId), ct);
         }
 
@@ -9202,7 +9202,7 @@ public static class EndpointMappings
         {
             var tripId = Convert.ToInt64(current["tripId"]);
             await db.ExecuteAsync(
-                "UPDATE trips SET status='completed', actual_end_time=UTC_TIMESTAMP() WHERE id=@tid AND status='active'",
+                "UPDATE trips SET status='completed', actual_end_time=NOW() WHERE id=@tid AND status='active'",
                 c => c.Parameters.AddWithValue("@tid", tripId), ct);
         }
 
@@ -9263,7 +9263,7 @@ public static class EndpointMappings
 
         var rows = await db.ExecuteAsync(
             @"UPDATE dispatch_assignments
-              SET assignment_status='cancelled', status='Cancelled', cancelled_at=UTC_TIMESTAMP()
+              SET assignment_status='cancelled', status='Cancelled', cancelled_at=NOW()
               WHERE id=@id AND company_id=@cid
                 AND assignment_status NOT IN ('delivered','cancelled')",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
@@ -9292,7 +9292,7 @@ public static class EndpointMappings
             @"INSERT INTO dispatch_proofs
                 (company_id, assignment_id, proof_type, confirmed_at,
                  confirmed_by_user_id, notes, evidence_hash, lat, lng)
-              VALUES (@cid, @aid, @ptype, UTC_TIMESTAMP(),
+              VALUES (@cid, @aid, @ptype, NOW(),
                       @uid, @notes, @hash, @lat, @lng)",
             c =>
             {
@@ -9312,7 +9312,7 @@ public static class EndpointMappings
             await db.ExecuteAsync(
                 @"UPDATE dispatch_assignments
                   SET assignment_status='delivered', status='Delivered',
-                      actual_delivery_at=UTC_TIMESTAMP(), completed_at=UTC_TIMESTAMP()
+                      actual_delivery_at=NOW(), completed_at=NOW()
                   WHERE id=@id AND company_id=@cid
                     AND assignment_status IN ('arrived_delivery','in_transit')",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
@@ -9321,7 +9321,7 @@ public static class EndpointMappings
         {
             await db.ExecuteAsync(
                 @"UPDATE dispatch_assignments
-                  SET actual_pickup_at=UTC_TIMESTAMP()
+                  SET actual_pickup_at=NOW()
                   WHERE id=@id AND company_id=@cid AND actual_pickup_at IS NULL",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
@@ -9367,7 +9367,7 @@ public static class EndpointMappings
               LEFT JOIN users rb ON rb.id=dex.resolved_by
               WHERE dex.company_id=@cid
                 AND (@status IS NULL OR dex.status=@status)
-              ORDER BY FIELD(dex.status,'open','acknowledged','resolved'), dex.created_at DESC
+              ORDER BY ARRAY_POSITION(ARRAY['open','acknowledged','resolved'], dex.status), dex.created_at DESC
               LIMIT 100",
             c =>
             {
@@ -9416,7 +9416,7 @@ public static class EndpointMappings
         var blockingWo = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM work_orders WHERE vehicle_id=@vid AND company_id=@cid
               AND status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
-              AND (deleted_at IS NULL OR deleted_at='0000-00-00 00:00:00')",
+              AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@vid", vehicleId);
@@ -9427,7 +9427,7 @@ public static class EndpointMappings
 
         var overduePm = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM maintenance_items WHERE vehicle_id=@vid AND company_id=@cid
-              AND (status='Overdue' OR due_date < CURDATE()) AND deleted_at IS NULL",
+              AND (status='Overdue' OR due_date < CURRENT_DATE) AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@vid", vehicleId);
@@ -9754,13 +9754,13 @@ public static class EndpointMappings
                  public_tracking_token, visibility_status, share_enabled, expires_at, created_by)
               VALUES (@companyId, @customerId, @shipmentId, @assignmentId, @tripId,
                       @token, 'active', 1, @expiresAt, @userId)
-              ON DUPLICATE KEY UPDATE
-                public_tracking_token = @token,
+              ON CONFLICT (company_id, shipment_id) DO UPDATE SET
+                public_tracking_token = EXCLUDED.public_tracking_token,
                 visibility_status = 'active',
                 share_enabled = 1,
-                expires_at = @expiresAt,
-                dispatch_assignment_id = COALESCE(@assignmentId, dispatch_assignment_id),
-                trip_id = COALESCE(@tripId, trip_id),
+                expires_at = EXCLUDED.expires_at,
+                dispatch_assignment_id = COALESCE(EXCLUDED.dispatch_assignment_id, customer_visibility.dispatch_assignment_id),
+                trip_id = COALESCE(EXCLUDED.trip_id, customer_visibility.trip_id),
                 updated_at = NOW()",
             c =>
             {
@@ -9888,11 +9888,11 @@ public static class EndpointMappings
 
         var stats = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_tracked,
-                     SUM(cv.share_enabled=1 AND cv.expires_at > NOW() AND cv.visibility_status='active') active_shares,
-                     SUM(da.assignment_status='exception') exception_count,
-                     SUM(da.assignment_status='delivered') delivered_count,
-                     SUM(da.planned_delivery_at IS NOT NULL AND da.planned_delivery_at < NOW()
-                         AND da.assignment_status NOT IN ('delivered','cancelled')) overdue_count
+                     SUM(CASE WHEN cv.share_enabled=1 AND cv.expires_at > NOW() AND cv.visibility_status='active' THEN 1 ELSE 0 END) active_shares,
+                     SUM(CASE WHEN da.assignment_status='exception' THEN 1 ELSE 0 END) exception_count,
+                     SUM(CASE WHEN da.assignment_status='delivered' THEN 1 ELSE 0 END) delivered_count,
+                     SUM(CASE WHEN da.planned_delivery_at IS NOT NULL AND da.planned_delivery_at < NOW()
+                         AND da.assignment_status NOT IN ('delivered','cancelled') THEN 1 ELSE 0 END) overdue_count
               FROM customer_visibility cv
               LEFT JOIN dispatch_assignments da ON da.id = cv.dispatch_assignment_id
               WHERE cv.company_id = @companyId",
@@ -9906,7 +9906,7 @@ public static class EndpointMappings
               LEFT JOIN latest_vehicle_positions lvp ON lvp.vehicle_id = da.vehicle_id
               WHERE cv.company_id = @companyId
                 AND da.assignment_status NOT IN ('delivered','cancelled')
-                AND (lvp.recorded_at IS NULL OR lvp.recorded_at < DATE_SUB(NOW(), INTERVAL 30 MINUTE))
+                AND (lvp.recorded_at IS NULL OR lvp.recorded_at < NOW() - 30 * INTERVAL '1 minute')
               LIMIT 10",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct);
 
@@ -11100,7 +11100,7 @@ public static class EndpointMappings
               FROM coaching_tasks ct
               LEFT JOIN safety_events se ON se.id = ct.safety_event_id
               WHERE ct.driver_id=@did AND ct.company_id=@cid AND ct.deleted_at IS NULL
-              ORDER BY FIELD(ct.priority,'Critical','High','Medium','Low'), ct.due_at ASC
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], ct.priority), ct.due_at ASC
               LIMIT 30",
             c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
@@ -11758,13 +11758,13 @@ public static class EndpointMappings
         var vehicleActive = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status IN ('Active','In Transit','Assigned')", p => p.Parameters.AddWithValue("@c", c), ct);
         var driverTotal   = await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         var avgSafety     = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsTotal     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsCompleted = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsOnTime    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openIncidents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var maintOverdue  = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURDATE()", p => p.Parameters.AddWithValue("@c", c), ct);
+        var jobsTotal     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var jobsCompleted = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var jobsOnTime    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var openIncidents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var maintOverdue  = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
         var openExcept    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var proofCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var proofCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
 
         decimal fleetUtil  = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : 0;
         decimal otdRate    = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : 0;
@@ -11796,12 +11796,12 @@ public static class EndpointMappings
         if (denied is not null) return denied;
 
         var activeTrips    = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND status IN ('Active','In Progress','In Transit')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND DATE(start_time)=CURDATE()", p => p.Parameters.AddWithValue("@c", c), ct);
-        var avgCompliance  = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND start_time::date=CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
+        var avgCompliance  = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var openExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
         var activeAssignments = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status NOT IN ('delivered','cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
         var exceptionTypes = await db.QueryAsync(
-            "SELECT exception_type, COUNT(*) cnt FROM dispatch_exceptions WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY exception_type ORDER BY cnt DESC LIMIT 5",
+            "SELECT exception_type, COUNT(*) cnt FROM dispatch_exceptions WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY exception_type ORDER BY cnt DESC LIMIT 5",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -11823,11 +11823,11 @@ public static class EndpointMappings
         var assigned  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='assigned'", p => p.Parameters.AddWithValue("@c", c), ct);
         var accepted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='accepted'", p => p.Parameters.AddWithValue("@c", c), ct);
         var inTransit = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status IN ('en_route_pickup','in_transit','arrived_pickup','loaded','arrived_delivery')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var delivered = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='delivered' AND updated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var delivered = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='delivered' AND updated_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var exceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='exception'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var proofs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignment_proofs WHERE company_id=@c AND captured_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var proofs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignment_proofs WHERE company_id=@c AND captured_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var statusDist = await db.QueryAsync(
-            "SELECT assignment_status AS status, COUNT(*) cnt FROM dispatch_assignments WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY assignment_status ORDER BY cnt DESC",
+            "SELECT assignment_status AS status, COUNT(*) cnt FROM dispatch_assignments WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY assignment_status ORDER BY cnt DESC",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -11847,17 +11847,17 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "safety:view");
         if (denied is not null) return denied;
 
-        var totalEvents   = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var criticalEvents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var totalEvents   = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var criticalEvents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var openCoaching  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var overdueCoach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURDATE() AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
+        var overdueCoach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         var avgSafety     = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var eventTypes    = await db.QueryAsync("SELECT event_type, severity, COUNT(*) cnt FROM safety_events WHERE company_id=@c AND event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY event_type, severity ORDER BY cnt DESC LIMIT 8", p => p.Parameters.AddWithValue("@c", c), ct);
+        var eventTypes    = await db.QueryAsync("SELECT event_type, severity, COUNT(*) cnt FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day' GROUP BY event_type, severity ORDER BY cnt DESC LIMIT 8", p => p.Parameters.AddWithValue("@c", c), ct);
         var topRiskDrivers = await db.QueryAsync(
             @"SELECT d.id, d.driver_code, d.full_name driver_name, d.safety_score,
                      COUNT(se.id) event_count
               FROM drivers d
-              LEFT JOIN safety_events se ON se.driver_id=d.id AND se.event_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+              LEFT JOIN safety_events se ON se.driver_id=d.id AND se.event_time >= NOW() - 30 * INTERVAL '1 day'
               WHERE d.company_id=@c AND d.deleted_at IS NULL
               GROUP BY d.id, d.driver_code, d.full_name, d.safety_score
               ORDER BY event_count DESC, d.safety_score ASC LIMIT 5",
@@ -11885,13 +11885,13 @@ public static class EndpointMappings
         var oosVehicles    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND out_of_service=1", p => p.Parameters.AddWithValue("@c", c), ct);
         var criticalDefects = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_defects WHERE company_id=@c AND severity='Critical' AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
         var openWorkOrders = await db.ScalarLongAsync("SELECT COUNT(*) FROM work_orders WHERE company_id=@c AND status NOT IN ('Completed','Closed','Cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var pmOverdue      = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURDATE()", p => p.Parameters.AddWithValue("@c", c), ct);
-        var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND inspection_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var pmOverdue      = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
+        var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND inspection_date >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var recurringFaults = await db.QueryAsync(
             "SELECT code, component, COUNT(*) total, MAX(recurrence_count) max_recurrences FROM fault_codes WHERE company_id=@c AND recurrence_count > 1 GROUP BY code, component ORDER BY total DESC LIMIT 5",
             p => p.Parameters.AddWithValue("@c", c), ct);
         var defectsByCategory = await db.QueryAsync(
-            "SELECT category, severity, COUNT(*) cnt FROM dvir_defects WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY category, severity ORDER BY cnt DESC LIMIT 8",
+            "SELECT category, severity, COUNT(*) cnt FROM dvir_defects WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY category, severity ORDER BY cnt DESC LIMIT 8",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -11917,7 +11917,7 @@ public static class EndpointMappings
         var slaBreached = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c AND status='Breached'", p => p.Parameters.AddWithValue("@c", c), ct);
         var openBreaches = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE tenant_id=@c AND status='Open'", p => p.Parameters.AddWithValue("@c", c), ct);
         var slaByType  = await db.QueryAsync(
-            "SELECT sla_type, COUNT(*) total, SUM(status='Met') met, SUM(status='Breached') breached FROM sla_records WHERE tenant_id=@c GROUP BY sla_type",
+            "SELECT sla_type, COUNT(*) total, SUM(CASE WHEN status='Met' THEN 1 ELSE 0 END) met, SUM(CASE WHEN status='Breached' THEN 1 ELSE 0 END) breached FROM sla_records WHERE tenant_id=@c GROUP BY sla_type",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         decimal metRate = slaTotal > 0 ? Math.Round(slaMet * 100m / slaTotal, 1) : 0;
@@ -11939,31 +11939,31 @@ public static class EndpointMappings
 
         // 7-day daily dispatch activity
         var dispatchTrend = await db.QueryAsync(
-            @"SELECT DATE(created_at) AS day,
-                     SUM(assignment_status='delivered') AS delivered,
-                     SUM(assignment_status='exception') AS exceptions,
+            @"SELECT created_at::date AS day,
+                     SUM(CASE WHEN assignment_status='delivered' THEN 1 ELSE 0 END) AS delivered,
+                     SUM(CASE WHEN assignment_status='exception' THEN 1 ELSE 0 END) AS exceptions,
                      COUNT(*) AS total
               FROM dispatch_assignments
-              WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-              GROUP BY DATE(created_at) ORDER BY day",
+              WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'
+              GROUP BY created_at::date ORDER BY day",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         // 7-day daily safety events
         var safetyTrend = await db.QueryAsync(
-            @"SELECT DATE(event_time) AS day, severity, COUNT(*) AS cnt
+            @"SELECT event_time::date AS day, severity, COUNT(*) AS cnt
               FROM safety_events
-              WHERE company_id=@c AND event_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-              GROUP BY DATE(event_time), severity ORDER BY day",
+              WHERE company_id=@c AND event_time >= NOW() - 7 * INTERVAL '1 day'
+              GROUP BY event_time::date, severity ORDER BY day",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         // 30-day vs 7-day OTD comparison
         var otd30 = await db.ScalarDecimalAsync(
-            @"SELECT IFNULL(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(status IN ('Completed','Delivered')),0), 0)
-              FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
+            @"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+              FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
         var otd7 = await db.ScalarDecimalAsync(
-            @"SELECT IFNULL(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(status IN ('Completed','Delivered')),0), 0)
-              FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+            @"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+              FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -11988,8 +11988,8 @@ public static class EndpointMappings
         var insights = new List<object>();
 
         // On-time delivery trend
-        var otd30 = await db.ScalarDecimalAsync(@"SELECT IFNULL(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(status IN ('Completed','Delivered')),0), null) FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
-        var otd7  = await db.ScalarDecimalAsync(@"SELECT IFNULL(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(status IN ('Completed','Delivered')),0), null) FROM jobs WHERE company_id=@c AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var otd30 = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var otd7  = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         if (otd30.HasValue && otd7.HasValue)
         {
             var diff = Math.Round(otd7.Value - otd30.Value, 1);
@@ -12006,10 +12006,10 @@ public static class EndpointMappings
         }
 
         // Route compliance
-        var compAvg = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var compAvg = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         if (compAvg.HasValue && compAvg.Value < 85)
         {
-            var lowCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND compliance_score < 70 AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+            var lowCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND compliance_score < 70 AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
             insights.Add(new
             {
                 type     = "route_compliance",
@@ -12022,7 +12022,7 @@ public static class EndpointMappings
         }
 
         // Safety events
-        var safetyCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND review_status NOT IN ('Closed','Dismissed') AND event_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)", p => p.Parameters.AddWithValue("@c", c), ct);
+        var safetyCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         if (safetyCount > 0)
             insights.Add(new
             {
@@ -12048,7 +12048,7 @@ public static class EndpointMappings
             });
 
         // Coaching overdue
-        var overdueCoach = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURDATE() AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
+        var overdueCoach = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         if (overdueCoach > 0)
             insights.Add(new
             {
@@ -12609,7 +12609,7 @@ public static class EndpointMappings
         var settingsTask      = settingsSvc.GetAsync(companyId, http.RequestAborted);
         var failureCountTask  = eventSvc.CountRecentFailuresAsync(companyId, 60, http.RequestAborted);
         var overdueReviewTask = db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM access_reviews WHERE company_id=@cid AND status IN ('pending','in_progress') AND due_date < CURDATE()",
+            "SELECT COUNT(*) FROM access_reviews WHERE company_id=@cid AND status IN ('pending','in_progress') AND due_date < CURRENT_DATE",
             c => c.Parameters.AddWithValue("@cid", companyId), http.RequestAborted);
         var backupConfigTask  = db.ScalarLongAsync(
             "SELECT COUNT(*) FROM backup_verifications WHERE (company_id=@cid OR company_id IS NULL) AND status='not_configured' LIMIT 1",
@@ -12871,13 +12871,13 @@ public static class EndpointMappings
                FROM work_orders wo
                WHERE wo.company_id=@cid AND wo.vehicle_id IS NOT NULL
                  AND wo.status NOT IN ('Completed','Cancelled')
-                 AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')) open_wo_vehicles,
+                 AND wo.deleted_at IS NULL) open_wo_vehicles,
 
               (SELECT COUNT(DISTINCT mi.vehicle_id)
                FROM maintenance_items mi
                WHERE mi.company_id=@cid AND mi.deleted_at IS NULL
                  AND (mi.status='Overdue'
-                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURDATE()))) overdue_pm_vehicles,
+                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))) overdue_pm_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
@@ -13058,13 +13058,13 @@ public static class EndpointMappings
               (SELECT COUNT(*) FROM work_orders wo
                WHERE wo.vehicle_id=v.id AND wo.company_id=@cid
                  AND wo.status NOT IN ('Completed','Cancelled')
-                 AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')) open_work_orders,
+                 AND wo.deleted_at IS NULL) open_work_orders,
 
               (SELECT COUNT(*) FROM maintenance_items mi
                WHERE mi.vehicle_id=v.id AND mi.company_id=@cid
                  AND mi.deleted_at IS NULL
                  AND (mi.status='Overdue'
-                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURDATE()))) overdue_pm,
+                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))) overdue_pm,
 
               LEAST(100, ROUND(
                 CASE WHEN COALESCE(v.out_of_service,0)=1 THEN 80 ELSE 0 END
@@ -13079,11 +13079,11 @@ public static class EndpointMappings
                    WHERE mi2.vehicle_id=v.id AND mi2.company_id=@cid
                      AND mi2.deleted_at IS NULL
                      AND (mi2.status='Overdue'
-                       OR (mi2.due_date IS NOT NULL AND mi2.due_date < CURDATE()))) * 10
+                       OR (mi2.due_date IS NOT NULL AND mi2.due_date < CURRENT_DATE))) * 10
                 + (SELECT COUNT(*) FROM work_orders wo2
                    WHERE wo2.vehicle_id=v.id AND wo2.company_id=@cid
                      AND wo2.status NOT IN ('Completed','Cancelled')
-                     AND (wo2.deleted_at IS NULL OR wo2.deleted_at='0000-00-00 00:00:00')) * 4
+                     AND wo2.deleted_at IS NULL) * 4
                 + CASE WHEN v.device_status='Offline' THEN 12 ELSE 0 END
                 + COALESCE(v.risk_score,20) * 0.35
               , 1)) priority_score
@@ -13305,7 +13305,7 @@ public static class EndpointMappings
               WHERE dd.vehicle_id=@id AND dd.company_id=@cid
                 AND dd.status NOT IN ('resolved','Resolved')
               ORDER BY dd.out_of_service DESC,
-                       FIELD(dd.severity,'Critical','Major','Minor'), dd.id DESC
+                       ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.id DESC
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
@@ -13324,8 +13324,8 @@ public static class EndpointMappings
               FROM work_orders wo
               WHERE wo.vehicle_id=@id AND wo.company_id=@cid
                 AND wo.status NOT IN ('Completed','Cancelled')
-                AND (wo.deleted_at IS NULL OR wo.deleted_at='0000-00-00 00:00:00')
-              ORDER BY FIELD(wo.priority,'Critical','High','Normal','Low'), wo.due_date
+                AND wo.deleted_at IS NULL
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Normal','Low'], wo.priority), wo.due_date
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
@@ -13335,7 +13335,7 @@ public static class EndpointMappings
               FROM maintenance_items mi
               WHERE mi.vehicle_id=@id AND mi.company_id=@cid AND mi.deleted_at IS NULL
                 AND (mi.status='Overdue'
-                  OR (mi.due_date IS NOT NULL AND mi.due_date < CURDATE()))
+                  OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))
               ORDER BY mi.due_date
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
@@ -13403,7 +13403,7 @@ public static class EndpointMappings
                 AND se.review_status NOT IN
                   ('Resolved','Acknowledged','resolved','acknowledged')
                 AND se.deleted_at IS NULL
-              ORDER BY FIELD(se.severity,'Critical','High','Medium','Low'),
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], se.severity),
                        se.occurred_at DESC
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
@@ -13416,7 +13416,7 @@ public static class EndpointMappings
               WHERE ct.driver_id=@id AND ct.company_id=@cid
                 AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
                 AND ct.deleted_at IS NULL
-              ORDER BY ct.due_at, FIELD(ct.priority,'Critical','High','Normal','Low')
+              ORDER BY ct.due_at, ARRAY_POSITION(ARRAY['Critical','High','Normal','Low'], ct.priority)
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 

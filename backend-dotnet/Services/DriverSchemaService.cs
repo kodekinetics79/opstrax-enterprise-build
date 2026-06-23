@@ -32,9 +32,9 @@ public sealed class DriverSchemaService(Database db, ILogger<DriverSchemaService
         {
             try
             {
-                await db.ExecuteAsync($"ALTER TABLE `{table}` ADD COLUMN `{col}` {def}");
+                await db.ExecuteAsync($"ALTER TABLE \"{table}\" ADD COLUMN \"{col}\" {def}");
             }
-            catch (MySqlConnector.MySqlException ex) when (ex.Number == 1060) { /* column exists */ }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "42701") { /* column exists */ }
             catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] ALTER {Table}.{Col} failed", table, col); }
         }
     }
@@ -47,18 +47,18 @@ public sealed class DriverSchemaService(Database db, ILogger<DriverSchemaService
         // are NOT queued here — they require live backend validation.
         await TryCreate("driver_offline_queue", @"
 CREATE TABLE IF NOT EXISTS driver_offline_queue (
-    id                  BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    id                  BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id          BIGINT NOT NULL,
     driver_id           BIGINT NOT NULL,
     idempotency_key     VARCHAR(64) NOT NULL,
     action_type         VARCHAR(60) NOT NULL,
-    payload_json        JSON NOT NULL,
+    payload_json        JSONB NOT NULL,
     status              VARCHAR(20) NOT NULL DEFAULT 'pending',
-    processed_at        DATETIME NULL,
+    processed_at        TIMESTAMPTZ NULL,
     error_message       TEXT NULL,
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_dq_idempotency (idempotency_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (idempotency_key)
+)");
     }
 
     private async Task CreateIndexes()
@@ -74,9 +74,8 @@ CREATE TABLE IF NOT EXISTS driver_offline_queue (
         {
             try
             {
-                await db.ExecuteAsync($"ALTER TABLE `{table}` ADD INDEX `{name}` ({cols})");
+                await db.ExecuteAsync($"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{table}\" ({cols})");
             }
-            catch (MySqlConnector.MySqlException ex) when (ex.Number is 1061 or 1062) { /* exists */ }
             catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Index {Name} failed", name); }
         }
     }

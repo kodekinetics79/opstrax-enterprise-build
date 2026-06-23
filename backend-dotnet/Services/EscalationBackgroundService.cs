@@ -79,7 +79,7 @@ public sealed class EscalationBackgroundService(
                     AND n.severity=@sev
                     AND n.status NOT IN ('read','acknowledged','suppressed','escalated')
                     AND n.escalated_from IS NULL
-                    AND n.created_at < DATE_SUB(NOW(), INTERVAL @minutes MINUTE)",
+                    AND n.created_at < NOW() - @minutes * INTERVAL '1 minute'",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",     companyId);
@@ -116,7 +116,7 @@ public sealed class EscalationBackgroundService(
                 if (escalationCount > 0)
                 {
                     var lastEscalated = await db.ScalarLongAsync(
-                        @"SELECT TIMESTAMPDIFF(MINUTE, MAX(created_at), NOW()) FROM notifications
+                        @"SELECT (EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) / 60)::BIGINT FROM notifications
                           WHERE escalated_from=@origId AND company_id=@cid",
                         c =>
                         {

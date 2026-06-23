@@ -177,35 +177,37 @@ public sealed class TripBackgroundService(
         // that fall within the trip time window (actual_start_time → now, or planned start → now).
         await db.ExecuteAsync(
             @"UPDATE location_events le
-              JOIN trips t ON t.vehicle_id=le.vehicle_id
-                          AND t.company_id=le.company_id
-                          AND t.status IN ('planned','active')
-                          AND le.event_time >= COALESCE(t.actual_start_time, t.planned_start_time, t.created_at)
-                          AND le.event_time <= NOW()
-              SET le.trip_id = t.id
-              WHERE le.trip_id IS NULL",
+              SET trip_id = t.id
+              FROM trips t
+              WHERE t.vehicle_id=le.vehicle_id
+                AND t.company_id=le.company_id
+                AND t.status IN ('planned','active')
+                AND le.event_time >= COALESCE(t.actual_start_time, t.planned_start_time, t.created_at)
+                AND le.event_time <= NOW()
+                AND le.trip_id IS NULL",
             ct: ct);
 
         // Auto-activate trips that now have at least one bound location_event.
         await db.ExecuteAsync(
-            @"UPDATE trips t
-              SET t.status='active',
-                  t.actual_start_time=COALESCE(t.actual_start_time,
-                    (SELECT MIN(le2.event_time) FROM location_events le2 WHERE le2.trip_id=t.id))
-              WHERE t.status='planned'
-                AND EXISTS (SELECT 1 FROM location_events le3 WHERE le3.trip_id=t.id LIMIT 1)",
+            @"UPDATE trips
+              SET status='active',
+                  actual_start_time=COALESCE(actual_start_time,
+                    (SELECT MIN(le2.event_time) FROM location_events le2 WHERE le2.trip_id=trips.id))
+              WHERE status='planned'
+                AND EXISTS (SELECT 1 FROM location_events le3 WHERE le3.trip_id=trips.id)",
             ct: ct);
 
         // Assign trip_sequence (order within trip) to newly bound events.
         // Using variables for per-trip sequencing.
         await db.ExecuteAsync(
             @"UPDATE location_events le
-              JOIN (
+              SET trip_sequence=ranked.seq
+              FROM (
                 SELECT id, ROW_NUMBER() OVER (PARTITION BY trip_id ORDER BY event_time ASC) AS seq
                 FROM location_events WHERE trip_id IS NOT NULL AND trip_sequence IS NULL
-              ) ranked ON ranked.id=le.id
-              SET le.trip_sequence=ranked.seq
-              WHERE le.trip_id IS NOT NULL AND le.trip_sequence IS NULL",
+              ) ranked
+              WHERE ranked.id=le.id
+                AND le.trip_id IS NOT NULL AND le.trip_sequence IS NULL",
             ct: ct);
     }
 
@@ -248,7 +250,7 @@ public sealed class TripBackgroundService(
 
             await db.ExecuteAsync(
                 @"UPDATE trip_stops
-                  SET status='completed', actual_arrival_time=@arr, arrival_delay_minutes=@delay, updated_at=UTC_TIMESTAMP()
+                  SET status='completed', actual_arrival_time=@arr, arrival_delay_minutes=@delay, updated_at=NOW()
                   WHERE id=@id AND status='pending'",
                 c =>
                 {
@@ -260,10 +262,10 @@ public sealed class TripBackgroundService(
 
         // Update trip-level counts for completed/on-time stops.
         await db.ExecuteAsync(
-            @"UPDATE trips t
-              SET t.stops_completed = (SELECT COUNT(*) FROM trip_stops ts WHERE ts.trip_id=t.id AND ts.status='completed'),
-                  t.stops_on_time   = (SELECT COUNT(*) FROM trip_stops ts WHERE ts.trip_id=t.id AND ts.status='completed' AND ts.arrival_delay_minutes=0)
-              WHERE t.status='active'",
+            @"UPDATE trips
+              SET stops_completed = (SELECT COUNT(*) FROM trip_stops ts WHERE ts.trip_id=trips.id AND ts.status='completed'),
+                  stops_on_time   = (SELECT COUNT(*) FROM trip_stops ts WHERE ts.trip_id=trips.id AND ts.status='completed' AND ts.arrival_delay_minutes=0)
+              WHERE status='active'",
             ct: ct);
     }
 
@@ -310,7 +312,7 @@ public sealed class TripBackgroundService(
         var expiredUncompleted = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM trip_stops
               WHERE trip_id=@tid AND status='pending'
-                AND time_window_end IS NOT NULL AND time_window_end < UTC_TIMESTAMP()",
+                AND time_window_end IS NOT NULL AND time_window_end < NOW()",
             c => c.Parameters.AddWithValue("@tid", tripId), ct);
         if (expiredUncompleted > 0)
         {
@@ -333,9 +335,7 @@ public sealed class TripBackgroundService(
         {
             var maxGapMinutes = await db.ScalarLongAsync(
                 @"SELECT COALESCE(MAX(gap_mins),0) FROM (
-                    SELECT TIMESTAMPDIFF(MINUTE,
-                           LAG(event_time) OVER (ORDER BY event_time),
-                           event_time) AS gap_mins
+                    SELECT (EXTRACT(EPOCH FROM (event_time - LAG(event_time) OVER (ORDER BY event_time))) / 60)::BIGINT AS gap_mins
                     FROM location_events WHERE trip_id=@tid
                   ) g WHERE gap_mins IS NOT NULL",
                 c => c.Parameters.AddWithValue("@tid", tripId), ct);
@@ -355,7 +355,7 @@ public sealed class TripBackgroundService(
                 AND ta.vehicle_id=t.vehicle_id
                 AND ta.alert_type IN ('speeding','repeated_speeding')
                 AND ta.created_at >= COALESCE(t.actual_start_time, t.planned_start_time, t.created_at)
-                AND ta.created_at <= COALESCE(t.actual_end_time, UTC_TIMESTAMP())",
+                AND ta.created_at <= COALESCE(t.actual_end_time, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@tid", tripId);
@@ -387,8 +387,8 @@ public sealed class TripBackgroundService(
             await db.ExecuteAsync(
                 @"UPDATE trips SET route_compliance_score=@score,
                          compliance_breakdown_json=@json,
-                         speeding_events_count=JSON_EXTRACT(@json,'$.speeding_events.count'),
-                         updated_at=UTC_TIMESTAMP()
+                         speeding_events_count=(@json::jsonb->>'speeding_events.count')::int,
+                         updated_at=NOW()
                   WHERE id=@id",
                 c =>
                 {
@@ -420,7 +420,7 @@ public sealed class TripBackgroundService(
               LEFT JOIN latest_vehicle_positions lvp ON lvp.vehicle_id=t.vehicle_id
               WHERE ts.status='pending'
                 AND ts.time_window_end IS NOT NULL
-                AND ts.time_window_end < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 MINUTE)
+                AND ts.time_window_end < NOW() - 30 * INTERVAL '1 minute'
                 AND ts.lat IS NOT NULL AND ts.lng IS NOT NULL",
             ct: ct);
 
@@ -450,8 +450,8 @@ public sealed class TripBackgroundService(
                 @"SELECT COUNT(*) FROM safety_events
                   WHERE company_id=@cid AND event_type='route_deviation'
                     AND status NOT IN ('resolved','dismissed')
-                    AND JSON_VALUE(meta_json,'$.tripId') = @tid
-                    AND JSON_VALUE(meta_json,'$.stopId') = @sid",
+                    AND meta_json->>'tripId' = @tid
+                    AND meta_json->>'stopId' = @sid",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
@@ -477,7 +477,7 @@ public sealed class TripBackgroundService(
                      occurred_at, description, meta_json, score_impact, system_insight)
                   SELECT @cid, t.driver_id, t.vehicle_id,
                          'route_deviation', 'High', 'open',
-                         UTC_TIMESTAMP(),
+                         NOW(),
                          @desc, @meta, 10,
                          @insight
                   FROM trips t WHERE t.id=@tid",
@@ -492,7 +492,7 @@ public sealed class TripBackgroundService(
 
             // Flag the stop as deviation.
             await db.ExecuteAsync(
-                "UPDATE trip_stops SET deviation_flagged=1, updated_at=UTC_TIMESTAMP() WHERE id=@id",
+                "UPDATE trip_stops SET deviation_flagged=1, updated_at=NOW() WHERE id=@id",
                 c => c.Parameters.AddWithValue("@id", stopId), ct);
 
             log.LogWarning("[TripBgSvc] Route deviation event created: trip={TripId} stop={StopId} vehicle={Vehicle}", tripId, stopId, vehicleCode);
@@ -504,35 +504,36 @@ public sealed class TripBackgroundService(
     {
         // Routes that are 'Completed' → mark trips 'completed'.
         await db.ExecuteAsync(
-            @"UPDATE trips t
-              JOIN routes r ON r.id=t.route_id
-              SET t.status='completed',
-                  t.actual_end_time=COALESCE(t.actual_end_time, UTC_TIMESTAMP()),
-                  t.actual_duration_minutes=TIMESTAMPDIFF(MINUTE, t.actual_start_time, UTC_TIMESTAMP()),
-                  t.updated_at=UTC_TIMESTAMP()
-              WHERE t.status='active' AND r.status='Completed'",
+            @"UPDATE trips
+              SET status='completed',
+                  actual_end_time=COALESCE(trips.actual_end_time, NOW()),
+                  actual_duration_minutes=(EXTRACT(EPOCH FROM (NOW() - trips.actual_start_time)) / 60)::BIGINT,
+                  updated_at=NOW()
+              FROM routes r
+              WHERE r.id=trips.route_id AND trips.status='active' AND r.status='Completed'",
             ct: ct);
 
         // Routes that are 'Cancelled' → mark trips 'cancelled'.
         await db.ExecuteAsync(
-            @"UPDATE trips t
-              JOIN routes r ON r.id=t.route_id
-              SET t.status='cancelled', t.updated_at=UTC_TIMESTAMP()
-              WHERE t.status IN ('planned','active') AND r.status='Cancelled'",
+            @"UPDATE trips
+              SET status='cancelled', updated_at=NOW()
+              FROM routes r
+              WHERE r.id=trips.route_id AND trips.status IN ('planned','active') AND r.status='Cancelled'",
             ct: ct);
 
         // Compute actual distance from odometer for newly completed trips.
         await db.ExecuteAsync(
-            @"UPDATE trips t
-              JOIN (
+            @"UPDATE trips
+              SET actual_distance_miles=od.dist
+              FROM (
                 SELECT trip_id,
                        MAX(odometer_miles) - MIN(odometer_miles) AS dist
                 FROM location_events
                 WHERE trip_id IS NOT NULL AND odometer_miles IS NOT NULL
                 GROUP BY trip_id
-              ) od ON od.trip_id=t.id
-              SET t.actual_distance_miles=od.dist
-              WHERE t.status='completed' AND t.actual_distance_miles IS NULL AND od.dist > 0",
+              ) od
+              WHERE od.trip_id=trips.id
+                AND trips.status='completed' AND trips.actual_distance_miles IS NULL AND od.dist > 0",
             ct: ct);
     }
 }

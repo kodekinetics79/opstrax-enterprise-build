@@ -45,8 +45,8 @@ public sealed class IncidentService(Database db)
             @"INSERT INTO platform_incidents
                 (company_id, severity, source_service, source_event,
                  status, title, safe_description, opened_at)
-              VALUES (@cid, @sev, @svc, @evt, 'open', @title, @desc, NOW());
-              SELECT LAST_INSERT_ID()",
+              VALUES (@cid, @sev, @svc, @evt, 'open', @title, @desc, NOW())
+              RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   (object?)companyId ?? DBNull.Value);
@@ -96,7 +96,7 @@ public sealed class IncidentService(Database db)
             @"SELECT id, company_id, severity, source_service, source_event,
                      status, title, safe_description, opened_at, resolved_at, assigned_to
               FROM platform_incidents
-              WHERE opened_at >= DATE_SUB(NOW(), INTERVAL @h HOUR)
+              WHERE opened_at >= NOW() - @h * INTERVAL '1 hour'
               ORDER BY opened_at DESC
               LIMIT 500",
             c => c.Parameters.AddWithValue("@h", hours), ct);

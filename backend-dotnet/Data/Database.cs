@@ -1,4 +1,4 @@
-using MySqlConnector;
+using Npgsql;
 
 namespace Opstrax.Api.Data;
 
@@ -7,17 +7,17 @@ public sealed class Database(IConfiguration configuration)
     private readonly string _connectionString = configuration.GetConnectionString("DefaultConnection")
         ?? throw new InvalidOperationException("Missing ConnectionStrings:DefaultConnection");
 
-    public async Task<MySqlConnection> OpenAsync(CancellationToken ct = default)
+    public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
     {
-        var connection = new MySqlConnection(_connectionString);
+        var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
         return connection;
     }
 
-    public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
         await using var connection = await OpenAsync(ct);
-        await using var command = new MySqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection);
         bind?.Invoke(command);
         await using var reader = await command.ExecuteReaderAsync(ct);
         var rows = new List<Dictionary<string, object?>>();
@@ -33,42 +33,47 @@ public sealed class Database(IConfiguration configuration)
         return rows;
     }
 
-    public async Task<Dictionary<string, object?>?> QuerySingleAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    public async Task<Dictionary<string, object?>?> QuerySingleAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
         => (await QueryAsync(sql, bind, ct)).FirstOrDefault();
 
-    public async Task<long> ScalarLongAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    public async Task<long> ScalarLongAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
         await using var connection = await OpenAsync(ct);
-        await using var command = new MySqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection);
         bind?.Invoke(command);
         var value = await command.ExecuteScalarAsync(ct);
         return value is null or DBNull ? 0 : Convert.ToInt64(value);
     }
 
-    public async Task<decimal?> ScalarDecimalAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    public async Task<decimal?> ScalarDecimalAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
         await using var connection = await OpenAsync(ct);
-        await using var command = new MySqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection);
         bind?.Invoke(command);
         var value = await command.ExecuteScalarAsync(ct);
         return value is null or DBNull ? null : Convert.ToDecimal(value);
     }
 
-    public async Task<int> ExecuteAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    public async Task<int> ExecuteAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
         await using var connection = await OpenAsync(ct);
-        await using var command = new MySqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection);
         bind?.Invoke(command);
         return await command.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<long> InsertAsync(string sql, Action<MySqlCommand>? bind = null, CancellationToken ct = default)
+    // Appends RETURNING id if not already present, then returns the inserted id.
+    public async Task<long> InsertAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
+        var pgSql = sql.TrimEnd(';', ' ', '\n', '\r');
+        if (!pgSql.Contains("RETURNING", StringComparison.OrdinalIgnoreCase))
+            pgSql += " RETURNING id";
+
         await using var connection = await OpenAsync(ct);
-        await using var command = new MySqlCommand($"{sql}; SELECT LAST_INSERT_ID();", connection);
+        await using var command = new NpgsqlCommand(pgSql, connection);
         bind?.Invoke(command);
         var value = await command.ExecuteScalarAsync(ct);
-        return Convert.ToInt64(value);
+        return value is null or DBNull ? 0 : Convert.ToInt64(value);
     }
 
     private static string ToCamel(string value)

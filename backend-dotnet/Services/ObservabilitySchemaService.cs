@@ -19,56 +19,73 @@ public sealed class ObservabilitySchemaService(Database db)
     {
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS service_run_history (
-                id                  BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 service_name        VARCHAR(100) NOT NULL,
-                status              ENUM('running','succeeded','failed','degraded')
-                                    NOT NULL DEFAULT 'running',
-                started_at          DATETIME     NOT NULL DEFAULT NOW(),
-                finished_at         DATETIME     NULL,
+                status              VARCHAR(20)
+                                    NOT NULL DEFAULT 'running'
+                                    CHECK (status IN ('running','succeeded','failed','degraded')),
+                started_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                finished_at         TIMESTAMPTZ  NULL,
                 duration_ms         INT          NULL,
                 processed_count     INT          NOT NULL DEFAULT 0,
                 failed_count        INT          NOT NULL DEFAULT 0,
                 error_code          VARCHAR(100) NULL,
                 error_message_safe  TEXT         NULL,
-                next_run_at         DATETIME     NULL,
-                heartbeat_at        DATETIME     NULL,
-                INDEX idx_srh_service  (service_name),
-                INDEX idx_srh_started  (started_at),
-                INDEX idx_srh_status   (status)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                next_run_at         TIMESTAMPTZ  NULL,
+                heartbeat_at        TIMESTAMPTZ  NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_srh_service ON service_run_history (service_name)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_srh_started ON service_run_history (started_at)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_srh_status ON service_run_history (status)
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS service_heartbeats (
                 service_name          VARCHAR(100) PRIMARY KEY,
-                last_heartbeat_at     DATETIME     NOT NULL DEFAULT NOW(),
-                last_run_at           DATETIME     NULL,
+                last_heartbeat_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                last_run_at           TIMESTAMPTZ  NULL,
                 last_run_status       VARCHAR(50)  NULL,
                 consecutive_failures  INT          NOT NULL DEFAULT 0,
                 last_error_safe       TEXT         NULL,
-                updated_at            DATETIME     NOT NULL DEFAULT NOW()
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
             """);
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS platform_incidents (
-                id               BIGINT       PRIMARY KEY AUTO_INCREMENT,
+                id               BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id       BIGINT       NULL,
-                severity         ENUM('critical','high','medium','low','info')
-                                 NOT NULL DEFAULT 'medium',
+                severity         VARCHAR(20)
+                                 NOT NULL DEFAULT 'medium'
+                                 CHECK (severity IN ('critical','high','medium','low','info')),
                 source_service   VARCHAR(100) NOT NULL,
                 source_event     VARCHAR(200) NOT NULL,
-                status           ENUM('open','investigating','mitigated','resolved')
-                                 NOT NULL DEFAULT 'open',
+                status           VARCHAR(20)
+                                 NOT NULL DEFAULT 'open'
+                                 CHECK (status IN ('open','investigating','mitigated','resolved')),
                 title            VARCHAR(500) NOT NULL,
                 safe_description TEXT         NULL,
-                opened_at        DATETIME     NOT NULL DEFAULT NOW(),
-                resolved_at      DATETIME     NULL,
-                assigned_to      VARCHAR(200) NULL,
-                INDEX idx_pi_status  (status),
-                INDEX idx_pi_service (source_service),
-                INDEX idx_pi_opened  (opened_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                opened_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                resolved_at      TIMESTAMPTZ  NULL,
+                assigned_to      VARCHAR(200) NULL
+            )
+            """);
+
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_pi_status ON platform_incidents (status)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_pi_service ON platform_incidents (source_service)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_pi_opened ON platform_incidents (opened_at)
             """);
     }
 }

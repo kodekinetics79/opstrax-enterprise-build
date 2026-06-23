@@ -15,7 +15,7 @@ public sealed class Batch7SchemaService(Database db)
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
     {
         var exists = await db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=@table AND column_name=@column",
+            @"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=@table AND column_name=@column",
             c => { c.Parameters.AddWithValue("@table", table); c.Parameters.AddWithValue("@column", column); }, ct);
         if (exists == 0) await db.ExecuteAsync($"ALTER TABLE {table} ADD COLUMN {column} {definition}", ct: ct);
     }
@@ -44,59 +44,59 @@ public sealed class Batch7SchemaService(Database db)
         new("sla_records", "risk_score",          "DECIMAL(6,2) NOT NULL DEFAULT 20"),
         new("sla_records", "owner_role",          "VARCHAR(80) NULL"),
         new("sla_records", "recommended_action",  "TEXT NULL"),
-        new("sla_records", "measured_at",         "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP"),
+        new("sla_records", "measured_at",         "TIMESTAMPTZ NULL"),
     ];
 
     private static readonly string[] Tables =
     [
         @"CREATE TABLE IF NOT EXISTS report_catalog (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NULL,
             report_key VARCHAR(100) NOT NULL UNIQUE,
             report_name VARCHAR(220) NOT NULL,
             report_category VARCHAR(100) NOT NULL,
             description TEXT NULL,
-            default_filters_json JSON NULL,
+            default_filters_json JSONB NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Active',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS report_runs (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             report_key VARCHAR(100) NOT NULL,
             report_name VARCHAR(220) NOT NULL,
-            filters_json JSON NULL,
+            filters_json JSONB NULL,
             run_by_user_id BIGINT NULL,
             run_by_name VARCHAR(160) NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Completed',
             row_count INT NULL,
-            result_summary_json JSON NULL,
-            started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            result_summary_json JSONB NULL,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            completed_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
 
         @"CREATE TABLE IF NOT EXISTS scheduled_reports (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             report_key VARCHAR(100) NOT NULL,
             report_name VARCHAR(220) NOT NULL,
             schedule_name VARCHAR(200) NOT NULL,
             frequency VARCHAR(40) NOT NULL DEFAULT 'Weekly',
-            recipients_json JSON NULL,
-            filters_json JSON NULL,
+            recipients_json JSONB NULL,
+            filters_json JSONB NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Active',
-            next_run_at TIMESTAMP NULL,
-            last_run_at TIMESTAMP NULL,
+            next_run_at TIMESTAMPTZ NULL,
+            last_run_at TIMESTAMPTZ NULL,
             created_by_user_id BIGINT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS report_exports (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             report_run_id BIGINT NULL,
             report_key VARCHAR(100) NOT NULL,
@@ -105,12 +105,12 @@ public sealed class Batch7SchemaService(Database db)
             export_url VARCHAR(500) NULL,
             requested_by_user_id BIGINT NULL,
             requested_by_name VARCHAR(160) NULL,
-            requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP NULL
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            completed_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS kpi_metrics (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             kpi_code VARCHAR(80) NOT NULL,
             kpi_name VARCHAR(220) NOT NULL,
@@ -122,25 +122,25 @@ public sealed class Batch7SchemaService(Database db)
             status VARCHAR(40) NOT NULL DEFAULT 'On Target',
             owner_role VARCHAR(80) NULL,
             recommendation TEXT NULL,
-            last_calculated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            last_calculated_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS kpi_targets (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             kpi_code VARCHAR(80) NOT NULL,
             target_value DECIMAL(12,4) NOT NULL,
             unit VARCHAR(40) NOT NULL DEFAULT '%',
             effective_date DATE NOT NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Active',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS sla_records (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             sla_number VARCHAR(80) NOT NULL UNIQUE,
             customer_id BIGINT NULL,
@@ -155,13 +155,13 @@ public sealed class Batch7SchemaService(Database db)
             risk_score DECIMAL(6,2) NOT NULL DEFAULT 10,
             owner_role VARCHAR(80) NULL,
             recommended_action TEXT NULL,
-            measured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL
+        )",
 
         @"CREATE TABLE IF NOT EXISTS sla_breaches (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             sla_record_id BIGINT NOT NULL,
             breach_type VARCHAR(80) NOT NULL DEFAULT 'Delivery Delay',
@@ -169,13 +169,13 @@ public sealed class Batch7SchemaService(Database db)
             description TEXT NULL,
             root_cause_placeholder VARCHAR(200) NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Open',
-            detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            resolved_at TIMESTAMP NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
 
         @"CREATE TABLE IF NOT EXISTS executive_snapshots (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             snapshot_date DATE NOT NULL,
             operations_health_score DECIMAL(5,2) NOT NULL DEFAULT 80,
@@ -185,29 +185,29 @@ public sealed class Batch7SchemaService(Database db)
             customer_sla_score DECIMAL(5,2) NOT NULL DEFAULT 82,
             fleet_readiness_score DECIMAL(5,2) NOT NULL DEFAULT 79,
             dispatch_readiness_score DECIMAL(5,2) NOT NULL DEFAULT 86,
-            top_risks_json JSON NULL,
-            top_savings_json JSON NULL,
+            top_risks_json JSONB NULL,
+            top_savings_json JSONB NULL,
             ai_brief TEXT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
 
         @"CREATE TABLE IF NOT EXISTS audit_export_requests (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             tenant_id BIGINT NOT NULL DEFAULT 1,
             requested_by_user_id BIGINT NULL,
             requested_by_name VARCHAR(160) NULL,
             date_from DATE NULL,
             date_to DATE NULL,
-            filters_json JSON NULL,
+            filters_json JSONB NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Pending',
             export_url VARCHAR(500) NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP NULL
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            completed_at TIMESTAMPTZ NULL
+        )",
 
         // Workforce shift scheduling — one row per driver per week
         @"CREATE TABLE IF NOT EXISTS workforce_schedules (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             driver_id BIGINT NOT NULL,
             week_start DATE NOT NULL,
             monday VARCHAR(40) NOT NULL DEFAULT 'Off',
@@ -217,36 +217,36 @@ public sealed class Batch7SchemaService(Database db)
             friday VARCHAR(40) NOT NULL DEFAULT 'Off',
             saturday VARCHAR(40) NOT NULL DEFAULT 'Off',
             sunday VARCHAR(40) NOT NULL DEFAULT 'Off',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_workforce_driver_week (driver_id, week_start)
-        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            UNIQUE (driver_id, week_start)
+        )",
     ];
 
     private static readonly string[] Indexes =
     [
-        "CREATE INDEX idx_report_runs_key ON report_runs(report_key)",
-        "CREATE INDEX idx_report_runs_tenant ON report_runs(tenant_id)",
-        "CREATE INDEX idx_scheduled_reports_key ON scheduled_reports(report_key)",
-        "CREATE INDEX idx_report_exports_key ON report_exports(report_key)",
-        "CREATE INDEX idx_kpi_metrics_code ON kpi_metrics(kpi_code)",
-        "CREATE INDEX idx_kpi_metrics_category ON kpi_metrics(category)",
-        "CREATE INDEX idx_kpi_targets_code ON kpi_targets(kpi_code)",
-        "CREATE INDEX idx_sla_records_customer ON sla_records(customer_id)",
-        "CREATE INDEX idx_sla_records_job ON sla_records(job_id)",
-        "CREATE INDEX idx_sla_records_status ON sla_records(status)",
-        "CREATE INDEX idx_sla_records_risk ON sla_records(risk_score)",
-        "CREATE INDEX idx_sla_breaches_record ON sla_breaches(sla_record_id)",
-        "CREATE INDEX idx_executive_snapshots_date ON executive_snapshots(snapshot_date)",
-        "CREATE INDEX idx_audit_logs_module ON audit_logs(module_key)",
-        "CREATE INDEX idx_audit_logs_severity ON audit_logs(severity)",
-        "CREATE INDEX idx_audit_logs_action ON audit_logs(action_name)",
+        "CREATE INDEX IF NOT EXISTS idx_report_runs_key ON report_runs(report_key)",
+        "CREATE INDEX IF NOT EXISTS idx_report_runs_tenant ON report_runs(tenant_id)",
+        "CREATE INDEX IF NOT EXISTS idx_scheduled_reports_key ON scheduled_reports(report_key)",
+        "CREATE INDEX IF NOT EXISTS idx_report_exports_key ON report_exports(report_key)",
+        "CREATE INDEX IF NOT EXISTS idx_kpi_metrics_code ON kpi_metrics(kpi_code)",
+        "CREATE INDEX IF NOT EXISTS idx_kpi_metrics_category ON kpi_metrics(category)",
+        "CREATE INDEX IF NOT EXISTS idx_kpi_targets_code ON kpi_targets(kpi_code)",
+        "CREATE INDEX IF NOT EXISTS idx_sla_records_customer ON sla_records(customer_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sla_records_job ON sla_records(job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sla_records_status ON sla_records(status)",
+        "CREATE INDEX IF NOT EXISTS idx_sla_records_risk ON sla_records(risk_score)",
+        "CREATE INDEX IF NOT EXISTS idx_sla_breaches_record ON sla_breaches(sla_record_id)",
+        "CREATE INDEX IF NOT EXISTS idx_executive_snapshots_date ON executive_snapshots(snapshot_date)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_module ON audit_logs(module_key)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_severity ON audit_logs(severity)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action_name)",
     ];
 
     private static readonly string[] Seeds =
     [
-        // ── REPORT CATALOG (30 records) ──────────────────────────────��───────────
-        @"INSERT IGNORE INTO report_catalog (report_key,report_name,report_category,description,status) VALUES
+        // ── REPORT CATALOG (30 records) ──────────────────────────────────────────────
+        @"INSERT INTO report_catalog (report_key,report_name,report_category,description,status) VALUES
           ('fleet-utilization',      'Fleet Utilization Report',           'Fleet Operations', 'Vehicle utilization, idle time, and uptime metrics across the fleet.',                          'Active'),
           ('vehicle-readiness',      'Vehicle Readiness Report',           'Fleet Operations', 'Fleet readiness by status, last inspection, maintenance backlog, and ELD health.',              'Active'),
           ('driver-utilization',     'Driver Utilization Report',          'Fleet Operations', 'Driver hours, assignments, utilization %, and availability by period.',                         'Active'),
@@ -276,10 +276,11 @@ public sealed class Batch7SchemaService(Database db)
           ('audit-log-report',       'Audit Log Report',                   'Audit Logs',       'System audit trail filtered by module, user, action, severity, and date.',                     'Active'),
           ('executive-summary',      'Executive Operations Summary',       'Executive',        'Board-ready executive summary of fleet health, cost, safety, and SLA performance.',            'Active'),
           ('kpi-scorecard',          'KPI Scorecard Report',               'SLA/KPI',          'Full KPI scorecard with targets, actuals, trends, and drift detection.',                       'Active'),
-          ('sla-scorecard',          'SLA Scorecard Report',               'SLA/KPI',          'Customer SLA scorecard with breach history, risk scores, and recommended actions.',            'Active')",
+          ('sla-scorecard',          'SLA Scorecard Report',               'SLA/KPI',          'Customer SLA scorecard with breach history, risk scores, and recommended actions.',            'Active')
+          ON CONFLICT DO NOTHING",
 
         // ── REPORT RUN HISTORY (20 records) ────────────────────────────────────────
-        @"INSERT IGNORE INTO report_runs (id,tenant_id,report_key,report_name,run_by_name,status,row_count,started_at,completed_at) VALUES
+        @"INSERT INTO report_runs (id,tenant_id,report_key,report_name,run_by_name,status,row_count,started_at,completed_at) VALUES
           (1,1,'fleet-utilization','Fleet Utilization Report','admin','Completed',18,'2026-05-20 08:00:00','2026-05-20 08:00:45'),
           (2,1,'delayed-jobs','Delayed Jobs Report','admin','Completed',7,'2026-05-20 08:15:00','2026-05-20 08:15:12'),
           (3,1,'safety-events','Safety Events Report','admin','Completed',42,'2026-05-20 09:00:00','2026-05-20 09:00:38'),
@@ -299,10 +300,11 @@ public sealed class Batch7SchemaService(Database db)
           (17,1,'margin-risk','Margin Risk Report','admin','Completed',11,'2026-05-23 12:00:00','2026-05-23 12:00:36'),
           (18,1,'fleet-utilization','Fleet Utilization Report','admin','Completed',18,'2026-05-24 07:30:00','2026-05-24 07:30:41'),
           (19,1,'sla-scorecard','SLA Scorecard Report','admin','Completed',30,'2026-05-24 08:00:00','2026-05-24 08:00:52'),
-          (20,1,'delayed-jobs','Delayed Jobs Report','admin','Running',NULL,'2026-05-24 08:15:00',NULL)",
+          (20,1,'delayed-jobs','Delayed Jobs Report','admin','Running',NULL,'2026-05-24 08:15:00',NULL)
+          ON CONFLICT DO NOTHING",
 
         // ── SCHEDULED REPORTS (8 records) ──────────────────────────────────────────
-        @"INSERT IGNORE INTO scheduled_reports (id,tenant_id,report_key,report_name,schedule_name,frequency,status,next_run_at) VALUES
+        @"INSERT INTO scheduled_reports (id,tenant_id,report_key,report_name,schedule_name,frequency,status,next_run_at) VALUES
           (1,1,'executive-summary','Executive Operations Summary','Daily Executive Brief','Daily','Active','2026-05-25 06:00:00'),
           (2,1,'fleet-utilization','Fleet Utilization Report','Weekly Fleet Report','Weekly','Active','2026-05-27 06:00:00'),
           (3,1,'sla-at-risk','SLA At-Risk Report','Daily SLA Watch','Daily','Active','2026-05-25 07:00:00'),
@@ -310,10 +312,11 @@ public sealed class Batch7SchemaService(Database db)
           (5,1,'fuel-spend','Fuel Spend Report','Monthly Fuel Report','Monthly','Active','2026-06-01 06:00:00'),
           (6,1,'audit-log-report','Audit Log Report','Weekly Audit Export','Weekly','Active','2026-05-27 09:00:00'),
           (7,1,'hos-warning','HOS Warning Report','Daily HOS Alert','Daily','Active','2026-05-25 05:30:00'),
-          (8,1,'country-compliance','Country Compliance Report','Monthly Compliance Summary','Monthly','Paused','2026-06-01 08:00:00')",
+          (8,1,'country-compliance','Country Compliance Report','Monthly Compliance Summary','Monthly','Paused','2026-06-01 08:00:00')
+          ON CONFLICT DO NOTHING",
 
         // ── REPORT EXPORTS (10 records) ─────────────────────────────────────────────
-        @"INSERT IGNORE INTO report_exports (id,tenant_id,report_run_id,report_key,export_type,status,requested_by_name,requested_at,completed_at) VALUES
+        @"INSERT INTO report_exports (id,tenant_id,report_run_id,report_key,export_type,status,requested_by_name,requested_at,completed_at) VALUES
           (1,1,1,'fleet-utilization','CSV','Completed','admin','2026-05-20 08:05:00','2026-05-20 08:05:08'),
           (2,1,3,'safety-events','PDF','Completed','admin','2026-05-20 09:05:00','2026-05-20 09:05:15'),
           (3,1,4,'fuel-spend','XLSX','Completed','admin','2026-05-21 07:35:00','2026-05-21 07:35:22'),
@@ -323,10 +326,11 @@ public sealed class Batch7SchemaService(Database db)
           (7,1,14,'dvir-compliance','PDF','Completed','admin','2026-05-23 09:10:00','2026-05-23 09:10:27'),
           (8,1,15,'kpi-scorecard','XLSX','Completed','admin','2026-05-23 10:10:00','2026-05-23 10:10:33'),
           (9,1,19,'sla-scorecard','PDF','Pending','admin','2026-05-24 08:10:00',NULL),
-          (10,1,NULL,'executive-summary','Executive PDF','Pending','admin','2026-05-24 08:30:00',NULL)",
+          (10,1,NULL,'executive-summary','Executive PDF','Pending','admin','2026-05-24 08:30:00',NULL)
+          ON CONFLICT DO NOTHING",
 
         // ── KPI METRICS (30 records) ────────────────────────────────────────────────
-        @"INSERT IGNORE INTO kpi_metrics (id,tenant_id,kpi_code,kpi_name,category,target_value,actual_value,unit,trend,status,owner_role,recommendation) VALUES
+        @"INSERT INTO kpi_metrics (id,tenant_id,kpi_code,kpi_name,category,target_value,actual_value,unit,trend,status,owner_role,recommendation) VALUES
           (1,1,'OTD','On-Time Delivery','Dispatch',95,87.4,'%','down','At Risk','Fleet Manager','Investigate 6 high-delay jobs and review dispatch scheduling gaps.'),
           (2,1,'SLA-COMP','SLA Compliance','Customer Service',98,91.2,'%','down','At Risk','Company Admin','Review 4 SLA breach records and escalate customer communications.'),
           (3,1,'ETA-ACC','Average ETA Accuracy','Dispatch',90,84.6,'%','stable','Watch','Fleet Manager','Improve route planning for 3 high-variance lanes.'),
@@ -356,10 +360,11 @@ public sealed class Batch7SchemaService(Database db)
           (27,1,'COST-LEAKAGE','Recoverable Cost Leakage','Finance',0,14280,'USD/month','stable','Breached','Finance Manager','$14,280 in recoverable leakage identified. Top categories: idling and unauthorized expenses.'),
           (28,1,'AUDIT-COVERAGE','Audit Coverage Score','Compliance',95,91.3,'%','stable','Watch','Compliance Manager','Audit coverage near target. 23 recent actions pending audit log enrichment.'),
           (29,1,'DISPATCH-CYCLE','Dispatch Cycle Time','Dispatch',30,38,'minutes','up','At Risk','Fleet Manager','Average dispatch cycle 27% above target. AI matching adoption needs improvement.'),
-          (30,1,'ROUTE-EFF','Route Efficiency','Operations',88,83.2,'%','stable','Watch','Fleet Manager','Route efficiency below target on 4 lanes. Re-optimization would save ~$1,200/week.')",
+          (30,1,'ROUTE-EFF','Route Efficiency','Operations',88,83.2,'%','stable','Watch','Fleet Manager','Route efficiency below target on 4 lanes. Re-optimization would save ~$1,200/week.')
+          ON CONFLICT DO NOTHING",
 
         // ── KPI TARGETS (20 records) ────────────────────────────────────────────────
-        @"INSERT IGNORE INTO kpi_targets (id,tenant_id,kpi_code,target_value,unit,effective_date,status) VALUES
+        @"INSERT INTO kpi_targets (id,tenant_id,kpi_code,target_value,unit,effective_date,status) VALUES
           (1,1,'OTD',95,'%','2026-01-01','Active'),
           (2,1,'SLA-COMP',98,'%','2026-01-01','Active'),
           (3,1,'ETA-ACC',90,'%','2026-01-01','Active'),
@@ -379,10 +384,11 @@ public sealed class Batch7SchemaService(Database db)
           (17,1,'FLEET-READY',90,'%','2026-01-01','Active'),
           (18,1,'HOS-COMPLY',100,'%','2026-01-01','Active'),
           (19,1,'INCIDENT-RATE',2,'per 1M miles','2026-01-01','Active'),
-          (20,1,'COST-LEAKAGE',0,'USD/month','2026-01-01','Active')",
+          (20,1,'COST-LEAKAGE',0,'USD/month','2026-01-01','Active')
+          ON CONFLICT DO NOTHING",
 
         // ── SLA RECORDS (30 records) ────────────────────────────────────────────────
-        @"INSERT IGNORE INTO sla_records (id,tenant_id,sla_number,customer_id,job_id,sla_type,target_value,actual_value,unit,status,breach_reason,risk_score,owner_role,recommended_action,measured_at) VALUES
+        @"INSERT INTO sla_records (id,tenant_id,sla_number,customer_id,job_id,sla_type,target_value,actual_value,unit,status,breach_reason,risk_score,owner_role,recommended_action,measured_at) VALUES
           (1,1,'SLA-001',1,1,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
           (2,1,'SLA-002',2,2,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
           (3,1,'SLA-003',3,3,'On-Time Delivery',100,72,'%','Breached','Dispatch delay',85,'Fleet Manager','Review dispatch assignment for this lane. Schedule driver availability review.',NOW()),
@@ -412,10 +418,11 @@ public sealed class Batch7SchemaService(Database db)
           (27,1,'SLA-027',2,NULL,'Response Time',4,3.5,'hours','Met',NULL,8,'Fleet Manager','Response time within SLA.',NOW()),
           (28,1,'SLA-028',3,NULL,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
           (29,1,'SLA-029',4,NULL,'ETA Accuracy',90,86,'%','At Risk','Traffic delay',32,'Fleet Manager','Add real-time traffic integration to ETA calculation.',NOW()),
-          (30,1,'SLA-030',5,NULL,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW())",
+          (30,1,'SLA-030',5,NULL,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW())
+          ON CONFLICT DO NOTHING",
 
         // ── SLA BREACHES (10 records) ───────────────────────────────────────────────
-        @"INSERT IGNORE INTO sla_breaches (id,tenant_id,sla_record_id,breach_type,severity,description,root_cause_placeholder,status,detected_at) VALUES
+        @"INSERT INTO sla_breaches (id,tenant_id,sla_record_id,breach_type,severity,description,root_cause_placeholder,status,detected_at) VALUES
           (1,1,3,'Delivery Delay','High','Job-3 delivered 4 hours late — dispatch scheduling gap identified.','Dispatch delay — driver not assigned until 2 hours after window opened.','Open','2026-05-20 14:00:00'),
           (2,1,7,'Delivery Delay','Critical','Job-7 not delivered — vehicle breakdown mid-route.','Vehicle breakdown — brake failure on TRK-104. Replacement dispatched too late.','Escalated','2026-05-21 16:30:00'),
           (3,1,10,'Route Delay','Medium','Job-10 delayed by 22% of ETA window due to traffic.','Traffic/route delay — I-95 incident caused 90-minute delay.','Acknowledged','2026-05-22 11:00:00'),
@@ -425,10 +432,11 @@ public sealed class Batch7SchemaService(Database db)
           (7,1,6,'POD Missing','Medium','Customer-1 missing proof of delivery for 2 stops.','Missing POD — driver did not capture photo at delivery point.','Open','2026-05-24 08:00:00'),
           (8,1,13,'Communication Gap','Low','ETA update to Customer-3 delayed by 4 hours.','ETA update delayed — system notification trigger not configured for this lane.','Acknowledged','2026-05-23 12:00:00'),
           (9,1,16,'ETA Inaccuracy','Medium','Customer-1 received ETA 82% accurate — below 90% SLA target.','Route inefficiency — planned route had 2 unscheduled stops added.','Open','2026-05-22 17:00:00'),
-          (10,1,18,'Partial Delivery','Low','Customer-3 received partial delivery — 1 item short shipped.','Partial delivery — warehouse picked incorrect pallet. Returns in progress.','Open','2026-05-23 10:00:00')",
+          (10,1,18,'Partial Delivery','Low','Customer-3 received partial delivery — 1 item short shipped.','Partial delivery — warehouse picked incorrect pallet. Returns in progress.','Open','2026-05-23 10:00:00')
+          ON CONFLICT DO NOTHING",
 
         // ── EXECUTIVE SNAPSHOTS (10 records — last 10 days) ────────────────────────
-        @"INSERT IGNORE INTO executive_snapshots (id,tenant_id,snapshot_date,operations_health_score,cost_health_score,safety_health_score,compliance_health_score,customer_sla_score,fleet_readiness_score,dispatch_readiness_score,ai_brief) VALUES
+        @"INSERT INTO executive_snapshots (id,tenant_id,snapshot_date,operations_health_score,cost_health_score,safety_health_score,compliance_health_score,customer_sla_score,fleet_readiness_score,dispatch_readiness_score,ai_brief) VALUES
           (1,1,'2026-05-15',83,78,87,90,86,81,88,'Operations stable. 2 SLA risks in dispatch. Fuel cost trending up 6%.'),
           (2,1,'2026-05-16',82,77,86,90,85,80,87,'On-time delivery dipped to 88%. Driver 2 HOS warning flagged. Maintenance backlog growing.'),
           (3,1,'2026-05-17',80,76,85,89,84,79,86,'Fleet readiness at 79% — 3 vehicles in maintenance. Safety events require coaching review.'),
@@ -438,10 +446,11 @@ public sealed class Batch7SchemaService(Database db)
           (7,1,'2026-05-21',79,73,81,87,80,78,83,'Critical: Driver 4 repeat HOS violation. ELD malfunction on TRK-104 unresolved.'),
           (8,1,'2026-05-22',80,74,82,88,81,78,84,'DVIR compliance improving. Cost leakage estimated at $14,280 this period.'),
           (9,1,'2026-05-23',81,75,83,88,82,79,85,'On-time delivery stabilizing at 87.4%. AI recommendations queue has 12 open items.'),
-          (10,1,'2026-05-24',82,75,84,89,83,79,86,'Operations in WATCH status. On-time delivery improved 1%. Idle cost and 6 SLA risks require action. ELD malfunction on TRK-104 remains critical.')",
+          (10,1,'2026-05-24',82,75,84,89,83,79,86,'Operations in WATCH status. On-time delivery improved 1%. Idle cost and 6 SLA risks require action. ELD malfunction on TRK-104 remains critical.')
+          ON CONFLICT DO NOTHING",
 
-        // ── AUDIT LOGS BULK SEED (100+ records across all modules) ───────��──────────
-        @"INSERT IGNORE INTO audit_logs (id,company_id,actor_name,action_name,entity_name,entity_id,severity,module_key,action_type,details_json) VALUES
+        // ── AUDIT LOGS BULK SEED (100+ records across all modules) ──────────────────
+        @"INSERT INTO audit_logs (id,company_id,actor_name,action_name,entity_name,entity_id,severity,module_key,action_type,details_json) VALUES
           (1,1,'admin','user.login','User',1,'Info','auth','login','{""source"":""api""}'),
           (2,1,'admin','vehicle.created','Vehicle',1,'Info','vehicles','create','{""source"":""api""}'),
           (3,1,'admin','vehicle.updated','Vehicle',2,'Info','vehicles','update','{""source"":""api""}'),
@@ -541,10 +550,11 @@ public sealed class Batch7SchemaService(Database db)
           (97,1,'admin','dvir.critical_defect','DvirReport',5,'Critical','dvir-inspections','flag','{""source"":""api""}'),
           (98,1,'admin','workorder.created','WorkOrder',5,'Info','work-orders','create','{""source"":""api""}'),
           (99,1,'admin','report.run_created','ReportRun',2,'Info','reports','create','{""source"":""api""}'),
-          (100,1,'admin','executive.snapshot_created','ExecutiveSnapshot',10,'Info','executive','create','{""source"":""api""}')",
+          (100,1,'admin','executive.snapshot_created','ExecutiveSnapshot',10,'Info','executive','create','{""source"":""api""}')
+          ON CONFLICT DO NOTHING",
 
         // ── AUDIT EXPORT REQUESTS (8 records) ──────────────────────────────────────
-        @"INSERT IGNORE INTO audit_export_requests (id,tenant_id,requested_by_name,date_from,date_to,status,created_at,completed_at) VALUES
+        @"INSERT INTO audit_export_requests (id,tenant_id,requested_by_name,date_from,date_to,status,created_at,completed_at) VALUES
           (1,1,'admin','2026-05-01','2026-05-15','Completed','2026-05-16 09:00:00','2026-05-16 09:00:45'),
           (2,1,'admin','2026-04-01','2026-04-30','Completed','2026-05-01 08:00:00','2026-05-01 08:01:12'),
           (3,1,'admin','2026-05-01','2026-05-24','Completed','2026-05-24 08:00:00','2026-05-24 08:01:33'),
@@ -552,10 +562,11 @@ public sealed class Batch7SchemaService(Database db)
           (5,1,'admin','2026-03-01','2026-03-31','Completed','2026-04-01 07:30:00','2026-04-01 07:31:08'),
           (6,1,'admin','2026-02-01','2026-02-28','Completed','2026-03-01 08:00:00','2026-03-01 08:00:52'),
           (7,1,'admin','2026-01-01','2026-01-31','Completed','2026-02-01 09:00:00','2026-02-01 09:01:18'),
-          (8,1,'admin','2026-05-24','2026-05-24','Pending','2026-05-24 09:00:00',NULL)",
+          (8,1,'admin','2026-05-24','2026-05-24','Pending','2026-05-24 09:00:00',NULL)
+          ON CONFLICT DO NOTHING",
 
         // ── AI RECOMMENDATIONS for Batch 7 modules ─────────────────────────────────
-        @"INSERT IGNORE INTO ai_recommendations (module_key,title,description,priority,score,action_label,action_type) VALUES
+        @"INSERT INTO ai_recommendations (module_key,title,description,priority,score,action_label,action_type) VALUES
           ('reports-analytics','Run SLA At-Risk Report — 6 Customers Flagged','6 customers have SLA risk scores above 50. Run the SLA At-Risk Report to identify breach root causes.','High',91,'Run Report','report_action'),
           ('reports-analytics','Cost Leakage Report — $14,280 Recoverable','Cost leakage analysis shows $14,280 in recoverable savings this period. Export the Cost Leakage Report for Finance review.','High',88,'Run Report','report_action'),
           ('reports-analytics','Schedule Daily HOS Warning Report','Drivers 2 and 4 have recurring HOS issues. Enable the Daily HOS Warning scheduled report to catch violations earlier.','Medium',76,'Schedule Report','schedule_action'),
@@ -570,6 +581,7 @@ public sealed class Batch7SchemaService(Database db)
           ('executive','Operations in WATCH Status — 3 KPIs Require Action','OTD, Idle Cost, and Gross Margin are below target. Recommend executive review and resource reallocation.','Critical',97,'View Executive Summary','executive_action'),
           ('executive','ELD Malfunction on TRK-104 — FMCSA Compliance Risk','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Critical',95,'View Compliance','executive_action'),
           ('executive','Fleet Readiness Below 80% — 4 Vehicles Offline','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','High',86,'View Fleet Status','executive_action'),
-          ('executive','Cost Savings Opportunity — $1,200/week Route Optimization','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Medium',78,'View Route Analysis','executive_action')",
+          ('executive','Cost Savings Opportunity — $1,200/week Route Optimization','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Medium',78,'View Route Analysis','executive_action')
+          ON CONFLICT DO NOTHING",
     ];
 }

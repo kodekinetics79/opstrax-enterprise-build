@@ -53,7 +53,7 @@ public sealed class OpsMetricsService(Database db)
                 SUM(validation_status='auth_failed') AS auth_failed,
                 SUM(is_replay=1)                     AS replay_detected
               FROM telemetry_events
-              WHERE received_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)", ct: ct);
+              WHERE received_at >= NOW() - 24 * INTERVAL '1 hour'", ct: ct);
 
         if (rows.Count == 0) return new(0, 0, 0, 0, 0);
         var r = rows[0];
@@ -75,7 +75,7 @@ public sealed class OpsMetricsService(Database db)
                 SUM(status='open' OR status='Open')             AS open_count,
                 SUM(severity='critical' OR severity='Critical') AS critical_count
               FROM telemetry_alerts
-              WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)", ct: ct);
+              WHERE created_at >= NOW() - 24 * INTERVAL '1 hour'", ct: ct);
 
         if (rows.Count == 0) return new(0, 0, 0);
         var r = rows[0];
@@ -91,7 +91,7 @@ public sealed class OpsMetricsService(Database db)
                 COUNT(*) AS generated_24h,
                 SUM(review_status NOT IN ('Closed','Dismissed')) AS open_review
               FROM safety_events
-              WHERE event_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)", ct: ct);
+              WHERE event_time >= NOW() - 24 * INTERVAL '1 hour'", ct: ct);
 
         if (rows.Count == 0) return new(0, 0);
         var r = rows[0];
@@ -107,7 +107,7 @@ public sealed class OpsMetricsService(Database db)
                 SUM(assignment_status NOT IN ('Completed','Cancelled','Failed')) AS active,
                 SUM(exception_count > 0) AS has_exceptions
               FROM dispatch_assignments
-              WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", ct: ct);
+              WHERE created_at >= NOW() - 7 * INTERVAL '1 day'", ct: ct);
 
         var excRows = await db.QueryAsync(
             @"SELECT COUNT(*) AS open_exceptions
@@ -128,7 +128,7 @@ public sealed class OpsMetricsService(Database db)
                 SUM(status IN ('pending','sent'))           AS pending,
                 SUM(status='failed')                        AS failed,
                 SUM(status IN ('read','acknowledged')
-                    AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS acked_24h,
+                    AND created_at >= NOW() - 24 * INTERVAL '1 hour') AS acked_24h,
                 SUM(delivery_status='not_configured')       AS not_configured
               FROM notifications", ct: ct);
 
@@ -151,7 +151,7 @@ public sealed class OpsMetricsService(Database db)
         var logRows = await db.QueryAsync(
             @"SELECT COUNT(*) AS runs_24h
               FROM report_execution_log
-              WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)", ct: ct);
+              WHERE executed_at >= NOW() - 24 * INTERVAL '1 hour'", ct: ct);
 
         if (rows.Count == 0) return new(0, 0, 0, 0);
         var r = rows[0];

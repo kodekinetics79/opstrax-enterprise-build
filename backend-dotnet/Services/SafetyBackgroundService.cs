@@ -135,7 +135,7 @@ public sealed class SafetyBackgroundService(
 
                 logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);
             }
-            catch (MySqlConnector.MySqlException ex) when (ex.Number == 1062)
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
             {
                 // UNIQUE KEY on source_telemetry_alert_id — already processed
             }
@@ -160,7 +160,7 @@ public sealed class SafetyBackgroundService(
               WHERE se.event_type='speeding'
                 AND se.status != 'dismissed'
                 AND se.driver_id IS NOT NULL
-                AND se.event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
+                AND se.event_time > NOW() - 24 * INTERVAL '1 hour'
               GROUP BY se.company_id, se.driver_id, repeat_threshold
               HAVING COUNT(*) >= COALESCE(tr.threshold_value, 3)",
             ct: ct);
@@ -173,7 +173,7 @@ public sealed class SafetyBackgroundService(
 
             // Only create one open repeated_speeding event per driver per day
             var existing = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND driver_id=@did AND event_type='repeated_speeding' AND status='open' AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)",
+                "SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND driver_id=@did AND event_type='repeated_speeding' AND status='open' AND event_time > NOW() - 24 * INTERVAL '1 hour'",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
 
             if (existing > 0) continue;
@@ -187,7 +187,7 @@ public sealed class SafetyBackgroundService(
                     (company_id, driver_id, event_type, severity, score_impact, status, meta_json)
                   VALUES
                     (@cid, @did, 'repeated_speeding', 'Critical', @impact, 'open',
-                     JSON_OBJECT('count', @count, 'window_hours', 24))",
+                     jsonb_build_object('count', @count, 'window_hours', 24))",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",    companyId);
@@ -211,7 +211,7 @@ public sealed class SafetyBackgroundService(
             @"SELECT DISTINCT company_id, driver_id
               FROM safety_events
               WHERE driver_id IS NOT NULL
-                AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 90 DAY)",
+                AND event_time > NOW() - 90 * INTERVAL '1 day'",
             ct: ct);
 
         foreach (var row in drivers)
@@ -230,11 +230,11 @@ public sealed class SafetyBackgroundService(
                     (company_id, driver_id, score_7d, score_30d, score_90d,
                      events_7d, events_30d, events_90d, breakdown_json, computed_at)
                   VALUES
-                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, UTC_TIMESTAMP())
-                  ON DUPLICATE KEY UPDATE
-                    score_7d=VALUES(score_7d), score_30d=VALUES(score_30d), score_90d=VALUES(score_90d),
-                    events_7d=VALUES(events_7d), events_30d=VALUES(events_30d), events_90d=VALUES(events_90d),
-                    breakdown_json=VALUES(breakdown_json), computed_at=UTC_TIMESTAMP()",
+                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, NOW())
+                  ON CONFLICT (company_id, driver_id) DO UPDATE SET
+                    score_7d=EXCLUDED.score_7d, score_30d=EXCLUDED.score_30d, score_90d=EXCLUDED.score_90d,
+                    events_7d=EXCLUDED.events_7d, events_30d=EXCLUDED.events_30d, events_90d=EXCLUDED.events_90d,
+                    breakdown_json=EXCLUDED.breakdown_json, computed_at=NOW()",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",  companyId);
@@ -260,7 +260,7 @@ public sealed class SafetyBackgroundService(
               FROM safety_events
               WHERE company_id=@cid AND driver_id=@did
                 AND status NOT IN ('dismissed')
-                AND event_time > DATE_SUB(UTC_TIMESTAMP(), INTERVAL @days DAY)",
+                AND event_time > NOW() - @days * INTERVAL '1 day'",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",  companyId);

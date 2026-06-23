@@ -10,7 +10,7 @@ public sealed class AuditService(Database db)
     {
         return db.ExecuteAsync(
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
-              VALUES (1, NULL, @actor, @actionName, @entityName, @entityId, JSON_OBJECT('source', 'api'))",
+              VALUES (1, NULL, @actor, @actionName, @entityName, @entityId, jsonb_build_object('source', 'api'))",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@actor", actor);
@@ -32,7 +32,7 @@ public sealed class AuditService(Database db)
 
         return db.ExecuteAsync(
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
-              VALUES (@companyId, @actorId, @actor, @actionName, @entityName, @entityId, COALESCE(@details, JSON_OBJECT('source', 'api')))",
+              VALUES (@companyId, @actorId, @actor, @actionName, @entityName, @entityId, COALESCE(@details, jsonb_build_object('source', 'api')))",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@companyId", companyId);

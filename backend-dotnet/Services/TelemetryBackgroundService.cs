@@ -51,12 +51,12 @@ public sealed class TelemetryBackgroundService(
         // Join telemetry_rules to get per-tenant stale threshold (default 900s = 15 min)
         var stale = await db.QueryAsync(
             @"SELECT lvp.company_id, lvp.vehicle_id, lvp.device_id,
-                     TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) seconds_stale,
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_stale,
                      COALESCE(tr.threshold_value, 900) stale_threshold
               FROM latest_vehicle_positions lvp
               LEFT JOIN telemetry_rules tr
                 ON tr.company_id=lvp.company_id AND tr.rule_type='stale_device' AND tr.enabled=1
-              WHERE TIMESTAMPDIFF(SECOND, lvp.received_at, UTC_TIMESTAMP()) > COALESCE(tr.threshold_value, 900)",
+              WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)",
             ct: ct);
 
         foreach (var pos in stale)
@@ -94,7 +94,7 @@ public sealed class TelemetryBackgroundService(
         var db = scope.ServiceProvider.GetRequiredService<Database>();
         // Remove nonces older than 24 h — beyond any replay window
         var deleted = await db.ExecuteAsync(
-            "DELETE FROM telemetry_nonces WHERE used_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)",
+            "DELETE FROM telemetry_nonces WHERE used_at < NOW() - 24 * INTERVAL '1 hour'",
             ct: ct);
         if (deleted > 0)
             logger.LogDebug("Pruned {Count} expired telemetry nonces", deleted);

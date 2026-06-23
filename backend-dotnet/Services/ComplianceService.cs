@@ -56,7 +56,7 @@ public sealed class ComplianceService(Database db, AuditService audit)
                          retention_until, generated_by
                   FROM compliance_evidence
                   WHERE control_id = @cid
-                    AND generated_at >= DATE_SUB(NOW(), INTERVAL @d DAY)
+                    AND generated_at >= NOW() - @d * INTERVAL '1 day'
                   ORDER BY generated_at DESC
                   LIMIT 200",
                 c =>
@@ -71,7 +71,7 @@ public sealed class ComplianceService(Database db, AuditService audit)
                      source_record_id, title, safe_summary, generated_at, evidence_hash,
                      retention_until, generated_by
               FROM compliance_evidence
-              WHERE generated_at >= DATE_SUB(NOW(), INTERVAL @d DAY)
+              WHERE generated_at >= NOW() - @d * INTERVAL '1 day'
               ORDER BY generated_at DESC
               LIMIT 500",
             c => c.Parameters.AddWithValue("@d", days), ct);
@@ -136,7 +136,7 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectAuditEvidenceAsync(long companyId, CancellationToken ct)
     {
         var count = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM audit_logs WHERE company_id = @cid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
+            "SELECT COUNT(*) FROM audit_logs WHERE company_id = @cid AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return (
             $"Audit log activity — {count} entries in last 30 days",
@@ -149,10 +149,10 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectSecurityEventEvidenceAsync(long companyId, CancellationToken ct)
     {
         var count = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM security_events WHERE company_id = @cid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
+            "SELECT COUNT(*) FROM security_events WHERE company_id = @cid AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var failures = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM security_events WHERE company_id = @cid AND success = 0 AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
+            "SELECT COUNT(*) FROM security_events WHERE company_id = @cid AND success = 0 AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return (
             $"Security event log — {count} events in last 30 days",
@@ -166,9 +166,9 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectServiceHealthEvidenceAsync(CancellationToken ct)
     {
         var count = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM service_run_history WHERE started_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", ct: ct);
+            "SELECT COUNT(*) FROM service_run_history WHERE started_at >= NOW() - 7 * INTERVAL '1 day'", ct: ct);
         var failures = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM service_run_history WHERE status='failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)", ct: ct);
+            "SELECT COUNT(*) FROM service_run_history WHERE status='failed' AND started_at >= NOW() - 7 * INTERVAL '1 day'", ct: ct);
         return (
             $"Background service health — {count} runs in last 7 days",
             $"System monitoring is active. {count} background service cycles recorded in the past 7 days. " +
@@ -181,13 +181,13 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectAccessReviewEvidenceAsync(long companyId, CancellationToken ct)
     {
         var completed = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)",
+            "SELECT COUNT(*) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= NOW() - 365 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var totalItems = await db.ScalarLongAsync(
-            "SELECT SUM(total_items) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)",
+            "SELECT SUM(total_items) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= NOW() - 365 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var revoked = await db.ScalarLongAsync(
-            "SELECT SUM(items_revoked) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)",
+            "SELECT SUM(items_revoked) FROM access_reviews WHERE company_id = @cid AND status = 'completed' AND completed_at >= NOW() - 365 * INTERVAL '1 day'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return (
             $"Access review completions — {completed} reviews completed in last year",
@@ -200,7 +200,7 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectBackupEvidenceAsync(CancellationToken ct)
     {
         var passed = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM backup_verifications WHERE status = 'passed' AND verified_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+            "SELECT COUNT(*) FROM backup_verifications WHERE status = 'passed' AND verified_at >= NOW() - 90 * INTERVAL '1 day'",
             ct: ct);
         var notConfigured = await db.ScalarLongAsync(
             "SELECT COUNT(*) FROM backup_verifications WHERE status = 'not_configured'",
@@ -218,7 +218,7 @@ public sealed class ComplianceService(Database db, AuditService audit)
         CollectIncidentEvidenceAsync(CancellationToken ct)
     {
         var resolved = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM platform_incidents WHERE status = 'resolved' AND resolved_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+            "SELECT COUNT(*) FROM platform_incidents WHERE status = 'resolved' AND resolved_at >= NOW() - 90 * INTERVAL '1 day'",
             ct: ct);
         var open = await db.ScalarLongAsync(
             "SELECT COUNT(*) FROM platform_incidents WHERE status IN ('open','investigating')",
