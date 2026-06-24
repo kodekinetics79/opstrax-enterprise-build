@@ -290,6 +290,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [kind] });
+      await queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       if (selectedRecord?.id) await queryClient.invalidateQueries({ queryKey: [kind, "detail", selectedRecord.id] });
     },
   });
@@ -794,11 +796,17 @@ function DecisionBrief({ config: cfg, record }: { config: EntityConfig; record: 
 }
 
 function pickBestDriver(rows: AnyRecord[]) {
-  return [...rows].sort((a, b) => Number(b.driverReadinessScore ?? b.readinessScore ?? b.safetyScore ?? 0) - Number(a.driverReadinessScore ?? a.readinessScore ?? a.safetyScore ?? 0))[0];
+  const score = (r: AnyRecord) => Number(r.driverReadinessScore ?? r.readinessScore ?? r.safetyScore ?? 0);
+  const unassigned = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id && (r.status === "Available" || !r.assignedVehicleId));
+  const pool = unassigned.length > 0 ? unassigned : rows;
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
 }
 
 function pickBestVehicle(rows: AnyRecord[]) {
-  return [...rows].sort((a, b) => Number(b.fleetReadinessScore ?? b.readinessScore ?? b.dataQualityScore ?? 0) - Number(a.fleetReadinessScore ?? a.readinessScore ?? a.dataQualityScore ?? 0))[0];
+  const score = (r: AnyRecord) => Number(r.fleetReadinessScore ?? r.readinessScore ?? r.dataQualityScore ?? 0);
+  const unassigned = rows.filter(r => !r.assignedDriverId && !r.assigned_driver_id && (r.status === "Available" || !r.assignedDriverId));
+  const pool = unassigned.length > 0 ? unassigned : rows;
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
 }
 
 function riskValue(row: AnyRecord) {

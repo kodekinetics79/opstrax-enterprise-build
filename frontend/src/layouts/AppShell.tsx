@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronDown, Languages, LogOut,
+  Bell, ChevronDown, LogOut,
   Menu, Search, Settings, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
-import { useI18n, LOCALES } from "@/i18n";
-import type { LocaleCode } from "@/i18n";
 
 const NAV_SECTIONS = [
   {
@@ -75,7 +73,6 @@ const NOTIFS = [
 
 export function AppShell() {
   const { session, logout } = useAuth();
-  const { locale, setLocale } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
@@ -84,11 +81,9 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState<Set<Group>>(new Set());
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const notifRef = useRef<HTMLDivElement>(null);
-  const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
   // close mobile sidebar & notif panel on route change
@@ -101,7 +96,6 @@ export function AppShell() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
-      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
     };
     document.addEventListener("mousedown", handler);
@@ -278,7 +272,7 @@ export function AppShell() {
               </button>
 
               {/* Search */}
-              <div className="relative w-full max-w-xs">
+              <div className="relative flex-1 min-w-0 max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   className="field h-8 w-full rounded-lg py-0 pl-9 pr-10 text-[13px]"
@@ -313,32 +307,7 @@ export function AppShell() {
                   Live
                 </div>
 
-                {/* Language selector */}
-                <div className="relative" ref={langRef}>
-                  <button
-                    type="button"
-                    title="Switch language"
-                    className="icon-btn relative h-8 w-8"
-                    onClick={() => setLangOpen((v) => !v)}
-                  >
-                    <Languages className="h-3.5 w-3.5" />
-                  </button>
-                  {langOpen && (
-                    <div className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[220px] overflow-hidden p-1">
-                      {(Object.entries(LOCALES) as [LocaleCode, typeof LOCALES[LocaleCode]][]).map(([code, meta]) => (
-                        <button
-                          key={code}
-                          type="button"
-                          onClick={() => { setLocale(code); setLangOpen(false); }}
-                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-[12px] transition hover:bg-slate-50 ${locale === code ? "text-teal-700 font-semibold" : "text-slate-500"}`}
-                        >
-                          <span>{meta.nativeLabel}</span>
-                          {meta.rtl && <span className="text-[9px] font-bold text-amber-700 border border-amber-300 rounded px-1">RTL</span>}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* Translation feature is under development — hidden from demo */}
 
                 {/* Notifications */}
                 <div className="relative" ref={notifRef}>

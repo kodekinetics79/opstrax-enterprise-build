@@ -4,13 +4,37 @@ import {
   AlertTriangle, CheckCircle, ChevronRight, Clock,
   MapPin, ShieldAlert, Truck, User, XCircle, Zap,
 } from "lucide-react";
-import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
+import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
-// P4 Dispatch Execution Workflow — no static data, no fake buttons.
-// All board state, eligibility, and actions come from real backend.
+function exportDispatchCsv(rows: AnyRecord[]) {
+  if (!rows.length) return;
+  const fmtDate = (v: unknown) => v ? new Date(String(v)).toLocaleString() : "";
+  const mapped = rows.map(r => ({
+    "Assignment ID": r.id,
+    "Vehicle":       r.vehicleCode ?? r.vehicle_code ?? "",
+    "Driver":        r.driverName  ?? r.driver_name  ?? "",
+    "Job / Route":   r.jobCode     ?? r.job_code     ?? r.jobId ?? "",
+    "Customer":      r.customerName ?? r.customer_name ?? "",
+    "Status":        r.status ?? "",
+    "Match Score":   r.matchScore  ?? r.match_score  ?? "",
+    "Match Reasons": (() => { try { const j = JSON.parse(String(r.matchReasonsJson ?? r.match_reasons_json ?? "[]")); return Array.isArray(j) ? j.join("; ") : String(j); } catch { return ""; } })(),
+    "Start Time":    fmtDate(r.startedAt   ?? r.started_at),
+    "Arrival Time":  fmtDate(r.arrivedAt   ?? r.arrived_at),
+    "Completion":    fmtDate(r.completedAt ?? r.completed_at),
+    "Cancelled":     fmtDate(r.cancelledAt ?? r.cancelled_at),
+    "Assigned At":   fmtDate(r.assignedAt  ?? r.assigned_at),
+  }));
+  const cols = Object.keys(mapped[0]);
+  const csv = [cols.join(","), ...mapped.map(r => cols.map(c => JSON.stringify((r as AnyRecord)[c] ?? "")).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const ts = new Date().toISOString().slice(0,10);
+  a.download = `dispatch-assignments_${ts}.csv`;
+  a.click();
+}
 
 const TABS = ["Board", "Assignments", "Eligibility", "Exceptions", "Available Drivers", "Available Vehicles"] as const;
 type Tab = (typeof TABS)[number];
@@ -132,7 +156,7 @@ export function DispatchCommandPage() {
           <button
             type="button"
             className="btn-ghost"
-            onClick={() => exportCsv("dispatch-assignments", assignments.data ?? [])}
+            onClick={() => exportDispatchCsv(assignments.data ?? [])}
           >
             Export Assignments
           </button>
