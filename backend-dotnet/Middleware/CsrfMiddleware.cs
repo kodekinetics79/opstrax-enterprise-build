@@ -27,8 +27,8 @@ public class CsrfMiddleware
             context.Response.Cookies.Append(CSRF_COOKIE_NAME, token, new Microsoft.AspNetCore.Http.CookieOptions
             {
                 HttpOnly = false,
-                Secure = context.Request.IsHttps,
-                SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Strict,
+                Secure = true,
+                SameSite = Microsoft.AspNetCore.Http.SameSiteMode.None,
                 MaxAge = TimeSpan.FromHours(8)
             });
         }
