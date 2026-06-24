@@ -55,10 +55,15 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     if (error?.response?.status === 401) {
+      const hadSession = !!(localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session"));
       localStorage.removeItem("opstrax.session.v2");
       localStorage.removeItem("opstrax.session");
-      window.alert("Your session has expired or is invalid. Please sign in again.");
-      window.location.href = "/login";
+      if (hadSession) {
+        window.alert("Your session has expired or is invalid. Please sign in again.");
+      }
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(error);
   }
