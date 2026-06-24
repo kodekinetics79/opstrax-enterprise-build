@@ -3920,11 +3920,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var ollamaBase  = Environment.GetEnvironmentVariable("OLLAMA_BASE_URL") ?? "http://localhost:11434";
         var ollamaModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL")    ?? "qwen2.5-coder:7b";
+        var ollamaKey   = Environment.GetEnvironmentVariable("OLLAMA_API_KEY");
 
         string aiSummary;
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            if (!string.IsNullOrWhiteSpace(ollamaKey))
+                http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ollamaKey);
+
             var payload = new
             {
                 model    = ollamaModel,
