@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using NpgsqlTypes;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
@@ -96,7 +98,7 @@ public sealed class TripBackgroundService(
               LEFT JOIN route_stops rs_last ON rs_last.route_id=r.id
                     AND rs_last.stop_sequence=(SELECT MAX(s3.stop_sequence) FROM route_stops s3 WHERE s3.route_id=r.id)
               WHERE r.status='Active' AND r.assigned_vehicle_id IS NOT NULL
-              GROUP BY r.id",
+              GROUP BY r.id, rs_first.address, rs_last.address",
             ct: ct);
 
         foreach (var route in routes)
@@ -157,7 +159,7 @@ public sealed class TripBackgroundService(
                          rs.time_window_start, rs.time_window_end,
                          rs.eta, 'pending'
                   FROM route_stops rs
-                  WHERE rs.route_id=@rid AND rs.deleted_at IS NULL
+                  WHERE rs.route_id=@rid
                   ORDER BY rs.stop_sequence",
                 c =>
                 {
@@ -387,13 +389,13 @@ public sealed class TripBackgroundService(
             await db.ExecuteAsync(
                 @"UPDATE trips SET route_compliance_score=@score,
                          compliance_breakdown_json=@json,
-                         speeding_events_count=(@json::jsonb->>'speeding_events.count')::int,
+                         speeding_events_count=COALESCE((@json::jsonb->'speeding_events'->>'count')::int, 0),
                          updated_at=NOW()
                   WHERE id=@id",
                 c =>
                 {
                     c.Parameters.AddWithValue("@score", score);
-                    c.Parameters.AddWithValue("@json",  breakdown);
+                    c.Parameters.Add(new NpgsqlParameter("@json", NpgsqlDbType.Jsonb) { Value = breakdown });
                     c.Parameters.AddWithValue("@id",    tripId);
                 }, ct);
         }
@@ -410,7 +412,7 @@ public sealed class TripBackgroundService(
         var overdue = await db.QueryAsync(
             @"SELECT ts.id AS stop_id, ts.trip_id, ts.stop_sequence,
                      t.company_id, t.driver_id, t.vehicle_id,
-                     v.vehicle_code, CONCAT(d.first_name,' ',d.last_name) AS driver_name,
+                     v.vehicle_code, d.full_name AS driver_name,
                      ts.lat AS stop_lat, ts.lng AS stop_lng, ts.address,
                      lvp.lat AS cur_lat, lvp.lng AS cur_lng
               FROM trip_stops ts

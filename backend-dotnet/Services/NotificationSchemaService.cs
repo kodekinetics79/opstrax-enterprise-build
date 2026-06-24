@@ -7,8 +7,30 @@ public sealed class NotificationSchemaService(Database db)
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
+        foreach (var sql in Migrations) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
     }
+
+    private static readonly string[] Migrations =
+    [
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_type VARCHAR(120) NOT NULL DEFAULT 'system'",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_type VARCHAR(80)",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_id BIGINT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title VARCHAR(255)",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS audience_type VARCHAR(80) NOT NULL DEFAULT 'dispatcher'",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS channel VARCHAR(40) NOT NULL DEFAULT 'in_app'",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'unread'",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(255)",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 5",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledgement_note TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS escalated_from BIGINT",
+    ];
 
     private static readonly string[] Tables =
     [

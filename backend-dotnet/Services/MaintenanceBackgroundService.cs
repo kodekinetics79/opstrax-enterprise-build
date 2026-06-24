@@ -54,7 +54,7 @@ public sealed class MaintenanceBackgroundService(
             @"SELECT r.*, c.id AS company_id_val
               FROM maintenance_pm_rules r
               JOIN companies c ON c.id=r.company_id
-              WHERE r.enabled=1",
+              WHERE r.enabled=TRUE",
             ct: ct);
 
         foreach (var rule in rules)
@@ -79,7 +79,7 @@ public sealed class MaintenanceBackgroundService(
                             AND mi.status IN ('Completed','Closed') LIMIT 1) AS last_service_odo
                   FROM vehicles v
                   WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                    AND (@vclass IS NULL OR v.type=@vclass)",
+                    AND (CAST(@vclass AS TEXT) IS NULL OR v.type=CAST(@vclass AS TEXT))",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",    companyId);
@@ -187,12 +187,12 @@ public sealed class MaintenanceBackgroundService(
         // Step 1 — Mark out-of-service where critical open defects exist.
         await db.ExecuteAsync(
             @"UPDATE vehicles
-              SET out_of_service=1, availability_status='out_of_service'
+              SET out_of_service=TRUE, availability_status='out_of_service'
               WHERE deleted_at IS NULL
                 AND EXISTS (
                     SELECT 1 FROM dvir_defects dd
                     WHERE dd.vehicle_id=vehicles.id
-                      AND dd.out_of_service=1
+                      AND dd.out_of_service=TRUE
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
                 )",
             ct: ct);
@@ -201,7 +201,7 @@ public sealed class MaintenanceBackgroundService(
         await db.ExecuteAsync(
             @"UPDATE vehicles
               SET availability_status='in_maintenance'
-              WHERE out_of_service=0 AND deleted_at IS NULL
+              WHERE out_of_service=FALSE AND deleted_at IS NULL
                 AND EXISTS (
                     SELECT 1 FROM work_orders wo
                     WHERE wo.vehicle_id=vehicles.id
@@ -214,12 +214,12 @@ public sealed class MaintenanceBackgroundService(
         // Step 3 — Restore to available when conditions are clear.
         await db.ExecuteAsync(
             @"UPDATE vehicles
-              SET out_of_service=0, availability_status='available'
+              SET out_of_service=FALSE, availability_status='available'
               WHERE deleted_at IS NULL
                 AND availability_status IN ('out_of_service','in_maintenance')
                 AND NOT EXISTS (
                     SELECT 1 FROM dvir_defects dd
-                    WHERE dd.vehicle_id=vehicles.id AND dd.out_of_service=1
+                    WHERE dd.vehicle_id=vehicles.id AND dd.out_of_service=TRUE
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
                 )
                 AND NOT EXISTS (

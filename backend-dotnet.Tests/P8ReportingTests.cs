@@ -347,8 +347,8 @@ public class P8SqlBuildInjectionProofTests
 
         var (sql, _, _) = SecureQueryBuilder.Build(req, Ds, companyId: 1);
 
-        // ORDER BY must contain backtick-quoted field, not raw user-controlled string
-        Assert.Contains($"ORDER BY `{sortable.Key}`", sql, StringComparison.OrdinalIgnoreCase);
+        // ORDER BY must contain double-quote-quoted field (PostgreSQL), not raw user-controlled string
+        Assert.Contains($"ORDER BY \"{sortable.Key}\"", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -357,9 +357,9 @@ public class P8SqlBuildInjectionProofTests
         var req = new P8QueryBody("trips", ["id", "status"]);
         var (sql, _, _) = SecureQueryBuilder.Build(req, Ds, companyId: 1);
 
-        // SELECT must have backtick-quoted names
-        Assert.Contains("`id`", sql);
-        Assert.Contains("`status`", sql);
+        // SELECT must have double-quote-quoted names (PostgreSQL identifier quoting)
+        Assert.Contains("\"id\"", sql);
+        Assert.Contains("\"status\"", sql);
     }
 
     [Fact]
@@ -411,7 +411,7 @@ public class P8SqlBuildInjectionProofTests
         var req = new P8QueryBody("trips", [groupable.Key], GroupBy: groupable.Key);
         var (sql, _, _) = SecureQueryBuilder.Build(req, Ds, companyId: 1);
 
-        Assert.Contains($"GROUP BY `{groupable.Key}`", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"GROUP BY \"{groupable.Key}\"", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -482,7 +482,7 @@ public class P8SqlBuildInjectionProofTests
         var (sql, _, _) = SecureQueryBuilder.Build(req, Ds, companyId: 1);
 
         var normalized = dir.ToUpperInvariant();
-        Assert.Contains($"ORDER BY `{sortable.Key}` {normalized}", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"ORDER BY \"{sortable.Key}\" {normalized}", sql, StringComparison.OrdinalIgnoreCase);
     }
 }
 

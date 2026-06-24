@@ -55,7 +55,7 @@ public sealed class TelemetryBackgroundService(
                      COALESCE(tr.threshold_value, 900) stale_threshold
               FROM latest_vehicle_positions lvp
               LEFT JOIN telemetry_rules tr
-                ON tr.company_id=lvp.company_id AND tr.rule_type='stale_device' AND tr.enabled=1
+                ON tr.company_id=lvp.company_id AND tr.rule_type='stale_device' AND tr.enabled=TRUE
               WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)",
             ct: ct);
 

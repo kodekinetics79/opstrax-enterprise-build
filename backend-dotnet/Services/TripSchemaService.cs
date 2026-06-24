@@ -23,10 +23,35 @@ public sealed class TripSchemaService(Database db)
 
     private static readonly ColumnDefinition[] Columns =
     [
+        // trips columns added post-bootstrap (base schema has minimal trips table)
+        new("trips", "route_id",                   "BIGINT NULL"),
+        new("trips", "job_id",                     "BIGINT NULL"),
+        new("trips", "trip_ref",                   "VARCHAR(60) NULL"),
+        new("trips", "planned_start_time",          "TIMESTAMPTZ NULL"),
+        new("trips", "actual_start_time",           "TIMESTAMPTZ NULL"),
+        new("trips", "planned_end_time",            "TIMESTAMPTZ NULL"),
+        new("trips", "actual_end_time",             "TIMESTAMPTZ NULL"),
+        new("trips", "origin",                     "TEXT NULL"),
+        new("trips", "destination",                "TEXT NULL"),
+        new("trips", "planned_distance_miles",      "DECIMAL(10,2) NULL"),
+        new("trips", "actual_distance_miles",       "DECIMAL(10,2) NULL"),
+        new("trips", "planned_duration_minutes",    "INT NULL"),
+        new("trips", "actual_duration_minutes",     "INT NULL"),
+        new("trips", "total_planned_stops",         "INT NOT NULL DEFAULT 0"),
+        new("trips", "stops_completed",             "INT NOT NULL DEFAULT 0"),
+        new("trips", "stops_on_time",               "INT NOT NULL DEFAULT 0"),
+        new("trips", "start_delay_minutes",         "INT NOT NULL DEFAULT 0"),
+        new("trips", "max_telemetry_gap_minutes",   "INT NOT NULL DEFAULT 0"),
+        new("trips", "speeding_events_count",       "INT NOT NULL DEFAULT 0"),
+        new("trips", "compliance_score",            "DECIMAL(5,2) NULL"),
+        new("trips", "route_compliance_score",      "DECIMAL(5,2) NULL DEFAULT 100"),
+        new("trips", "compliance_breakdown_json",   "JSONB NULL"),
+        new("trips", "created_at",                 "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+        new("trips", "updated_at",                 "TIMESTAMPTZ NULL"),
         // Bind location_events to trips for breadcrumb replay
-        new("location_events", "trip_id", "BIGINT NULL"),
+        new("location_events", "trip_id",          "BIGINT NULL"),
         // Capture odometer at trip start/end for actual_distance
-        new("location_events", "trip_sequence", "INT NULL"),
+        new("location_events", "trip_sequence",    "INT NULL"),
     ];
 
     private static readonly string[] Tables =

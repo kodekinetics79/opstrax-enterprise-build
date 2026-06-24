@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using NpgsqlTypes;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
@@ -91,7 +93,7 @@ public sealed class SafetyBackgroundService(
             // Fetch tenant score weight for this event type
             var weightRuleType = $"safety_weight_{alertType.Replace("-", "_")}";
             var scoreImpact = await db.ScalarDecimalAsync(
-                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@rt AND enabled=1 LIMIT 1",
+                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@rt AND enabled=TRUE LIMIT 1",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@rt", weightRuleType); }, ct)
                 ?? SeverityWeights.GetValueOrDefault(severity, 10m);
 
@@ -156,7 +158,7 @@ public sealed class SafetyBackgroundService(
                      COALESCE(tr.threshold_value, 3) repeat_threshold
               FROM safety_events se
               LEFT JOIN telemetry_rules tr
-                ON tr.company_id=se.company_id AND tr.rule_type='safety_repeated_speeding_threshold' AND tr.enabled=1
+                ON tr.company_id=se.company_id AND tr.rule_type='safety_repeated_speeding_threshold' AND tr.enabled=TRUE
               WHERE se.event_type='speeding'
                 AND se.status != 'dismissed'
                 AND se.driver_id IS NOT NULL
@@ -179,7 +181,7 @@ public sealed class SafetyBackgroundService(
             if (existing > 0) continue;
 
             var weight = await db.ScalarDecimalAsync(
-                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='safety_weight_repeated_speeding' AND enabled=1 LIMIT 1",
+                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='safety_weight_repeated_speeding' AND enabled=TRUE LIMIT 1",
                 c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 25m;
 
             await db.ExecuteAsync(
@@ -245,7 +247,7 @@ public sealed class SafetyBackgroundService(
                     c.Parameters.AddWithValue("@e7",   events7d);
                     c.Parameters.AddWithValue("@e30",  events30d);
                     c.Parameters.AddWithValue("@e90",  events90d);
-                    c.Parameters.AddWithValue("@bd",   breakdown30d);
+                    c.Parameters.Add(new NpgsqlParameter("@bd", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = breakdown30d });
                 }, ct);
         }
     }
