@@ -9,4 +9,12 @@ export default defineConfig({
       "@": "/src",
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // force deterministic chunk splitting so cache busts correctly
+        chunkFileNames: "assets/[name]-[hash].js",
+      },
+    },
+  },
 });
