@@ -374,7 +374,7 @@ public static class EndpointMappings
         });
 
         // ── Invoices / Payments / Profitability ──
-        app.MapGet("/api/invoices", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/invoices", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code invoice_number, mr.title, mr.status, mr.priority,
                      mr.assigned_to_name customer_name, mr.created_at invoice_date,
                      COALESCE(mr.numeric_value, 0) amount, COALESCE(mr.secondary_value, 0) tax,
@@ -383,18 +383,20 @@ public static class EndpointMappings
                      (CURRENT_DATE::date - COALESCE(mr.due_date, mr.created_at + 30 * INTERVAL '1 day')::date) aging_days,
                      COALESCE(mr.currency, 'USD') currency
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='invoices' AND mr.deleted_at IS NULL
-              ORDER BY mr.created_at DESC", ct: ct));
-        app.MapGet("/api/payments", (Database db, CancellationToken ct) => OkRows(db,
+              WHERE mr.company_id=@cid AND mr.module_key='invoices' AND mr.deleted_at IS NULL
+              ORDER BY mr.created_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/payments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code payment_number, mr.title, mr.status,
                      mr.assigned_to_name customer_name, mr.created_at payment_date,
                      COALESCE(mr.numeric_value, 0) amount, COALESCE(mr.currency, 'USD') currency,
                      COALESCE(mr.tags, 'Bank Transfer') payment_method,
                      mr.notes notes
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='payments' AND mr.deleted_at IS NULL
-              ORDER BY mr.created_at DESC", ct: ct));
-        app.MapGet("/api/profitability", (Database db, CancellationToken ct) => OkRows(db,
+              WHERE mr.company_id=@cid AND mr.module_key='payments' AND mr.deleted_at IS NULL
+              ORDER BY mr.created_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/profitability", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT cm.id, cm.entity_type, cm.entity_id,
                      COALESCE(c.name, CONCAT('Entity-',cm.entity_id)) entity_name,
                      cm.revenue_estimate, cm.fuel_cost, cm.driver_cost, cm.maintenance_cost,
@@ -402,15 +404,17 @@ public static class EndpointMappings
                      cm.risk_score, cm.status, cm.created_at
               FROM cost_margin_records cm
               LEFT JOIN customers c ON c.id=cm.customer_id
-              WHERE cm.company_id=GetCompanyId()
-              ORDER BY cm.gross_margin_percent DESC LIMIT 50", ct: ct));
-        app.MapGet("/api/profitability/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(
+              WHERE cm.company_id=@cid
+              ORDER BY cm.gross_margin_percent DESC LIMIT 50",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/profitability/summary", (HttpContext http, Database db, CancellationToken ct) => db.QuerySingleAsync(
             @"SELECT COALESCE(SUM(revenue_estimate),0) total_revenue,
                      COALESCE(SUM(total_cost),0) total_cost,
                      COALESCE(SUM(gross_margin),0) total_margin,
                      COALESCE(AVG(gross_margin_percent),0) avg_margin_pct,
                      COUNT(*) total_records
-              FROM cost_margin_records WHERE company_id=GetCompanyId()", ct: ct)
+              FROM cost_margin_records WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct)
             .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
 
         // ── Carbon Emissions ──
@@ -429,23 +433,25 @@ public static class EndpointMappings
               ORDER BY co2_this_month DESC", ct: ct));
 
         // ── Digital Forms ──
-        app.MapGet("/api/digital-forms/templates", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/digital-forms/templates", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code form_key, mr.title, mr.tags category,
                      COALESCE(mr.numeric_value, 10) fields,
                      mr.notes compliance,
                      CASE WHEN mr.status='Active' THEN 1 ELSE 0 END active,
                      mr.priority required_role
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='digital-forms' AND mr.deleted_at IS NULL
-              ORDER BY mr.tags, mr.title", ct: ct));
-        app.MapGet("/api/digital-forms/submissions", (Database db, CancellationToken ct) => OkRows(db,
+              WHERE mr.company_id=@cid AND mr.module_key='digital-forms' AND mr.deleted_at IS NULL
+              ORDER BY mr.tags, mr.title",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/digital-forms/submissions", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, COALESCE(mr.title,'Form Submission') form_title, mr.record_code form_key,
                      mr.assigned_to_name submitted_by, mr.created_at submitted_at,
                      COALESCE(mr.status,'Passed') status,
                      0 defects, 0 attachments
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='digital-forms-submission' AND mr.deleted_at IS NULL
-              ORDER BY mr.created_at DESC LIMIT 50", ct: ct));
+              WHERE mr.company_id=@cid AND mr.module_key='digital-forms-submission' AND mr.deleted_at IS NULL
+              ORDER BY mr.created_at DESC LIMIT 50",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/digital-forms/submissions", async (DigitalFormSubmissionBody body, Database db, HttpContext http, AuditService audit, CancellationToken ct) => {
             var companyId = GetCompanyId(http);
             var userId = http.Items[AuthUserIdItemKey]?.ToString() ?? "system";
@@ -458,7 +464,7 @@ public static class EndpointMappings
         });
 
         // ── Feature Flags ──
-        app.MapGet("/api/feature-flags", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/feature-flags", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code flag_key, mr.title name, mr.notes description,
                      COALESCE(mr.tags, 'General') category,
                      CASE WHEN mr.status='Active' THEN 1 ELSE 0 END enabled,
@@ -466,8 +472,9 @@ public static class EndpointMappings
                      COALESCE(mr.priority, 'Production') env,
                      mr.updated_at last_modified
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='feature-flags' AND mr.deleted_at IS NULL
-              ORDER BY mr.tags, mr.title", ct: ct));
+              WHERE mr.company_id=@cid AND mr.module_key='feature-flags' AND mr.deleted_at IS NULL
+              ORDER BY mr.tags, mr.title",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPut("/api/feature-flags/{key}/toggle", async (string key, ToggleBody body, Database db, HttpContext http, AuditService audit, CancellationToken ct) => {
             var companyId = GetCompanyId(http);
             var affected = await db.ExecuteAsync(
@@ -478,13 +485,14 @@ public static class EndpointMappings
         });
 
         // ── Integrations ──
-        app.MapGet("/api/integrations", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/integrations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT id, provider_name, category, status,
                      NOW() last_sync_at
-              FROM integrations WHERE company_id=GetCompanyId() ORDER BY category, provider_name", ct: ct));
+              FROM integrations WHERE company_id=@cid ORDER BY category, provider_name",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ── Vehicle Assignments / Owners ──
-        app.MapGet("/api/vehicle-assignments", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/vehicle-assignments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT va.id, va.assigned_at assignment_date, NULL::timestamptz release_date,
                      COALESCE(va.assignment_type,'Dispatch') assignment_type,
                      COALESCE(va.status,'Active') status,
@@ -493,9 +501,10 @@ public static class EndpointMappings
               FROM vehicle_assignments va
               LEFT JOIN vehicles v ON v.id=va.vehicle_id
               LEFT JOIN drivers d ON d.id=va.driver_id
-              WHERE va.company_id=GetCompanyId()
-              ORDER BY va.assigned_at DESC LIMIT 50", ct: ct));
-        app.MapGet("/api/owners", (Database db, CancellationToken ct) => OkRows(db,
+              WHERE va.company_id=@cid
+              ORDER BY va.assigned_at DESC LIMIT 50",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/owners", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code owner_code, mr.title owner_name,
                      mr.assigned_to_name contact_name, mr.status,
                      COALESCE(mr.numeric_value, 0) vehicle_count,
@@ -503,8 +512,9 @@ public static class EndpointMappings
                      COALESCE(mr.currency, 'USD') currency,
                      mr.notes
               FROM module_records mr
-              WHERE mr.company_id=GetCompanyId() AND mr.module_key='owners' AND mr.deleted_at IS NULL
-              ORDER BY mr.created_at DESC", ct: ct));
+              WHERE mr.company_id=@cid AND mr.module_key='owners' AND mr.deleted_at IS NULL
+              ORDER BY mr.created_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ── Traffic Violations ──
         app.MapGet("/api/traffic-violations", (Database db, CancellationToken ct) => OkRows(db,
@@ -1327,7 +1337,7 @@ public static class EndpointMappings
         app.MapGet("/api/executive/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 10", ct: ct));
 
         // ===== ALERT RULES =====================================================
-        app.MapGet("/api/alert-rules", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/alert-rules", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT id, record_code rule_key, title name,
                      COALESCE(tags,'Speed') category,
                      COALESCE(status,'Active') status,
@@ -1335,8 +1345,9 @@ public static class EndpointMappings
                      COALESCE(numeric_value,0) triggered_today,
                      updated_at last_triggered
               FROM module_records
-              WHERE company_id=GetCompanyId() AND module_key='alert-rules' AND deleted_at IS NULL
-              ORDER BY title", ct: ct));
+              WHERE company_id=@cid AND module_key='alert-rules' AND deleted_at IS NULL
+              ORDER BY title",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/alert-rules", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var name = body.GetValueOrDefault("name")?.ToString() ?? "New Rule";
@@ -1369,13 +1380,14 @@ public static class EndpointMappings
         });
 
         // ===== DRIVER MESSAGING =====================================================
-        app.MapGet("/api/driver-messages", (Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/driver-messages", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT id, record_code, title subject, status,
                      tags channel, secondary_value recipient,
                      numeric_value replies, updated_at sent_at
               FROM module_records
-              WHERE company_id=GetCompanyId() AND module_key='driver-messages' AND deleted_at IS NULL
-              ORDER BY created_at DESC LIMIT 100", ct: ct));
+              WHERE company_id=@cid AND module_key='driver-messages' AND deleted_at IS NULL
+              ORDER BY created_at DESC LIMIT 100",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var code = $"MSG-{Guid.NewGuid():N}"[..16];
@@ -13104,7 +13116,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // Vehicle risk query — priority score computed entirely in SQL
         var vehicleRows = await db.QueryAsync(@"
-            SELECT
+            SELECT * FROM (SELECT
               v.id,
               v.vehicle_code,
               v.type                         vehicle_type,
@@ -13160,14 +13172,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             FROM vehicles v
             WHERE v.company_id=@cid AND v.deleted_at IS NULL
-            HAVING priority_score >= 15
-            ORDER BY priority_score DESC
+            ) sub
+            WHERE sub.priority_score >= 15
+            ORDER BY sub.priority_score DESC
             LIMIT 25",
             c => c.Parameters.AddWithValue("@cid", cid), ct);
 
         // Driver risk query — priority score computed entirely in SQL
         var driverRows = await db.QueryAsync(@"
-            SELECT
+            SELECT * FROM (SELECT
               d.id,
               d.driver_code,
               d.full_name,
@@ -13213,8 +13226,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             FROM drivers d
             WHERE d.company_id=@cid AND d.deleted_at IS NULL
               AND d.status NOT IN ('Inactive','Deleted')
-            HAVING priority_score >= 15
-            ORDER BY priority_score DESC
+            ) sub
+            WHERE sub.priority_score >= 15
+            ORDER BY sub.priority_score DESC
             LIMIT 25",
             c => c.Parameters.AddWithValue("@cid", cid), ct);
 
@@ -13490,10 +13504,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var hosStatus = await db.QuerySingleAsync(
             @"SELECT hc.drive_time_remaining_minutes, hc.shift_time_remaining_minutes,
-                     hc.status hos_status, hc.duty_status, hc.last_updated_at
+                     hc.status hos_status, hc.duty_status, hc.last_synced_at last_updated_at
               FROM hos_clocks hc
               WHERE hc.driver_id=@id
-              ORDER BY hc.last_updated_at DESC
+              ORDER BY hc.last_synced_at DESC
               LIMIT 1",
             c => c.Parameters.AddWithValue("@id", id), ct);
 
