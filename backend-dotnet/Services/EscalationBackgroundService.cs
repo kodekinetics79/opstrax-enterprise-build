@@ -54,7 +54,7 @@ public sealed class EscalationBackgroundService(
                      initial_audience, escalation_audience,
                      time_to_escalate_minutes, repeat_interval_minutes, max_repeats
               FROM escalation_rules
-              WHERE enabled=1",
+              WHERE enabled=TRUE",
             ct: ct);
 
         if (rules.Count == 0) return;

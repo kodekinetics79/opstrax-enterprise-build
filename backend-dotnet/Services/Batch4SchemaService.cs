@@ -38,9 +38,10 @@ public sealed class Batch4SchemaService(Database db)
         new("safety_events", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 35"),
         new("safety_events", "ai_summary", "TEXT NULL"),
         new("safety_events", "recommended_action", "VARCHAR(260) NULL"),
-        new("safety_events", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
-        new("safety_events", "updated_at", "TIMESTAMPTZ NULL"),
-        new("safety_events", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("safety_events", "status",          "VARCHAR(80) NOT NULL DEFAULT 'New'"),
+        new("safety_events", "created_at",     "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+        new("safety_events", "updated_at",     "TIMESTAMPTZ NULL"),
+        new("safety_events", "deleted_at",     "TIMESTAMPTZ NULL"),
 
         new("dashcam_events", "event_number", "VARCHAR(80) NULL"),
         new("dashcam_events", "event_type", "VARCHAR(120) NULL"),
@@ -64,7 +65,38 @@ public sealed class Batch4SchemaService(Database db)
         new("dashcam_events", "occurred_at", "TIMESTAMPTZ NULL"),
         new("dashcam_events", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("dashcam_events", "updated_at", "TIMESTAMPTZ NULL"),
-        new("dashcam_events", "deleted_at", "TIMESTAMPTZ NULL")
+        new("dashcam_events", "deleted_at", "TIMESTAMPTZ NULL"),
+
+        new("evidence_package_items", "evidence_package_id", "BIGINT NOT NULL DEFAULT 1"),
+        new("evidence_package_items", "item_json",           "JSONB NULL"),
+
+        new("insurance_reports", "evidence_package_id", "BIGINT NULL"),
+        new("insurance_reports", "report_summary",      "TEXT NULL"),
+        new("insurance_reports", "export_url",          "VARCHAR(500) NULL"),
+
+        new("driver_safety_scorecards", "safety_score",               "DECIMAL(6,2) NOT NULL DEFAULT 80"),
+        new("driver_safety_scorecards", "harsh_braking_count",        "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "harsh_acceleration_count",   "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "speeding_count",             "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "dashcam_event_count",        "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "coaching_open_count",        "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "coaching_completed_count",   "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "incident_count",             "INT NOT NULL DEFAULT 0"),
+        new("driver_safety_scorecards", "risk_score",                 "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+
+        new("vehicle_safety_scorecards", "safety_score",          "DECIMAL(6,2) NOT NULL DEFAULT 80"),
+        new("vehicle_safety_scorecards", "safety_event_count",    "INT NOT NULL DEFAULT 0"),
+        new("vehicle_safety_scorecards", "dashcam_event_count",   "INT NOT NULL DEFAULT 0"),
+        new("vehicle_safety_scorecards", "incident_count",        "INT NOT NULL DEFAULT 0"),
+        new("vehicle_safety_scorecards", "route_deviation_count", "INT NOT NULL DEFAULT 0"),
+        new("vehicle_safety_scorecards", "risk_score",            "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+
+        new("safety_trends", "trend_date",                "DATE NULL"),
+        new("safety_trends", "harsh_braking_count",       "INT NOT NULL DEFAULT 0"),
+        new("safety_trends", "harsh_acceleration_count",  "INT NOT NULL DEFAULT 0"),
+        new("safety_trends", "speeding_count",            "INT NOT NULL DEFAULT 0"),
+        new("safety_trends", "dashcam_event_count",       "INT NOT NULL DEFAULT 0"),
+        new("safety_trends", "incident_count",            "INT NOT NULL DEFAULT 0")
     ];
 
     private static readonly string[] Tables =
@@ -225,9 +257,9 @@ public sealed class Batch4SchemaService(Database db)
                  n%4 = 0,
                  'Evidence package bundle: video, GPS, speed, route, DVIR, maintenance and statements.'
           FROM seq WHERE (SELECT COUNT(*) FROM evidence_packages WHERE deleted_at IS NULL) < 10",
-        @"INSERT INTO evidence_package_items (company_id, evidence_package_id, item_type, item_title, item_url, item_json, source_entity_type, source_entity_id)
+        @"INSERT INTO evidence_package_items (company_id, package_id, evidence_package_id, item_type, item_title, item_url, item_json, source_entity_type, source_entity_id)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<40)
-          SELECT 1, ((n-1)%10)+1,
+          SELECT 1, ((n-1)%10)+1, ((n-1)%10)+1,
                  (ARRAY['Road Video','Driver Video','GPS Trail','Speed Snapshot','DVIR','Maintenance','Photo'])[(n%7)+1],
                  'Evidence package item ' || n, '/placeholder/package-item.dat',
                  jsonb_build_object('readyForExport', true),
@@ -240,15 +272,16 @@ public sealed class Batch4SchemaService(Database db)
                  'Insurance/legal report placeholder generated from incident and evidence package.',
                  '/placeholder/insurance-report.pdf'
           FROM seq WHERE (SELECT COUNT(*) FROM insurance_reports) < 8",
-        @"INSERT INTO driver_safety_scorecards (company_id, driver_id, safety_score, harsh_braking_count, harsh_acceleration_count, speeding_count, dashcam_event_count, coaching_open_count, coaching_completed_count, incident_count, risk_score)
-          SELECT 1, d.id, GREATEST(55, 98-(d.id%12)*3), d.id%5, d.id%4, d.id%6, d.id%3, d.id%4, d.id%2, d.id%3, 20+(d.id%10)*6
+        @"INSERT INTO driver_safety_scorecards (company_id, driver_id, period_start, period_end, safety_score, harsh_braking_count, harsh_acceleration_count, speeding_count, dashcam_event_count, coaching_open_count, coaching_completed_count, incident_count, risk_score)
+          SELECT 1, d.id, CURRENT_DATE - INTERVAL '30 days', CURRENT_DATE, GREATEST(55, 98-(d.id%12)*3), d.id%5, d.id%4, d.id%6, d.id%3, d.id%4, d.id%2, d.id%3, 20+(d.id%10)*6
           FROM drivers d WHERE NOT EXISTS (SELECT 1 FROM driver_safety_scorecards s WHERE s.driver_id=d.id)",
-        @"INSERT INTO vehicle_safety_scorecards (company_id, vehicle_id, safety_score, safety_event_count, dashcam_event_count, incident_count, route_deviation_count, risk_score)
-          SELECT 1, v.id, GREATEST(58, 97-(v.id%10)*3), v.id%6, v.id%4, v.id%3, v.id%2, 18+(v.id%8)*7
+        @"INSERT INTO vehicle_safety_scorecards (company_id, vehicle_id, period_start, period_end, safety_score, safety_event_count, dashcam_event_count, incident_count, route_deviation_count, risk_score)
+          SELECT 1, v.id, CURRENT_DATE - INTERVAL '30 days', CURRENT_DATE, GREATEST(58, 97-(v.id%10)*3), v.id%6, v.id%4, v.id%3, v.id%2, 18+(v.id%8)*7
           FROM vehicles v WHERE NOT EXISTS (SELECT 1 FROM vehicle_safety_scorecards s WHERE s.vehicle_id=v.id)",
-        @"INSERT INTO safety_trends (company_id, trend_date, harsh_braking_count, harsh_acceleration_count, speeding_count, dashcam_event_count, incident_count, fleet_safety_score)
+        @"INSERT INTO safety_trends (company_id, period_start, period_end, trend_date, harsh_braking_count, harsh_acceleration_count, speeding_count, dashcam_event_count, incident_count, fleet_safety_score)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<14)
-          SELECT 1, CURRENT_DATE - n * INTERVAL '1 day', n%7, n%5, n%8, n%4, n%3, 88-(n%6)
+          SELECT 1, CURRENT_DATE - n * INTERVAL '1 day', CURRENT_DATE - (n-1) * INTERVAL '1 day',
+                 CURRENT_DATE - n * INTERVAL '1 day', n%7, n%5, n%8, n%4, n%3, 88-(n%6)
           FROM seq WHERE (SELECT COUNT(*) FROM safety_trends) < 14",
         @"INSERT INTO ai_recommendations (company_id,module_key,title,body,score,status)
           SELECT 1, x.module_key, x.title, x.body, x.score, 'Recommended' FROM (

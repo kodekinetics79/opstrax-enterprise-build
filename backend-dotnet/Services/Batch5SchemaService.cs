@@ -97,9 +97,21 @@ public sealed class Batch5SchemaService(Database db)
         new("contracts", "deleted_at",              "TIMESTAMPTZ NULL"),
 
         new("audit_logs", "entity_type",            "VARCHAR(100) NULL"),
-        new("idling_events", "threshold_status",     "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
-        new("idling_events", "risk_score",           "DECIMAL(6,2) NOT NULL DEFAULT 20"),
-        new("idling_events", "recommended_action",   "VARCHAR(260) NULL")
+        new("idling_events", "threshold_status",         "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
+        new("idling_events", "risk_score",               "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+        new("idling_events", "recommended_action",       "VARCHAR(260) NULL"),
+        new("cost_margin_records", "carrier_cost",       "DECIMAL(12,2) NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "expense_total",      "DECIMAL(12,2) NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "delay_cost",         "DECIMAL(12,2) NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "idle_cost",          "DECIMAL(12,2) NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "margin_estimate",    "DECIMAL(12,2) NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "margin_percent",     "DECIMAL(6,2)  NOT NULL DEFAULT 0"),
+        new("cost_margin_records", "margin_risk",        "VARCHAR(50) NOT NULL DEFAULT 'Low'"),
+        new("cost_margin_records", "ai_notes",           "TEXT NULL"),
+
+        new("cost_margin_predictions", "recommendation", "TEXT NULL"),
+
+        new("cost_leakage_items", "owner_role", "VARCHAR(120) NULL")
     ];
 
     private static readonly string[] Tables =

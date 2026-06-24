@@ -90,7 +90,7 @@ public sealed class TripBackgroundService(
                      rs_last.address  AS destination,
                      COUNT(rs.id)     AS total_stops
               FROM routes r
-              LEFT JOIN route_stops rs ON rs.route_id=r.id AND rs.deleted_at IS NULL
+              LEFT JOIN route_stops rs ON rs.route_id=r.id
               LEFT JOIN route_stops rs_first ON rs_first.route_id=r.id
                     AND rs_first.stop_sequence=(SELECT MIN(s2.stop_sequence) FROM route_stops s2 WHERE s2.route_id=r.id)
               LEFT JOIN route_stops rs_last ON rs_last.route_id=r.id

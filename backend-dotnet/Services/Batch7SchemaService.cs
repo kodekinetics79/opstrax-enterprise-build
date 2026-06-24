@@ -332,7 +332,7 @@ public sealed class Batch7SchemaService(Database db)
         // ── KPI METRICS (30 records) ────────────────────────────────────────────────
         @"INSERT INTO kpi_metrics (id,tenant_id,kpi_code,kpi_name,category,target_value,actual_value,unit,trend,status,owner_role,recommendation) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'OTD','On-Time Delivery','Dispatch',95,87.4,'%','down','At Risk','Fleet Manager','Investigate 6 high-delay jobs and review dispatch scheduling gaps.'),
-          (2,1,1,'SLA-COMP','SLA Compliance','Customer Service',98,91.2,'%','down','At Risk','Company Admin','Review 4 SLA breach records and escalate customer communications.'),
+          (2,1,'SLA-COMP','SLA Compliance','Customer Service',98,91.2,'%','down','At Risk','Company Admin','Review 4 SLA breach records and escalate customer communications.'),
           (3,1,'ETA-ACC','Average ETA Accuracy','Dispatch',90,84.6,'%','stable','Watch','Fleet Manager','Improve route planning for 3 high-variance lanes.'),
           (4,1,'JOBS-COMP','Jobs Completed','Operations',200,187,'count','up','On Target','Fleet Manager','On track. 187 of 200 target jobs completed this period.'),
           (5,1,'DELAYED-JOBS','Delayed Jobs','Operations',5,9,'count','up','Breached','Fleet Manager','9 delayed jobs — 4 are repeat lanes. Dispatch re-optimization recommended.'),
@@ -366,7 +366,7 @@ public sealed class Batch7SchemaService(Database db)
         // ── KPI TARGETS (20 records) ────────────────────────────────────────────────
         @"INSERT INTO kpi_targets (id,tenant_id,kpi_code,target_value,unit,effective_date,status) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'OTD',95,'%','2026-01-01','Active'),
-          (2,1,1,'SLA-COMP',98,'%','2026-01-01','Active'),
+          (2,1,'SLA-COMP',98,'%','2026-01-01','Active'),
           (3,1,'ETA-ACC',90,'%','2026-01-01','Active'),
           (4,1,'JOBS-COMP',200,'count','2026-01-01','Active'),
           (5,1,'DELAYED-JOBS',5,'count','2026-01-01','Active'),
@@ -566,22 +566,22 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── AI RECOMMENDATIONS for Batch 7 modules ─────────────────────────────────
-        @"INSERT INTO ai_recommendations (module_key,title,description,priority,score,action_label,action_type) VALUES
-          ('reports-analytics','Run SLA At-Risk Report — 6 Customers Flagged','6 customers have SLA risk scores above 50. Run the SLA At-Risk Report to identify breach root causes.','High',91,'Run Report','report_action'),
-          ('reports-analytics','Cost Leakage Report — $14,280 Recoverable','Cost leakage analysis shows $14,280 in recoverable savings this period. Export the Cost Leakage Report for Finance review.','High',88,'Run Report','report_action'),
-          ('reports-analytics','Schedule Daily HOS Warning Report','Drivers 2 and 4 have recurring HOS issues. Enable the Daily HOS Warning scheduled report to catch violations earlier.','Medium',76,'Schedule Report','schedule_action'),
-          ('reports-analytics','Executive Summary Report — Board Ready','Monthly executive summary is due. Run and export the Executive Operations Summary for board distribution.','Medium',72,'Run Report','report_action'),
-          ('sla-kpi','On-Time Delivery Drifting — 7.6% Below Target','OTD has dropped from 94% to 87.4% over 5 days. Investigate dispatch scheduling and vehicle availability.','Critical',96,'Review KPI','kpi_action'),
-          ('sla-kpi','Idle Cost Breaching Weekly Target — Review Top 3 Vehicles','Idle cost is $347.50/week over target. TRK-101, VAN-106, and BOX-107 account for 68% of idle time.','High',89,'Review Idle Cost','kpi_action'),
-          ('sla-kpi','4 SLA Breaches Open — Customer Communications Required','SLA records SLA-003, SLA-007, SLA-010, and SLA-021 are in breach status. Customer notifications are overdue.','High',87,'View SLA Breaches','sla_action'),
-          ('sla-kpi','Gross Margin Below Target — 4 Routes Operating Below 10%','Gross margin at 17.4% vs 22% target. Identify low-margin routes and renegotiate customer rates.','High',84,'Margin Analysis','kpi_action'),
-          ('audit-logs','97 Audit Events This Period — Coverage Score 91%','Audit coverage is near target. 23 recent actions pending enrichment. Review critical and warning severity events.','Medium',74,'View Audit Logs','audit_action'),
-          ('audit-logs','2 Critical Audit Events Require Review','Audit events: ELD malfunction (eld.malfunction) and DVIR critical defect (dvir.critical_defect) are pending review.','High',85,'Review Critical Events','audit_action'),
-          ('audit-logs','Compliance Audit Export Ready','AUD-2026-US-001 audit package is ready. Request an audit log export covering the same date range for the compliance review.','Medium',71,'Export Audit Logs','audit_action'),
-          ('executive','Operations in WATCH Status — 3 KPIs Require Action','OTD, Idle Cost, and Gross Margin are below target. Recommend executive review and resource reallocation.','Critical',97,'View Executive Summary','executive_action'),
-          ('executive','ELD Malfunction on TRK-104 — FMCSA Compliance Risk','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Critical',95,'View Compliance','executive_action'),
-          ('executive','Fleet Readiness Below 80% — 4 Vehicles Offline','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','High',86,'View Fleet Status','executive_action'),
-          ('executive','Cost Savings Opportunity — $1,200/week Route Optimization','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Medium',78,'View Route Analysis','executive_action')
+        @"INSERT INTO ai_recommendations (company_id,module_key,title,body,description,priority,score,action_label,action_type) VALUES
+          (1,'reports-analytics','Run SLA At-Risk Report — 6 Customers Flagged','6 customers have SLA risk scores above 50. Run the SLA At-Risk Report to identify breach root causes.','6 customers have SLA risk scores above 50. Run the SLA At-Risk Report to identify breach root causes.','High',91,'Run Report','report_action'),
+          (1,'reports-analytics','Cost Leakage Report — $14,280 Recoverable','Cost leakage analysis shows $14,280 in recoverable savings this period. Export the Cost Leakage Report for Finance review.','Cost leakage analysis shows $14,280 in recoverable savings this period. Export the Cost Leakage Report for Finance review.','High',88,'Run Report','report_action'),
+          (1,'reports-analytics','Schedule Daily HOS Warning Report','Drivers 2 and 4 have recurring HOS issues. Enable the Daily HOS Warning scheduled report to catch violations earlier.','Drivers 2 and 4 have recurring HOS issues. Enable the Daily HOS Warning scheduled report to catch violations earlier.','Medium',76,'Schedule Report','schedule_action'),
+          (1,'reports-analytics','Executive Summary Report — Board Ready','Monthly executive summary is due. Run and export the Executive Operations Summary for board distribution.','Monthly executive summary is due. Run and export the Executive Operations Summary for board distribution.','Medium',72,'Run Report','report_action'),
+          (1,'sla-kpi','On-Time Delivery Drifting — 7.6% Below Target','OTD has dropped from 94% to 87.4% over 5 days. Investigate dispatch scheduling and vehicle availability.','OTD has dropped from 94% to 87.4% over 5 days. Investigate dispatch scheduling and vehicle availability.','Critical',96,'Review KPI','kpi_action'),
+          (1,'sla-kpi','Idle Cost Breaching Weekly Target — Review Top 3 Vehicles','Idle cost is $347.50/week over target. TRK-101, VAN-106, and BOX-107 account for 68% of idle time.','Idle cost is $347.50/week over target. TRK-101, VAN-106, and BOX-107 account for 68% of idle time.','High',89,'Review Idle Cost','kpi_action'),
+          (1,'sla-kpi','4 SLA Breaches Open — Customer Communications Required','SLA records SLA-003, SLA-007, SLA-010, and SLA-021 are in breach status. Customer notifications are overdue.','SLA records SLA-003, SLA-007, SLA-010, and SLA-021 are in breach status. Customer notifications are overdue.','High',87,'View SLA Breaches','sla_action'),
+          (1,'sla-kpi','Gross Margin Below Target — 4 Routes Operating Below 10%','Gross margin at 17.4% vs 22% target. Identify low-margin routes and renegotiate customer rates.','Gross margin at 17.4% vs 22% target. Identify low-margin routes and renegotiate customer rates.','High',84,'Margin Analysis','kpi_action'),
+          (1,'audit-logs','97 Audit Events This Period — Coverage Score 91%','Audit coverage is near target. 23 recent actions pending enrichment. Review critical and warning severity events.','Audit coverage is near target. 23 recent actions pending enrichment. Review critical and warning severity events.','Medium',74,'View Audit Logs','audit_action'),
+          (1,'audit-logs','2 Critical Audit Events Require Review','Audit events: ELD malfunction (eld.malfunction) and DVIR critical defect (dvir.critical_defect) are pending review.','Audit events: ELD malfunction (eld.malfunction) and DVIR critical defect (dvir.critical_defect) are pending review.','High',85,'Review Critical Events','audit_action'),
+          (1,'audit-logs','Compliance Audit Export Ready','AUD-2026-US-001 audit package is ready. Request an audit log export covering the same date range for the compliance review.','AUD-2026-US-001 audit package is ready. Request an audit log export covering the same date range for the compliance review.','Medium',71,'Export Audit Logs','audit_action'),
+          (1,'executive','Operations in WATCH Status — 3 KPIs Require Action','OTD, Idle Cost, and Gross Margin are below target. Recommend executive review and resource reallocation.','OTD, Idle Cost, and Gross Margin are below target. Recommend executive review and resource reallocation.','Critical',97,'View Executive Summary','executive_action'),
+          (1,'executive','ELD Malfunction on TRK-104 — FMCSA Compliance Risk','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Critical',95,'View Compliance','executive_action'),
+          (1,'executive','Fleet Readiness Below 80% — 4 Vehicles Offline','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','High',86,'View Fleet Status','executive_action'),
+          (1,'executive','Cost Savings Opportunity — $1,200/week Route Optimization','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Medium',78,'View Route Analysis','executive_action')
           ON CONFLICT DO NOTHING",
     ];
 }

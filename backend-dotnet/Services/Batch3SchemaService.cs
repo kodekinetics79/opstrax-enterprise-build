@@ -378,8 +378,8 @@ public sealed class Batch3SchemaService(Database db)
             UNION ALL SELECT 'dvir-inspections','Repeat defect intelligence','Repeated lights/brake defects indicate a preventive maintenance schedule should be advanced.',90
             UNION ALL SELECT 'documents','Document expiry risk','Medical card and vehicle insurance documents entering 30-day renewal window should be queued for renewal.',94
           ) x WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations ar WHERE ar.module_key=x.module_key AND ar.title=x.title)",
-        @"INSERT INTO notifications (company_id, event_type, title, message, severity, module_key, status)
-          SELECT 1, 'system.alert', x.title, x.body, x.severity, x.module_key, 'unread'
+        @"INSERT INTO notifications (company_id, title, body, severity, module_key, status)
+          SELECT 1, x.title, x.body, x.severity, x.module_key, 'Unread'
           FROM (
             SELECT 'Maintenance due' title, 'Service due this week for multiple NOVA/DC fleet units.' body, 'Warning' severity, 'maintenance' module_key
             UNION ALL SELECT 'Critical DVIR defect','Unsafe-to-operate DVIR needs mechanic review.','Critical','dvir-inspections'

@@ -49,7 +49,25 @@ public sealed class Batch6SchemaService(Database db)
         new("compliance_rules",    "severity",         "VARCHAR(50) NOT NULL DEFAULT 'High'"),
         new("compliance_rules",    "threshold_value",  "DECIMAL(12,2) NULL"),
         new("compliance_rules",    "threshold_unit",   "VARCHAR(40) NULL"),
-        new("hos_clocks",          "hos_warning",      "TEXT NULL")
+        new("hos_clocks",               "hos_warning",           "TEXT NULL"),
+        new("eld_devices",              "last_sync_at",          "TIMESTAMPTZ NULL"),
+        new("driver_compliance_status", "license_expiry",        "TIMESTAMPTZ NULL"),
+        new("driver_compliance_status", "medical_cert_expiry",   "TIMESTAMPTZ NULL"),
+        new("driver_compliance_status", "drug_test_valid",       "BOOLEAN NOT NULL DEFAULT true"),
+        new("driver_compliance_status", "drug_test_expiry",      "TIMESTAMPTZ NULL"),
+        new("vehicle_compliance_status","registration_expiry",   "TIMESTAMPTZ NULL"),
+        new("vehicle_compliance_status","insurance_valid",       "BOOLEAN NOT NULL DEFAULT true"),
+        new("vehicle_compliance_status","insurance_expiry",      "TIMESTAMPTZ NULL"),
+        new("vehicle_compliance_status","inspection_expiry",     "TIMESTAMPTZ NULL"),
+        new("vehicle_compliance_status","eld_installed",         "BOOLEAN NOT NULL DEFAULT false"),
+        new("vehicle_compliance_status","eld_device_id",         "BIGINT NULL"),
+        new("compliance_violations",    "category",              "VARCHAR(80) NULL"),
+        new("compliance_audit_packages","included_drivers",      "INT NULL"),
+        new("compliance_audit_packages","included_vehicles",     "INT NULL"),
+        new("compliance_audit_packages","included_documents",    "INT NULL"),
+        new("compliance_audit_packages","included_violations",   "INT NULL"),
+        new("compliance_audit_packages","hos_logs_count",        "INT NOT NULL DEFAULT 0"),
+        new("compliance_audit_packages","notes",                 "TEXT NULL")
     ];
 
     private static readonly string[] Tables =
@@ -338,40 +356,40 @@ public sealed class Batch6SchemaService(Database db)
           (10,10,'PK',6,'10hr/day',300,420,2200,'OK',NULL)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO hos_logs (id,driver_id,vehicle_id,log_date,country_code,profile_id,status,start_time,end_time,duration_minutes,location,is_certified) VALUES
-          (1,1,1,'2026-05-20','US',1,'Driving','2026-05-20 06:00:00','2026-05-20 12:00:00',360,'Manassas, VA',true),
-          (2,1,1,'2026-05-20','US',1,'On Duty (Not Driving)','2026-05-20 12:00:00','2026-05-20 12:30:00',30,'Woodbridge, VA',true),
-          (3,1,1,'2026-05-20','US',1,'Driving','2026-05-20 12:30:00','2026-05-20 17:30:00',300,'Alexandria, VA',true),
-          (4,2,2,'2026-05-20','US',1,'Driving','2026-05-20 05:00:00','2026-05-20 16:00:00',660,'Dulles, VA',true),
-          (5,2,2,'2026-05-20','US',1,'Driving','2026-05-20 16:15:00','2026-05-20 17:25:00',70,'Fairfax, VA',false),
-          (6,3,3,'2026-05-21','US',1,'Off Duty','2026-05-21 00:00:00','2026-05-21 08:00:00',480,'Arlington, VA',true),
-          (7,3,3,'2026-05-21','US',1,'Driving','2026-05-21 08:00:00','2026-05-21 15:00:00',420,'Washington DC',true),
-          (8,4,4,'2026-05-21','US',1,'Driving','2026-05-21 04:00:00','2026-05-21 15:00:00',660,'Manassas, VA',true),
-          (9,4,4,'2026-05-21','US',1,'Driving','2026-05-21 15:30:00','2026-05-21 17:30:00',120,'Woodbridge, VA',false),
-          (10,5,5,'2026-05-21','US',1,'Driving','2026-05-21 07:00:00','2026-05-21 12:00:00',300,'Alexandria, VA',true),
-          (11,6,6,'2026-05-21','CA',3,'Driving','2026-05-21 06:00:00','2026-05-21 15:00:00',540,'Ottawa, ON',true),
-          (12,7,7,'2026-05-21','CA',3,'Driving','2026-05-21 05:30:00','2026-05-21 17:00:00',690,'Toronto, ON',false),
-          (13,8,8,'2026-05-21','SA',4,'Driving','2026-05-21 07:00:00','2026-05-21 14:00:00',420,'Riyadh, SA',true),
-          (14,9,9,'2026-05-21','AE',5,'Driving','2026-05-21 08:00:00','2026-05-21 14:00:00',360,'Dubai, AE',true),
-          (15,10,10,'2026-05-21','PK',6,'Driving','2026-05-21 07:00:00','2026-05-21 12:00:00',300,'Karachi, PK',true),
-          (16,1,1,'2026-05-22','US',1,'Driving','2026-05-22 06:00:00','2026-05-22 11:00:00',300,'Manassas, VA',true),
-          (17,2,2,'2026-05-22','US',1,'Off Duty','2026-05-22 00:00:00','2026-05-22 10:00:00',600,'Rest Stop VA',true),
-          (18,3,3,'2026-05-22','US',1,'Driving','2026-05-22 09:00:00','2026-05-22 14:30:00',330,'Dulles, VA',true),
-          (19,4,4,'2026-05-22','US',1,'Sleeper Berth','2026-05-22 00:00:00','2026-05-22 10:00:00',600,'Truck Stop VA',true),
-          (20,5,5,'2026-05-22','US',1,'Driving','2026-05-22 08:00:00','2026-05-22 13:00:00',300,'Fairfax, VA',true),
-          (21,6,6,'2026-05-22','CA',3,'Driving','2026-05-22 07:00:00','2026-05-22 13:00:00',360,'Montreal, QC',true),
-          (22,7,7,'2026-05-22','CA',3,'Off Duty','2026-05-22 00:00:00','2026-05-22 08:00:00',480,'Rest Area ON',true),
-          (23,8,8,'2026-05-22','SA',4,'Driving','2026-05-22 06:00:00','2026-05-22 13:00:00',420,'Jeddah, SA',true),
-          (24,9,9,'2026-05-22','AE',5,'On Duty (Not Driving)','2026-05-22 08:00:00','2026-05-22 09:00:00',60,'Abu Dhabi, AE',true),
-          (25,10,10,'2026-05-22','PK',6,'Driving','2026-05-22 07:00:00','2026-05-22 12:30:00',330,'Lahore, PK',true),
-          (26,1,1,'2026-05-23','US',1,'Driving','2026-05-23 06:00:00','2026-05-23 12:00:00',360,'Arlington, VA',true),
-          (27,2,2,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 15:00:00',480,'Washington DC',false),
-          (28,3,3,'2026-05-23','US',1,'Driving','2026-05-23 08:00:00','2026-05-23 13:00:00',300,'Woodbridge, VA',false),
-          (29,4,4,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 12:00:00',300,'Alexandria, VA',false),
-          (30,5,5,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 12:00:00',300,'Manassas, VA',false)
+        @"INSERT INTO hos_logs (id,company_id,driver_id,vehicle_id,log_date,country_code,profile_id,status,start_time,end_time,duration_minutes,driving_hours,on_duty_hours,cycle_hours_left,location,is_certified) OVERRIDING SYSTEM VALUE VALUES
+          (1,1,1,1,'2026-05-20','US',1,'Driving','2026-05-20 06:00:00','2026-05-20 12:00:00',360,6.00,0.00,300,'Manassas, VA',true),
+          (2,1,1,1,'2026-05-20','US',1,'On Duty (Not Driving)','2026-05-20 12:00:00','2026-05-20 12:30:00',30,0.00,0.50,660,'Woodbridge, VA',true),
+          (3,1,1,1,'2026-05-20','US',1,'Driving','2026-05-20 12:30:00','2026-05-20 17:30:00',300,5.00,0.00,360,'Alexandria, VA',true),
+          (4,1,2,2,'2026-05-20','US',1,'Driving','2026-05-20 05:00:00','2026-05-20 16:00:00',660,11.00,0.00,0,'Dulles, VA',true),
+          (5,1,2,2,'2026-05-20','US',1,'Driving','2026-05-20 16:15:00','2026-05-20 17:25:00',70,1.17,0.00,590,'Fairfax, VA',false),
+          (6,1,3,3,'2026-05-21','US',1,'Off Duty','2026-05-21 00:00:00','2026-05-21 08:00:00',480,0.00,0.00,660,'Arlington, VA',true),
+          (7,1,3,3,'2026-05-21','US',1,'Driving','2026-05-21 08:00:00','2026-05-21 15:00:00',420,7.00,0.00,240,'Washington DC',true),
+          (8,1,4,4,'2026-05-21','US',1,'Driving','2026-05-21 04:00:00','2026-05-21 15:00:00',660,11.00,0.00,0,'Manassas, VA',true),
+          (9,1,4,4,'2026-05-21','US',1,'Driving','2026-05-21 15:30:00','2026-05-21 17:30:00',120,2.00,0.00,540,'Woodbridge, VA',false),
+          (10,1,5,5,'2026-05-21','US',1,'Driving','2026-05-21 07:00:00','2026-05-21 12:00:00',300,5.00,0.00,360,'Alexandria, VA',true),
+          (11,1,6,6,'2026-05-21','CA',3,'Driving','2026-05-21 06:00:00','2026-05-21 15:00:00',540,9.00,0.00,120,'Ottawa, ON',true),
+          (12,1,7,7,'2026-05-21','CA',3,'Driving','2026-05-21 05:30:00','2026-05-21 17:00:00',690,11.50,0.00,0,'Toronto, ON',false),
+          (13,1,8,8,'2026-05-21','SA',4,'Driving','2026-05-21 07:00:00','2026-05-21 14:00:00',420,7.00,0.00,240,'Riyadh, SA',true),
+          (14,1,9,9,'2026-05-21','AE',5,'Driving','2026-05-21 08:00:00','2026-05-21 14:00:00',360,6.00,0.00,300,'Dubai, AE',true),
+          (15,1,10,10,'2026-05-21','PK',6,'Driving','2026-05-21 07:00:00','2026-05-21 12:00:00',300,5.00,0.00,360,'Karachi, PK',true),
+          (16,1,1,1,'2026-05-22','US',1,'Driving','2026-05-22 06:00:00','2026-05-22 11:00:00',300,5.00,0.00,360,'Manassas, VA',true),
+          (17,1,2,2,'2026-05-22','US',1,'Off Duty','2026-05-22 00:00:00','2026-05-22 10:00:00',600,0.00,0.00,660,'Rest Stop VA',true),
+          (18,1,3,3,'2026-05-22','US',1,'Driving','2026-05-22 09:00:00','2026-05-22 14:30:00',330,5.50,0.00,330,'Dulles, VA',true),
+          (19,1,4,4,'2026-05-22','US',1,'Sleeper Berth','2026-05-22 00:00:00','2026-05-22 10:00:00',600,0.00,0.00,660,'Truck Stop VA',true),
+          (20,1,5,5,'2026-05-22','US',1,'Driving','2026-05-22 08:00:00','2026-05-22 13:00:00',300,5.00,0.00,360,'Fairfax, VA',true),
+          (21,1,6,6,'2026-05-22','CA',3,'Driving','2026-05-22 07:00:00','2026-05-22 13:00:00',360,6.00,0.00,300,'Montreal, QC',true),
+          (22,1,7,7,'2026-05-22','CA',3,'Off Duty','2026-05-22 00:00:00','2026-05-22 08:00:00',480,0.00,0.00,660,'Rest Area ON',true),
+          (23,1,8,8,'2026-05-22','SA',4,'Driving','2026-05-22 06:00:00','2026-05-22 13:00:00',420,7.00,0.00,240,'Jeddah, SA',true),
+          (24,1,9,9,'2026-05-22','AE',5,'On Duty (Not Driving)','2026-05-22 08:00:00','2026-05-22 09:00:00',60,0.00,1.00,660,'Abu Dhabi, AE',true),
+          (25,1,10,10,'2026-05-22','PK',6,'Driving','2026-05-22 07:00:00','2026-05-22 12:30:00',330,5.50,0.00,330,'Lahore, PK',true),
+          (26,1,1,1,'2026-05-23','US',1,'Driving','2026-05-23 06:00:00','2026-05-23 12:00:00',360,6.00,0.00,300,'Arlington, VA',true),
+          (27,1,2,2,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 15:00:00',480,8.00,0.00,180,'Washington DC',false),
+          (28,1,3,3,'2026-05-23','US',1,'Driving','2026-05-23 08:00:00','2026-05-23 13:00:00',300,5.00,0.00,360,'Woodbridge, VA',false),
+          (29,1,4,4,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 12:00:00',300,5.00,0.00,360,'Alexandria, VA',false),
+          (30,1,5,5,'2026-05-23','US',1,'Driving','2026-05-23 07:00:00','2026-05-23 12:00:00',300,5.00,0.00,360,'Manassas, VA',false)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO eld_devices (id,device_serial,device_model,provider,vehicle_id,driver_id,status,last_sync_at,firmware_version) VALUES
+        @"INSERT INTO eld_devices (id,device_serial,device_model,provider,vehicle_id,driver_id,status,last_sync_at,firmware_version) OVERRIDING SYSTEM VALUE VALUES
           (1,'ELD-001-TRK101','KeepTruckin M300','Motive',1,1,'Active','2026-05-24 08:00:00','3.4.1'),
           (2,'ELD-002-TRK102','KeepTruckin M300','Motive',2,2,'Active','2026-05-24 07:30:00','3.4.1'),
           (3,'ELD-003-VAN103','Samsara VG34','Samsara',3,3,'Active','2026-05-24 08:15:00','2.9.0'),
@@ -384,7 +402,7 @@ public sealed class Batch6SchemaService(Database db)
           (10,'ELD-010-VAN110','Omnitracs IVG','Omnitracs',10,10,'Active','2026-05-24 08:05:00','4.1.2')
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO driver_compliance_status (id,driver_id,country_code,profile_id,overall_status,license_valid,license_expiry,medical_cert_valid,medical_cert_expiry,drug_test_valid,drug_test_expiry,hos_status,violation_count) VALUES
+        @"INSERT INTO driver_compliance_status (id,driver_id,country_code,profile_id,overall_status,license_valid,license_expiry,medical_cert_valid,medical_cert_expiry,drug_test_valid,drug_test_expiry,hos_status,violations_count) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'US',1,'Compliant',true,'2028-03-15',true,'2026-09-01',true,'2026-11-15','OK',0),
           (2,2,'US',1,'Warning',true,'2026-07-20',true,'2026-06-01',true,'2026-08-01','Warning',2),
           (3,3,'US',1,'Compliant',true,'2029-01-10',true,'2027-02-15',true,'2027-01-20','OK',0),
@@ -397,7 +415,7 @@ public sealed class Batch6SchemaService(Database db)
           (10,10,'PK',6,'Compliant',true,'2027-04-10',true,'2026-11-01',true,'2026-10-15','OK',0)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO vehicle_compliance_status (id,vehicle_id,country_code,profile_id,overall_status,registration_valid,registration_expiry,insurance_valid,insurance_expiry,inspection_valid,inspection_expiry,eld_installed,eld_device_id,violation_count) VALUES
+        @"INSERT INTO vehicle_compliance_status (id,vehicle_id,country_code,profile_id,overall_status,registration_valid,registration_expiry,insurance_valid,insurance_expiry,inspection_valid,inspection_expiry,eld_installed,eld_device_id,violations_count) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'US',1,'Compliant',true,'2027-01-31',true,'2026-09-30',true,'2026-11-15',true,1,0),
           (2,2,'US',1,'Warning',true,'2026-08-31',true,'2026-06-30',true,'2026-07-15',true,2,1),
           (3,3,'US',1,'Compliant',true,'2027-03-31',true,'2026-10-30',true,'2026-12-15',true,3,0),
@@ -410,7 +428,7 @@ public sealed class Batch6SchemaService(Database db)
           (10,10,'PK',6,'Compliant',true,'2027-01-31',true,'2026-11-30',true,'2026-10-31',false,NULL,0)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO compliance_violations (id,violation_code,rule_id,profile_id,country_code,driver_id,vehicle_id,category,description,severity,status,detected_at) VALUES
+        @"INSERT INTO compliance_violations (id,violation_code,rule_id,profile_id,country_code,driver_id,vehicle_id,category,description,severity,status,detected_at) OVERRIDING SYSTEM VALUE VALUES
           (1,'VIO-001',1,1,'US',2,2,'HOS','Driver 2 exceeded 11-hour driving limit by 70 minutes on 2026-05-20','Critical','Open','2026-05-20 17:25:00'),
           (2,'VIO-002',2,1,'US',4,4,'HOS','Driver 4 exceeded 14-hour duty window on 2026-05-21','Critical','Open','2026-05-21 18:00:00'),
           (3,'VIO-003',4,1,'US',NULL,4,'ELD','Vehicle TRK-104 ELD device reporting malfunction (ELD-004)','High','Open','2026-05-23 11:00:00'),
@@ -428,7 +446,7 @@ public sealed class Batch6SchemaService(Database db)
           (15,'VIO-015',3,1,'US',5,NULL,'HOS','Driver 5 cycle time caution — review 70hr/8day cycle usage','Medium','Open','2026-05-23 09:00:00')
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO compliance_audit_packages (id,package_code,country_code,profile_id,created_by,status,included_drivers,included_vehicles,included_documents,included_violations,hos_logs_count,date_range_start,date_range_end,notes) VALUES
+        @"INSERT INTO compliance_audit_packages (id,package_code,country_code,profile_id,created_by,status,included_drivers,included_vehicles,included_documents,included_violations,hos_logs_count,date_from,date_to,notes) OVERRIDING SYSTEM VALUE VALUES
           (1,'AUD-2026-US-001','US',1,'admin','Ready',5,5,18,8,20,'2026-05-01','2026-05-24','FMCSA property carrier compliance audit package — May 2026'),
           (2,'AUD-2026-CA-001','CA',3,'admin','Draft',2,2,6,2,6,'2026-05-01','2026-05-24','Transport Canada NSC audit package — May 2026'),
           (3,'AUD-2026-AE-001','AE',5,'admin','Draft',1,1,3,0,3,'2026-05-01','2026-05-24','UAE RTA compliance audit package'),

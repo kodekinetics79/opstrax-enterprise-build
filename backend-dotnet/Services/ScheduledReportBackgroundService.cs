@@ -78,7 +78,7 @@ public sealed class ScheduledReportBackgroundService(
                      s.selected_fields_json,
                      s.filters_json,
                      s.sort_json,
-                     s.group_by_field,
+                     s.group_by_json AS group_by_field,
                      s.company_id     AS saved_report_company_id
               FROM scheduled_reports sr
               JOIN saved_reports s ON s.id = sr.saved_report_id
