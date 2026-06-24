@@ -406,7 +406,7 @@ export function AppShell() {
                           {initials}
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-900 truncate">{session?.user?.name || session?.role || "User"}</p>
+                          <p className="text-sm font-bold text-slate-900 truncate">{String(session?.user?.["name"] ?? session?.role ?? "User")}</p>
                           <p className="text-[11px] text-slate-500 truncate">{session?.role || "Admin"}</p>
                         </div>
                       </div>
