@@ -4515,6 +4515,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     private static bool IsBlank(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value.ToString());
+    private static object AsId(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString()) ? DBNull.Value : value;
+    private static object AsDecimal(object? value) { if (value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString())) return DBNull.Value; return decimal.TryParse(value.ToString(), out var d) ? d : DBNull.Value; }
 
     private static void BindVehicle(NpgsqlCommand c, Dictionary<string, object?> body)
     {
@@ -4570,24 +4572,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static void BindJob(NpgsqlCommand c, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@code", !IsBlank(Get(body, "jobNumber")) ? Get(body, "jobNumber") : Get(body, "jobCode"));
-        c.Parameters.AddWithValue("@customerId", Get(body, "customerId"));
+        c.Parameters.AddWithValue("@customerId", AsId(Get(body, "customerId")));
         c.Parameters.AddWithValue("@type", Get(body, "jobType"));
         c.Parameters.AddWithValue("@priority", Get(body, "priority"));
         c.Parameters.AddWithValue("@pickup", Get(body, "pickupAddress"));
-        c.Parameters.AddWithValue("@pickupLat", Get(body, "pickupLatitude"));
-        c.Parameters.AddWithValue("@pickupLng", Get(body, "pickupLongitude"));
+        c.Parameters.AddWithValue("@pickupLat", AsDecimal(Get(body, "pickupLatitude")));
+        c.Parameters.AddWithValue("@pickupLng", AsDecimal(Get(body, "pickupLongitude")));
         c.Parameters.AddWithValue("@dropoff", Get(body, "dropoffAddress"));
-        c.Parameters.AddWithValue("@dropLat", Get(body, "dropoffLatitude"));
-        c.Parameters.AddWithValue("@dropLng", Get(body, "dropoffLongitude"));
+        c.Parameters.AddWithValue("@dropLat", AsDecimal(Get(body, "dropoffLatitude")));
+        c.Parameters.AddWithValue("@dropLng", AsDecimal(Get(body, "dropoffLongitude")));
         c.Parameters.AddWithValue("@start", Get(body, "scheduledStart"));
         c.Parameters.AddWithValue("@end", Get(body, "scheduledEnd"));
         c.Parameters.AddWithValue("@slaStart", Get(body, "slaWindowStart"));
         c.Parameters.AddWithValue("@slaEnd", Get(body, "slaWindowEnd"));
         c.Parameters.AddWithValue("@requiredVehicleType", Get(body, "requiredVehicleType"));
         c.Parameters.AddWithValue("@requiredDriverCertification", Get(body, "requiredDriverCertification"));
-        c.Parameters.AddWithValue("@driverId", Get(body, "assignedDriverId"));
-        c.Parameters.AddWithValue("@vehicleId", Get(body, "assignedVehicleId"));
-        c.Parameters.AddWithValue("@routeId", Get(body, "routeId"));
+        c.Parameters.AddWithValue("@driverId", AsId(Get(body, "assignedDriverId")));
+        c.Parameters.AddWithValue("@vehicleId", AsId(Get(body, "assignedVehicleId")));
+        c.Parameters.AddWithValue("@routeId", AsId(Get(body, "routeId")));
         c.Parameters.AddWithValue("@status", Get(body, "status"));
         c.Parameters.AddWithValue("@eta", Get(body, "eta"));
         c.Parameters.AddWithValue("@slaStatus", Get(body, "slaStatus"));
@@ -4606,8 +4608,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         c.Parameters.AddWithValue("@code", Get(body, "routeCode"));
         c.Parameters.AddWithValue("@name", !IsBlank(Get(body, "routeName")) ? Get(body, "routeName") : Get(body, "name"));
         c.Parameters.AddWithValue("@status", Get(body, "status"));
-        c.Parameters.AddWithValue("@driverId", Get(body, "assignedDriverId"));
-        c.Parameters.AddWithValue("@vehicleId", Get(body, "assignedVehicleId"));
+        c.Parameters.AddWithValue("@driverId", AsId(Get(body, "assignedDriverId")));
+        c.Parameters.AddWithValue("@vehicleId", AsId(Get(body, "assignedVehicleId")));
         c.Parameters.AddWithValue("@region", Get(body, "region"));
         c.Parameters.AddWithValue("@routeType", Get(body, "routeType"));
         c.Parameters.AddWithValue("@start", Get(body, "plannedStart"));
@@ -4620,13 +4622,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static void BindRouteStop(NpgsqlCommand c, long routeId, Dictionary<string, object?> body)
     {
         c.Parameters.AddWithValue("@routeId", routeId);
-        c.Parameters.AddWithValue("@jobId", Get(body, "jobId"));
-        c.Parameters.AddWithValue("@customerId", Get(body, "customerId"));
-        c.Parameters.AddWithValue("@sequence", Get(body, "stopSequence"));
+        c.Parameters.AddWithValue("@jobId", AsId(Get(body, "jobId")));
+        c.Parameters.AddWithValue("@customerId", AsId(Get(body, "customerId")));
+        var seq = Get(body, "stopSequence"); c.Parameters.AddWithValue("@sequence", seq is DBNull || string.IsNullOrWhiteSpace(seq?.ToString()) ? 1 : Convert.ToInt32(seq));
         c.Parameters.AddWithValue("@type", Get(body, "stopType"));
         c.Parameters.AddWithValue("@address", Get(body, "address"));
-        c.Parameters.AddWithValue("@lat", Get(body, "latitude"));
-        c.Parameters.AddWithValue("@lng", Get(body, "longitude"));
+        c.Parameters.AddWithValue("@lat", AsDecimal(Get(body, "latitude")));
+        c.Parameters.AddWithValue("@lng", AsDecimal(Get(body, "longitude")));
         c.Parameters.AddWithValue("@start", Get(body, "timeWindowStart"));
         c.Parameters.AddWithValue("@end", Get(body, "timeWindowEnd"));
         c.Parameters.AddWithValue("@eta", Get(body, "eta"));
