@@ -24,11 +24,13 @@ apiClient.interceptors.request.use((config) => {
   if (session) {
     try {
       const parsed = JSON.parse(session);
-      if (parsed.token) {
-        config.headers.Authorization = `Bearer ${parsed.token}`;
+      // session.v2 stores { session: { token, csrfToken, ... }, expiresAt }
+      const inner = parsed.session ?? parsed;
+      if (inner.token) {
+        config.headers.Authorization = `Bearer ${inner.token}`;
       }
-      if (parsed.csrfToken) {
-        setGlobalCsrfToken(parsed.csrfToken);
+      if (inner.csrfToken) {
+        setGlobalCsrfToken(inner.csrfToken);
       }
     } catch {
       localStorage.removeItem("opstrax.session");
