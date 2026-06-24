@@ -223,7 +223,7 @@ SELECT 1, ((n-1)%20)+1, 24 + n, (24+n)*3.86, n*7,
   (ARRAY['Shell Manassas','Exxon Woodbridge','BP Fairfax','Wawa Dulles','Sunoco Alexandria'])[(n%5)+1]
 FROM seq;
 
-INSERT INTO safety_events (company_id, vehicle_id, driver_id, event_type, severity, notes, status)
+INSERT INTO safety_events (company_id, vehicle_id, driver_id, event_type, severity, description, review_status)
 WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 15)
 SELECT 1, ((n-1)%20)+1, ((n-1)%20)+1,
   (ARRAY['Harsh Braking','Speeding','Following Distance','Lane Departure','Extended Idle'])[(n%5)+1],
@@ -448,9 +448,9 @@ SELECT 1,
   (ARRAY['Info','Warning','High','Info'])[(n%4)+1]
 FROM seq;
 
-INSERT INTO notifications (company_id, event_type, title, message, status) VALUES
-(1,'system.ai_active','OpsTrax AI Active','AI copilot is monitoring dispatch, cost, safety and compliance signals.','Delivered'),
-(1,'system.simulation','Live Simulation Running','Node event stream is available for control tower updates.','Delivered');
+INSERT INTO notifications (company_id, title, body, status) VALUES
+(1,'OpsTrax AI Active','AI copilot is monitoring dispatch, cost, safety and compliance signals.','Delivered'),
+(1,'Live Simulation Running','Node event stream is available for control tower updates.','Delivered');
 
 INSERT INTO integrations (company_id, provider_name, category, status) VALUES
 (1,'Samsara Import Adapter','Telematics','Connected'),
