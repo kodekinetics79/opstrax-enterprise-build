@@ -280,7 +280,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── REPORT RUN HISTORY (20 records) ────────────────────────────────────────
-        @"INSERT INTO report_runs (id,tenant_id,report_key,report_name,run_by_name,status,row_count,started_at,completed_at) VALUES
+        @"INSERT INTO report_runs (id,tenant_id,report_key,report_name,run_by_name,status,row_count,started_at,completed_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'fleet-utilization','Fleet Utilization Report','admin','Completed',18,'2026-05-20 08:00:00','2026-05-20 08:00:45'),
           (2,1,'delayed-jobs','Delayed Jobs Report','admin','Completed',7,'2026-05-20 08:15:00','2026-05-20 08:15:12'),
           (3,1,'safety-events','Safety Events Report','admin','Completed',42,'2026-05-20 09:00:00','2026-05-20 09:00:38'),
@@ -304,7 +304,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── SCHEDULED REPORTS (8 records) ──────────────────────────────────────────
-        @"INSERT INTO scheduled_reports (id,tenant_id,report_key,report_name,schedule_name,frequency,status,next_run_at) VALUES
+        @"INSERT INTO scheduled_reports (id,tenant_id,report_key,report_name,schedule_name,frequency,status,next_run_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'executive-summary','Executive Operations Summary','Daily Executive Brief','Daily','Active','2026-05-25 06:00:00'),
           (2,1,'fleet-utilization','Fleet Utilization Report','Weekly Fleet Report','Weekly','Active','2026-05-27 06:00:00'),
           (3,1,'sla-at-risk','SLA At-Risk Report','Daily SLA Watch','Daily','Active','2026-05-25 07:00:00'),
@@ -316,7 +316,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── REPORT EXPORTS (10 records) ─────────────────────────────────────────────
-        @"INSERT INTO report_exports (id,tenant_id,report_run_id,report_key,export_type,status,requested_by_name,requested_at,completed_at) VALUES
+        @"INSERT INTO report_exports (id,tenant_id,report_run_id,report_key,export_type,status,requested_by_name,requested_at,completed_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,1,'fleet-utilization','CSV','Completed','admin','2026-05-20 08:05:00','2026-05-20 08:05:08'),
           (2,1,3,'safety-events','PDF','Completed','admin','2026-05-20 09:05:00','2026-05-20 09:05:15'),
           (3,1,4,'fuel-spend','XLSX','Completed','admin','2026-05-21 07:35:00','2026-05-21 07:35:22'),
@@ -330,9 +330,9 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── KPI METRICS (30 records) ────────────────────────────────────────────────
-        @"INSERT INTO kpi_metrics (id,tenant_id,kpi_code,kpi_name,category,target_value,actual_value,unit,trend,status,owner_role,recommendation) VALUES
+        @"INSERT INTO kpi_metrics (id,tenant_id,kpi_code,kpi_name,category,target_value,actual_value,unit,trend,status,owner_role,recommendation) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'OTD','On-Time Delivery','Dispatch',95,87.4,'%','down','At Risk','Fleet Manager','Investigate 6 high-delay jobs and review dispatch scheduling gaps.'),
-          (2,1,'SLA-COMP','SLA Compliance','Customer Service',98,91.2,'%','down','At Risk','Company Admin','Review 4 SLA breach records and escalate customer communications.'),
+          (2,1,1,'SLA-COMP','SLA Compliance','Customer Service',98,91.2,'%','down','At Risk','Company Admin','Review 4 SLA breach records and escalate customer communications.'),
           (3,1,'ETA-ACC','Average ETA Accuracy','Dispatch',90,84.6,'%','stable','Watch','Fleet Manager','Improve route planning for 3 high-variance lanes.'),
           (4,1,'JOBS-COMP','Jobs Completed','Operations',200,187,'count','up','On Target','Fleet Manager','On track. 187 of 200 target jobs completed this period.'),
           (5,1,'DELAYED-JOBS','Delayed Jobs','Operations',5,9,'count','up','Breached','Fleet Manager','9 delayed jobs — 4 are repeat lanes. Dispatch re-optimization recommended.'),
@@ -364,9 +364,9 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── KPI TARGETS (20 records) ────────────────────────────────────────────────
-        @"INSERT INTO kpi_targets (id,tenant_id,kpi_code,target_value,unit,effective_date,status) VALUES
+        @"INSERT INTO kpi_targets (id,tenant_id,kpi_code,target_value,unit,effective_date,status) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'OTD',95,'%','2026-01-01','Active'),
-          (2,1,'SLA-COMP',98,'%','2026-01-01','Active'),
+          (2,1,1,'SLA-COMP',98,'%','2026-01-01','Active'),
           (3,1,'ETA-ACC',90,'%','2026-01-01','Active'),
           (4,1,'JOBS-COMP',200,'count','2026-01-01','Active'),
           (5,1,'DELAYED-JOBS',5,'count','2026-01-01','Active'),
@@ -388,41 +388,41 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── SLA RECORDS (30 records) ────────────────────────────────────────────────
-        @"INSERT INTO sla_records (id,tenant_id,sla_number,customer_id,job_id,sla_type,target_value,actual_value,unit,status,breach_reason,risk_score,owner_role,recommended_action,measured_at) VALUES
-          (1,1,'SLA-001',1,1,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (2,1,'SLA-002',2,2,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (3,1,'SLA-003',3,3,'On-Time Delivery',100,72,'%','Breached','Dispatch delay',85,'Fleet Manager','Review dispatch assignment for this lane. Schedule driver availability review.',NOW()),
-          (4,1,'SLA-004',4,4,'ETA Accuracy',90,88,'%','Met',NULL,12,'Fleet Manager','Within acceptable range.',NOW()),
-          (5,1,'SLA-005',5,5,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (6,1,'SLA-006',1,6,'Proof of Delivery',98,95,'%','At Risk','Missing POD document',42,'Fleet Manager','Follow up with driver on 2 incomplete POD records.',NOW()),
-          (7,1,'SLA-007',2,7,'On-Time Delivery',100,65,'%','Breached','Vehicle breakdown',92,'Fleet Manager','Escalate to customer service. Arrange replacement vehicle.',NOW()),
-          (8,1,'SLA-008',3,8,'ETA Accuracy',90,91,'%','Met',NULL,8,'Fleet Manager','ETA performance excellent on this lane.',NOW()),
-          (9,1,'SLA-009',4,9,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (10,1,'SLA-010',5,10,'On-Time Delivery',100,78,'%','Breached','Traffic/route delay',78,'Fleet Manager','Review alternate route options. Notify customer proactively.',NOW()),
-          (11,1,'SLA-011',1,NULL,'Response Time',4,3.8,'hours','Met',NULL,8,'Fleet Manager','Response time within SLA.',NOW()),
-          (12,1,'SLA-012',2,NULL,'Response Time',4,5.2,'hours','Breached','Driver availability',67,'Fleet Manager','Add backup driver coverage for this customer time window.',NOW()),
-          (13,1,'SLA-013',3,NULL,'Communication Frequency',24,28,'hours','At Risk','ETA update delayed',38,'Fleet Manager','Automate ETA update triggers for this customer lane.',NOW()),
-          (14,1,'SLA-014',4,11,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (15,1,'SLA-015',5,12,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (16,1,'SLA-016',1,13,'ETA Accuracy',90,82,'%','At Risk','Route inefficiency',44,'Fleet Manager','Optimize route for this lane.',NOW()),
-          (17,1,'SLA-017',2,14,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (18,1,'SLA-018',3,15,'On-Time Delivery',100,92,'%','At Risk','Partial delivery',35,'Fleet Manager','Review partial delivery protocol with driver.',NOW()),
-          (19,1,'SLA-019',4,16,'Proof of Delivery',98,98,'%','Met',NULL,5,'Fleet Manager','POD compliance excellent.',NOW()),
-          (20,1,'SLA-020',5,17,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (21,1,'SLA-021',1,18,'On-Time Delivery',100,55,'%','Breached','Customer delay',88,'Fleet Manager','Document customer delay reason. Adjust SLA terms if recurring.',NOW()),
-          (22,1,'SLA-022',2,19,'ETA Accuracy',90,94,'%','Met',NULL,5,'Fleet Manager','ETA accuracy above target.',NOW()),
-          (23,1,'SLA-023',3,20,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (24,1,'SLA-024',4,NULL,'Response Time',4,4.1,'hours','At Risk','Staff shortage',28,'Fleet Manager','Schedule coverage review for peak hours.',NOW()),
-          (25,1,'SLA-025',5,NULL,'Communication Frequency',24,24,'hours','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (26,1,'SLA-026',1,NULL,'On-Time Delivery',100,68,'%','Breached','Unknown',80,'Fleet Manager','Investigate root cause. Missing proof record compounds issue.',NOW()),
-          (27,1,'SLA-027',2,NULL,'Response Time',4,3.5,'hours','Met',NULL,8,'Fleet Manager','Response time within SLA.',NOW()),
-          (28,1,'SLA-028',3,NULL,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
-          (29,1,'SLA-029',4,NULL,'ETA Accuracy',90,86,'%','At Risk','Traffic delay',32,'Fleet Manager','Add real-time traffic integration to ETA calculation.',NOW()),
-          (30,1,'SLA-030',5,NULL,'On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW())
+        @"INSERT INTO sla_records (id,company_id,tenant_id,sla_number,customer_id,job_id,sla_type,metric_name,target_value,actual_value,unit,status,breach_reason,risk_score,owner_role,recommended_action,measured_at) OVERRIDING SYSTEM VALUE VALUES
+          (1,1,1,'SLA-001',1,1,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (2,1,1,'SLA-002',2,2,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (3,1,1,'SLA-003',3,3,'On-Time Delivery','On-Time Delivery',100,72,'%','Breached','Dispatch delay',85,'Fleet Manager','Review dispatch assignment for this lane. Schedule driver availability review.',NOW()),
+          (4,1,1,'SLA-004',4,4,'ETA Accuracy','ETA Accuracy',90,88,'%','Met',NULL,12,'Fleet Manager','Within acceptable range.',NOW()),
+          (5,1,1,'SLA-005',5,5,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (6,1,1,'SLA-006',1,6,'Proof of Delivery','Proof of Delivery',98,95,'%','At Risk','Missing POD document',42,'Fleet Manager','Follow up with driver on 2 incomplete POD records.',NOW()),
+          (7,1,1,'SLA-007',2,7,'On-Time Delivery','On-Time Delivery',100,65,'%','Breached','Vehicle breakdown',92,'Fleet Manager','Escalate to customer service. Arrange replacement vehicle.',NOW()),
+          (8,1,1,'SLA-008',3,8,'ETA Accuracy','ETA Accuracy',90,91,'%','Met',NULL,8,'Fleet Manager','ETA performance excellent on this lane.',NOW()),
+          (9,1,1,'SLA-009',4,9,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (10,1,1,'SLA-010',5,10,'On-Time Delivery','On-Time Delivery',100,78,'%','Breached','Traffic/route delay',78,'Fleet Manager','Review alternate route options. Notify customer proactively.',NOW()),
+          (11,1,1,'SLA-011',1,NULL,'Response Time','Response Time',4,3.8,'hours','Met',NULL,8,'Fleet Manager','Response time within SLA.',NOW()),
+          (12,1,1,'SLA-012',2,NULL,'Response Time','Response Time',4,5.2,'hours','Breached','Driver availability',67,'Fleet Manager','Add backup driver coverage for this customer time window.',NOW()),
+          (13,1,1,'SLA-013',3,NULL,'Communication Frequency','Communication Frequency',24,28,'hours','At Risk','ETA update delayed',38,'Fleet Manager','Automate ETA update triggers for this customer lane.',NOW()),
+          (14,1,1,'SLA-014',4,11,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (15,1,1,'SLA-015',5,12,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (16,1,1,'SLA-016',1,13,'ETA Accuracy','ETA Accuracy',90,82,'%','At Risk','Route inefficiency',44,'Fleet Manager','Optimize route for this lane.',NOW()),
+          (17,1,1,'SLA-017',2,14,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (18,1,1,'SLA-018',3,15,'On-Time Delivery','On-Time Delivery',100,92,'%','At Risk','Partial delivery',35,'Fleet Manager','Review partial delivery protocol with driver.',NOW()),
+          (19,1,1,'SLA-019',4,16,'Proof of Delivery','Proof of Delivery',98,98,'%','Met',NULL,5,'Fleet Manager','POD compliance excellent.',NOW()),
+          (20,1,1,'SLA-020',5,17,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (21,1,1,'SLA-021',1,18,'On-Time Delivery','On-Time Delivery',100,55,'%','Breached','Customer delay',88,'Fleet Manager','Document customer delay reason. Adjust SLA terms if recurring.',NOW()),
+          (22,1,1,'SLA-022',2,19,'ETA Accuracy','ETA Accuracy',90,94,'%','Met',NULL,5,'Fleet Manager','ETA accuracy above target.',NOW()),
+          (23,1,1,'SLA-023',3,20,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (24,1,1,'SLA-024',4,NULL,'Response Time','Response Time',4,4.1,'hours','At Risk','Staff shortage',28,'Fleet Manager','Schedule coverage review for peak hours.',NOW()),
+          (25,1,1,'SLA-025',5,NULL,'Communication Frequency','Communication Frequency',24,24,'hours','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (26,1,1,'SLA-026',1,NULL,'On-Time Delivery','On-Time Delivery',100,68,'%','Breached','Unknown',80,'Fleet Manager','Investigate root cause. Missing proof record compounds issue.',NOW()),
+          (27,1,1,'SLA-027',2,NULL,'Response Time','Response Time',4,3.5,'hours','Met',NULL,8,'Fleet Manager','Response time within SLA.',NOW()),
+          (28,1,1,'SLA-028',3,NULL,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW()),
+          (29,1,1,'SLA-029',4,NULL,'ETA Accuracy','ETA Accuracy',90,86,'%','At Risk','Traffic delay',32,'Fleet Manager','Add real-time traffic integration to ETA calculation.',NOW()),
+          (30,1,1,'SLA-030',5,NULL,'On-Time Delivery','On-Time Delivery',100,100,'%','Met',NULL,5,'Fleet Manager','No action required.',NOW())
           ON CONFLICT DO NOTHING",
 
         // ── SLA BREACHES (10 records) ───────────────────────────────────────────────
-        @"INSERT INTO sla_breaches (id,tenant_id,sla_record_id,breach_type,severity,description,root_cause_placeholder,status,detected_at) VALUES
+        @"INSERT INTO sla_breaches (id,tenant_id,sla_record_id,breach_type,severity,description,root_cause_placeholder,status,detected_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,3,'Delivery Delay','High','Job-3 delivered 4 hours late — dispatch scheduling gap identified.','Dispatch delay — driver not assigned until 2 hours after window opened.','Open','2026-05-20 14:00:00'),
           (2,1,7,'Delivery Delay','Critical','Job-7 not delivered — vehicle breakdown mid-route.','Vehicle breakdown — brake failure on TRK-104. Replacement dispatched too late.','Escalated','2026-05-21 16:30:00'),
           (3,1,10,'Route Delay','Medium','Job-10 delayed by 22% of ETA window due to traffic.','Traffic/route delay — I-95 incident caused 90-minute delay.','Acknowledged','2026-05-22 11:00:00'),
@@ -436,7 +436,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── EXECUTIVE SNAPSHOTS (10 records — last 10 days) ────────────────────────
-        @"INSERT INTO executive_snapshots (id,tenant_id,snapshot_date,operations_health_score,cost_health_score,safety_health_score,compliance_health_score,customer_sla_score,fleet_readiness_score,dispatch_readiness_score,ai_brief) VALUES
+        @"INSERT INTO executive_snapshots (id,tenant_id,snapshot_date,operations_health_score,cost_health_score,safety_health_score,compliance_health_score,customer_sla_score,fleet_readiness_score,dispatch_readiness_score,ai_brief) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'2026-05-15',83,78,87,90,86,81,88,'Operations stable. 2 SLA risks in dispatch. Fuel cost trending up 6%.'),
           (2,1,'2026-05-16',82,77,86,90,85,80,87,'On-time delivery dipped to 88%. Driver 2 HOS warning flagged. Maintenance backlog growing.'),
           (3,1,'2026-05-17',80,76,85,89,84,79,86,'Fleet readiness at 79% — 3 vehicles in maintenance. Safety events require coaching review.'),
@@ -450,7 +450,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── AUDIT LOGS BULK SEED (100+ records across all modules) ──────────────────
-        @"INSERT INTO audit_logs (id,company_id,actor_name,action_name,entity_name,entity_id,severity,module_key,action_type,details_json) VALUES
+        @"INSERT INTO audit_logs (id,company_id,actor_name,action_name,entity_name,entity_id,severity,module_key,action_type,details_json) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'admin','user.login','User',1,'Info','auth','login','{""source"":""api""}'),
           (2,1,'admin','vehicle.created','Vehicle',1,'Info','vehicles','create','{""source"":""api""}'),
           (3,1,'admin','vehicle.updated','Vehicle',2,'Info','vehicles','update','{""source"":""api""}'),
@@ -554,7 +554,7 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── AUDIT EXPORT REQUESTS (8 records) ──────────────────────────────────────
-        @"INSERT INTO audit_export_requests (id,tenant_id,requested_by_name,date_from,date_to,status,created_at,completed_at) VALUES
+        @"INSERT INTO audit_export_requests (id,tenant_id,requested_by_name,date_from,date_to,status,created_at,completed_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'admin','2026-05-01','2026-05-15','Completed','2026-05-16 09:00:00','2026-05-16 09:00:45'),
           (2,1,'admin','2026-04-01','2026-04-30','Completed','2026-05-01 08:00:00','2026-05-01 08:01:12'),
           (3,1,'admin','2026-05-01','2026-05-24','Completed','2026-05-24 08:00:00','2026-05-24 08:01:33'),

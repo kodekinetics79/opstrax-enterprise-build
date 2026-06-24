@@ -30,6 +30,7 @@ public sealed class ReportingSchemaService(Database db)
             ("scheduled_reports", "last_status",        "VARCHAR(40) NULL"),
             ("scheduled_reports", "last_error",         "TEXT NULL"),
             ("scheduled_reports", "recipient_type",     "VARCHAR(40) NOT NULL DEFAULT 'users'"),
+            ("scheduled_reports", "delivery_method",    "VARCHAR(40) NOT NULL DEFAULT 'in_app'"),
         };
         foreach (var (table, col, def) in extCols)
         {

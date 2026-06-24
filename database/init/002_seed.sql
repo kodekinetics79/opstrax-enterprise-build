@@ -2,6 +2,21 @@
 -- Converted from MySQL: ELT→ARRAY, IF→CASE WHEN, DATE_ADD→interval, CURDATE→CURRENT_DATE,
 -- JSON_ARRAY→jsonb_build_array, JSON_OBJECT→jsonb_build_object, LPAD with ::TEXT cast
 
+-- Reset all data and sequences (idempotent re-seed)
+TRUNCATE TABLE
+  role_permissions, permissions, module_records, ai_recommendations, ai_insights,
+  command_center_actions, operational_events, audit_logs, notifications, integrations,
+  subscription_plans, kpi_records, sla_records, customer_communications,
+  proof_of_delivery, dispatch_recommendations, eta_updates,
+  entity_timeline_events, driver_certifications, vehicle_assignments,
+  customer_addresses, customer_contacts, asset_documents, driver_documents,
+  vehicle_documents, compliance_documents, inspections, hos_logs, expenses,
+  carriers, documents, dashcam_events, safety_events, fuel_transactions,
+  maintenance_items, work_orders, geofence_events, geofences,
+  route_stops, dispatch_assignments, trips, location_events, routes,
+  jobs, contracts, assets, customers, vehicles, drivers, users, roles, companies
+RESTART IDENTITY CASCADE;
+
 -- Companies (explicit IDs, requires OVERRIDING SYSTEM VALUE with GENERATED ALWAYS AS IDENTITY)
 INSERT INTO companies (id, company_code, name, industry, timezone) OVERRIDING SYSTEM VALUE VALUES
 (1, 'OPX-DEMO', 'OpsTrax Demo Logistics', 'Transport & Field Operations', 'America/New_York'),
@@ -10,25 +25,24 @@ INSERT INTO companies (id, company_code, name, industry, timezone) OVERRIDING SY
 (4, 'VENDOR-TENANT', 'Vendor Services', 'Partner Services', 'America/New_York');
 SELECT setval(pg_get_serial_sequence('companies', 'id'), MAX(id)) FROM companies;
 
-INSERT INTO roles (name, permissions_json) VALUES
-('Super Admin',            jsonb_build_array('*')),
-('Company Admin',          jsonb_build_array('*')),
-('Fleet Manager',          jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
-('Dispatcher',             jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
-('Driver',                 jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
-('Mechanic',               jsonb_build_array('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
-('Safety Manager',         jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
-('Compliance Manager',     jsonb_build_array('dashboard:view','compliance:view','compliance:manage','audit:view','fleet:view','intelligence:view')),
-('Customer Service',       jsonb_build_array('customers:view','customer-portal:view','dispatch:view','crm:view')),
-('Customer Portal User',   jsonb_build_array('customer-portal:view')),
-('Reseller / Partner Admin', jsonb_build_array('*')),
-('Read-only Auditor',      jsonb_build_array('audit:view','fleet:view','dashboard:view'));
-
-INSERT INTO roles (name, permissions_json) VALUES
-('Operations Manager',      jsonb_build_array('dashboard:view','map:view','fleet:view','dispatch:view','dispatch:manage','orders:view','orders:manage','shipments:view','shipments:manage','pod:view','pod:upload','maintenance:view','safety:view','dashcam:view','compliance:view','reports:view','settings:view')),
-('Finance & Billing Manager', jsonb_build_array('finance:view','finance:manage','fuel:view','fuel:manage','reports:view','settings:view')),
-('CRM & Sales Manager',     jsonb_build_array('crm:view','crm:manage','campaigns:view','campaigns:manage','customer_portal:view','reports:view')),
-('Vendor Service Provider', jsonb_build_array('vendor_portal:view','maintenance:view','pod:view'));
+INSERT INTO roles (id, name, permissions_json) OVERRIDING SYSTEM VALUE VALUES
+(1,  'Super Admin',              jsonb_build_array('*')),
+(2,  'Company Admin',            jsonb_build_array('*')),
+(3,  'Fleet Manager',            jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
+(4,  'Dispatcher',               jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+(5,  'Driver',                   jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
+(6,  'Mechanic',                 jsonb_build_array('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
+(7,  'Safety Manager',           jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
+(8,  'Compliance Manager',       jsonb_build_array('dashboard:view','compliance:view','compliance:manage','audit:view','fleet:view','intelligence:view')),
+(9,  'Customer Service',         jsonb_build_array('customers:view','customer-portal:view','dispatch:view','crm:view')),
+(10, 'Customer Portal User',     jsonb_build_array('customer-portal:view')),
+(11, 'Reseller / Partner Admin', jsonb_build_array('*')),
+(12, 'Read-only Auditor',        jsonb_build_array('audit:view','fleet:view','dashboard:view')),
+(13, 'Operations Manager',       jsonb_build_array('dashboard:view','map:view','fleet:view','dispatch:view','dispatch:manage','orders:view','orders:manage','shipments:view','shipments:manage','pod:view','pod:upload','maintenance:view','safety:view','dashcam:view','compliance:view','reports:view','settings:view')),
+(14, 'Finance & Billing Manager',jsonb_build_array('finance:view','finance:manage','fuel:view','fuel:manage','reports:view','settings:view')),
+(15, 'CRM & Sales Manager',      jsonb_build_array('crm:view','crm:manage','campaigns:view','campaigns:manage','customer_portal:view','reports:view')),
+(16, 'Vendor Service Provider',  jsonb_build_array('vendor_portal:view','maintenance:view','pod:view'));
+SELECT setval(pg_get_serial_sequence('roles', 'id'), MAX(id)) FROM roles;
 
 INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, permissions_json) VALUES
 (1, 1, 'Mason Lee',       'superadmin@opstrax.com',   'Super Admin',             'demo123', jsonb_build_array('*')),
@@ -209,13 +223,13 @@ SELECT 1, ((n-1)%20)+1, 24 + n, (24+n)*3.86, n*7,
   (ARRAY['Shell Manassas','Exxon Woodbridge','BP Fairfax','Wawa Dulles','Sunoco Alexandria'])[(n%5)+1]
 FROM seq;
 
-INSERT INTO safety_events (company_id, vehicle_id, driver_id, event_type, severity, description, review_status)
+INSERT INTO safety_events (company_id, vehicle_id, driver_id, event_type, severity, notes, status)
 WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 15)
 SELECT 1, ((n-1)%20)+1, ((n-1)%20)+1,
   (ARRAY['Harsh Braking','Speeding','Following Distance','Lane Departure','Extended Idle'])[(n%5)+1],
   (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
   'Event detected by OpsTrax telemetry and queued for review.',
-  (ARRAY['New','In Review','Coaching Assigned'])[(n%3)+1]
+  (ARRAY['Open','Reviewing','Coaching Assigned'])[(n%3)+1]
 FROM seq;
 
 INSERT INTO dashcam_events (company_id, safety_event_id, title, severity, coaching_status)
@@ -434,9 +448,9 @@ SELECT 1,
   (ARRAY['Info','Warning','High','Info'])[(n%4)+1]
 FROM seq;
 
-INSERT INTO notifications (company_id, title, body, status) VALUES
-(1,'OpsTrax AI Active','AI copilot is monitoring dispatch, cost, safety and compliance signals.','Unread'),
-(1,'Live Simulation Running','Node event stream is available for control tower updates.','Unread');
+INSERT INTO notifications (company_id, event_type, title, message, status) VALUES
+(1,'system.ai_active','OpsTrax AI Active','AI copilot is monitoring dispatch, cost, safety and compliance signals.','Delivered'),
+(1,'system.simulation','Live Simulation Running','Node event stream is available for control tower updates.','Delivered');
 
 INSERT INTO integrations (company_id, provider_name, category, status) VALUES
 (1,'Samsara Import Adapter','Telematics','Connected'),

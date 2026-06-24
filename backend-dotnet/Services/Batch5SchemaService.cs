@@ -97,6 +97,9 @@ public sealed class Batch5SchemaService(Database db)
         new("contracts", "deleted_at",              "TIMESTAMPTZ NULL"),
 
         new("audit_logs", "entity_type",            "VARCHAR(100) NULL"),
+        new("idling_events", "threshold_status",     "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
+        new("idling_events", "risk_score",           "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+        new("idling_events", "recommended_action",   "VARCHAR(260) NULL")
     ];
 
     private static readonly string[] Tables =

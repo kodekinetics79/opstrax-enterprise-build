@@ -74,7 +74,10 @@ public sealed class Batch1SchemaService(Database db)
         new("ai_insights", "closed_at", "TIMESTAMPTZ NULL"),
         new("ai_insights", "acknowledged_by", "VARCHAR(160) NULL"),
         new("ai_insights", "recommended_action", "TEXT NULL"),
-        new("ai_insights", "company_id", "BIGINT NOT NULL DEFAULT 1")
+        new("ai_insights", "company_id", "BIGINT NOT NULL DEFAULT 1"),
+        new("location_events", "engine_status", "VARCHAR(40) NULL DEFAULT 'Running'"),
+        new("location_events", "fuel_level", "DECIMAL(6,2) NULL"),
+        new("location_events", "odometer_miles", "DECIMAL(12,2) NULL")
     ];
 
     private static readonly string[] TableStatements =

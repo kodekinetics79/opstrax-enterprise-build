@@ -39,8 +39,17 @@ public sealed class Batch6SchemaService(Database db)
         new("hos_logs",     "is_certified",          "BOOLEAN NOT NULL DEFAULT false"),
         new("ai_recommendations", "description",     "TEXT NULL"),
         new("ai_recommendations", "priority",        "VARCHAR(40) NULL"),
-        new("ai_recommendations", "action_label",    "VARCHAR(160) NULL"),
-        new("ai_recommendations", "action_type",     "VARCHAR(120) NULL"),
+        new("ai_recommendations", "action_label",      "VARCHAR(160) NULL"),
+        new("ai_recommendations", "action_type",      "VARCHAR(120) NULL"),
+        new("countries",           "hos_ruleset",      "VARCHAR(80) NULL"),
+        new("countries",           "rtl",              "BOOLEAN NOT NULL DEFAULT false"),
+        new("compliance_profiles", "max_driving_hours","INT NULL"),
+        new("compliance_profiles", "max_duty_hours",   "INT NULL"),
+        new("compliance_profiles", "rest_requirement_hours", "INT NULL"),
+        new("compliance_rules",    "severity",         "VARCHAR(50) NOT NULL DEFAULT 'High'"),
+        new("compliance_rules",    "threshold_value",  "DECIMAL(12,2) NULL"),
+        new("compliance_rules",    "threshold_unit",   "VARCHAR(40) NULL"),
+        new("hos_clocks",          "hos_warning",      "TEXT NULL")
     ];
 
     private static readonly string[] Tables =
@@ -289,11 +298,12 @@ public sealed class Batch6SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
+          OVERRIDING SYSTEM VALUE
           SELECT 1,1,'en-US','US','America/New_York','MM/DD/YYYY','USD','Miles','Gallons'
           WHERE NOT EXISTS (SELECT 1 FROM tenant_locale_settings WHERE id=1)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO compliance_profiles (id,country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) VALUES
+        @"INSERT INTO compliance_profiles (id,country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) OVERRIDING SYSTEM VALUE VALUES
           (1,'US','FMCSA Property Carrier','FMCSA','395.3 Property',true,11,14,10),
           (2,'US','FMCSA Passenger Carrier','FMCSA','395.3 Passenger',true,10,15,8),
           (3,'CA','Transport Canada NSC','Transport Canada','NSC',true,13,14,8),
@@ -302,7 +312,7 @@ public sealed class Batch6SchemaService(Database db)
           (6,'PK','NHA Pakistan Compliance','NHA Pakistan','NHA',false,10,12,8)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO compliance_rules (id,profile_id,rule_code,rule_name,category,description,severity,threshold_value,threshold_unit) VALUES
+        @"INSERT INTO compliance_rules (id,profile_id,rule_code,rule_name,category,description,severity,threshold_value,threshold_unit) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'FMCSA-HOS-11H','11-Hour Driving Limit','HOS','Driver cannot drive more than 11 hours after 10 consecutive hours off duty','Critical',11,'Hours'),
           (2,1,'FMCSA-HOS-14H','14-Hour Window','HOS','Driver cannot drive after the 14th hour following 10 hours off duty','Critical',14,'Hours'),
           (3,1,'FMCSA-HOS-70H','70-Hour / 8-Day Limit','HOS','Driver may not drive after 70 hours on duty in 8 consecutive days','High',70,'Hours'),
@@ -315,7 +325,7 @@ public sealed class Batch6SchemaService(Database db)
           (10,6,'PK-NHA-10H','Pakistan 10-Hour Limit','HOS','NHA: Maximum 10 hours driving per day','Medium',10,'Hours')
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning) VALUES
+        @"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'US',1,'70hr/8day',480,620,3900,'OK',NULL),
           (2,2,'US',1,'70hr/8day',55,90,240,'Warning','Approaching drive limit'),
           (3,3,'US',1,'70hr/8day',660,840,4200,'OK',NULL),
