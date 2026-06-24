@@ -241,7 +241,7 @@ public sealed class MaintenanceBackgroundService(
         var affected = await db.QueryAsync(
             @"SELECT da.id, da.company_id, da.vehicle_id, da.assignment_status
               FROM dispatch_assignments da
-              JOIN vehicles v ON v.id = da.vehicle_id AND v.out_of_service = 1
+              JOIN vehicles v ON v.id = da.vehicle_id AND v.out_of_service = TRUE
               WHERE da.assignment_status NOT IN ('delivered', 'cancelled')
                 AND NOT EXISTS (
                     SELECT 1 FROM dispatch_exceptions de

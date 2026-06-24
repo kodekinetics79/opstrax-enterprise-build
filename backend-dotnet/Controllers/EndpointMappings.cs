@@ -1,5 +1,8 @@
 using Npgsql;
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Services;
@@ -347,7 +350,7 @@ public static class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : DriverHos(http, db, ct);
         });
 
-        app.MapGet("/api/geofences", (Database db, CancellationToken ct) => OkRows(db, @"SELECT g.*, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND ge.event_time::date=CURRENT_DATE events_today FROM geofences g WHERE g.company_id=1 ORDER BY g.name", ct: ct));
+        app.MapGet("/api/geofences", (Database db, CancellationToken ct) => OkRows(db, @"SELECT g.*, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND ge.event_time::date=CURRENT_DATE) events_today FROM geofences g WHERE g.company_id=1 ORDER BY g.name", ct: ct));
         app.MapGet("/api/geofences/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(@"SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_count, SUM(CASE WHEN status='Inactive' THEN 1 ELSE 0 END) inactive_count, (SELECT COUNT(*) FROM geofence_events WHERE event_time::date=CURRENT_DATE AND event_type='Entry') entry_events_today, (SELECT COUNT(*) FROM geofence_events WHERE event_time::date=CURRENT_DATE AND event_type='Exit') exit_events_today, (SELECT COUNT(DISTINCT vehicle_id) FROM geofence_events WHERE event_time::date=CURRENT_DATE) vehicles_triggered FROM geofences WHERE company_id=1", ct: ct).ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
         app.MapGet("/api/geofences/{id:long}/events", (long id, Database db, CancellationToken ct) => OkRows(db, @"SELECT ge.*, v.vehicle_code, d.full_name driver_name FROM geofence_events ge LEFT JOIN vehicles v ON v.id=ge.vehicle_id LEFT JOIN drivers d ON d.id=v.assigned_driver_id WHERE ge.geofence_id=@id ORDER BY ge.event_time DESC LIMIT 50", c => c.Parameters.AddWithValue("@id", id), ct: ct));
         app.MapPost("/api/geofences", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
@@ -583,11 +586,11 @@ public static class EndpointMappings
               ) idle ON idle.vehicle_id=v.id
               LEFT JOIN (
                 SELECT vehicle_id, ROUND(SUM(total_cost),2) fuel_cost_month, ROUND(SUM(quantity),1) gallons_month
-                FROM fuel_transactions WHERE fuel_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01')
+                FROM fuel_transactions WHERE fuel_date >= DATE_TRUNC('month', CURRENT_DATE)::date
                 GROUP BY vehicle_id
               ) fuel ON fuel.vehicle_id=v.id
               LEFT JOIN (
-                SELECT assigned_vehicle_id vehicle_id, SUM(CASE WHEN status NOT IN ('Completed','Delivered') THEN 1 ELSE 0 END) active_jobs, SUM(CASE WHEN completed_at::date=CURRENT_DATE THEN 1 ELSE 0 END) completed_today
+                SELECT assigned_vehicle_id vehicle_id, SUM(CASE WHEN status NOT IN ('Completed','Delivered') THEN 1 ELSE 0 END) active_jobs, SUM(CASE WHEN status IN ('Completed','Delivered') AND updated_at::date=CURRENT_DATE THEN 1 ELSE 0 END) completed_today
                 FROM jobs WHERE deleted_at IS NULL
                 GROUP BY assigned_vehicle_id
               ) jobs ON jobs.vehicle_id=v.id
@@ -602,7 +605,7 @@ public static class EndpointMappings
                      ROUND(AVG(CASE WHEN status='Active' THEN GREATEST(55,85-(risk_score*0.3)) ELSE GREATEST(10,45-(risk_score*0.4)) END),1) avg_utilization_pct,
                      (SELECT ROUND(SUM(duration_minutes)/60,1) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_hours_today,
                      (SELECT CONCAT('$',TO_CHAR((SUM(estimated_cost))::numeric, 'FM9,999,999,999')) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_cost_today,
-                     (SELECT CONCAT('$',TO_CHAR((SUM(total_cost))::numeric, 'FM9,999,999,999')) FROM fuel_transactions WHERE fuel_date>=TO_CHAR(CURRENT_DATE,'YYYY-MM-01')) fuel_spend_month
+                     (SELECT CONCAT('$',TO_CHAR((SUM(total_cost))::numeric, 'FM9,999,999,999')) FROM fuel_transactions WHERE fuel_date>=DATE_TRUNC('month', CURRENT_DATE)::date) fuel_spend_month
               FROM vehicles WHERE deleted_at IS NULL", ct: ct)
             .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
 
@@ -2191,7 +2194,7 @@ public static class EndpointMappings
                      SUM(CASE WHEN status='En Route' OR status='In Progress' THEN 1 ELSE 0 END) en_route,
                      SUM(CASE WHEN status='At Stop' THEN 1 ELSE 0 END) at_stop,
                      SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END) completed,
-                     SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) `delayed`,
+                     SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) delayed_jobs,
                      SUM(CASE WHEN sla_status='At Risk' THEN 1 ELSE 0 END) sla_at_risk,
                      SUM(CASE WHEN proof_status='Pending' THEN 1 ELSE 0 END) proof_pending,
                      SUM(CASE WHEN customer_update_status='Sent' THEN 1 ELSE 0 END) customer_updates_sent,
@@ -3888,16 +3891,68 @@ public static class EndpointMappings
 
     private static async Task<IResult> AiAsk(Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
-        var prompt = Get(body, "prompt")?.ToString() ?? "Executive Summary";
-        var evidence = await db.QueryAsync("SELECT title, body, severity FROM ai_insights ORDER BY created_at DESC LIMIT 4", ct: ct);
-        var actions = await db.QueryAsync("SELECT title, priority, status FROM command_center_actions ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority) LIMIT 4", ct: ct);
+        var prompt   = Get(body, "prompt")?.ToString() ?? "Executive Summary";
+        var category = Get(body, "category")?.ToString() ?? "General";
+
+        // Gather live fleet context from the database
+        var dispSummary  = await db.QuerySingleAsync(
+            "SELECT COUNT(*) total, SUM(CASE WHEN assignment_status='exception' THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN assignment_status='delivered' THEN 1 ELSE 0 END) completed FROM dispatch_assignments WHERE company_id=1", ct: ct);
+        var safeSummary  = await db.QuerySingleAsync("SELECT ROUND(100-AVG(LEAST(risk_score,95)),1) fleet_safety_score, COUNT(*) total_events, SUM(CASE WHEN status NOT IN ('Resolved','Dismissed') THEN 1 ELSE 0 END) open_events FROM safety_events WHERE deleted_at IS NULL", ct: ct);
+        var maintSummary = await db.QuerySingleAsync("SELECT COUNT(*) maintenance_due, SUM(CASE WHEN priority='Critical' THEN 1 ELSE 0 END) critical FROM maintenance_items WHERE status NOT IN ('Completed','Cancelled','Closed')", ct: ct);
+        var alertSummary = await db.QuerySingleAsync("SELECT COUNT(*) total, SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical FROM ai_insights WHERE company_id=1 AND status='Open'", ct: ct);
+        var evidence     = await db.QueryAsync("SELECT title, body, severity FROM ai_insights ORDER BY created_at DESC LIMIT 5", ct: ct);
+        var actions      = await db.QueryAsync("SELECT title, priority, status FROM command_center_actions ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority) LIMIT 4", ct: ct);
+
+        var fleetCtx = $"""
+Fleet Operations Context (live data):
+- Dispatch: {dispSummary?["total"] ?? "?"} total jobs, {dispSummary?["exceptions"] ?? "?"} exceptions, {dispSummary?["completed"] ?? "?"} completed today
+- Safety: Fleet score {safeSummary?["fleetSafetyScore"] ?? "?"}/100, {safeSummary?["openEvents"] ?? "?"} open events
+- Maintenance: {maintSummary?["maintenanceDue"] ?? "?"} items due, {maintSummary?["critical"] ?? "?"} critical
+- Alerts: {alertSummary?["total"] ?? "?"} open alerts, {alertSummary?["critical"] ?? "?"} critical
+""";
+
+        var systemPrompt = """
+You are OpsTrax AI, an intelligent operations assistant for a transport & fleet management platform.
+You help fleet managers, dispatchers, and executives make fast, data-driven decisions.
+Respond concisely (3-5 sentences), be specific to the data provided, and always end with 2-3 concrete next actions.
+Format: start with a direct assessment, then list actions as "Action 1:", "Action 2:", etc.
+""";
+
+        var ollamaBase  = Environment.GetEnvironmentVariable("OLLAMA_BASE_URL") ?? "http://localhost:11434";
+        var ollamaModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL")    ?? "qwen2.5-coder:7b";
+
+        string aiSummary;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            var payload = new
+            {
+                model    = ollamaModel,
+                messages = new[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user",   content = $"{fleetCtx}\n\nQuestion: {prompt}" }
+                },
+                stream = false
+            };
+            var resp = await http.PostAsJsonAsync($"{ollamaBase}/api/chat", payload, ct);
+            resp.EnsureSuccessStatusCode();
+            var json   = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            aiSummary  = json.GetProperty("message").GetProperty("content").GetString()
+                         ?? "Unable to parse AI response.";
+        }
+        catch (Exception ex)
+        {
+            aiSummary = $"OpsTrax AI reviewed {category}. {fleetCtx.Replace("\n","; ")} — AI service temporarily unavailable: {ex.Message}";
+        }
+
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            summary = $"OpsTrax AI reviewed {prompt}. Current operational risk is concentrated around dispatch exceptions, idling cost, maintenance timing, and SLA-sensitive customer ETAs.",
+            summary          = aiSummary,
             evidence,
-            recommendedActions = actions,
-            suggestedNextSteps = new[] { "Send proactive ETA updates", "Pull delayed jobs into dispatch review", "Schedule high-priority maintenance", "Coach drivers with repeated safety signals" },
-            actionButtons = new[] { "Create Dispatch Review", "Send ETA Updates", "Generate Executive Brief", "Open Evidence" }
+            recommendedActions  = actions,
+            suggestedNextSteps  = new[] { "Send proactive ETA updates", "Pull delayed jobs into dispatch review", "Schedule high-priority maintenance", "Coach drivers with repeated safety signals" },
+            actionButtons    = new[] { "Create Dispatch Review", "Send ETA Updates", "Generate Executive Brief", "Open Evidence" }
         }));
     }
 
@@ -7414,7 +7469,7 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "safety:view");
         if (denied is not null) return denied;
         var companyId  = GetCompanyId(http);
-        var status     = http.Request.Query["status"].FirstOrDefault() ?? "open";
+        var status     = http.Request.Query["status"].FirstOrDefault() ?? "all";
         var eventType  = http.Request.Query["eventType"].FirstOrDefault();
         var driverId   = http.Request.Query["driverId"].FirstOrDefault();
         var vehicleId  = http.Request.Query["vehicleId"].FirstOrDefault();
@@ -9366,7 +9421,7 @@ public static class EndpointMappings
               LEFT JOIN users cb ON cb.id=dex.created_by
               LEFT JOIN users rb ON rb.id=dex.resolved_by
               WHERE dex.company_id=@cid
-                AND (@status IS NULL OR dex.status=@status)
+                AND (CAST(@status AS TEXT) IS NULL OR dex.status=CAST(@status AS TEXT))
               ORDER BY ARRAY_POSITION(ARRAY['open','acknowledged','resolved'], dex.status), dex.created_at DESC
               LIMIT 100",
             c =>
