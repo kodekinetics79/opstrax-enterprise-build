@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell, ChevronDown, Languages, LogOut,
-  Menu, Search, X,
+  Menu, Search, Settings, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
@@ -85,8 +85,11 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const notifRef = useRef<HTMLDivElement>(null);
   const langRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   // close mobile sidebar & notif panel on route change
   useEffect(() => {
@@ -99,6 +102,7 @@ export function AppShell() {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
       if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -275,13 +279,28 @@ export function AppShell() {
 
               {/* Search */}
               <div className="relative w-full max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
-                  className="field h-8 rounded-lg py-0 pl-9 pr-10 text-[13px]"
-                  placeholder="Search anything..."
+                  className="field h-8 w-full rounded-lg py-0 pl-9 pr-10 text-[13px]"
+                  placeholder="Search vehicles, drivers, jobs…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && searchQuery.trim()) {
+                      const q = searchQuery.trim().toLowerCase();
+                      if (q.includes("vehicle") || q.match(/^trk|^van|^box/)) navigate("/vehicles");
+                      else if (q.includes("driver")) navigate("/drivers");
+                      else if (q.includes("job") || q.includes("dispatch")) navigate("/dispatch-board");
+                      else if (q.includes("safety") || q.includes("incident")) navigate("/incidents");
+                      else if (q.includes("maint") || q.includes("work order")) navigate("/work-orders");
+                      else if (q.includes("alert")) navigate("/alerts");
+                      else navigate("/command-center");
+                      setSearchQuery("");
+                    }
+                  }}
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 hidden items-center gap-0.5 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400 md:flex">
-                  ⌘K
+                  ↵
                 </span>
               </div>
 
@@ -369,15 +388,60 @@ export function AppShell() {
                   )}
                 </div>
 
-                {/* Avatar / sign-out */}
-                <button
-                  type="button"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
-                  title={`Signed in as ${session?.role || "Admin"} — click to sign out`}
-                  onClick={logout}
-                >
-                  {initials}
-                </button>
+                {/* Avatar / profile dropdown */}
+                <div className="relative" ref={profileRef}>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
+                    title="My profile"
+                    onClick={() => setProfileOpen((v) => !v)}
+                  >
+                    {initials}
+                  </button>
+                  {profileOpen && (
+                    <div className="panel absolute right-0 top-full z-50 mt-2 w-55 overflow-hidden p-0 shadow-lg">
+                      {/* User info */}
+                      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-100 to-blue-100 text-[14px] font-extrabold text-teal-700">
+                          {initials}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">{session?.user?.name || session?.role || "User"}</p>
+                          <p className="text-[11px] text-slate-500 truncate">{session?.role || "Admin"}</p>
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      <div className="py-1">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                          onClick={() => { navigate("/settings"); setProfileOpen(false); }}
+                        >
+                          <Settings className="h-4 w-4 text-slate-400" />
+                          Settings
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                          onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
+                        >
+                          <User className="h-4 w-4 text-slate-400" />
+                          User Management
+                        </button>
+                      </div>
+                      <div className="border-t border-slate-100 py-1">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-red-600 hover:bg-red-50 transition"
+                          onClick={() => { logout(); setProfileOpen(false); }}
+                        >
+                          <LogOut className="h-4 w-4" />
+                          Sign out
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
