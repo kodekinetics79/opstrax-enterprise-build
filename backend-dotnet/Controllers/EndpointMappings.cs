@@ -485,16 +485,16 @@ public static class EndpointMappings
 
         // ── Vehicle Assignments / Owners ──
         app.MapGet("/api/vehicle-assignments", (Database db, CancellationToken ct) => OkRows(db,
-            @"SELECT va.id, va.assignment_date, va.release_date,
+            @"SELECT va.id, va.assigned_at assignment_date, NULL::timestamptz release_date,
                      COALESCE(va.assignment_type,'Dispatch') assignment_type,
                      COALESCE(va.status,'Active') status,
                      v.vehicle_code, d.full_name driver_name, d.driver_code,
-                     va.notes
+                     NULL::text notes
               FROM vehicle_assignments va
               LEFT JOIN vehicles v ON v.id=va.vehicle_id
               LEFT JOIN drivers d ON d.id=va.driver_id
               WHERE va.company_id=GetCompanyId()
-              ORDER BY va.assignment_date DESC LIMIT 50", ct: ct));
+              ORDER BY va.assigned_at DESC LIMIT 50", ct: ct));
         app.MapGet("/api/owners", (Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code owner_code, mr.title owner_name,
                      mr.assigned_to_name contact_name, mr.status,
@@ -2884,15 +2884,25 @@ public static class EndpointMappings
     private static async Task<IResult> LastMileDeliveries(Database db, CancellationToken ct)
     {
         var routes = (await db.QueryAsync(
-            @"SELECT r.id, COALESCE(r.route_name,r.name,'Route '||r.id) route_name, r.status, r.sla_risk, r.total_stops,
-                     v.vehicle_code, d.full_name driver_name, r.planned_start_time, r.planned_end_time, r.efficiency_score
+            @"SELECT r.id, COALESCE(r.route_name,r.name,'Route '||r.id) route_name, r.status,
+                     COALESCE(r.sla_risk,'Low') sla_risk, COALESCE(r.total_stops,0) total_stops,
+                     v.vehicle_code, d.full_name driver_name,
+                     COALESCE(r.planned_start, r.created_at) planned_start_time,
+                     COALESCE(r.planned_end, r.created_at + INTERVAL '6 hours') planned_end_time,
+                     COALESCE(r.efficiency_score,85) efficiency_score
               FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id LEFT JOIN drivers d ON d.id=r.assigned_driver_id
-              WHERE r.deleted_at IS NULL AND r.status IN ('Active','Planned','Delayed') ORDER BY r.planned_start_time", ct: ct)).ToList();
+              WHERE r.deleted_at IS NULL AND r.status IN ('Active','Planned','Delayed')
+              ORDER BY COALESCE(r.planned_start, r.created_at)", ct: ct)).ToList();
         var routeIds = routes.Select(r => (long)((IDictionary<string, object?>)r)["id"]!).ToList();
         var allStops = routeIds.Count > 0
             ? await db.QueryAsync(
-                @"SELECT rs.id, rs.route_id, rs.stop_sequence, rs.stop_type, rs.address, rs.eta, rs.status, rs.proof_status,
-                         COALESCE(c.name, rs.customer_name, 'Customer') customer_name, rs.time_window_start, rs.time_window_end, rs.notes
+                @"SELECT rs.id, rs.route_id, rs.stop_sequence,
+                         COALESCE(rs.stop_type,'Delivery') stop_type,
+                         rs.address, rs.eta, rs.status,
+                         COALESCE(rs.proof_status,'Pending') proof_status,
+                         COALESCE(c.name,'Customer') customer_name,
+                         rs.time_window_start, rs.time_window_end,
+                         rs.notes
                   FROM route_stops rs LEFT JOIN customers c ON c.id=rs.customer_id
                   WHERE rs.route_id IN (" + string.Join(",", routeIds) + @") ORDER BY rs.route_id, rs.stop_sequence", ct: ct)
             : [];
@@ -6623,9 +6633,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> ExecutiveSummary(Database db, CancellationToken ct)
     {
-        var latest     = await db.QueryAsync("SELECT * FROM executive_snapshots WHERE deleted_at IS NULL ORDER BY snapshot_date DESC LIMIT 1", ct: ct);
-        var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_health_score, safety_score, compliance_score, financial_score, overall_score FROM executive_snapshots WHERE deleted_at IS NULL ORDER BY snapshot_date DESC LIMIT 14", ct: ct);
-        var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical' AND deleted_at IS NULL", ct: ct);
+        var latest     = await db.QueryAsync("SELECT * FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 1", ct: ct);
+        var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_readiness_score AS fleet_health_score, safety_health_score AS safety_score, compliance_health_score AS compliance_score, cost_health_score AS financial_score, ROUND((operations_health_score+safety_health_score+compliance_health_score+fleet_readiness_score)/4,1) AS overall_score FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 14", ct: ct);
+        var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical'", ct: ct);
         var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE status='Open'", ct: ct);
         var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE created_at::date=CURRENT_DATE", ct: ct);
         var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 5", ct: ct);
@@ -12908,23 +12918,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                 AND v.status='Active' AND COALESCE(v.out_of_service,0)=0
+                 AND v.status='Active'
                  AND NOT EXISTS (
                    SELECT 1 FROM dvir_defects dd
-                   WHERE dd.vehicle_id=v.id AND dd.company_id=@cid
-                     AND dd.out_of_service=TRUE
+                   JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+                   WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
+                     AND dr.safe_to_operate=FALSE
                      AND dd.status NOT IN ('resolved','Resolved')
                  )
               ) dispatch_ready_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                 AND COALESCE(v.out_of_service,FALSE)=TRUE) oos_vehicles,
+                 AND v.status='Out of Service') oos_vehicles,
 
-              (SELECT COUNT(DISTINCT dd.vehicle_id)
+              (SELECT COUNT(DISTINCT dr.vehicle_id)
                FROM dvir_defects dd
-               WHERE dd.company_id=@cid AND dd.vehicle_id IS NOT NULL
-                 AND dd.out_of_service=TRUE
+               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+               WHERE dd.company_id=@cid AND dr.vehicle_id IS NOT NULL
+                 AND dr.safe_to_operate=FALSE
                  AND dd.status NOT IN ('resolved','Resolved')) critical_defect_vehicles,
 
               (SELECT COUNT(DISTINCT wo.vehicle_id)
@@ -12974,10 +12986,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                WHERE d.company_id=@cid AND d.deleted_at IS NULL
                  AND d.status='Active') avg_safety_score,
 
-              -- Dispatch exceptions
-              (SELECT COUNT(*) FROM dispatch_exceptions dex
-               WHERE dex.company_id=@cid
-                 AND dex.status NOT IN ('resolved','Resolved')) open_dispatch_exceptions
+              -- Dispatch exceptions (from dispatch_assignments flagged as exceptions)
+              (SELECT COUNT(*) FROM dispatch_assignments da
+               WHERE da.company_id=@cid
+                 AND da.status IN ('Exception','Cancelled','Failed')) open_dispatch_exceptions
 
             FROM (SELECT 1) _dual",
             c => c.Parameters.AddWithValue("@cid", cid), ct);
@@ -13098,22 +13110,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               v.type                         vehicle_type,
               v.status,
               v.device_status,
-              COALESCE(v.out_of_service,0)   out_of_service,
+              CASE WHEN v.status='Out of Service' THEN 1 ELSE 0 END out_of_service,
               COALESCE(v.readiness_score,50) readiness_score,
               COALESCE(v.risk_score,20)      base_risk_score,
 
               (SELECT COUNT(*) FROM dvir_defects dd
-               WHERE dd.vehicle_id=v.id AND dd.company_id=@cid
-                 AND dd.out_of_service=TRUE
+               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+               WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
+                 AND dr.safe_to_operate=FALSE
                  AND dd.status NOT IN ('resolved','Resolved')) critical_defects,
 
               (SELECT COUNT(*) FROM dvir_defects dd
-               WHERE dd.vehicle_id=v.id AND dd.company_id=@cid
+               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+               WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
                  AND dd.status NOT IN ('resolved','Resolved')) open_defects,
 
-              (SELECT COUNT(*) FROM fault_codes fc
-               WHERE fc.vehicle_id=v.id AND fc.company_id=@cid
-                 AND fc.status='active') active_faults,
+              0 active_faults,
 
               (SELECT COUNT(*) FROM work_orders wo
                WHERE wo.vehicle_id=v.id AND wo.company_id=@cid
@@ -13127,14 +13139,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                    OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))) overdue_pm,
 
               LEAST(100, ROUND(
-                CASE WHEN COALESCE(v.out_of_service,FALSE)=TRUE THEN 80 ELSE 0 END
+                CASE WHEN v.status='Out of Service' THEN 80 ELSE 0 END
                 + (SELECT COUNT(*) FROM dvir_defects dd2
-                   WHERE dd2.vehicle_id=v.id AND dd2.company_id=@cid
-                     AND dd2.out_of_service=TRUE
+                   JOIN dvir_reports dr2 ON dr2.id=dd2.dvir_report_id
+                   WHERE dr2.vehicle_id=v.id AND dd2.company_id=@cid
+                     AND dr2.safe_to_operate=FALSE
                      AND dd2.status NOT IN ('resolved','Resolved')) * 30
-                + (SELECT COUNT(*) FROM fault_codes fc2
-                   WHERE fc2.vehicle_id=v.id AND fc2.company_id=@cid
-                     AND fc2.status='active') * 8
                 + (SELECT COUNT(*) FROM maintenance_items mi2
                    WHERE mi2.vehicle_id=v.id AND mi2.company_id=@cid
                      AND mi2.deleted_at IS NULL
@@ -13360,27 +13370,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var openDefects = await db.QueryAsync(
             @"SELECT dd.id, dd.defect_description, dd.severity, dd.status,
-                     dd.out_of_service, dd.created_at, dd.resolved_at
+                     dr.safe_to_operate, dd.created_at
               FROM dvir_defects dd
-              WHERE dd.vehicle_id=@id AND dd.company_id=@cid
+              JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+              WHERE dr.vehicle_id=@id AND dd.company_id=@cid
                 AND dd.status NOT IN ('resolved','Resolved')
-              ORDER BY dd.out_of_service DESC,
+              ORDER BY CASE WHEN dr.safe_to_operate=FALSE THEN 0 ELSE 1 END,
                        ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.id DESC
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
-        var activeFaults = await db.QueryAsync(
-            @"SELECT fc.id, fc.code, fc.component, fc.description, fc.severity,
-                     fc.status, fc.recurrence_count, fc.first_seen_at, fc.last_seen_at
-              FROM fault_codes fc
-              WHERE fc.vehicle_id=@id AND fc.company_id=@cid AND fc.status='active'
-              ORDER BY fc.severity, fc.last_seen_at DESC
-              LIMIT 10",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+        var activeFaults = Array.Empty<Dictionary<string, object?>>();
 
         var openWorkOrders = await db.QueryAsync(
-            @"SELECT wo.id, wo.work_order_number, wo.title, wo.service_type, wo.status,
-                     wo.priority, wo.due_date, wo.estimated_cost, wo.created_date
+            @"SELECT wo.id, COALESCE(wo.work_order_number, wo.work_order_code) work_order_number,
+                     wo.title, wo.status, wo.priority, wo.due_date, wo.estimated_cost,
+                     COALESCE(wo.created_date, wo.created_at) created_date
               FROM work_orders wo
               WHERE wo.vehicle_id=@id AND wo.company_id=@cid
                 AND wo.status NOT IN ('Completed','Cancelled')
@@ -13390,8 +13395,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var overduePm = await db.QueryAsync(
-            @"SELECT mi.id, mi.service_type, mi.status, mi.due_date,
-                     mi.due_mileage, mi.risk_level, mi.notes
+            @"SELECT mi.id, COALESCE(mi.service_type, mi.category) service_type,
+                     mi.status, mi.due_date, mi.due_odometer due_mileage, mi.risk_level
               FROM maintenance_items mi
               WHERE mi.vehicle_id=@id AND mi.company_id=@cid AND mi.deleted_at IS NULL
                 AND (mi.status='Overdue'
@@ -13401,22 +13406,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var recentInspections = await db.QueryAsync(
-            @"SELECT dr.id, dr.inspection_type, dr.status, dr.safe_to_operate,
+            @"SELECT dr.id, dr.inspection_type, dr.inspection_status status, dr.safe_to_operate,
                      dr.submitted_at, dr.driver_id,
                      (SELECT COUNT(*) FROM dvir_defects dd WHERE dd.dvir_report_id=dr.id) defect_count,
-                     (SELECT COUNT(*) FROM dvir_defects dd WHERE dd.dvir_report_id=dr.id AND dd.out_of_service=TRUE) critical_defect_count
+                     (SELECT COUNT(*) FROM dvir_defects dd WHERE dd.dvir_report_id=dr.id
+                       AND dd.status NOT IN ('resolved','Resolved')) critical_defect_count
               FROM dvir_reports dr
-              WHERE dr.vehicle_id=@id AND dr.company_id=@cid AND dr.deleted_at IS NULL
+              WHERE dr.vehicle_id=@id AND dr.company_id=@cid
               ORDER BY dr.submitted_at DESC
               LIMIT 5",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var currentAssignment = await db.QuerySingleAsync(
-            @"SELECT da.id, da.status, da.pickup_address, da.delivery_address,
-                     da.scheduled_pickup_at, da.scheduled_delivery_at,
+            @"SELECT da.id, da.status,
+                     j.pickup_address, j.dropoff_address delivery_address,
+                     j.scheduled_start scheduled_pickup_at, j.scheduled_end scheduled_delivery_at,
                      d.full_name driver_name
               FROM dispatch_assignments da
               LEFT JOIN drivers d ON d.id=da.driver_id
+              LEFT JOIN jobs j ON j.id=da.job_id
               WHERE da.vehicle_id=@id AND da.company_id=@cid
                 AND da.status NOT IN ('delivered','cancelled','Delivered','Cancelled')
               ORDER BY da.assigned_at DESC
@@ -13490,11 +13498,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => c.Parameters.AddWithValue("@id", id), ct);
 
         var currentAssignment = await db.QuerySingleAsync(
-            @"SELECT da.id, da.status, da.pickup_address, da.delivery_address,
-                     da.scheduled_pickup_at, da.scheduled_delivery_at,
+            @"SELECT da.id, da.status,
+                     j.pickup_address, j.dropoff_address delivery_address,
+                     j.scheduled_start scheduled_pickup_at, j.scheduled_end scheduled_delivery_at,
                      v.vehicle_code
               FROM dispatch_assignments da
               LEFT JOIN vehicles v ON v.id=da.vehicle_id
+              LEFT JOIN jobs j ON j.id=da.job_id
               WHERE da.driver_id=@id AND da.company_id=@cid
                 AND da.status NOT IN ('delivered','cancelled','Delivered','Cancelled')
               ORDER BY da.assigned_at DESC
