@@ -20,7 +20,7 @@ type Field = {
   key: string;
   label: string;
   required?: boolean;
-  type?: "text" | "number" | "select";
+  type?: "text" | "number" | "select" | "email";
   options?: string[];
 };
 
