@@ -1737,33 +1737,144 @@ public static class EndpointMappings
         }, "Login successful"));
     }
 
-    private static async Task<IResult> CommandCenterSummary(Database db, CancellationToken ct)
+    // Live operations cockpit for the Command Center page. Every section is sourced
+    // from the tenant's own rows and shaped to the exact contract the UI consumes
+    // (kpis, fleetStatus, exceptions, briefItems, priorityActions, charts).
+    private static async Task<IResult> CommandCenterSummary(HttpContext http, Database db, CancellationToken ct)
     {
-        var kpis = await db.QueryAsync("SELECT * FROM kpi_records ORDER BY id LIMIT 8", ct: ct);
-        var actions = await db.QueryAsync("SELECT * FROM command_center_actions ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority), id LIMIT 12", ct: ct);
-        var timeline = await db.QueryAsync("SELECT * FROM operational_events ORDER BY event_time DESC LIMIT 12", ct: ct);
-        var alerts = await db.QueryAsync("SELECT * FROM ai_insights ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], severity), created_at DESC LIMIT 8", ct: ct);
-        var fleet = await db.QuerySingleAsync("SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Available','Active','On Route') THEN 1 ELSE 0 END) ready, ROUND(AVG(readiness_score),1) readinessScore FROM vehicles", ct: ct);
-        var dispatch = await db.QuerySingleAsync("SELECT COUNT(*) totalJobs, SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) completed FROM jobs", ct: ct);
-        var map = await db.QueryAsync("SELECT id, vehicle_code, lat, lng, event_type, speed_mph FROM location_events ORDER BY event_time DESC LIMIT 12", ct: ct);
+        var cid = GetCompanyId(http);
+        void Bind(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", cid);
+
+        // ── Live operational KPIs ───────────────────────────────────────────────
+        var activeJobs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status NOT IN ('Completed','Unassigned','Cancelled')", Bind, ct);
+        var slaExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND (sla_status='At Risk' OR status IN ('Delayed','At Risk'))", Bind, ct);
+        var delayed       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status='Delayed'", Bind, ct);
+        var overdue       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND assigned_vehicle_id IS NULL AND scheduled_start < NOW()", Bind, ct);
+        var fleetOnRoad   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Idle','At Stop','Delayed')", Bind, ct);
+        var safety24h     = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND COALESCE(occurred_at,event_time,created_at) > NOW()-INTERVAL '24 hours'", Bind, ct);
+        var maintCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND (out_of_service OR status='Maintenance')", Bind, ct);
+
+        var kpis = new object[]
+        {
+            new { label = "Active Shipments",    value = activeJobs,    valueText = activeJobs.ToString(),    status = activeJobs    > 0 ? "Active"   : "Idle" },
+            new { label = "SLA Exceptions",      value = slaExceptions, valueText = slaExceptions.ToString(), status = slaExceptions > 0 ? "Risk"     : "On Track" },
+            new { label = "Overdue Assignments", value = overdue,       valueText = overdue.ToString(),       status = overdue       > 0 ? "Critical" : "Clear" },
+            new { label = "Fleet On Road",       value = fleetOnRoad,   valueText = fleetOnRoad.ToString(),   status = "Active" },
+            new { label = "Safety Events (24h)", value = safety24h,     valueText = safety24h.ToString(),     status = safety24h     > 3 ? "Warning"  : "Active" },
+        };
+
+        // ── Fleet status mix (drives the four fleet chips) ──────────────────────
+        var fs = await db.QuerySingleAsync(
+            @"SELECT
+                SUM(CASE WHEN device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Delayed') THEN 1 ELSE 0 END) driving,
+                SUM(CASE WHEN device_status='Online' AND status IN ('Idle','At Stop') THEN 1 ELSE 0 END) idling,
+                SUM(CASE WHEN device_status='Online' AND status IN ('Available','Parked','Standby','Maintenance') THEN 1 ELSE 0 END) parked,
+                SUM(CASE WHEN device_status<>'Online' THEN 1 ELSE 0 END) offline
+              FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL", Bind, ct);
+        long FsVal(string k) => fs != null && fs.TryGetValue(k, out var v) && v != null ? Convert.ToInt64(v) : 0;
+        var offline = FsVal("offline");
+        var fleetStatus = new { driving = FsVal("driving"), idling = FsVal("idling"), parked = FsVal("parked"), offline };
+
+        // ── Exception queue (jobs at risk + fleet down + recent safety) ─────────
+        var exRows = await db.QueryAsync(
+            @"WITH ex AS (
+                SELECT CASE WHEN j.status='Delayed' THEN 'Critical' ELSE 'Warning' END severity,
+                       v.vehicle_code vehicle, d.full_name driver,
+                       CASE WHEN j.status='Delayed' THEN 'Shipment delayed' ELSE 'SLA at risk' END event,
+                       '/active-shipments' action_route, 'Update ETA' action_label,
+                       COALESCE(j.updated_at, j.created_at) ts, 0 ord
+                FROM jobs j
+                LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
+                LEFT JOIN drivers d ON d.id=j.assigned_driver_id
+                WHERE j.company_id=@cid AND j.deleted_at IS NULL AND (j.status='Delayed' OR j.sla_status='At Risk')
+                UNION ALL
+                SELECT CASE WHEN v.out_of_service THEN 'Critical' ELSE 'Warning' END,
+                       v.vehicle_code, d.full_name,
+                       CASE WHEN v.out_of_service THEN 'Vehicle out of service' ELSE 'In maintenance' END,
+                       '/work-orders', 'Create WO', v.created_at, 1
+                FROM vehicles v LEFT JOIN drivers d ON d.id=v.assigned_driver_id
+                WHERE v.company_id=@cid AND v.deleted_at IS NULL AND (v.out_of_service OR v.status='Maintenance')
+                UNION ALL
+                SELECT CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END,
+                       v.vehicle_code, d.full_name, COALESCE(NULLIF(se.event_type,''),'Safety event'),
+                       '/incidents', 'Review', COALESCE(se.occurred_at, se.event_time, se.created_at), 2
+                FROM safety_events se
+                LEFT JOIN vehicles v ON v.id=se.vehicle_id
+                LEFT JOIN drivers d ON d.id=se.driver_id
+                WHERE se.company_id=@cid AND se.deleted_at IS NULL AND se.severity IN ('Critical','High')
+                  AND COALESCE(se.occurred_at, se.event_time, se.created_at) > NOW()-INTERVAL '48 hours'
+              )
+              SELECT severity, vehicle, driver, event, action_route, action_label, ts
+              FROM ex
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], severity), ord, ts DESC
+              LIMIT 12", Bind, ct);
+
+        static string Rel(object? o)
+        {
+            if (o is not DateTime dt) return "";
+            var mins = (DateTime.UtcNow - dt.ToUniversalTime()).TotalMinutes;
+            if (mins < 1) return "just now";
+            if (mins < 60) return $"{(int)mins} min ago";
+            var hrs = mins / 60;
+            if (hrs < 24) return $"{(int)hrs} hr ago";
+            return $"{(int)(hrs / 24)} d ago";
+        }
+
+        var exceptions = exRows.Select(r => new
+        {
+            severity    = r.GetValueOrDefault("severity"),
+            vehicle     = r.GetValueOrDefault("vehicle"),
+            driver      = r.GetValueOrDefault("driver"),
+            @event      = r.GetValueOrDefault("event"),
+            actionRoute = r.GetValueOrDefault("actionRoute"),
+            actionLabel = r.GetValueOrDefault("actionLabel"),
+            timestamp   = Rel(r.GetValueOrDefault("ts")),
+        }).ToList();
+
+        // ── Operations brief (synthesised from the live metrics above) ──────────
+        string S(long n) => n == 1 ? "" : "s";
+        var briefItems = new List<string>
+        {
+            $"{fleetOnRoad} vehicles on active routes — {offline} offline device{S(offline)}.",
+            slaExceptions > 0 ? $"{slaExceptions} job{S(slaExceptions)} at SLA risk, {delayed} already delayed." : "All shipments within committed SLA windows.",
+            overdue > 0 ? $"{overdue} job{S(overdue)} past dispatch window awaiting assignment." : "No jobs past dispatch window.",
+            safety24h > 0 ? $"{safety24h} safety event{S(safety24h)} logged in the last 24 hours." : "No safety events in the last 24 hours.",
+            maintCount > 0 ? $"{maintCount} vehicle{S(maintCount)} in maintenance or out of service." : "Full fleet mechanically available.",
+        };
+
+        // ── Priority actions (next-best operational moves) ──────────────────────
+        var priorityActions = new List<object>();
+        if (slaExceptions > 0) priorityActions.Add(new { title = $"Resolve {slaExceptions} SLA exception{S(slaExceptions)}", entityRoute = "/alerts" });
+        if (overdue > 0)       priorityActions.Add(new { title = $"Assign {overdue} overdue job{S(overdue)}", entityRoute = "/dispatch-board" });
+        if (maintCount > 0)    priorityActions.Add(new { title = $"Clear {maintCount} vehicle{S(maintCount)} in maintenance", entityRoute = "/work-orders" });
+        if (safety24h > 0)     priorityActions.Add(new { title = $"Review {safety24h} safety event{S(safety24h)}", entityRoute = "/incidents" });
+        if (priorityActions.Count == 0) priorityActions.Add(new { title = "Fleet operating within normal parameters", entityRoute = "/vehicles" });
+
+        // ── Sparkline charts (7-point live series) ──────────────────────────────
+        var weeklyJobs = (await db.QueryAsync(
+            @"SELECT COUNT(j.id) v FROM generate_series(6,0,-1) g
+              LEFT JOIN jobs j ON j.scheduled_start::date=(CURRENT_DATE - g) AND j.company_id=@cid AND j.deleted_at IS NULL
+              GROUP BY g ORDER BY g DESC", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
+        var costLeakage = (await db.QueryAsync(
+            @"SELECT COALESCE(SUM(e.amount),0) v FROM generate_series(6,0,-1) g
+              LEFT JOIN expenses e ON e.expense_date=(CURRENT_DATE - g) AND e.company_id=@cid
+              GROUP BY g ORDER BY g DESC", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
+        var safetyScore = (await db.QueryAsync(
+            @"SELECT fleet_safety_score v FROM (
+                SELECT fleet_safety_score, COALESCE(trend_date, period_start) d
+                FROM safety_trends WHERE company_id=@cid ORDER BY d DESC LIMIT 7
+              ) t ORDER BY d ASC", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
+
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             operationalStatus = "Active command posture",
             generatedAt = DateTime.UtcNow,
             kpis,
-            aiBrief = alerts.FirstOrDefault()?["body"] ?? "OpsTrax AI is monitoring fleet risk, cost leakage, ETA variance, safety signals, and compliance exposure.",
-            priorityActions = actions,
-            timeline,
-            charts = new
-            {
-                weeklyJobs = new[] { 28, 35, 31, 44, 39, 52, 47 },
-                riskMix = new[] { 6, 3, 4, 2 },
-                costLeakage = new[] { 1200, 930, 1450, 710, 560, 880 }
-            },
-            fleetSnapshot = fleet,
-            dispatchSnapshot = dispatch,
-            mapPreview = map,
-            alerts
+            fleetStatus,
+            exceptions,
+            briefItems,
+            priorityActions,
+            charts = new { weeklyJobs, costLeakage, safetyScore },
         }));
     }
 
@@ -2294,6 +2405,11 @@ public static class EndpointMappings
                 AND da.assignment_status NOT IN ('cancelled','delivered')
               ORDER BY da.created_at DESC LIMIT 200",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
+
+        // Canonicalize stored statuses so bucketing + the frontend state machine align
+        // regardless of legacy/title-case values (e.g. "Assigned", "In Progress").
+        foreach (var a in assignments)
+            a["assignmentStatus"] = NormalizeAssignmentStatus(a["assignmentStatus"]?.ToString());
 
         // Also include unassigned jobs (no dispatch_assignment row yet).
         var unassigned = await db.QueryAsync(
@@ -9022,6 +9138,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@limit",  limit);
             }, ct);
 
+        // Canonicalize statuses so the assignments table + frontend state machine align.
+        foreach (var r in rows)
+            r["assignmentStatus"] = NormalizeAssignmentStatus(r["assignmentStatus"]?.ToString());
+
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -9248,7 +9368,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Assignment not found"));
 
-        var from = current["assignmentStatus"]?.ToString() ?? "";
+        var from = NormalizeAssignmentStatus(current["assignmentStatus"]?.ToString());
         var to   = body.Status?.ToLowerInvariant() ?? "";
 
         if (!IsValidDispatchTransition(from, to))
@@ -9280,10 +9400,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c.Parameters.AddWithValue("@cid", companyId);
         }, ct);
 
-        // If job linked, mirror status on job.
+        // If job linked, mirror status on job (Postgres UPDATE ... FROM syntax).
         await db.ExecuteAsync(
-            @"UPDATE jobs j JOIN dispatch_assignments da ON da.job_id=j.id
-              SET j.status=@tos WHERE da.id=@id AND da.company_id=@cid",
+            @"UPDATE jobs j SET status=@tos
+              FROM dispatch_assignments da
+              WHERE da.job_id=j.id AND da.id=@id AND da.company_id=@cid",
             c =>
             {
                 c.Parameters.AddWithValue("@tos", ToDisplayStatus(to));
@@ -9671,6 +9792,33 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         "cancelled"        => "Cancelled",
         _                  => s,
     };
+
+    // Canonicalize legacy / display-cased assignment statuses (e.g. "Assigned",
+    // "Accepted", "In Progress") into the lowercase P4 state-machine tokens that the
+    // board bucketing, transition engine, and frontend all key off. Without this,
+    // historical rows fall into no Kanban column and appear as an empty/"stuck" board.
+    internal static string NormalizeAssignmentStatus(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var s = raw.Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        while (s.Contains("__")) s = s.Replace("__", "_");
+        return s switch
+        {
+            "draft"                                       => "draft",
+            "unassigned" or "pending"                     => "unassigned",
+            "assigned"                                    => "assigned",
+            "accepted"                                    => "accepted",
+            "en_route" or "en_route_pickup" or "enroute"  => "en_route_pickup",
+            "arrived_pickup" or "at_pickup"               => "arrived_pickup",
+            "loaded"                                      => "loaded",
+            "in_progress" or "in_transit" or "intransit" or "en_route_delivery" => "in_transit",
+            "arrived_delivery" or "at_delivery"           => "arrived_delivery",
+            "delivered" or "completed" or "complete"      => "delivered",
+            "exception"                                   => "exception",
+            "cancelled" or "canceled"                     => "cancelled",
+            _                                             => s,
+        };
+    }
 
     // ── Dispatch Insights Builder ─────────────────────────────────────────────────
     private static List<Dictionary<string, object?>> BuildDispatchInsights(

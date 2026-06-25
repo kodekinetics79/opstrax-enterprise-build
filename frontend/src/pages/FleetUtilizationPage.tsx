@@ -2,45 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed fallback ─────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  const vehicles = developmentFleetSeedData.vehicles as AnyRecord[];
-  const drivers = developmentFleetSeedData.drivers as AnyRecord[];
-  return vehicles.map((v, i) => ({
-    id: v.id ?? i + 1,
-    vehicleCode: v.vehicleCode ?? `VH-${String(i + 1).padStart(3, "0")}`,
-    type: v.type ?? "Box Truck",
-    status: (["Active", "Active", "Active", "Available", "Maintenance", "Active"] as const)[i % 6],
-    odometerMiles: 45000 + i * 3200,
-    readinessScore: 88 - (i % 8) * 3,
-    riskScore: 12 + (i % 10) * 5,
-    driverName: (drivers[i % drivers.length] as AnyRecord)?.fullName ?? `Driver ${i + 1}`,
-    driverCode: `DRV-${String((i % 12) + 1).padStart(3, "0")}`,
-    idleMinutesToday: [0, 18, 45, 0, 72, 12, 30, 5, 60, 0, 24, 90][i % 12],
-    idleEventsToday: [0, 2, 4, 0, 6, 1, 3, 1, 5, 0, 2, 7][i % 12],
-    fuelCostMonth: 380 + (i * 87),
-    gallonsMonth: 95 + (i * 22),
-    activeJobs: [2, 1, 3, 0, 0, 1, 2, 1, 1, 0, 2, 0][i % 12],
-    completedToday: [3, 2, 4, 0, 0, 2, 3, 1, 2, 0, 3, 0][i % 12],
-    utilizationPct: [92, 85, 88, 22, 5, 78, 81, 70, 75, 18, 83, 3][i % 12],
-    activeHoursPct: [90, 80, 85, 20, 8, 75, 79, 68, 72, 15, 80, 5][i % 12],
-  }));
-}
-
-const SEED_SUMMARY: AnyRecord = {
-  totalVehicles: 12, activeVehicles: 8, availableVehicles: 2, maintenanceVehicles: 2,
-  avgReadiness: 84.3, avgUtilizationPct: 68.5, idleHoursToday: 5.8, idleCostToday: "$42", fuelSpendMonth: "$12,400",
-};
-
+// Live-only: data comes straight from the DB-backed /api/fleet/utilization endpoints.
+// No seed/demo fallback — loading, error and empty states below reflect real backend state.
 const fleetApi = {
-  list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/fleet/utilization")), () => buildSeed()),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/fleet/utilization/summary")), () => SEED_SUMMARY),
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/fleet/utilization")),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/fleet/utilization/summary")),
 };
 
 // ── Utilization bar ───────────────────────────────────────────────────────────
