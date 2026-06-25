@@ -24,24 +24,43 @@ import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk", "Moving", "Idle"] as const;
+const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
 
 type LayerKey = "vehicles" | "geofences";
+type StatusBucket = "Moving" | "Idle" | "Offline";
+
+/** Classify a vehicle into a single live-status bucket — the heart of the status board. */
+function statusBucket(entity: AnyRecord): StatusBucket {
+  if (entity.isStale) return "Offline";
+  const status = String(entity.status ?? "").toLowerCase();
+  const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
+  if (speed > 3 || /active|on route|moving|driving|en route/.test(status)) return "Moving";
+  return "Idle";
+}
 
 function matchesFilter(entity: AnyRecord, filter: string): boolean {
   if (filter === "All") return true;
+  if (filter === "Moving" || filter === "Idle" || filter === "Offline") {
+    return statusBucket(entity) === filter;
+  }
   const alert = String(entity.liveAlert ?? entity.live_alert ?? "").toLowerCase();
-  const status = String(entity.status ?? "").toLowerCase();
   const risk = String(entity.riskLevel ?? entity.risk_level ?? "").toLowerCase();
   switch (filter) {
     case "Speeding":        return alert.includes("speed");
     case "Device offline":  return alert.includes("device");
     case "Camera offline":  return alert.includes("camera");
     case "Fleet risk":      return alert.includes("risk") || risk === "high";
-    case "Moving":          return /active|on route|moving|driving/.test(status);
-    case "Idle":            return /idle|parked|stopped|available/.test(status);
     default:                return true;
   }
+}
+
+/** Compact "2m ago" style freshness from seconds-since-last-ping. */
+function freshnessLabel(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "—";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
 }
 
 function matchesSearch(entity: AnyRecord, q: string): boolean {
@@ -55,6 +74,7 @@ function matchesSearch(entity: AnyRecord, q: string): boolean {
 
 export function LiveMapPage() {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
@@ -87,7 +107,8 @@ export function LiveMapPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["telemetry-alerts"] }),
   });
 
-  // Merge the live SSE GPS stream onto the DB entity snapshot so markers move in real time.
+  // Merge the live SSE GPS stream onto the DB entity snapshot so markers move in real time
+  // and carry GPS freshness (secondsSincePing / isStale) for the status board and roster.
   const baseEntities = (data?.entities as AnyRecord[]) ?? [];
   const liveEntities = useMemo<AnyRecord[]>(() => {
     if (telemetry.positions.length === 0) return baseEntities;
@@ -95,14 +116,41 @@ export function LiveMapPage() {
     return baseEntities.map((e) => {
       const live = posMap.get(String(e.label ?? e.vehicleCode ?? ""));
       if (!live) return e;
-      return { ...e, lat: live.lat, lng: live.lng, speedMph: live.speedMph, heading: live.heading };
+      return {
+        ...e,
+        lat: live.lat,
+        lng: live.lng,
+        speedMph: live.speedMph,
+        heading: live.heading,
+        secondsSincePing: live.secondsSincePing,
+        isStale: live.isStale,
+      };
     });
   }, [baseEntities, telemetry.positions]);
 
+  // Live status segmentation — Moving / Idle / Offline — the signature fleet-status board.
+  const buckets = useMemo(() => {
+    const counts: Record<StatusBucket, number> = { Moving: 0, Idle: 0, Offline: 0 };
+    for (const e of liveEntities) counts[statusBucket(e)] += 1;
+    return counts;
+  }, [liveEntities]);
+
   const visibleEntities = useMemo(
-    () => liveEntities.filter((e) => matchesFilter(e, activeFilter) && matchesSearch(e, search)),
+    () =>
+      liveEntities
+        .filter((e) => matchesFilter(e, activeFilter) && matchesSearch(e, search))
+        // Surface what needs attention first: offline, then moving, then idle.
+        .sort((a, b) => {
+          const order: Record<StatusBucket, number> = { Offline: 0, Moving: 1, Idle: 2 };
+          return order[statusBucket(a)] - order[statusBucket(b)];
+        }),
     [liveEntities, activeFilter, search],
   );
+
+  const focusOn = (entity: AnyRecord) => {
+    setSelected(entity);
+    setFocusId(String(entity.id ?? entity.vehicleId ?? entity.vehicle_id ?? entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? ""));
+  };
 
   if (isLoading || !data) return <LoadingState />;
 
@@ -140,6 +188,37 @@ export function LiveMapPage() {
         <KpiCard label="Speed Alerts" value={String(kpis.speedAlerts ?? 0)} status="Warning" />
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatusBoardCard
+          label="All Units"
+          count={liveEntities.length}
+          tone="slate"
+          active={activeFilter === "All"}
+          onClick={() => setActiveFilter("All")}
+        />
+        <StatusBoardCard
+          label="Moving"
+          count={buckets.Moving}
+          tone="teal"
+          active={activeFilter === "Moving"}
+          onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")}
+        />
+        <StatusBoardCard
+          label="Idle / Parked"
+          count={buckets.Idle}
+          tone="indigo"
+          active={activeFilter === "Idle"}
+          onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")}
+        />
+        <StatusBoardCard
+          label="Offline"
+          count={buckets.Offline}
+          tone="rose"
+          active={activeFilter === "Offline"}
+          onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")}
+        />
+      </div>
+
       <div className="grid gap-6 xl:grid-cols-[1.4fr_.6fr]">
         <section className="panel p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -166,13 +245,16 @@ export function LiveMapPage() {
           </div>
 
           <div className="map-surface mt-4 h-[640px]">
-            <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} />
+            <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
           </div>
         </section>
 
         <aside className="space-y-6">
           <section className="panel p-5">
-            <h2 className="section-title">Find a Unit</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="section-title">Live Roster</h2>
+              <span className="text-xs font-semibold text-slate-400">{visibleEntities.length} units</span>
+            </div>
             <div className="relative mt-3">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -182,23 +264,12 @@ export function LiveMapPage() {
                 placeholder="Vehicle code, driver, status…"
               />
             </div>
-            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
               {visibleEntities.length === 0 ? (
                 <p className="text-sm text-slate-500">No vehicles match the current filters.</p>
               ) : (
                 visibleEntities.map((entity) => (
-                  <button
-                    type="button"
-                    key={String(entity.id ?? entity.vehicleId ?? entity.label)}
-                    onClick={() => setSelected(entity)}
-                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:bg-blue-50/40"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-900">{String(entity.label ?? entity.vehicleCode ?? "Vehicle")}</p>
-                      <p className="truncate text-xs text-slate-500">{String(entity.driverName ?? entity.driver_name ?? "Unassigned")} · {String(entity.status ?? "--")}</p>
-                    </div>
-                    <RiskBadge risk={entity.riskLevel ?? entity.risk_level} />
-                  </button>
+                  <RosterRow key={String(entity.id ?? entity.vehicleId ?? entity.label)} entity={entity} onClick={() => focusOn(entity)} />
                 ))
               )}
             </div>
@@ -241,8 +312,74 @@ export function LiveMapPage() {
         </aside>
       </div>
 
-      <VehicleDetailDrawer detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} />
+      <VehicleDetailDrawer detail={detail.data} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
     </div>
+  );
+}
+
+const BOARD_TONES: Record<string, { dot: string; activeBorder: string; activeBg: string; text: string }> = {
+  slate:  { dot: "bg-slate-400",   activeBorder: "border-slate-400",   activeBg: "bg-slate-50",   text: "text-slate-700" },
+  teal:   { dot: "bg-teal-500",    activeBorder: "border-teal-400",    activeBg: "bg-teal-50",    text: "text-teal-700" },
+  indigo: { dot: "bg-indigo-500",  activeBorder: "border-indigo-400",  activeBg: "bg-indigo-50",  text: "text-indigo-700" },
+  rose:   { dot: "bg-rose-500",    activeBorder: "border-rose-400",    activeBg: "bg-rose-50",    text: "text-rose-700" },
+};
+
+function StatusBoardCard({ label, count, tone, active, onClick }: { label: string; count: number; tone: keyof typeof BOARD_TONES; active: boolean; onClick: () => void }) {
+  const t = BOARD_TONES[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active ? "true" : "false"}
+      className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
+        active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300"
+      }`}
+    >
+      <div className="flex items-center gap-2.5">
+        <span className={`h-2.5 w-2.5 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+        <span className="text-sm font-semibold text-slate-600">{label}</span>
+      </div>
+      <span className={`text-2xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+    </button>
+  );
+}
+
+const ROSTER_DOT: Record<StatusBucket, string> = {
+  Moving: "bg-teal-500",
+  Idle: "bg-indigo-400",
+  Offline: "bg-rose-500",
+};
+
+function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void }) {
+  const bucket = statusBucket(entity);
+  const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
+  const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
+  const label = String(entity.label ?? entity.vehicleCode ?? "Vehicle");
+  const fresh = freshnessLabel(entity.secondsSincePing as number | null | undefined);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:bg-blue-50/40"
+    >
+      <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${ROSTER_DOT[bucket]} ${bucket === "Moving" ? "animate-pulse" : ""}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-sm font-bold text-slate-900">{label}</p>
+          <RiskBadge risk={entity.riskLevel ?? entity.risk_level} />
+        </div>
+        <p className="truncate text-xs text-slate-500">{driver}</p>
+        <div className="mt-1 flex items-center gap-2 text-[11px] font-medium text-slate-400">
+          {bucket === "Moving" ? (
+            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speed)} mph</span>
+          ) : (
+            <span className={bucket === "Offline" ? "text-rose-500" : "text-indigo-500"}>{bucket === "Offline" ? "Offline" : "Idle"}</span>
+          )}
+          <span>·</span>
+          <span>{fresh}</span>
+        </div>
+      </div>
+    </button>
   );
 }
 
