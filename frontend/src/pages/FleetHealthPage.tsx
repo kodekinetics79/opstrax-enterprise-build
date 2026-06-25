@@ -970,7 +970,7 @@ export function FleetHealthPage() {
 
   if (summary.isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="flex items-center justify-center py-24">
         <div className="flex flex-col items-center gap-3 text-slate-500">
           <RefreshCw className="h-8 w-8 animate-spin" />
           <p className="text-sm font-medium">Loading fleet health data…</p>
@@ -981,7 +981,7 @@ export function FleetHealthPage() {
 
   if (summary.isError) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
+      <div className="flex items-center justify-center py-24 px-8">
         <div className="text-center max-w-sm">
           <XCircle className="h-10 w-10 text-red-400 mx-auto mb-3" />
           <p className="text-base font-semibold text-slate-700 mb-1">Failed to load fleet health data</p>
@@ -999,7 +999,7 @@ export function FleetHealthPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="space-y-6">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}
@@ -1014,7 +1014,7 @@ export function FleetHealthPage() {
         onActionTaken={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
 
-      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <div className="space-y-6">
         {/* Page header */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div>
