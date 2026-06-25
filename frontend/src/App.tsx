@@ -3,7 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { RequirePermission } from "@/hooks/usePermission";
-import { hasPermission } from "@/auth/rbacConfig";
+import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { modules } from "@/modules/moduleConfig";
 import { LoginPage } from "@/pages/LoginPage";
 import { LoadingState } from "@/components/ui";
@@ -106,18 +106,8 @@ const DriverNotificationsPage = lazy(() => import("@/pages/driver/DriverNotifica
 const PlatformOpsPage = lazy(() => import("@/pages/PlatformOpsPage"));
 const FleetHealthPage = lazy(() => import("@/pages/FleetHealthPage").then(m => ({ default: m.FleetHealthPage })));
 const FleetOverviewPage = lazy(() => import("@/pages/FleetOverviewPage").then(m => ({ default: m.FleetOverviewPage })));
-
-function getLandingRoute(session: ReturnType<typeof useAuth>["session"]) {
-  const permissions = session?.permissions ?? [];
-  // Drivers land in the mobile portal
-  if (hasPermission(permissions, "driver:self") && !hasPermission(permissions, "dashboard:view"))
-    return "/driver";
-  if (hasPermission(permissions, "dashboard:view")) return "/live-dashboard";
-  if (hasPermission(permissions, "customer_portal:view")) return "/customer-portal";
-  if (hasPermission(permissions, "shipments:view")) return "/shipments";
-  if (hasPermission(permissions, "drivers:view")) return "/drivers";
-  return "/live-dashboard";
-}
+// Platform Admin — global SaaS business control plane (own auth + routing)
+const PlatformApp = lazy(() => import("@/pages/platform/PlatformApp"));
 
 function ProtectedShell() {
   const { session } = useAuth();
@@ -130,7 +120,10 @@ export default function App() {
   return (
     <Suspense fallback={<LoadingState />}>
       <Routes>
-        <Route path="/login" element={session ? <Navigate to={getLandingRoute(session)} replace /> : <LoginPage />} />
+        {/* ── Platform Admin — fully isolated control plane, separate auth ── */}
+        <Route path="/platform/*" element={<PlatformApp />} />
+
+        <Route path="/login" element={session ? <Navigate to={getLandingRouteForSession(session)} replace /> : <LoginPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
@@ -146,7 +139,7 @@ export default function App() {
         ) : null}
 
         <Route element={<ProtectedShell />}>
-          <Route index element={<Navigate to={getLandingRoute(session)} replace />} />
+          <Route index element={<Navigate to={getLandingRouteForSession(session)} replace />} />
 
         {/* ── Control Tower ── */}
         <Route path="/live-dashboard" element={<RequirePermission permission="dashboard:view"><FleetOverviewPage /></RequirePermission>} />
@@ -189,7 +182,7 @@ export default function App() {
         <Route path="/shipments" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
         <Route path="/load-bookings" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
         <Route path="/route-plans" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
-        <Route path="/proof-of-delivery" element={<RequirePermission permission="pod:view"><ProofOfDeliveryPage /></RequirePermission>} />
+        <Route path="/proof-of-delivery" element={<RequirePermission permission="shipments:view"><ProofOfDeliveryPage /></RequirePermission>} />
         <Route path="/last-mile-delivery" element={<RequirePermission permission="dispatch:view"><LastMileDeliveryPage /></RequirePermission>} />
 
         {/* ── Customer Portal ── */}
@@ -321,7 +314,7 @@ export default function App() {
               />
             ))}
         </Route>
-        <Route path="*" element={<Navigate to={session ? getLandingRoute(session) : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={session ? getLandingRouteForSession(session) : "/login"} replace />} />
       </Routes>
     </Suspense>
   );

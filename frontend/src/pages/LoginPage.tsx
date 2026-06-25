@@ -1,10 +1,39 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import axios from "axios";
 import { AlertCircle, ArrowRight } from "lucide-react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
+
+function getLoginErrorMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    return "We could not complete sign-in. Please try again.";
+  }
+
+  if (error.code === "ECONNABORTED") {
+    return "OpsTrax is taking too long to respond. The backend may be waking up, so please try again in a few seconds.";
+  }
+
+  const status = error.response?.status;
+  if (status === 401) {
+    return "The email or password was not recognized. Please verify your credentials and try again.";
+  }
+  if (status === 403) {
+    return "Security verification did not complete. Refresh the page and try signing in again.";
+  }
+  if (status === 429) {
+    return "Too many sign-in attempts were detected. Wait a moment, then try again.";
+  }
+  if (!error.response) {
+    return "We could not reach the OpsTrax API. Check the connection or retry once the service is fully awake.";
+  }
+
+  return String(error.response?.data?.message ?? "We could not complete sign-in. Please try again.");
+}
 
 /* ── Telemetry particle canvas ──────────────────────────────────────────── */
 function TelemetryCanvas() {
@@ -283,8 +312,16 @@ export function LoginPage() {
   const [showPassword, setShowPass] = useState(false);
 
   const login = useMutation({
-    mutationFn: ({ email: e, password: p }: { email: string; password: string }) => authApi.login(e, p),
-    onSuccess: (session) => { setSession(session); navigate("/command-center", { replace: true }); },
+    mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
+      await authApi.bootstrap();
+      return authApi.login(e, p);
+    },
+    onSuccess: (session) => {
+      flushSync(() => {
+        setSession(session);
+      });
+      navigate(getLandingRouteForSession(session), { replace: true });
+    },
   });
 
   const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
@@ -386,7 +423,7 @@ export function LoginPage() {
           {login.isError && (
             <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              Invalid email or password. Please try again.
+              {getLoginErrorMessage(login.error)}
             </div>
           )}
 

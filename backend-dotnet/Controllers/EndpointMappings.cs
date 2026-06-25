@@ -6848,21 +6848,85 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var notes = Get(body, "notes")?.ToString() ?? "";
         var signatureUrl = Get(body, "signatureDataUrl")?.ToString() ?? "";
         var proofType = string.IsNullOrEmpty(signatureUrl) ? "Verbal Confirmation" : "Digital Signature";
-        var proofId = await db.InsertAsync(
-            @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, received_by, proof_type, signature_url, status, notes, captured_at)
-              VALUES (@companyId, @id, @receiver, @receiver, @proofType, @sigUrl, 'Captured', @notes, NOW())",
-            c =>
+        // All proof writes run inside a single transaction with SELECT FOR UPDATE so
+        // concurrent captures of the same job are serialised at the DB level and a
+        // mid-flight failure rolls back instead of leaving orphaned Superseded rows.
+        var proofId = await db.WithTransactionAsync(async (conn, tx) =>
+        {
+            await using var selectCmd = new Npgsql.NpgsqlCommand(
+                @"SELECT id FROM proof_of_delivery
+                  WHERE company_id=@companyId AND job_id=@id AND status='Pending'
+                  ORDER BY created_at DESC, id DESC
+                  LIMIT 1
+                  FOR UPDATE", conn, tx);
+            selectCmd.Parameters.AddWithValue("@companyId", companyId);
+            selectCmd.Parameters.AddWithValue("@id", id);
+            var pendingId = await selectCmd.ExecuteScalarAsync(ct);
+
+            long pid;
+            if (pendingId is not null and not DBNull)
             {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@receiver", receivedBy);
-                c.Parameters.AddWithValue("@proofType", proofType);
-                c.Parameters.AddWithValue("@sigUrl", signatureUrl);
-                c.Parameters.AddWithValue("@notes", notes);
-            }, ct);
-        await db.ExecuteAsync(
-            "UPDATE jobs SET proof_status='Captured', status='Delivered' WHERE id=@id AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+                pid = Convert.ToInt64(pendingId);
+
+                await using var supersedeCmd = new Npgsql.NpgsqlCommand(
+                    @"UPDATE proof_of_delivery
+                      SET status='Superseded',
+                          notes=CASE
+                              WHEN COALESCE(notes,'') = '' THEN 'Superseded by captured proof.'
+                              ELSE notes || ' | Superseded by captured proof.'
+                          END
+                      WHERE company_id=@companyId AND job_id=@id AND status='Pending' AND id<>@proofId",
+                    conn, tx);
+                supersedeCmd.Parameters.AddWithValue("@companyId", companyId);
+                supersedeCmd.Parameters.AddWithValue("@id", id);
+                supersedeCmd.Parameters.AddWithValue("@proofId", pid);
+                await supersedeCmd.ExecuteNonQueryAsync(ct);
+
+                await using var captureCmd = new Npgsql.NpgsqlCommand(
+                    @"UPDATE proof_of_delivery
+                      SET receiver_name=@receiver,
+                          received_by=@receiver,
+                          proof_type=@proofType,
+                          signature_url=@sigUrl,
+                          status='Captured',
+                          notes=@notes,
+                          captured_at=NOW()
+                      WHERE id=@proofId AND company_id=@companyId",
+                    conn, tx);
+                captureCmd.Parameters.AddWithValue("@proofId", pid);
+                captureCmd.Parameters.AddWithValue("@companyId", companyId);
+                captureCmd.Parameters.AddWithValue("@receiver", receivedBy);
+                captureCmd.Parameters.AddWithValue("@proofType", proofType);
+                captureCmd.Parameters.AddWithValue("@sigUrl", signatureUrl);
+                captureCmd.Parameters.AddWithValue("@notes", notes);
+                await captureCmd.ExecuteNonQueryAsync(ct);
+            }
+            else
+            {
+                await using var insertCmd = new Npgsql.NpgsqlCommand(
+                    @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, received_by, proof_type, signature_url, status, notes, captured_at)
+                      VALUES (@companyId, @id, @receiver, @receiver, @proofType, @sigUrl, 'Captured', @notes, NOW())
+                      RETURNING id",
+                    conn, tx);
+                insertCmd.Parameters.AddWithValue("@companyId", companyId);
+                insertCmd.Parameters.AddWithValue("@id", id);
+                insertCmd.Parameters.AddWithValue("@receiver", receivedBy);
+                insertCmd.Parameters.AddWithValue("@proofType", proofType);
+                insertCmd.Parameters.AddWithValue("@sigUrl", signatureUrl);
+                insertCmd.Parameters.AddWithValue("@notes", notes);
+                var inserted = await insertCmd.ExecuteScalarAsync(ct);
+                pid = inserted is null or DBNull ? 0 : Convert.ToInt64(inserted);
+            }
+
+            await using var jobCmd = new Npgsql.NpgsqlCommand(
+                "UPDATE jobs SET proof_status='Captured', status='Delivered' WHERE id=@id AND company_id=@companyId",
+                conn, tx);
+            jobCmd.Parameters.AddWithValue("@id", id);
+            jobCmd.Parameters.AddWithValue("@companyId", companyId);
+            await jobCmd.ExecuteNonQueryAsync(ct);
+
+            return pid;
+        }, ct);
         await audit.LogAsync("proof.captured", "Job", id, ct: ct);
         await AddTimeline(db, "Job", id, "proof.captured", $"POD captured — {receivedBy}", ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, proofId, status = "Captured", proofType, receivedBy }, "Proof of delivery captured"));
@@ -6872,14 +6936,59 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var companyId = GetCompanyId(http);
         var rows = await db.QueryAsync(
-            @"SELECT pod.*, COALESCE(j.job_number, j.job_code) job_number, c.name customer_name, v.vehicle_code, d.full_name driver_name
-              FROM proof_of_delivery pod
-              LEFT JOIN jobs j ON j.id=pod.job_id
+            @"WITH latest_pod AS (
+                  SELECT DISTINCT ON (pod.job_id)
+                         pod.id,
+                         pod.company_id,
+                         pod.job_id,
+                         pod.receiver_name,
+                         pod.received_by,
+                         pod.proof_type,
+                         pod.photo_url,
+                         pod.signature_url,
+                         pod.status,
+                         pod.notes,
+                         pod.captured_at,
+                         pod.created_at
+                  FROM proof_of_delivery pod
+                  WHERE pod.company_id=@cid
+                  ORDER BY pod.job_id, COALESCE(pod.captured_at, pod.created_at) DESC, pod.id DESC
+              )
+              SELECT lp.id,
+                     j.id job_id,
+                     COALESCE(j.job_number, j.job_code) job_number,
+                     j.status job_status,
+                     j.proof_status,
+                     j.sla_status,
+                     j.customer_update_status,
+                     j.tracking_code,
+                     j.pickup_address,
+                     j.dropoff_address,
+                     j.eta,
+                     c.name customer_name,
+                     v.vehicle_code,
+                     d.full_name driver_name,
+                     lp.id proof_id,
+                     COALESCE(lp.status, CASE WHEN j.proof_status='Pending' THEN 'Pending' ELSE 'Awaiting Capture' END) status,
+                     COALESCE(lp.proof_type, CASE WHEN j.proof_status='Pending' THEN 'Placeholder' ELSE 'Awaiting Capture' END) proof_type,
+                     lp.receiver_name,
+                     lp.received_by,
+                     lp.photo_url,
+                     lp.signature_url,
+                     lp.notes,
+                     lp.captured_at,
+                     lp.created_at
+              FROM jobs j
+              LEFT JOIN latest_pod lp ON lp.job_id=j.id
               LEFT JOIN customers c ON c.id=j.customer_id
               LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
               LEFT JOIN drivers d ON d.id=j.assigned_driver_id
-              WHERE pod.company_id=@cid
-              ORDER BY pod.captured_at DESC LIMIT 100",
+              WHERE j.company_id=@cid
+                AND j.deleted_at IS NULL
+                AND (j.proof_status='Pending' OR lp.id IS NOT NULL OR j.status IN ('Completed','Delivered','At Stop'))
+              ORDER BY CASE WHEN COALESCE(lp.status, CASE WHEN j.proof_status='Pending' THEN 'Pending' ELSE 'Awaiting Capture' END)='Pending' THEN 0 ELSE 1 END,
+                       COALESCE(lp.captured_at, j.eta, j.scheduled_end, j.scheduled_start) DESC
+              LIMIT 150",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(rows, "Proof of delivery records"));
     }
@@ -6888,12 +6997,32 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
-            @"SELECT COUNT(*) total,
-                     SUM(CASE WHEN pod.status='Captured' THEN 1 ELSE 0 END) captured,
-                     SUM(CASE WHEN pod.status='Pending' THEN 1 ELSE 0 END) pending,
-                     SUM(CASE WHEN pod.proof_type='Digital Signature' THEN 1 ELSE 0 END) digital_signatures,
-                     (SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND proof_status='Pending') jobs_pending_proof
-              FROM proof_of_delivery pod WHERE pod.company_id=@cid",
+            @"WITH latest_pod AS (
+                  SELECT DISTINCT ON (pod.job_id)
+                         pod.job_id,
+                         pod.status,
+                         pod.proof_type
+                  FROM proof_of_delivery pod
+                  WHERE pod.company_id=@cid
+                  ORDER BY pod.job_id, COALESCE(pod.captured_at, pod.created_at) DESC, pod.id DESC
+              ),
+              proof_surface AS (
+                  SELECT j.id job_id,
+                         COALESCE(lp.status, CASE WHEN j.proof_status='Pending' THEN 'Pending' ELSE 'Awaiting Capture' END) surface_status,
+                         COALESCE(lp.proof_type, CASE WHEN j.proof_status='Pending' THEN 'Placeholder' ELSE 'Awaiting Capture' END) surface_proof_type,
+                         j.proof_status
+                  FROM jobs j
+                  LEFT JOIN latest_pod lp ON lp.job_id=j.id
+                  WHERE j.company_id=@cid
+                    AND j.deleted_at IS NULL
+                    AND (j.proof_status='Pending' OR lp.job_id IS NOT NULL OR j.status IN ('Completed','Delivered','At Stop'))
+              )
+              SELECT COUNT(*) total,
+                     SUM(CASE WHEN surface_status='Captured' THEN 1 ELSE 0 END) captured,
+                     SUM(CASE WHEN surface_status='Pending' THEN 1 ELSE 0 END) pending,
+                     SUM(CASE WHEN surface_proof_type='Digital Signature' THEN 1 ELSE 0 END) digital_signatures,
+                     SUM(CASE WHEN proof_status='Pending' THEN 1 ELSE 0 END) jobs_pending_proof
+              FROM proof_surface",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>(), "POD summary"));
     }

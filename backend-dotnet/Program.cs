@@ -38,6 +38,8 @@ builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<OpsMetricsService>();
 // P10 Security + Compliance
 builder.Services.AddSingleton<SecuritySchemaService>();
+// Platform Admin — global SaaS business control plane (separate from tenant admin)
+builder.Services.AddSingleton<PlatformSchemaService>();
 builder.Services.AddScoped<SecuritySettingsService>();
 builder.Services.AddScoped<SecurityEventService>();
 builder.Services.AddScoped<SsoConnectionService>();
@@ -90,6 +92,7 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Reporting",         () => scope.ServiceProvider.GetRequiredService<ReportingSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Observability",     () => scope.ServiceProvider.GetRequiredService<ObservabilitySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
 }
 
 app.Use(async (context, next) =>
@@ -115,6 +118,10 @@ app.UseWhen(
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
+                // Platform Admin — self-authenticates against platform_sessions (separate
+                // identity from tenant users); must bypass the tenant session middleware
+                // so a platform bearer token is never validated as a tenant user token.
+                path.StartsWith("/api/platform", StringComparison.OrdinalIgnoreCase) ||
                 // P9 health probes — must be unauthenticated for k8s / load-balancer probes
                 path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
                 // Telemetry ingest — device-authenticated via X-Device-Key header, not user session
@@ -242,6 +249,29 @@ app.UseWhen(
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
             context.Items[EndpointMappings.AuthRoleItemKey] = roleName;
             context.Items[EndpointMappings.AuthPermissionsItemKey] = permissions.ToArray();
+
+            // ── Feature entitlement enforcement (server-side, tenant-isolated) ──────
+            // Platform Admin controls which modules a tenant may access. If a tenant has
+            // an entitlement row explicitly disabling the module this path belongs to,
+            // block it here — even if the client calls the API/URL directly. Default is
+            // allow (no row = inherit), preserving behaviour for un-gated modules.
+            var moduleKey = ModuleKeyForPath(path);
+            if (moduleKey is not null)
+            {
+                var blocked = await db.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@mk AND enabled=false",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@mk", moduleKey);
+                    });
+                if (blocked > 0)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Module disabled", $"The '{moduleKey}' module is not enabled for your account. Contact your account owner."));
+                    return;
+                }
+            }
 
             await next();
         });
@@ -380,6 +410,7 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
     }, statusCode: statusCode);
 });
 app.MapOpsTraxEndpoints();
+app.MapPlatformEndpoints();
 EndpointMappings.MapP9OpsEndpoints(app);
 EndpointMappings.MapP10SecurityEndpoints(app);
 EndpointMappings.MapFleetHealthEndpoints(app);
@@ -431,6 +462,36 @@ static IEnumerable<string> ParsePermissions(object? source)
 
         yield return str;
     }
+}
+
+// Maps an /api/* request path to the entitlement module_key that gates it.
+// Returns null for paths that are not entitlement-gated (always allowed).
+static string? ModuleKeyForPath(string path)
+{
+    if (string.IsNullOrEmpty(path)) return null;
+    // Order matters: most specific prefixes first.
+    (string Prefix, string Module)[] map =
+    [
+        ("/api/safety",              "safety"),
+        ("/api/dashcam",             "safety"),
+        ("/api/maintenance",         "maintenance"),
+        ("/api/work-orders",         "maintenance"),
+        ("/api/dispatch",            "dispatch"),
+        ("/api/trips",               "dispatch"),
+        ("/api/telemetry",           "telematics"),
+        ("/api/devices",             "telematics"),
+        ("/api/customers",           "crm"),
+        ("/api/contracts",           "crm"),
+        ("/api/customer-eta",        "customer_portal"),
+        ("/api/customer-visibility", "customer_portal"),
+        ("/api/reporting",           "reports"),
+        ("/api/compliance",          "compliance"),
+    ];
+    foreach (var (prefix, module) in map)
+    {
+        if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return module;
+    }
+    return null;
 }
 
 static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step)

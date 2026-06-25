@@ -7,6 +7,9 @@ function resolveEmail(usernameOrEmail: string): string {
 }
 
 export const authApi = {
+  bootstrap: async () => {
+    try { await apiClient.get("/api/health"); } catch { /* warm-up only — never block login */ }
+  },
   login: async (usernameOrEmail: string, password: string) => {
     const email = resolveEmail(usernameOrEmail);
     const response = await unwrap<UserSession>(

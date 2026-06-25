@@ -73,7 +73,9 @@ apiClient.interceptors.response.use(
       // Telemetry endpoints use short-lived stream tickets and a separate auth path.
       // A 401 there means the ticket expired or was never issued — not that the main
       // session is invalid. Let the caller handle it gracefully instead of nuking the session.
-      const skipLogout = url.includes("/api/telemetry/");
+      // Telemetry and platform endpoints self-authenticate; a 401 from them never
+      // means the tenant session is invalid, so don't clear it.
+      const skipLogout = url.includes("/api/telemetry/") || url.includes("/api/platform/");
       if (!skipLogout) {
         localStorage.removeItem("opstrax.session.v2");
         localStorage.removeItem("opstrax.session");

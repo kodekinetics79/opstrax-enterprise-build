@@ -30,4 +30,5 @@ export const jobsApi = {
   changeStatus: (id: string | number, status: string, notes?: string) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/status`, { status, notes })),
   sendEta: (id: string | number, payload: AnyRecord = {}) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/send-eta`, payload)),
   proofPlaceholder: (id: string | number, payload: AnyRecord = {}) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/proof-placeholder`, payload)),
+  captureProof: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/proof`, payload)),
 };

@@ -4,6 +4,7 @@ import {
   ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
   Search, Send, Sparkles, Trash2, TriangleAlert, Truck, X,
 } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
   RiskBadge, StatusBadge, exportCsv, labelize,
@@ -36,6 +37,49 @@ const PIPELINE: { label: string; summaryKey: string; statusValue: string }[] = [
 
 type Toast = { kind: "success" | "error" | "info"; message: string };
 
+type ShipmentSurface =
+  | "jobs"
+  | "active-shipments"
+  | "shipments";
+
+const SURFACE_CONFIG: Record<ShipmentSurface, {
+  eyebrow: string;
+  title: string;
+  description: string;
+  exportName: string;
+  createLabel: string;
+  tableColumns: string[];
+  filterRows: (row: AnyRecord) => boolean;
+}> = {
+  jobs: {
+    eyebrow: "Jobs & Orders",
+    title: "Order execution cockpit",
+    description: "Create, assign, track, prove and audit every job with live SLA, proof, customer update, and assignment logic in one operational surface.",
+    exportName: "jobs",
+    createLabel: "Create Job",
+    tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "priority", "proofStatus", "recommendedAction"],
+    filterRows: () => true,
+  },
+  "active-shipments": {
+    eyebrow: "Active Shipments",
+    title: "Execution in motion",
+    description: "Live shipment execution board for in-flight work only: dispatch state, ETA confidence, proof readiness, and customer promise exposure.",
+    exportName: "active-shipments",
+    createLabel: "Create Shipment Job",
+    tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
+    filterRows: (row) => !/completed|delivered/i.test(String(row.status ?? "")),
+  },
+  shipments: {
+    eyebrow: "Shipments",
+    title: "Shipment lifecycle register",
+    description: "Full shipment entity register from assignment through delivered proof, with stops, customer communication, and audit continuity tied to the underlying job.",
+    exportName: "shipments",
+    createLabel: "Create Shipment Job",
+    tableColumns: ["jobNumber", "customerName", "trackingCode", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
+    filterRows: () => true,
+  },
+};
+
 export function JobsPage() {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
@@ -55,6 +99,14 @@ export function JobsPage() {
   const qc = useQueryClient();
   const hasPermission = useHasPermission();
   const { session } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const surface = ((): ShipmentSurface => {
+    if (location.pathname === "/active-shipments") return "active-shipments";
+    if (location.pathname === "/shipments") return "shipments";
+    return "jobs";
+  })();
+  const surfaceConfig = SURFACE_CONFIG[surface];
   const canManage = hasPermission("shipments:create") || hasPermission("shipments:update") || hasPermission("dispatch:update") || hasPermission("dispatch:assign");
   const canExport = hasPermission("shipments:export") || hasPermission("shipments:view") || canManage;
   const canCreate = canManage;
@@ -76,7 +128,17 @@ export function JobsPage() {
   });
   const action = useMutation({
     mutationFn: ({ type, id }: { type: string; id: string | number }) => type === "eta" ? jobsApi.sendEta(id) : jobsApi.proofPlaceholder(id),
-    onSuccess: async (_d, vars) => { await qc.invalidateQueries({ queryKey: ["jobs"] }); await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] }); notify("success", vars.type === "eta" ? "Customer ETA update sent" : "Proof capture queued"); },
+    onSuccess: async (_d, vars) => {
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: ["jobs", "summary"] });
+      await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
+      await qc.invalidateQueries({ queryKey: ["pod"] });
+      await qc.invalidateQueries({ queryKey: ["pod", "summary"] });
+      notify("success", vars.type === "eta" ? "Customer ETA update sent" : "POD workflow queued");
+      if (vars.type === "proof") {
+        navigate(`/proof-of-delivery?jobId=${vars.id}`);
+      }
+    },
     onError: () => notify("error", "The action could not be completed."),
   });
   const changeStatus = useMutation({
@@ -90,12 +152,14 @@ export function JobsPage() {
     onError: () => notify("error", "Status change was rejected."),
   });
 
-  const rows = useMemo(() => scopedRows.filter((row) => {
+  const baseRows = useMemo(() => scopedRows.filter(surfaceConfig.filterRows), [scopedRows, surfaceConfig]);
+
+  const rows = useMemo(() => baseRows.filter((row) => {
     const qLower = query.toLowerCase();
     const matchesText = !query ||
       String(row.jobNumber || row.jobCode || "").toLowerCase().includes(qLower) ||
       String(row.customerName || "").toLowerCase().includes(qLower) ||
-      String(row.driverName || row.vehicleCode || "").toLowerCase().includes(qLower) ||
+      String(row.driverName || row.vehicleCode || row.trackingCode || "").toLowerCase().includes(qLower) ||
       String(row.pickupAddress || row.dropoffAddress || "").toLowerCase().includes(qLower);
 
     const matchesStatus = status === "All"
@@ -104,7 +168,7 @@ export function JobsPage() {
       || (status === "SLA At Risk" && (row.slaStatus === "At Risk" || /At Risk/i.test(String(row.status))));
     const matchesPriority = priority === "All" || String(row.priority) === priority;
     return matchesText && matchesStatus && matchesPriority;
-  }), [priority, query, scopedRows, status]);
+  }), [baseRows, priority, query, status]);
 
   useEffect(() => {
     if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
@@ -116,7 +180,7 @@ export function JobsPage() {
   if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} />;
 
   const headline = [
-    { label: "Jobs Today", value: visibleSummary.totalJobsToday, icon: <Package className="h-4 w-4" /> },
+    { label: surface === "active-shipments" ? "Active Now" : surface === "shipments" ? "Shipment Rows" : "Jobs Today", value: surface === "active-shipments" ? rows.length : visibleSummary.totalJobsToday, icon: <Package className="h-4 w-4" /> },
     { label: "SLA At Risk", value: visibleSummary.slaAtRisk, status: "Review", icon: <TriangleAlert className="h-4 w-4" /> },
     { label: "Proof Pending", value: visibleSummary.proofPending, status: "Review", icon: <FileCheck2 className="h-4 w-4" /> },
     { label: "On-Time ETA", value: visibleSummary.averageEtaAccuracy, icon: <MapPin className="h-4 w-4" /> },
@@ -133,12 +197,12 @@ export function JobsPage() {
       <Toaster toast={toast} onClose={() => setToast(null)} />
 
       <PageHeader
-        eyebrow="Jobs & Orders"
-        title="Order execution cockpit"
-        description="Create, assign, track, prove and audit every job — with live SLA risk and customer ETA intelligence in one operational surface."
+        eyebrow={surfaceConfig.eyebrow}
+        title={surfaceConfig.title}
+        description={surfaceConfig.description}
         actions={<>
-          <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> Create Job</button>
-          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv("jobs", rows)}><Download className="h-4 w-4" /> Export Roster</button>
+          <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
+          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
         </>}
       />
 
@@ -150,7 +214,11 @@ export function JobsPage() {
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Live operations signal</p>
             <p className="mt-0.5 text-sm font-medium text-slate-100">
               {slaRisk + proofPending + unassigned === 0
-                ? "All jobs on track — no SLA, proof, or assignment exceptions right now."
+                ? surface === "active-shipments"
+                  ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
+                  : surface === "shipments"
+                    ? "Shipment lifecycle is stable end to end — no immediate SLA, proof, or assignment exceptions."
+                    : "All jobs on track — no SLA, proof, or assignment exceptions right now."
                 : [
                     slaRisk > 0 ? `${slaRisk} at SLA risk` : null,
                     unassigned > 0 ? `${unassigned} unassigned` : null,
@@ -201,7 +269,7 @@ export function JobsPage() {
       </div>
 
       {rows.length ? (
-        <DataTable rows={rows} columns={["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "priority", "proofStatus", "recommendedAction"]} onSelect={setSelected} />
+        <DataTable rows={rows} columns={surfaceConfig.tableColumns} onSelect={setSelected} />
       ) : (
         <EmptyState title="No jobs match these filters" subtitle="Adjust the pipeline stage, priority, or search to widen results." />
       )}
@@ -283,7 +351,7 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Capture Proof</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
             <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
           </div>

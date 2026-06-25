@@ -95,6 +95,27 @@ public sealed class Database(IConfiguration configuration)
         return await command.ExecuteNonQueryAsync(ct);
     }
 
+    // Runs work inside a serializable transaction, committing on success and rolling
+    // back on any exception. Use this when multiple DB writes must be atomic.
+    public async Task<T> WithTransactionAsync<T>(
+        Func<NpgsqlConnection, NpgsqlTransaction, Task<T>> work,
+        CancellationToken ct = default)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+        try
+        {
+            var result = await work(connection, tx);
+            await tx.CommitAsync(ct);
+            return result;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
     // Appends RETURNING id if not already present, then returns the inserted id.
     public async Task<long> InsertAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {

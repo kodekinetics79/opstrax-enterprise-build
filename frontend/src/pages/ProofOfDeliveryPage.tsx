@@ -1,40 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
-function buildSeedPod(): AnyRecord[] {
-  return (developmentFleetSeedData.shipments as AnyRecord[]).slice(0, 12).map((s, i) => ({
-    id: i + 1,
-    jobId: s.id,
-    jobNumber: s.shipmentId ?? `JOB-${s.id}`,
-    customerName: s.customerName ?? "Customer",
-    driverName: s.driverName ?? "--",
-    vehicleCode: s.vehicleCode ?? "--",
-    status: i % 3 === 0 ? "Pending" : "Captured",
-    proofType: i % 3 === 0 ? "Pending" : i % 2 === 0 ? "Digital Signature" : "Verbal Confirmation",
-    receivedBy: i % 3 === 0 ? "" : `Receiver ${i + 1}`,
-    capturedAt: i % 3 === 0 ? null : new Date(Date.now() - i * 3600000).toISOString(),
-    notes: "",
-  }));
-}
-
 const podApi = {
-  list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/proof-of-delivery")), () => buildSeedPod()),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/proof-of-delivery/summary")), () => ({
-    total: 12, captured: 8, pending: 4, digitalSignatures: 5, jobsPendingProof: 4,
-  })),
-  capture: (jobId: string | number, payload: AnyRecord) =>
-    withFallback(
-      unwrap<AnyRecord>(apiClient.post(`/api/jobs/${jobId}/proof`, payload)),
-      () => ({ id: jobId, proofId: Date.now(), status: "Captured", receivedBy: payload.receivedBy, success: true })
-    ),
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/proof-of-delivery")),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/proof-of-delivery/summary")),
+  capture: (jobId: string | number, payload: AnyRecord) => jobsApi.captureProof(jobId, payload),
 };
 
 // ── Signature Canvas ─────────────────────────────────────────────────────────
@@ -234,10 +212,11 @@ function CaptureModal({
 export function ProofOfDeliveryPage() {
   const qc = useQueryClient();
   const hasPermission = useHasPermission();
-  const canCapture = hasPermission("dispatch:update") || hasPermission("shipments:update") || hasPermission("pod:view");
+  const canCapture = hasPermission("dispatch:update") || hasPermission("shipments:update");
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [captureJob, setCaptureJob] = useState<AnyRecord | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"All" | "Pending" | "Captured">("All");
+  const [statusFilter, setStatusFilter] = useState<"All" | "Pending" | "Captured" | "Awaiting Capture">("All");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
@@ -251,9 +230,18 @@ export function ProofOfDeliveryPage() {
   const captureMutation = useMutation({
     mutationFn: ({ jobId, payload }: { jobId: string | number; payload: AnyRecord }) =>
       podApi.capture(jobId, payload),
-    onSuccess: () => {
+    onSuccess: async (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["pod"] });
+      qc.invalidateQueries({ queryKey: ["pod", "summary"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["jobs", "summary"] });
+      qc.invalidateQueries({ queryKey: ["jobs", "detail", vars.jobId] });
       setCaptureJob(null);
+      if (searchParams.get("jobId")) {
+        const next = new URLSearchParams(searchParams);
+        next.delete("jobId");
+        setSearchParams(next, { replace: true });
+      }
       showToast("Proof of delivery captured");
     },
   });
@@ -265,6 +253,20 @@ export function ProofOfDeliveryPage() {
 
   const s = (summary ?? {}) as AnyRecord;
   const rows = (records ?? []) as AnyRecord[];
+  const focusedJobId = searchParams.get("jobId");
+  // Track which jobId has already been auto-opened so closing the modal while
+  // the query param is still present doesn't immediately re-open it.
+  const autoOpenedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!focusedJobId || !rows.length || !canCapture) return;
+    if (autoOpenedFor.current === focusedJobId) return;
+    const match = rows.find((row) => String(row.jobId ?? row.id) === focusedJobId);
+    if (match && ["Pending", "Awaiting Capture"].includes(String(match.status ?? ""))) {
+      autoOpenedFor.current = focusedJobId;
+      setCaptureJob(match);
+    }
+  }, [focusedJobId, rows, canCapture]);
 
   const filtered = rows.filter((r) => {
     if (statusFilter !== "All" && r.status !== statusFilter) return false;
@@ -274,7 +276,8 @@ export function ProofOfDeliveryPage() {
         String(r.jobNumber ?? "").toLowerCase().includes(q) ||
         String(r.customerName ?? "").toLowerCase().includes(q) ||
         String(r.driverName ?? "").toLowerCase().includes(q) ||
-        String(r.receivedBy ?? "").toLowerCase().includes(q)
+        String(r.receivedBy ?? "").toLowerCase().includes(q) ||
+        String(r.trackingCode ?? "").toLowerCase().includes(q)
       );
     }
     return true;
@@ -294,7 +297,7 @@ export function ProofOfDeliveryPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Proof of Delivery</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Digital signature capture, verbal confirmation and delivery audit trail</p>
+          <p className="text-sm text-slate-500 mt-0.5">Delivery evidence surface tied directly to job status, shipment promise, and invoice readiness</p>
         </div>
         <button
           type="button"
@@ -321,10 +324,17 @@ export function ProofOfDeliveryPage() {
         ))}
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-3 text-white">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Lifecycle assurance</p>
+        <p className="mt-1 text-sm text-slate-100">
+          Every POD row is now anchored to a real shipment job. Pending proof, captured evidence, and job delivery status are evaluated together so dispatch, customer updates, and invoice readiness stay in sync.
+        </p>
+      </div>
+
       {/* Filters */}
       <div className="panel flex flex-wrap gap-3 items-center">
         <div className="flex gap-1.5">
-          {(["All", "Pending", "Captured"] as const).map((f) => (
+          {(["All", "Pending", "Awaiting Capture", "Captured"] as const).map((f) => (
             <button
               key={f}
               type="button"
@@ -341,7 +351,7 @@ export function ProofOfDeliveryPage() {
         </div>
         <input
           type="search"
-          placeholder="Search job, customer, driver…"
+          placeholder="Search job, tracking code, customer, driver…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
@@ -359,6 +369,7 @@ export function ProofOfDeliveryPage() {
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Job</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Customer</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Shipment State</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Driver / Vehicle</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Received by</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
@@ -370,8 +381,15 @@ export function ProofOfDeliveryPage() {
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((row, i) => (
                   <tr key={String(row.id ?? i)} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(row.jobNumber ?? `JOB-${row.jobId}`)}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      <div>{String(row.jobNumber ?? `JOB-${row.jobId}`)}</div>
+                      <div className="mt-0.5 text-[11px] text-slate-400">{String(row.trackingCode ?? "No tracking code")}</div>
+                    </td>
                     <td className="px-4 py-3 text-slate-700">{String(row.customerName ?? "—")}</td>
+                    <td className="px-4 py-3 text-slate-700">
+                      <div className="font-medium text-slate-900">{String(row.jobStatus ?? "—")}</div>
+                      <div className="mt-0.5 text-[11px] text-slate-400">SLA {String(row.slaStatus ?? "—")} · Update {String(row.customerUpdateStatus ?? "—")}</div>
+                    </td>
                     <td className="px-4 py-3 text-slate-700">
                       {String(row.driverName ?? "—")}
                       {row.vehicleCode ? <span className="text-slate-400"> / {String(row.vehicleCode)}</span> : null}
@@ -385,7 +403,7 @@ export function ProofOfDeliveryPage() {
                       {row.capturedAt ? new Date(String(row.capturedAt)).toLocaleString() : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {canCapture && row.status === "Pending" && (
+                      {canCapture && ["Pending", "Awaiting Capture"].includes(String(row.status ?? "")) && (
                         <button
                           type="button"
                           className="text-xs px-3 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors"
