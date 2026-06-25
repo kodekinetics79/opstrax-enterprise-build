@@ -9621,7 +9621,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // ── Vehicle checks ─────────────────────────────────────────────────────
         var vehicle = await db.QuerySingleAsync(
-            @"SELECT v.*, COALESCE(v.out_of_service,0) oos, COALESCE(v.availability_status,'available') avail_status
+            @"SELECT v.*, v.out_of_service::int oos, COALESCE(v.availability_status,'available') avail_status
               FROM vehicles v WHERE v.id=@vid AND v.company_id=@cid AND v.deleted_at IS NULL LIMIT 1",
             c =>
             {

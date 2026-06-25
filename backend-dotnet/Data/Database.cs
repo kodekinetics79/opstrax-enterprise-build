@@ -4,8 +4,19 @@ namespace Opstrax.Api.Data;
 
 public sealed class Database(IConfiguration configuration)
 {
-    private readonly string _connectionString = configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("Missing ConnectionStrings:DefaultConnection");
+    // Credentials are environment-only — never hard-coded in appsettings.json.
+    // Resolution order: ConnectionStrings:DefaultConnection (incl. the
+    // ConnectionStrings__DefaultConnection env var used by docker-compose) →
+    // the PG_CONNECTION env var (used by Render / .env). Fails fast if neither is set.
+    private readonly string _connectionString =
+        Coalesce(
+            configuration.GetConnectionString("DefaultConnection"),
+            Environment.GetEnvironmentVariable("PG_CONNECTION"))
+        ?? throw new InvalidOperationException(
+            "Database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION.");
+
+    private static string? Coalesce(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
     {
