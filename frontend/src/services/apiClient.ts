@@ -57,14 +57,17 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     if (error?.response?.status === 401) {
-      const hadSession = !!(localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session"));
-      localStorage.removeItem("opstrax.session.v2");
-      localStorage.removeItem("opstrax.session");
-      if (hadSession) {
-        window.alert("Your session has expired or is invalid. Please sign in again.");
-      }
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login";
+      const url = (error.config?.url ?? "") as string;
+      // Telemetry endpoints use short-lived stream tickets and a separate auth path.
+      // A 401 there means the ticket expired or was never issued — not that the main
+      // session is invalid. Let the caller handle it gracefully instead of nuking the session.
+      const skipLogout = url.includes("/api/telemetry/");
+      if (!skipLogout) {
+        localStorage.removeItem("opstrax.session.v2");
+        localStorage.removeItem("opstrax.session");
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
       }
     }
     return Promise.reject(error);
