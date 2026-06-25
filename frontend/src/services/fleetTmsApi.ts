@@ -433,6 +433,408 @@ export interface QuoteRequest {
   notes: string;
 }
 
+// ── Cold chain (PR2) ──────────────────────────────────────────────────────────
+export interface TemperatureZone {
+  id: string;
+  code: string;
+  name: string;
+  minCelsius: number;
+  maxCelsius: number;
+  color: string;
+  isActive: boolean;
+  notes: string;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface TemperatureDevice {
+  id: string;
+  deviceCode: string;
+  name: string;
+  zoneId?: string | null;
+  zoneCode?: string | null;
+  zoneName?: string | null;
+  shipmentId?: string | null;
+  shipmentNumber?: string | null;
+  vehicleNumber: string;
+  status: string;
+  lastReportedTemperatureCelsius: number;
+  batteryPercent: number;
+  lastPingAtUtc?: string | null;
+  notes: string;
+  createdAtUtc?: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface TemperatureReading {
+  id: string;
+  deviceId: string;
+  shipmentId?: string | null;
+  zoneId?: string | null;
+  temperatureCelsius: number;
+  humidityPercent?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  source: string;
+  status: string;
+  notes: string;
+  recordedAtUtc: string;
+  createdAtUtc: string;
+}
+
+export interface TemperatureAlert {
+  id: string;
+  deviceId: string;
+  deviceCode?: string | null;
+  shipmentId?: string | null;
+  shipmentNumber?: string | null;
+  readingId: string;
+  alertType: string;
+  severity: string;
+  status: string;
+  thresholdMin: number;
+  thresholdMax: number;
+  measuredTemperature: number;
+  triggeredAtUtc: string;
+  resolvedAtUtc?: string | null;
+  resolvedBy: string;
+  resolutionNotes: string;
+  notes: string;
+}
+
+export interface ColdChainReport {
+  id: string;
+  shipmentId: string;
+  shipmentNumber: string;
+  generatedAtUtc: string;
+  compliancePercent: number;
+  minTemperatureCelsius: number;
+  maxTemperatureCelsius: number;
+  totalReadings: number;
+  breachCount: number;
+  summaryJson: string;
+  notes: string;
+}
+
+export interface RefrigerationUnitHealth {
+  id: string;
+  vehicleNumber: string;
+  unitSerial: string;
+  status: string;
+  compressorHours: number;
+  lastServiceAtUtc?: string | null;
+  nextServiceDueAtUtc?: string | null;
+  temperatureDeviationCount: number;
+  notes: string;
+}
+
+export interface AssetType {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  isReturnable: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface Asset {
+  id: string;
+  assetTypeId: string;
+  assetTypeCode?: string | null;
+  assetTypeName?: string | null;
+  assetTag: string;
+  name: string;
+  status: string;
+  currentLocation: string;
+  condition: string;
+  isReturnable: boolean;
+  quantity: number;
+  unitOfMeasure: string;
+  notes: string;
+  lastSeenAtUtc?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+  assignmentCount?: number;
+}
+
+export interface AssetAssignment {
+  id: string;
+  assetId: string;
+  shipmentId?: string | null;
+  shipmentNumber?: string | null;
+  carrierId?: string | null;
+  carrierName?: string | null;
+  assigneeType: string;
+  assigneeName: string;
+  quantity: number;
+  status: string;
+  assignedAtUtc: string;
+  releasedAtUtc?: string | null;
+  notes: string;
+}
+
+export interface AssetEvent {
+  id: string;
+  type: string;
+  eventType: string;
+  quantity: number;
+  location: string;
+  actorName: string;
+  occurredAtUtc: string;
+  notes: string;
+}
+
+export interface BarcodeScanEvent {
+  id: string;
+  scannedValue: string;
+  scannerId: string;
+  eventType: string;
+  status: string;
+  recordedAtUtc: string;
+  notes: string;
+}
+
+export interface RfidEvent {
+  id: string;
+  tagId: string;
+  readerId: string;
+  eventType: string;
+  status: string;
+  recordedAtUtc: string;
+  notes: string;
+}
+
+interface ColdChainSummaryResponse {
+  generatedAtUtc: string;
+  summary: {
+    activeDevices: number;
+    readingsToday: number;
+    openAlerts: number;
+    totalReadings: number;
+    breachReadings: number;
+    avgTemperatureCelsius: number;
+    compliancePercent: number;
+  };
+  zones: TemperatureZone[];
+  devices: Array<Pick<TemperatureDevice, "id" | "deviceCode" | "name" | "vehicleNumber" | "status" | "lastReportedTemperatureCelsius" | "batteryPercent" | "lastPingAtUtc" | "notes"> & {
+    zoneCode?: string | null;
+    zoneName?: string | null;
+  }>;
+  alerts: Array<Pick<TemperatureAlert, "id" | "alertType" | "severity" | "status" | "measuredTemperature" | "thresholdMin" | "thresholdMax" | "triggeredAtUtc" | "resolutionNotes">>;
+  reports: ColdChainReport[];
+}
+
+export const fleetColdChainApi = {
+  summary: () => unwrap<ColdChainSummaryResponse>(apiClient.get("/api/fleet-tms/cold-chain/summary")),
+  devices: () => unwrap<{ items: TemperatureDevice[] }>(apiClient.get("/api/fleet-tms/cold-chain/devices")),
+  createDevice: (body: Partial<TemperatureDevice> & { deviceCode: string; name: string }) =>
+    unwrap<TemperatureDevice>(apiClient.post("/api/fleet-tms/cold-chain/devices", body)),
+  shipmentReadings: (shipmentId: string) => unwrap<{ items: TemperatureReading[] }>(apiClient.get(`/api/fleet-tms/cold-chain/shipments/${shipmentId}/readings`)),
+  createReading: (body: {
+    deviceId: string;
+    shipmentId?: string | null;
+    zoneId?: string | null;
+    temperatureCelsius: number;
+    humidityPercent?: number | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    source?: string;
+    status?: string;
+    notes?: string;
+  }) => unwrap<TemperatureReading>(apiClient.post("/api/fleet-tms/cold-chain/readings", body)),
+  alerts: (status?: string) => unwrap<{ items: TemperatureAlert[] }>(apiClient.get("/api/fleet-tms/cold-chain/alerts", { params: status ? { status } : undefined })),
+  resolveAlert: (id: string, body: { resolutionNotes?: string } = {}) =>
+    unwrap<TemperatureAlert>(apiClient.post(`/api/fleet-tms/cold-chain/alerts/${id}/resolve`, body)),
+  report: (shipmentId: string) => unwrap<ColdChainReport>(apiClient.get(`/api/fleet-tms/cold-chain/reports/${shipmentId}`)),
+};
+
+export const fleetAssetApi = {
+  assetTypes: () => unwrap<{ items: AssetType[] }>(apiClient.get("/api/fleet-tms/assets/types")),
+  createAssetType: (body: Partial<AssetType> & { code: string; name: string }) =>
+    unwrap<AssetType>(apiClient.post("/api/fleet-tms/assets/types", body)),
+  assets: () => unwrap<{ items: Asset[] }>(apiClient.get("/api/fleet-tms/assets")),
+  asset: (id: string) => unwrap<{ asset: Asset; assignments: AssetAssignment[]; events: AssetEvent[] }>(apiClient.get(`/api/fleet-tms/assets/${id}`)),
+  createAsset: (body: Partial<Asset> & { assetTypeId: string; assetTag: string; name: string }) =>
+    unwrap<Asset>(apiClient.post("/api/fleet-tms/assets", body)),
+  updateAsset: (id: string, body: Partial<Asset> & { assetTypeId?: string }) =>
+    unwrap<Asset>(apiClient.put(`/api/fleet-tms/assets/${id}`, body)),
+  assignAsset: (id: string, body: {
+    shipmentId?: string | null;
+    carrierId?: string | null;
+    assigneeType?: string;
+    assigneeName?: string;
+    quantity?: number;
+    status?: string;
+    currentLocation?: string;
+    releasedAtUtc?: string | null;
+    notes?: string;
+  }) => unwrap<AssetAssignment>(apiClient.post(`/api/fleet-tms/assets/${id}/assign`, body)),
+  checkInAsset: (id: string, body: {
+    location?: string;
+    condition?: string;
+    notes?: string;
+    shipmentId?: string | null;
+    carrierId?: string | null;
+    assigneeType?: string;
+    assigneeName?: string;
+    quantity?: number;
+  }) => unwrap<Asset>(apiClient.post(`/api/fleet-tms/assets/${id}/check-in`, body)),
+  checkOutAsset: (id: string, body: {
+    location?: string;
+    condition?: string;
+    notes?: string;
+    shipmentId?: string | null;
+    carrierId?: string | null;
+    assigneeType?: string;
+    assigneeName?: string;
+    quantity?: number;
+  }) => unwrap<Asset>(apiClient.post(`/api/fleet-tms/assets/${id}/check-out`, body)),
+  events: (id: string) => unwrap<{ items: AssetEvent[] }>(apiClient.get(`/api/fleet-tms/assets/${id}/events`)),
+  scan: (body: {
+    kind?: string;
+    assetId?: string | null;
+    shipmentId?: string | null;
+    scannedValue?: string;
+    tagId?: string;
+    scannerId?: string;
+    readerId?: string;
+    eventType?: string;
+    status?: string;
+    notes?: string;
+  }) => unwrap<BarcodeScanEvent | RfidEvent>(apiClient.post("/api/fleet-tms/assets/scan", body)),
+};
+
+export interface SaudiRegionReference {
+  id: string;
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  countryCode: string;
+  isGccReady: boolean;
+  cities: string[];
+}
+
+export interface FleetReadinessDocument {
+  id: string;
+  kind: string;
+  subjectType: string;
+  subjectId: string;
+  subjectName: string;
+  documentType: string;
+  documentNumber: string;
+  transportDocumentNo: string;
+  permitNo: string;
+  vatNumber: string;
+  commercialRegistrationNo: string;
+  countryCode: string;
+  nationalAddressBuildingNo: string;
+  nationalAddressAdditionalNo: string;
+  district: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  documentStatus: string;
+  expiryStatus: string;
+  issueDate?: string | null;
+  hijriExpiryDate?: string | null;
+  gregorianExpiryDate?: string | null;
+  notes: string;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface FleetReadinessExpiry {
+  id: string;
+  kind: string;
+  subjectType: string;
+  subjectName: string;
+  documentType: string;
+  documentNumber: string;
+  documentStatus: string;
+  expiryStatus: string;
+  countryCode: string;
+  gregorianExpiryDate?: string | null;
+  hijriExpiryDate?: string | null;
+  daysRemaining: number;
+  notes: string;
+}
+
+export interface FleetInvoiceReadySummary {
+  generatedAtUtc: string;
+  summary: {
+    readyCount: number;
+    blockedCount: number;
+    readinessPercent: number;
+    carrierReady: number;
+    branchReady: number;
+  };
+  readyShipments: Array<{
+    id: string;
+    shipmentNumber: string;
+    customerName: string;
+    status: string;
+    customerVATNumber: string;
+    customerCommercialRegistrationNo: string;
+    invoiceReadyAtUtc?: string | null;
+    invoiceReadinessNotes: string;
+    origin: string;
+    destination: string;
+    carrierName: string;
+    routeCode: string;
+  }>;
+  blockedShipments: Array<{
+    id: string;
+    shipmentNumber: string;
+    customerName: string;
+    status: string;
+    invoiceReadinessNotes: string;
+    origin: string;
+    destination: string;
+    carrierName: string;
+    routeCode: string;
+  }>;
+}
+
+export interface FleetReadinessDocumentRequest {
+  kind: string;
+  subjectType: string;
+  subjectId?: string;
+  subjectName: string;
+  documentType: string;
+  documentNumber?: string;
+  transportDocumentNo?: string;
+  permitNo?: string;
+  vatNumber?: string;
+  commercialRegistrationNo?: string;
+  countryCode?: string;
+  nationalAddressBuildingNo?: string;
+  nationalAddressAdditionalNo?: string;
+  district?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  documentStatus?: string;
+  issueDate?: string | null;
+  hijriExpiryDate?: string | null;
+  gregorianExpiryDate?: string | null;
+  notes?: string;
+  requiresExpiry?: boolean;
+}
+
+export const fleetReadinessApi = {
+  regions: () => unwrap<{ items: SaudiRegionReference[] }>(apiClient.get("/api/fleet-tms/saudi/regions")),
+  documents: (query?: { kind?: string; subjectType?: string }) =>
+    unwrap<{ items: FleetReadinessDocument[] }>(apiClient.get("/api/fleet-tms/compliance/documents", { params: query })),
+  createDocument: (body: FleetReadinessDocumentRequest) =>
+    unwrap<FleetReadinessDocument>(apiClient.post("/api/fleet-tms/compliance/documents", body)),
+  updateDocument: (id: string, body: FleetReadinessDocumentRequest) =>
+    unwrap<FleetReadinessDocument>(apiClient.put(`/api/fleet-tms/compliance/documents/${id}`, body)),
+  expiries: () =>
+    unwrap<{ generatedAtUtc: string; items: FleetReadinessExpiry[]; summary: { totalDocuments: number; expiringSoon: number; expired: number; healthy: number; windowDays: number } }>(apiClient.get("/api/fleet-tms/compliance/expiries")),
+  invoiceReady: () => unwrap<FleetInvoiceReadySummary>(apiClient.get("/api/fleet-tms/vat/invoice-ready")),
+};
+
 const DEFERRED = "Carrier & booking management ships in a later Fleet TMS release.";
 
 export const fleetCommercialApi = {

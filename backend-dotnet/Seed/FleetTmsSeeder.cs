@@ -12,6 +12,7 @@ public sealed class FleetTmsSeeder(Database db, ILogger<FleetTmsSeeder> log)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
+        await SeedSaudiRegions(ct);
         var companies = await db.QueryAsync("SELECT id, name FROM companies WHERE status='Active' ORDER BY id", ct: ct);
         foreach (var company in companies)
         {
@@ -21,12 +22,186 @@ public sealed class FleetTmsSeeder(Database db, ILogger<FleetTmsSeeder> log)
                 var existing = await db.ScalarLongAsync(
                     "SELECT COUNT(*) FROM fleet_tms_shipments WHERE company_id=@companyId",
                     c => c.Parameters.AddWithValue("@companyId", companyId), ct);
-                if (existing > 0) continue;
+                if (existing == 0) await SeedCompany(companyId, ct);
 
-                await SeedCompany(companyId, ct);
+                // PR2 cold chain + assets + readiness — independently guarded so they seed
+                // whether or not PR1 already populated shipments for this company.
+                await SeedColdChainAndAssets(companyId, ct);
             }
             catch (Exception ex) { log.LogWarning(ex, "[FleetTmsSeeder] seed failed for company {CompanyId}", companyId); }
         }
+    }
+
+    private async Task SeedSaudiRegions(CancellationToken ct)
+    {
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_saudi_regions", ct: ct) > 0) return;
+        var regions = new (string Code, string En, string Ar, int Sort, string Cities)[]
+        {
+            ("RD", "Riyadh", "الرياض", 1, "[\"Riyadh\",\"Al Kharj\",\"Al Majma'ah\"]"),
+            ("MK", "Makkah", "مكة المكرمة", 2, "[\"Jeddah\",\"Mecca\",\"Taif\"]"),
+            ("EP", "Eastern Province", "المنطقة الشرقية", 3, "[\"Dammam\",\"Khobar\",\"Jubail\",\"Hofuf\"]"),
+            ("MD", "Madinah", "المدينة المنورة", 4, "[\"Medina\",\"Yanbu\"]"),
+            ("QS", "Qassim", "القصيم", 5, "[\"Buraidah\",\"Unaizah\"]"),
+            ("AS", "Asir", "عسير", 6, "[\"Abha\",\"Khamis Mushait\"]"),
+        };
+        foreach (var r in regions)
+        {
+            await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_saudi_regions (code, name_en, name_ar, country_code, cities_json, sort_order, is_gcc_ready)
+VALUES (@code, @en, @ar, 'SA', @cities::jsonb, @sort, true)",
+                c => { c.Parameters.AddWithValue("@code", r.Code); c.Parameters.AddWithValue("@en", r.En); c.Parameters.AddWithValue("@ar", r.Ar); c.Parameters.AddWithValue("@cities", r.Cities); c.Parameters.AddWithValue("@sort", r.Sort); }, ct);
+        }
+        log.LogInformation("[FleetTmsSeeder] seeded Saudi region reference data");
+    }
+
+    private async Task SeedColdChainAndAssets(long companyId, CancellationToken ct)
+    {
+        var rng = new Random((int)(companyId * 104729));
+        var shipments = await db.QueryAsync(
+            "SELECT id, shipment_number FROM fleet_tms_shipments WHERE company_id=@companyId ORDER BY id LIMIT 5",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+
+        // ── Cold chain ──
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_devices WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct) == 0)
+        {
+            var zones = new (string Code, string Name, decimal Min, decimal Max, string Color)[]
+            {
+                ("CHILL", "Chilled (2-8C)", 2m, 8m, "#22d3ee"),
+                ("FROZEN", "Frozen (-18C)", -22m, -16m, "#3b82f6"),
+                ("AMBIENT", "Ambient (15-25C)", 15m, 25m, "#f59e0b"),
+            };
+            var zoneIds = new List<long>();
+            foreach (var z in zones)
+            {
+                var zid = await db.InsertAsync(@"
+INSERT INTO fleet_tms_temperature_zones (company_id, code, name, min_celsius, max_celsius, color, is_active, notes, created_at_utc, updated_at_utc)
+VALUES (@companyId, @code, @name, @min, @max, @color, true, '', NOW(), NOW())",
+                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", z.Code); c.Parameters.AddWithValue("@name", z.Name); c.Parameters.AddWithValue("@min", z.Min); c.Parameters.AddWithValue("@max", z.Max); c.Parameters.AddWithValue("@color", z.Color); }, ct);
+                zoneIds.Add(zid);
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                var chilledZone = zoneIds[0];
+                long? shipId = shipments.Count > i ? Convert.ToInt64(shipments[i]["id"]) : null;
+                var temp = i == 1 ? 11.5m : 4m + (decimal)rng.NextDouble() * 3; // device 1 is breaching
+                var deviceId = await db.InsertAsync(@"
+INSERT INTO fleet_tms_temperature_devices (company_id, device_code, name, zone_id, shipment_id, vehicle_number, status, last_reported_temperature_celsius, battery_percent, last_ping_at_utc, notes, created_at_utc, updated_at_utc)
+VALUES (@companyId, @code, @name, @zone, @ship, @vehicle, 'Active', @temp, @battery, NOW() - (@i || ' minutes')::interval, '', NOW(), NOW())",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@code", $"TMP-{companyId:D2}{i + 1}");
+                        c.Parameters.AddWithValue("@name", $"Reefer Sensor {i + 1}");
+                        c.Parameters.AddWithValue("@zone", chilledZone);
+                        c.Parameters.AddWithValue("@ship", (object?)shipId ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@vehicle", $"REF-{400 + i}");
+                        c.Parameters.AddWithValue("@temp", Math.Round(temp, 1));
+                        c.Parameters.AddWithValue("@battery", (decimal)rng.Next(60, 100));
+                        c.Parameters.AddWithValue("@i", i);
+                    }, ct);
+
+                for (var r = 0; r < 4; r++)
+                {
+                    var rtemp = i == 1 && r == 0 ? 11.5m : 3m + (decimal)rng.NextDouble() * 4;
+                    var breach = rtemp < 2m || rtemp > 8m;
+                    var readingId = await db.InsertAsync(@"
+INSERT INTO fleet_tms_temperature_readings (company_id, device_id, shipment_id, zone_id, temperature_celsius, humidity_percent, source, status, notes, recorded_at_utc, created_at_utc)
+VALUES (@companyId, @device, @ship, @zone, @temp, @humidity, 'Sensor', @status, '', NOW() - (@mins || ' minutes')::interval, NOW())",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@companyId", companyId);
+                            c.Parameters.AddWithValue("@device", deviceId);
+                            c.Parameters.AddWithValue("@ship", (object?)shipId ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@zone", chilledZone);
+                            c.Parameters.AddWithValue("@temp", Math.Round(rtemp, 1));
+                            c.Parameters.AddWithValue("@humidity", (decimal)rng.Next(40, 80));
+                            c.Parameters.AddWithValue("@status", breach ? "Breach" : "Normal");
+                            c.Parameters.AddWithValue("@mins", r * 30);
+                        }, ct);
+                    if (breach)
+                    {
+                        await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_temperature_alerts (company_id, device_id, shipment_id, reading_id, alert_type, severity, status, threshold_min, threshold_max, measured_temperature, triggered_at_utc, notes)
+VALUES (@companyId, @device, @ship, @reading, 'TemperatureBreach', 'High', 'Open', 2, 8, @temp, NOW(), 'Seeded breach alert.')",
+                            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@device", deviceId); c.Parameters.AddWithValue("@ship", (object?)shipId ?? DBNull.Value); c.Parameters.AddWithValue("@reading", readingId); c.Parameters.AddWithValue("@temp", Math.Round(rtemp, 1)); }, ct);
+                    }
+                }
+            }
+
+            await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_refrigeration_unit_health (company_id, vehicle_number, unit_serial, status, compressor_hours, last_service_at_utc, next_service_due_at_utc, temperature_deviation_count, notes, created_at_utc)
+VALUES (@companyId, 'REF-412', 'CARR-998812', 'NeedsAttention', 8421, NOW() - INTERVAL '40 days', NOW() + INTERVAL '5 days', 3, 'Compressor hours approaching service interval.', NOW())",
+                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+        }
+
+        // ── Assets ──
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_asset_types WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct) == 0)
+        {
+            var types = new (string Code, string Name)[] { ("PALLET", "Euro Pallet"), ("ROLLCAGE", "Roll Cage"), ("CRATE", "Cold Crate") };
+            var typeIds = new List<long>();
+            foreach (var t in types)
+            {
+                var tid = await db.InsertAsync(@"
+INSERT INTO fleet_tms_asset_types (company_id, code, name, description, is_returnable, created_at_utc, updated_at_utc)
+VALUES (@companyId, @code, @name, @desc, true, NOW(), NOW())",
+                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", t.Code); c.Parameters.AddWithValue("@name", t.Name); c.Parameters.AddWithValue("@desc", $"Returnable {t.Name.ToLower()}"); }, ct);
+                typeIds.Add(tid);
+            }
+            for (var i = 0; i < 6; i++)
+            {
+                var typeId = typeIds[i % typeIds.Count];
+                await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_assets (company_id, asset_type_id, asset_tag, name, status, current_location, condition, is_returnable, quantity, unit_of_measure, notes, last_seen_at_utc, created_at_utc, updated_at_utc)
+VALUES (@companyId, @type, @tag, @name, @status, @loc, 'Good', true, @qty, 'Each', '', NOW() - (@i || ' hours')::interval, NOW(), NOW())",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@type", typeId);
+                        c.Parameters.AddWithValue("@tag", $"AST-{companyId:D2}{100 + i}");
+                        c.Parameters.AddWithValue("@name", $"Asset {100 + i}");
+                        c.Parameters.AddWithValue("@status", i % 3 == 0 ? "InUse" : "Available");
+                        c.Parameters.AddWithValue("@loc", i % 2 == 0 ? "Riyadh DC" : "Jeddah DC");
+                        c.Parameters.AddWithValue("@qty", rng.Next(1, 12));
+                        c.Parameters.AddWithValue("@i", i + 1);
+                    }, ct);
+            }
+        }
+
+        // ── Readiness documents ──
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_readiness_documents WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct) == 0)
+        {
+            var docs = new (string Kind, string SubjType, string SubjName, string DocType, string DocNo, int ExpiryDays, string Status)[]
+            {
+                ("Compliance", "Carrier", "In-house Fleet", "Commercial Registration", "CR-1010234567", 220, "Active"),
+                ("Transport", "Vehicle", "REF-412", "Transport Operating Card", "TOC-55821", 12, "Active"),
+                ("Driver", "Driver", "Abdullah Al-Harbi", "Driver Iqama", "IQ-2384756", -5, "Active"),
+                ("Compliance", "Company", "OpsTrax KSA", "VAT Certificate", "VAT-300012345600003", 95, "Active"),
+            };
+            foreach (var d in docs)
+            {
+                var status = d.ExpiryDays < 0 ? "Expired" : d.ExpiryDays <= 30 ? "ExpiringSoon" : "Healthy";
+                await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_readiness_documents
+ (company_id, kind, subject_type, subject_id, subject_name, document_type, document_number, country_code,
+  document_status, expiry_status, issue_date, gregorian_expiry_date, notes, created_at_utc, updated_at_utc)
+VALUES (@companyId, @kind, @subjType, '', @subjName, @docType, @docNo, 'SA', 'Active', @expiryStatus,
+  (NOW() - INTERVAL '300 days')::date, (NOW() + (@days || ' days')::interval)::date, '', NOW(), NOW())",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@kind", d.Kind);
+                        c.Parameters.AddWithValue("@subjType", d.SubjType);
+                        c.Parameters.AddWithValue("@subjName", d.SubjName);
+                        c.Parameters.AddWithValue("@docType", d.DocType);
+                        c.Parameters.AddWithValue("@docNo", d.DocNo);
+                        c.Parameters.AddWithValue("@expiryStatus", status);
+                        c.Parameters.AddWithValue("@days", d.ExpiryDays);
+                    }, ct);
+            }
+        }
+
+        log.LogInformation("[FleetTmsSeeder] seeded cold chain + assets + readiness for company {CompanyId}", companyId);
     }
 
     private async Task SeedCompany(long companyId, CancellationToken ct)
