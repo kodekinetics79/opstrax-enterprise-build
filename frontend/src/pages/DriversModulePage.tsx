@@ -42,6 +42,25 @@ const g = (row: AnyRecord, ...keys: string[]) => {
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const rowId = (row: AnyRecord) => String(row?.id ?? "");
 
+function findMatching(rows: AnyRecord[] | undefined, ...patterns: RegExp[]) {
+  const list = rows || [];
+  return list.find((row) => {
+    const hay = [
+      row.documentType,
+      row.document_type,
+      row.documentName,
+      row.document_name,
+      row.certificationType,
+      row.certification_type,
+      row.title,
+      row.category,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return patterns.some((pattern) => pattern.test(String(hay)));
+  }) || null;
+}
+
 function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
   const heat = String(g(row, "riskHeatScore", "risk_heat_score") ?? "");
   if (/high|critical/i.test(heat)) return "High";
@@ -285,6 +304,21 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
   }, [rows, selectedId]);
 
   const record = (detail.data?.record as AnyRecord) || null;
+  const documents = (detail.data?.documents as AnyRecord[]) || [];
+  const certifications = (detail.data?.certifications as AnyRecord[]) || [];
+  const licenseDoc = findMatching(documents, /license|cdl/i) || findMatching(certifications, /license|cdl/i);
+  const medicalDoc = findMatching(documents, /medical|med cert|dot/i) || findMatching(certifications, /medical|dot/i);
+  const insuranceDoc = findMatching(documents, /insurance|health/i);
+  const profileItems = record ? [
+    ["Driver code", String(g(record, "driverCode", "driver_code") ?? "—")],
+    ["Phone", String(g(record, "phone") ?? "—")],
+    ["Email", String(g(record, "email") ?? "—")],
+    ["Assigned vehicle", String(g(record, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")],
+    ["License number", String(g(record, "licenseNumber", "license_number") ?? g(licenseDoc || {}, "certificationNumber", "certification_number") ?? "—")],
+    ["License expiry", fmt(g(record, "licenseExpiry", "license_expiry") ?? g(licenseDoc || {}, "expiryDate", "expiry_date"))],
+    ["License class", String(g(record, "licenseClass", "license_class") ?? "—")],
+    ["Compliance score", String(num(g(record, "complianceScore", "compliance_score")) || "—")],
+  ] : [];
   const sections = [
     { title: "Certifications", rows: detail.data?.certifications as AnyRecord[] | undefined, fields: ["certificationType", "status", "expiryDate"] },
     { title: "Documents", rows: detail.data?.documents as AnyRecord[] | undefined, fields: ["documentName", "documentType", "status", "expiryDate"] },
@@ -323,11 +357,59 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
         </div>
         <div className="space-y-4">
           {record ? (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <KpiCard label="Driver" value={String(g(record, "fullName", "driverName", "full_name") ?? `Driver ${record.id}`)} />
               <KpiCard label="Status" value={String(g(record, "status") ?? "--")} />
               <KpiCard label="Vehicle" value={String(g(record, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")} />
               <KpiCard label="Safety score" value={String(num(g(record, "safetyScore", "safety_score")))} />
+            </div>
+          ) : null}
+          {record ? (
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <section className="panel p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800">Driver profile</h3>
+                    <p className="text-xs text-slate-500">Core personnel and operator identity details from the live record.</p>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {profileItems.map(([label, value]) => (
+                    <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section className="panel p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800">Credentials and coverage</h3>
+                    <p className="text-xs text-slate-500">License, medical and insurance evidence surfaced from live documents and certifications.</p>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <CredentialCard
+                    title="Driver license / CDL"
+                    status={String(g(licenseDoc || record, "status") ?? "Missing")}
+                    name={String(g(licenseDoc || {}, "documentName", "document_name", "certificationType", "certification_type") ?? "License record")}
+                    expiry={fmt(g(record, "licenseExpiry", "license_expiry") ?? g(licenseDoc || {}, "expiryDate", "expiry_date"))}
+                  />
+                  <CredentialCard
+                    title="Medical certificate"
+                    status={String(g(medicalDoc || {}, "status") ?? "Watch")}
+                    name={String(g(medicalDoc || {}, "documentName", "document_name", "certificationType", "certification_type") ?? "Medical certificate")}
+                    expiry={fmt(g(medicalDoc || {}, "expiryDate", "expiry_date"))}
+                  />
+                  <CredentialCard
+                    title="Health insurance / coverage"
+                    status={String(g(insuranceDoc || {}, "status") ?? "Not captured")}
+                    name={String(g(insuranceDoc || {}, "documentName", "document_name", "documentType", "document_type") ?? "No insurance document on file")}
+                    expiry={fmt(g(insuranceDoc || {}, "expiryDate", "expiry_date"))}
+                  />
+                </div>
+              </section>
             </div>
           ) : null}
           <div className="panel p-4">
@@ -352,6 +434,24 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
         </div>
       </div>
       {detail.isLoading ? <LoadingState /> : null}
+    </div>
+  );
+}
+
+function CredentialCard({ title, status, name, expiry }: { title: string; status: string; name: string; expiry: string }) {
+  const tone = /valid|active|current/i.test(status)
+    ? "border-emerald-200 bg-emerald-50/60"
+    : /review|expiring|watch/i.test(status)
+      ? "border-amber-200 bg-amber-50/60"
+      : "border-rose-200 bg-rose-50/60";
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</div>
+      <div className="mt-2 text-sm font-semibold text-slate-900">{name}</div>
+      <div className="mt-2 flex items-center justify-between text-xs">
+        <span className="font-medium text-slate-600">{status}</span>
+        <span className="text-slate-500">Expiry {expiry}</span>
+      </div>
     </div>
   );
 }
