@@ -75,6 +75,7 @@ const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((modul
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module) => ({ default: module.EntityListPage })));
 const VehiclesModulePage = lazy(() => import("@/pages/VehiclesModulePage").then((module) => ({ default: module.VehiclesModulePage })));
+const DriversModulePage = lazy(() => import("@/pages/DriversModulePage").then((module) => ({ default: module.DriversModulePage })));
 const JobsPage = lazy(() => import("@/pages/JobsPage").then((module) => ({ default: module.JobsPage })));
 const IotDevicesPage = lazy(() => import("@/pages/IotDevicesPage").then((module) => ({ default: module.IotDevicesPage })));
 const TelematicsCommandPage = lazy(() => import("@/pages/TelematicsCommandPage").then((module) => ({ default: module.TelematicsCommandPage })));
@@ -168,7 +169,8 @@ export default function App() {
         {/* ── Fleet ── */}
         <Route path="/vehicles" element={<Navigate to="/vehicles/overview" replace />} />
         <Route path="/vehicles/*" element={<RequirePermission permission="vehicles:view"><VehiclesModulePage /></RequirePermission>} />
-        <Route path="/drivers" element={<RequirePermission permission="drivers:view"><EntityListPage kind="drivers" /></RequirePermission>} />
+        <Route path="/drivers" element={<Navigate to="/drivers/overview" replace />} />
+        <Route path="/drivers/*" element={<RequirePermission permission="drivers:view"><DriversModulePage /></RequirePermission>} />
         <Route path="/assets" element={<RequirePermission permission="vehicles:view"><EntityListPage kind="assets" /></RequirePermission>} />
         <Route path="/iot-devices" element={<RequirePermission permission="telematics:devices:view"><IotDevicesPage /></RequirePermission>} />
         <Route path="/gps-tracking" element={<RequirePermission permission="telematics:gps:view"><TelematicsCommandPage kind="gps-tracking" /></RequirePermission>} />
