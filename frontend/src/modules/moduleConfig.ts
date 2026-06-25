@@ -83,6 +83,7 @@ export const modules: ModuleConfig[] = [
   { key: "last-mile-delivery", title: "Last Mile Delivery", route: "/last-mile-delivery", group: "Transport Operations", description: "Final-mile runs with ETA, proof, stop status and customer experience.", accent: "blue",   requiredPermission: "dispatch.view" },
 
   { key: "fleet-utilization", title: "Fleet Utilization", route: "/fleet-utilization", group: "Fleet", description: "Vehicle utilization %, idle time, fuel efficiency, active hours and per-vehicle productivity analytics.", accent: "teal", requiredPermission: "fleet:view" },
+  { key: "fleet-workspace", title: "Fleet TMS Workspace", route: "/fleet-workspace", group: "Fleet", description: "Shipment lifecycle, POD verification, public tracking links, vehicles, tracking, maintenance and fuel in one operations cockpit.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "vehicles",    title: "Vehicles",    route: "/vehicles",    group: "Fleet", description: "Fleet registry, age, readiness, documents, device visibility and lifecycle planning.", accent: "blue",   requiredPermission: "vehicles:view" },
   { key: "drivers",     title: "Drivers",     route: "/drivers",     group: "Fleet", description: "Driver availability, HOS, safety, documents, assignment and coaching state.", accent: "green",  requiredPermission: "drivers.view" },
   { key: "owners",      title: "Owners",      route: "/owners",      group: "Fleet", description: "Owner-operator and asset ownership management.", accent: "teal",   requiredPermission: "fleet.view" },
@@ -182,6 +183,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   downtime: TrendingDown,
   "preventive-maintenance": Wrench,
   "fleet-utilization": BarChart3,
+  "fleet-workspace": Truck,
   "driver-scorecards": ShieldCheck,
   "fuel-idling": Fuel,
   expenses: WalletCards,
