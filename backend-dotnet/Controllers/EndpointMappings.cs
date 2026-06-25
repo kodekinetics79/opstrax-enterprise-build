@@ -8602,17 +8602,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var woCode = $"WO-{companyId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         var woId   = await db.InsertAsync(
             @"INSERT INTO work_orders
-                (company_id, vehicle_id, defect_id, work_order_code, work_order_number,
+                (company_id, vehicle_id, work_order_code, work_order_number,
                  title, issue_type, description, priority, status,
                  estimated_cost, due_date)
-              VALUES (@cid, @vid, @defId, @code, @code,
+              VALUES (@cid, @vid, @code, @code,
                       @title, @stype, @desc, @pri, 'Open',
                       @cost, @due)",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@vid",   body.VehicleId);
-                c.Parameters.AddWithValue("@defId", body.DefectId ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@code",  woCode);
                 c.Parameters.AddWithValue("@title", body.Title ?? body.ServiceType ?? "Work Order");
                 c.Parameters.AddWithValue("@stype", body.ServiceType ?? (object)DBNull.Value);
