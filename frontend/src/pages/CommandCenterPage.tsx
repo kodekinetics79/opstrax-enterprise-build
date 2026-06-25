@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity, AlertOctagon, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight,
@@ -38,9 +37,9 @@ const FLEET_CFG = [
 ];
 
 const POSTURE: Record<string, { chip: string; dot: string }> = {
-  Elevated: { chip: "border-red-300/60 bg-red-500/15 text-red-100",     dot: "#f87171" },
-  Guarded:  { chip: "border-amber-300/60 bg-amber-500/15 text-amber-100", dot: "#fbbf24" },
-  Stable:   { chip: "border-emerald-300/60 bg-emerald-500/15 text-emerald-100", dot: "#34d399" },
+  Elevated: { chip: "border-red-200 bg-red-50 text-red-700",         dot: "#ef4444" },
+  Guarded:  { chip: "border-amber-200 bg-amber-50 text-amber-700",   dot: "#f59e0b" },
+  Stable:   { chip: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "#10b981" },
 };
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -53,11 +52,6 @@ export function CommandCenterPage() {
     refetchInterval: 15_000,
   });
   const navigate = useNavigate();
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   if (isLoading || !data) return <CenterState spin label="Synchronizing command center…" />;
   if (isError) return (
@@ -90,62 +84,49 @@ export function CommandCenterPage() {
 
   return (
     <div className="space-y-4">
-      {/* ── Command banner ─────────────────────────────────── */}
-      <header className="relative overflow-hidden rounded-[20px] px-6 py-4 shadow-lg"
-        style={{ background: "linear-gradient(120deg, #0b1220 0%, #111c2e 55%, #122a2a 100%)" }}>
-        {/* hairline brand accent — restrained, no large color washes */}
-        <span className="absolute inset-x-0 top-0 h-[2px]" style={{ background: "linear-gradient(90deg,#0d9488,#2563eb)" }} />
+      {/* ── Command banner — light glass, brand-tinted ─────── */}
+      <header className="relative overflow-hidden rounded-[20px] border border-white/70 px-6 py-4 shadow-sm ring-1 ring-slate-200/70 backdrop-blur-xl"
+        style={{ background: "linear-gradient(120deg,#ffffff 0%,#f0fdfa 36%,#eff6ff 68%,#f5f3ff 100%)" }}>
+        {/* soft glass blobs for depth */}
+        <span className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-teal-300/20 blur-3xl" />
+        <span className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full bg-blue-300/15 blur-3xl" />
+        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: "linear-gradient(90deg,#0d9488,#2563eb,#7c3aed)" }} />
         <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
-              <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] ring-1 ring-white/15"
-                style={{ background: "rgba(255,255,255,.06)", color: "#5eead4" }}>
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-700 ring-1 ring-teal-200/70">
                 <Gauge className="h-3 w-3" /> Operations
               </span>
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
               </span>
-              <span className="text-[11px] font-semibold" style={{ color: "#94a3b8" }}>Live · refreshes every 15s</span>
-              {isFetching && <RefreshCw className="h-3 w-3 animate-spin" style={{ color: "#5eead4" }} />}
+              <span className="text-[11px] font-semibold text-slate-500">Live · refreshes every 15s</span>
+              {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-500" />}
             </div>
-            <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-[26px]" style={{ color: "#ffffff" }}>
+            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-[26px]">
               Command Center
-              <span className="ml-2 text-base font-medium" style={{ color: "#94a3b8" }}>· Fleet Operations</span>
+              <span className="ml-2 text-base font-medium text-slate-400">· Fleet Operations</span>
             </h1>
-            <p className="mt-1.5 max-w-2xl text-sm" style={{ color: "#cbd5e1" }}>
+            <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
               {critCount > 0
-                ? <><span className="font-bold" style={{ color: "#fca5a5" }}>{critCount} critical</span> and {warnCount} warning signal{warnCount === 1 ? "" : "s"} on the board — act on the queue before the next dispatch window.</>
+                ? <><span className="font-bold text-red-600">{critCount} critical</span> and {warnCount} warning signal{warnCount === 1 ? "" : "s"} on the board — act on the queue before the next dispatch window.</>
                 : warnCount > 0
-                  ? <><span className="font-bold" style={{ color: "#fcd34d" }}>{warnCount} warning{warnCount === 1 ? "" : "s"}</span> in play — fleet is holding but watch the exception queue.</>
+                  ? <><span className="font-bold text-amber-600">{warnCount} warning{warnCount === 1 ? "" : "s"}</span> in play — fleet is holding but watch the exception queue.</>
                   : "Fleet operating within normal parameters across every monitored signal."}
             </p>
           </div>
 
           <div className="flex flex-col items-end gap-3">
-            <div className="flex items-center gap-2.5">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${postureTone.chip}`}>
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: postureTone.dot }} />
-                {posture} posture
-              </span>
-              <div className="hidden text-right sm:block">
-                <p className="font-mono text-lg font-bold leading-none tabular-nums" style={{ color: "#ffffff" }}>
-                  {now.toLocaleTimeString("en-GB", { hour12: false })}
-                </p>
-                <p className="text-[10px] font-medium uppercase tracking-wider" style={{ color: "#94a3b8" }}>
-                  {now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" })}
-                </p>
-              </div>
-            </div>
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${postureTone.chip}`}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: postureTone.dot }} />
+              {posture} posture
+            </span>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => navigate("/alerts")}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold shadow-sm transition hover:brightness-105"
-                style={{ background: "#ffffff", color: "#0f172a" }}>
+              <button type="button" onClick={() => navigate("/alerts")} className="btn-primary h-9 gap-1.5 px-3.5 text-xs">
                 <ShieldCheck className="h-3.5 w-3.5" /> Acknowledge Risks
               </button>
-              <button type="button" onClick={() => exportCsv("command-center", kpis)}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold ring-1 ring-white/15 transition hover:bg-white/10"
-                style={{ background: "rgba(255,255,255,.05)", color: "#e2e8f0" }}>
+              <button type="button" onClick={() => exportCsv("command-center", kpis)} className="btn-ghost h-9 gap-1.5 px-3.5 text-xs">
                 <Download className="h-3.5 w-3.5" /> Export
               </button>
             </div>

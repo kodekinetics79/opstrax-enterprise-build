@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronDown, LogOut,
+  Bell, ChevronDown, ChevronRight, LogOut,
   Menu, Search, Settings, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
@@ -83,8 +83,22 @@ export function AppShell() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [now, setNow] = useState(() => new Date());
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+
+  // live header clock
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // current page context (group + title) for the header breadcrumb
+  const pageContext = useMemo(() => {
+    const active = modules.find((m) => m.route === location.pathname);
+    const group = NAV_SECTIONS.find((s) => active && (s.items as readonly string[]).includes(active.key));
+    return { group: group?.label ?? "Workspace", title: active?.title ?? "Dashboard" };
+  }, [location.pathname]);
 
   // close mobile sidebar & notif panel on route change
   useEffect(() => {
@@ -126,19 +140,19 @@ export function AppShell() {
     <div className="flex h-full flex-col gap-4">
 
       {/* Brand */}
-      <div className="flex items-center gap-3 px-1 py-2">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white via-teal-50/40 to-blue-50/50 px-3 py-2.5 shadow-sm">
         <div className="shrink-0">
-          <OpsTraxLogo size={36} />
+          <OpsTraxLogo size={34} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] font-extrabold tracking-tight text-slate-950">OpsTrax</p>
+          <p className="text-[15px] font-black tracking-tight text-slate-950">OpsTrax</p>
           <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-slate-400">
             {String(session?.company?.name || "Fleet Platform")}
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="live-dot" />
-        </div>
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-600 ring-1 ring-emerald-200">
+          <span className="live-dot h-1.5 w-1.5" /> Live
+        </span>
       </div>
 
       {/* Navigation */}
@@ -175,22 +189,22 @@ export function AppShell() {
                         key={module.key}
                         to={module.route}
                         className={({ isActive }) =>
-                          `relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all duration-150 ${
+                          `group relative flex items-center gap-2.5 rounded-xl py-2 pl-3.5 pr-3 text-sm transition-all duration-150 ${
                             isActive
-                              ? "bg-gradient-to-r from-blue-50 to-teal-50 text-slate-950 ring-1 ring-blue-200"
-                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                              ? "bg-gradient-to-r from-teal-50 via-blue-50 to-transparent font-semibold text-slate-950 shadow-sm ring-1 ring-blue-200/70"
+                              : "text-slate-600 hover:translate-x-0.5 hover:bg-slate-100 hover:text-slate-950"
                           }`
                         }
                         >
                           {({ isActive }) => (
                             <>
                               {isActive && <span className="nav-active-bar" />}
-                              <Icon
-                                className={`h-4 w-4 shrink-0 transition-colors ${
-                                isActive ? section.color : "text-slate-400"
-                                }`}
-                              />
-                              <span className="truncate font-medium">{module.title}</span>
+                              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                                isActive ? "bg-white shadow-sm ring-1 ring-slate-200/80" : "bg-transparent group-hover:bg-white/70"
+                              }`}>
+                                <Icon className={`h-4 w-4 shrink-0 transition-colors ${isActive ? section.color : "text-slate-400 group-hover:text-slate-600"}`} />
+                              </span>
+                              <span className="truncate">{module.title}</span>
                             </>
                           )}
                       </NavLink>
@@ -298,8 +312,25 @@ export function AppShell() {
                 </span>
               </div>
 
+              {/* Page context breadcrumb (fills the centre gap) */}
+              <div className="ml-1 hidden min-w-0 items-center gap-1.5 border-l border-slate-200 pl-4 lg:flex">
+                <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-slate-400">{pageContext.group}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                <span className="truncate text-[13px] font-bold text-slate-800">{pageContext.title}</span>
+              </div>
+
+              {/* Live clock */}
+              <div className="ml-auto hidden flex-col items-end leading-none md:flex">
+                <span className="font-mono text-[15px] font-bold tabular-nums text-slate-800">
+                  {now.toLocaleTimeString("en-GB", { hour12: false })}
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  {now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" })}
+                </span>
+              </div>
+
               {/* Right section */}
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-2 md:ml-3 md:border-l md:border-slate-200 md:pl-3">
 
                 {/* Live status */}
                 <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
