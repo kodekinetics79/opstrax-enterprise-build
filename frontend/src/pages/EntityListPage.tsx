@@ -4,6 +4,7 @@ import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { DriverIntelligenceBoard } from "@/components/DriverIntelligenceBoard";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
@@ -63,6 +64,7 @@ const config: Record<EntityKind, EntityConfig> = {
       { key: "make", label: "Make" },
       { key: "model", label: "Model" },
       { key: "year", label: "Year", type: "number" },
+      { key: "odometerMiles", label: "Odometer (mi)", type: "number" },
       { key: "vin", label: "VIN" },
       { key: "plateNumber", label: "Plate Number" },
       { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
@@ -353,6 +355,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         />
       ) : null}
 
+      {kind === "drivers" ? <DriverIntelligenceBoard rows={rows} /> : null}
+
       {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -376,12 +380,14 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
           {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
         <div className="space-y-4">
-          <div className="panel p-5">
-            <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
+          {kind !== "drivers" ? (
+            <div className="panel p-5">
+              <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
+              </div>
             </div>
-          </div>
+          ) : null}
           {isFleetMaster ? <RiskActionQueue kind={kind} rows={rows} /> : null}
           {(recommendations.length ? recommendations : [{ title: "Select a record", body: "Open a row to inspect detail evidence, timeline, recommendations, documents, assignments and audit trail." }]).slice(0, 3).map((item, i) => (
             <AiInsightCard key={String(item.id || i)} insight={item} />
