@@ -19,6 +19,15 @@ const SECTIONS: Array<{ key: VehicleSection; label: string; description: string 
   { key: "records", label: "Records", description: "Maintenance, compliance and audit" },
 ];
 
+const RELATED_ENTITIES = [
+  { label: "Drivers", route: "/drivers", note: "Open the assigned operator record" },
+  { label: "Jobs", route: "/jobs", note: "See live work tied to the unit" },
+  { label: "Maintenance", route: "/maintenance", note: "Inspect service and repair work" },
+  { label: "Documents", route: "/documents", note: "Review compliance and asset docs" },
+  { label: "Work Orders", route: "/work-orders", note: "Jump to open repair actions" },
+  { label: "Audit Logs", route: "/audit-logs", note: "Trace changes and events" },
+] as const;
+
 function readSection(pathname: string): VehicleSection {
   const section = pathname.split("/").filter(Boolean)[1];
   if (section === "roster" || section === "planning" || section === "health" || section === "records") return section;
@@ -68,22 +77,24 @@ export function VehiclesModulePage() {
   const readiness = Math.round(num(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score) || avg(rows, "fleetReadinessScore"));
 
   const shellBanner = (
-    <header className="rounded-[22px] border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-6 py-5 text-white shadow-xl">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/80 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.16),rgba(59,130,246,0.14),rgba(99,102,241,0.10))]" />
+      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-teal-200/35 blur-3xl" />
+      <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-200">
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-300" /> Fleet module
+          <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 shadow-sm">
+            <span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Fleet module
           </div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight text-white">Vehicles</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-300">
+          <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Vehicles</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Split into focused subviews so users can get to the right fleet task without scrolling through one oversized page.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost h-10 border-white/15 bg-white/5 text-white hover:bg-white/10">
+          <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
             Export fleet
           </button>
-          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
+          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10 bg-gradient-to-r from-teal-600 to-blue-600 shadow-md shadow-blue-200/60 hover:from-teal-500 hover:to-blue-500">
             Open roster <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -103,7 +114,7 @@ export function VehiclesModulePage() {
               type="button"
               onClick={() => navigate(`/vehicles/${item.key}`)}
               className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "hover:bg-slate-50"
+                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
               }`}
             >
               <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
@@ -126,6 +137,33 @@ export function VehiclesModulePage() {
             <ModuleCard title="Planning" body="See replacement pressure, operational gaps and CapEx priority." action="Open planning" onClick={() => navigate("/vehicles/planning")} icon={<Sparkles className="h-5 w-5" />} />
             <ModuleCard title="Health" body="Inspect device, camera, maintenance and compliance posture." action="Open health" onClick={() => navigate("/vehicles/health")} icon={<Wrench className="h-5 w-5" />} />
           </div>
+          <section className="panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Entity links</h2>
+                <p className="text-sm text-slate-500">Keep vehicle work connected to the other records a fleet user actually needs.</p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Related modules
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {RELATED_ENTITIES.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => navigate(item.route)}
+                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-900">{item.label}</span>
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-500">{item.note}</p>
+                </button>
+              ))}
+            </div>
+          </section>
           <div className="panel p-5">
             <div className="flex items-center justify-between">
               <div>
@@ -153,9 +191,9 @@ export function VehiclesModulePage() {
 
       {section === "roster" && <VehiclesRosterPage />}
 
-      {section === "planning" && <PlanningView rows={rows} planning={planning.data as AnyRecord} />}
-      {section === "health" && <HealthView rows={rows} />}
-      {section === "records" && <RecordsView rows={rows} />}
+      {section === "planning" && <PlanningView rows={rows} planning={planning.data as AnyRecord} onNavigate={navigate} />}
+      {section === "health" && <HealthView rows={rows} onNavigate={navigate} />}
+      {section === "records" && <RecordsView rows={rows} onNavigate={navigate} />}
     </div>
   );
 }
@@ -174,7 +212,7 @@ function ModuleCard({ title, body, action, onClick, icon }: { title: string; bod
   );
 }
 
-function PlanningView({ rows, planning }: { rows: AnyRecord[]; planning?: AnyRecord }) {
+function PlanningView({ rows, planning, onNavigate }: { rows: AnyRecord[]; planning?: AnyRecord; onNavigate: (route: string) => void }) {
   const forecast = ((planning?.replacementForecast as AnyRecord[]) || []).slice(0, 6);
   const gaps = ((planning?.operationalGaps as AnyRecord[]) || []).slice(0, 6);
   const customerBusiness = ((planning?.customerBusiness as AnyRecord[]) || []).slice(0, 4);
@@ -194,6 +232,7 @@ function PlanningView({ rows, planning }: { rows: AnyRecord[]; planning?: AnyRec
         <SimpleListCard title="Customer business pressure" rows={customerBusiness} fields={["customerName", "planningSignal", "activeJobs"]} />
         <SimpleListCard title="Route pressure" rows={routeBusiness} fields={["routeCode", "planningSignal", "activeJobs"]} />
       </div>
+      <RelatedJumpRow onNavigate={onNavigate} />
       {!forecast.length && !gaps.length && !customerBusiness.length && !routeBusiness.length ? (
         <EmptyState title="No planning data" subtitle="The backend returned no planning insight rows." />
       ) : null}
@@ -202,7 +241,7 @@ function PlanningView({ rows, planning }: { rows: AnyRecord[]; planning?: AnyRec
   );
 }
 
-function HealthView({ rows }: { rows: AnyRecord[] }) {
+function HealthView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (route: string) => void }) {
   const risky = rows.filter((row) => riskTier(row) === "High" || !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Online")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Online")));
   return (
     <div className="space-y-5">
@@ -219,11 +258,12 @@ function HealthView({ rows }: { rows: AnyRecord[] }) {
         ].map((k) => <KpiCard key={k.label} label={k.label} value={String(k.value)} />)}
       </div>
       <SimpleListCard title="Vehicles needing attention" rows={risky.slice(0, 8)} fields={["vehicleCode", "status", "deviceStatus", "cameraStatus", "riskHeatScore"]} />
+      <RelatedJumpRow onNavigate={onNavigate} />
     </div>
   );
 }
 
-function RecordsView({ rows }: { rows: AnyRecord[] }) {
+function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (route: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => (rows[0] ? rowId(rows[0]) : null));
   const detail = useQuery({
     queryKey: ["vehicles", "detail", selectedId],
@@ -249,6 +289,7 @@ function RecordsView({ rows }: { rows: AnyRecord[] }) {
         <h2 className="text-lg font-semibold text-slate-900">Records view</h2>
         <p className="mt-1 text-sm text-slate-500">Vehicle records are split out from the roster so the user can inspect one record at a time.</p>
       </section>
+      <RelatedJumpRow onNavigate={onNavigate} />
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
         <div className="panel p-4">
           <h3 className="text-sm font-semibold text-slate-800">Vehicle selector</h3>
@@ -278,6 +319,22 @@ function RecordsView({ rows }: { rows: AnyRecord[] }) {
               <KpiCard label="Odometer" value={`${num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} mi`} />
             </div>
           ) : null}
+          <div className="panel p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Record connections</h3>
+                <p className="text-xs text-slate-500">Jump directly to the entity areas this vehicle record depends on.</p>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <RelatedChip label="Open driver" onClick={() => onNavigate("/drivers")} />
+              <RelatedChip label="Open maintenance" onClick={() => onNavigate("/maintenance")} />
+              <RelatedChip label="Open documents" onClick={() => onNavigate("/documents")} />
+              <RelatedChip label="Open jobs" onClick={() => onNavigate("/jobs")} />
+              <RelatedChip label="Open work orders" onClick={() => onNavigate("/work-orders")} />
+              <RelatedChip label="Open audit logs" onClick={() => onNavigate("/audit-logs")} />
+            </div>
+          </div>
           {sections.map((section) => (
             <SimpleListCard key={section.title} title={section.title} rows={section.rows || []} fields={section.fields} />
           ))}
@@ -314,6 +371,36 @@ function SimpleListCard({ title, rows, fields }: { title: string; rows: AnyRecor
         </div>
       )}
     </section>
+  );
+}
+
+function RelatedJumpRow({ onNavigate }: { onNavigate: (route: string) => void }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {RELATED_ENTITIES.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          onClick={() => onNavigate(item.route)}
+          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-teal-200 hover:bg-teal-50/50"
+        >
+          <div className="font-semibold text-slate-900">{item.label}</div>
+          <div className="mt-1 text-xs text-slate-500">{item.note}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RelatedChip({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-teal-200 hover:bg-white"
+    >
+      {label}
+    </button>
   );
 }
 
