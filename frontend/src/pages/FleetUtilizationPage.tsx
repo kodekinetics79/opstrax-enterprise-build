@@ -63,12 +63,21 @@ function UtilBar({ pct, label }: { pct: number; label?: string }) {
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
+// Status colors mirror the real backend vocabulary (vehicles.status):
+// On Route / Active, At Stop, Idle, Delayed, Available, Maintenance, Out of Service.
+const STATUS_STYLES: Record<string, string> = {
+  "On Route": "bg-emerald-50 border-emerald-200 text-emerald-700",
+  "Active": "bg-emerald-50 border-emerald-200 text-emerald-700",
+  "At Stop": "bg-sky-50 border-sky-200 text-sky-700",
+  "Idle": "bg-amber-50 border-amber-200 text-amber-700",
+  "Delayed": "bg-orange-50 border-orange-200 text-orange-700",
+  "Available": "bg-blue-50 border-blue-200 text-blue-700",
+  "Maintenance": "bg-violet-50 border-violet-200 text-violet-700",
+  "Out of Service": "bg-red-50 border-red-200 text-red-700",
+};
+
 function VehicleStatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "Active" ? "bg-teal-50 border-teal-200 text-teal-700" :
-    status === "Available" ? "bg-blue-50 border-blue-200 text-blue-700" :
-    status === "Maintenance" ? "bg-amber-50 border-amber-200 text-amber-700" :
-    "bg-slate-100 border-slate-200 text-slate-600";
+  const cls = STATUS_STYLES[status] ?? "bg-slate-100 border-slate-200 text-slate-600";
   return (
     <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>
   );
@@ -79,7 +88,7 @@ function VehicleStatusBadge({ status }: { status: string }) {
 type SortKey = "utilizationPct" | "idleMinutesToday" | "fuelCostMonth" | "riskScore";
 
 export function FleetUtilizationPage() {
-  const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Available" | "Maintenance">("All");
+  const [statusFilter, setStatusFilter] = useState<string>("All");
   const [sortBy, setSortBy] = useState<SortKey>("utilizationPct");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
@@ -89,6 +98,20 @@ export function FleetUtilizationPage() {
 
   const vehicles = (listQ.data ?? []) as AnyRecord[];
   const s = (sumQ.data ?? {}) as AnyRecord;
+
+  // Filter chips are derived from live data so they always match the real status
+  // vocabulary (On Route, At Stop, Idle, Delayed, Available, Maintenance, …).
+  const STATUS_ORDER = ["On Route", "Active", "At Stop", "Idle", "Delayed", "Available", "Maintenance", "Out of Service"];
+  const statusOptions = [
+    "All",
+    ...Array.from(new Set(vehicles.map((v) => String(v.status ?? "")).filter(Boolean))).sort(
+      (a, b) => {
+        const ia = STATUS_ORDER.indexOf(a);
+        const ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      }
+    ),
+  ];
 
   const filtered = vehicles
     .filter((v) => {
@@ -175,8 +198,8 @@ export function FleetUtilizationPage() {
 
       {/* Filters + sort */}
       <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5">
-          {(["All", "Active", "Available", "Maintenance"] as const).map((f) => (
+        <div className="flex gap-1.5 flex-wrap">
+          {statusOptions.map((f) => (
             <button
               key={f}
               type="button"

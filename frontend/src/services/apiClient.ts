@@ -29,6 +29,10 @@ apiClient.interceptors.request.use((config) => {
       if (inner.token) {
         config.headers.Authorization = `Bearer ${inner.token}`;
       }
+      const tenantId = inner.company?.id ?? inner.company?.companyId ?? inner.user?.companyId ?? inner.user?.company_id;
+      if (tenantId) {
+        config.headers["X-Opstrax-Tenant-Id"] = String(tenantId);
+      }
       if (inner.csrfToken) {
         setGlobalCsrfToken(inner.csrfToken);
       }
@@ -79,3 +83,26 @@ export async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Pro
   if (!response.data.success) throw new Error(response.data.message || "API request failed");
   return response.data.data;
 }
+
+// ── Node.js microservice client ───────────────────────────────────────────────
+// Used for modules served by the Node.js event/integration backend (NODE_EVENTS_URL).
+// Auth is tenant-scoped via X-Opstrax-Tenant-Id header; no JWT check on this service.
+export const nodeApiClient = axios.create({
+  baseURL: NODE_EVENTS_URL,
+  headers: { Accept: "application/json" },
+  timeout: 15000,
+});
+
+nodeApiClient.interceptors.request.use((config) => {
+  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
+  if (session) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = JSON.parse(session) as any;
+      const inner = p.session ?? p;
+      const tid = inner?.company?.id ?? inner?.company?.companyId ?? inner?.user?.companyId ?? inner?.user?.company_id;
+      if (tid) config.headers["X-Opstrax-Tenant-Id"] = String(tid);
+    } catch { /* ignore */ }
+  }
+  return config;
+});

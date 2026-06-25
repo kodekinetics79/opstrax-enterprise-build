@@ -56,8 +56,8 @@ async function fetchMessages(): Promise<AnyRecord[]> {
   }
 }
 
-async function sendMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages", { json: payload }); }
-async function broadcastMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages/broadcast", { json: payload }); }
+async function sendMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages", payload); }
+async function broadcastMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages/broadcast", payload); }
 
 const CHANNEL_COLOR: Record<string, string> = {
   "In-App":    "border-blue-200 bg-blue-50 text-blue-700",

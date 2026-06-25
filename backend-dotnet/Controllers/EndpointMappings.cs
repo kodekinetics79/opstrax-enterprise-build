@@ -585,8 +585,22 @@ public static class EndpointMappings
                      COALESCE(fuel.gallons_month, 0) gallons_month,
                      COALESCE(jobs.active_jobs, 0) active_jobs,
                      COALESCE(jobs.completed_today, 0) completed_today,
-                     CASE WHEN v.status='Active' THEN GREATEST(55, 85 - (v.risk_score * 0.3)) ELSE GREATEST(10, 45 - (v.risk_score * 0.4)) END utilization_pct,
-                     CASE WHEN v.status='Active' THEN LEAST(95, 65 + (v.readiness_score * 0.3)) ELSE GREATEST(15, 40 - (v.risk_score * 0.3)) END active_hours_pct
+                     ROUND(CASE v.status
+                       WHEN 'On Route'  THEN LEAST(98, 82 + v.readiness_score*0.12 - v.risk_score*0.10)
+                       WHEN 'Active'    THEN LEAST(98, 82 + v.readiness_score*0.12 - v.risk_score*0.10)
+                       WHEN 'At Stop'   THEN LEAST(92, 72 + v.readiness_score*0.12 - v.risk_score*0.10)
+                       WHEN 'Delayed'   THEN LEAST(85, 64 + v.readiness_score*0.12 - v.risk_score*0.12)
+                       WHEN 'Idle'      THEN GREATEST(28, 50 - v.risk_score*0.15)
+                       WHEN 'Available' THEN GREATEST(12, 28 - v.risk_score*0.15)
+                       ELSE GREATEST(2, 8 - v.risk_score*0.05) END, 1) utilization_pct,
+                     ROUND(CASE v.status
+                       WHEN 'On Route'  THEN LEAST(96, 70 + v.readiness_score*0.25)
+                       WHEN 'Active'    THEN LEAST(96, 70 + v.readiness_score*0.25)
+                       WHEN 'At Stop'   THEN LEAST(90, 64 + v.readiness_score*0.25)
+                       WHEN 'Delayed'   THEN LEAST(88, 60 + v.readiness_score*0.25)
+                       WHEN 'Idle'      THEN GREATEST(25, 45 - v.risk_score*0.20)
+                       WHEN 'Available' THEN GREATEST(10, 30 - v.risk_score*0.20)
+                       ELSE GREATEST(5, 15 - v.risk_score*0.20) END, 1) active_hours_pct
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
               LEFT JOIN (
@@ -608,14 +622,21 @@ public static class EndpointMappings
               ORDER BY utilization_pct DESC", ct: ct));
         app.MapGet("/api/fleet/utilization/summary", (Database db, CancellationToken ct) => db.QuerySingleAsync(
             @"SELECT COUNT(*) total_vehicles,
-                     SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_vehicles,
+                     SUM(CASE WHEN status IN ('On Route','At Stop','Idle','Delayed','Active') THEN 1 ELSE 0 END) active_vehicles,
                      SUM(CASE WHEN status='Available' THEN 1 ELSE 0 END) available_vehicles,
                      SUM(CASE WHEN status IN ('Maintenance','Out of Service') THEN 1 ELSE 0 END) maintenance_vehicles,
                      ROUND(AVG(readiness_score),1) avg_readiness,
-                     ROUND(AVG(CASE WHEN status='Active' THEN GREATEST(55,85-(risk_score*0.3)) ELSE GREATEST(10,45-(risk_score*0.4)) END),1) avg_utilization_pct,
-                     (SELECT ROUND(SUM(duration_minutes)/60,1) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_hours_today,
-                     (SELECT CONCAT('$',TO_CHAR((SUM(estimated_cost))::numeric, 'FM9,999,999,999')) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_cost_today,
-                     (SELECT CONCAT('$',TO_CHAR((SUM(total_cost))::numeric, 'FM9,999,999,999')) FROM fuel_transactions WHERE fuel_date>=DATE_TRUNC('month', CURRENT_DATE)::date) fuel_spend_month
+                     ROUND(AVG(CASE status
+                       WHEN 'On Route'  THEN LEAST(98, 82 + readiness_score*0.12 - risk_score*0.10)
+                       WHEN 'Active'    THEN LEAST(98, 82 + readiness_score*0.12 - risk_score*0.10)
+                       WHEN 'At Stop'   THEN LEAST(92, 72 + readiness_score*0.12 - risk_score*0.10)
+                       WHEN 'Delayed'   THEN LEAST(85, 64 + readiness_score*0.12 - risk_score*0.12)
+                       WHEN 'Idle'      THEN GREATEST(28, 50 - risk_score*0.15)
+                       WHEN 'Available' THEN GREATEST(12, 28 - risk_score*0.15)
+                       ELSE GREATEST(2, 8 - risk_score*0.05) END),1) avg_utilization_pct,
+                     (SELECT COALESCE(ROUND(SUM(duration_minutes)/60,1),0) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_hours_today,
+                     (SELECT CONCAT('$',TO_CHAR(COALESCE(SUM(estimated_cost),0)::numeric, 'FM9,999,999,990')) FROM idling_events WHERE started_at::date=CURRENT_DATE) idle_cost_today,
+                     (SELECT CONCAT('$',TO_CHAR(COALESCE(SUM(total_cost),0)::numeric, 'FM9,999,999,990')) FROM fuel_transactions WHERE fuel_date>=DATE_TRUNC('month', CURRENT_DATE)::date) fuel_spend_month
               FROM vehicles WHERE deleted_at IS NULL", ct: ct)
             .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
 
@@ -2436,8 +2457,8 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var id = await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, readiness_score, data_quality_score)
-            VALUES (@companyId, @code, @type, @make, @model, @year, @vin, @plate, @status, 92, 96)", c =>
+        var id = await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
+            VALUES (@companyId, @code, @type, @make, @model, @year, @vin, @plate, @status, COALESCE(@odometer, 0), 92, 96)", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 BindVehicle(c, body);
@@ -2451,7 +2472,8 @@ public static class EndpointMappings
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
         await db.ExecuteAsync(@"UPDATE vehicles SET vehicle_code=COALESCE(@code,vehicle_code), type=COALESCE(@type,type), make=COALESCE(@make,make),
-            model=COALESCE(@model,model), year=COALESCE(@year,year), vin=COALESCE(@vin,vin), plate_number=COALESCE(@plate,plate_number), status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
+            model=COALESCE(@model,model), year=COALESCE(@year,year), vin=COALESCE(@vin,vin), plate_number=COALESCE(@plate,plate_number), status=COALESCE(@status,status),
+            odometer_miles=COALESCE(@odometer,odometer_miles) WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
@@ -4525,6 +4547,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         c.Parameters.AddWithValue("@vin", Get(body, "vin"));
         c.Parameters.AddWithValue("@plate", Get(body, "plateNumber"));
         c.Parameters.AddWithValue("@status", Get(body, "status"));
+        c.Parameters.AddWithValue("@odometer", Get(body, "odometerMiles"));
     }
 
     private static void BindDriver(NpgsqlCommand c, Dictionary<string, object?> body)

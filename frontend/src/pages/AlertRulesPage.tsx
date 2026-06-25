@@ -39,10 +39,10 @@ async function fetchRules(): Promise<AnyRecord[]> {
     return SEED_RULES;
   }
 }
-async function createRule(payload: AnyRecord) { return apiClient.post("/api/alert-rules", { json: payload }); }
-async function updateRule(id: string, payload: AnyRecord) { return apiClient.put(`/api/alert-rules/${id}`, { json: payload }); }
+async function createRule(payload: AnyRecord) { return apiClient.post("/api/alert-rules", payload); }
+async function updateRule(id: string, payload: AnyRecord) { return apiClient.put(`/api/alert-rules/${id}`, payload); }
 async function deleteRule(id: string) { return apiClient.delete(`/api/alert-rules/${id}`); }
-async function toggleRule(id: string, enabled: boolean) { return apiClient.put(`/api/alert-rules/${id}/toggle`, { json: { enabled } }); }
+async function toggleRule(id: string, enabled: boolean) { return apiClient.put(`/api/alert-rules/${id}/toggle`, { enabled }); }
 
 const FIELDS: [string, string, string?][] = [
   ["name",       "Rule Name"],

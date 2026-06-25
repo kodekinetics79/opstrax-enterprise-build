@@ -24,6 +24,18 @@ public sealed class Batch7SchemaService(Database db)
 
     private static readonly ColumnDefinition[] Columns =
     [
+        // Enrich integrations with rich connector catalog fields
+        new("integrations", "integration_key",        "VARCHAR(100) NULL"),
+        new("integrations", "description",            "TEXT NULL"),
+        new("integrations", "logo",                   "VARCHAR(20) NULL"),
+        new("integrations", "sync_label",             "VARCHAR(80) NULL"),
+        new("integrations", "last_sync_at",           "TIMESTAMPTZ NULL"),
+        new("integrations", "related_systems_json",   "JSONB NULL"),
+        new("integrations", "connected_to_json",      "JSONB NULL"),
+        new("integrations", "managed_by",             "VARCHAR(100) NULL"),
+        new("integrations", "scope",                  "VARCHAR(40) NOT NULL DEFAULT 'tenant'"),
+        new("integrations", "config_json",            "JSONB NULL"),
+        new("integrations", "updated_at",             "TIMESTAMPTZ NULL"),
         // Enrich audit_logs with severity + module context
         new("audit_logs", "severity",     "VARCHAR(40) NOT NULL DEFAULT 'Info'"),
         new("audit_logs", "module_key",   "VARCHAR(100) NULL"),
@@ -225,6 +237,7 @@ public sealed class Batch7SchemaService(Database db)
 
     private static readonly string[] Indexes =
     [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_integrations_tenant_key ON integrations(company_id, integration_key) WHERE integration_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_report_runs_key ON report_runs(report_key)",
         "CREATE INDEX IF NOT EXISTS idx_report_runs_tenant ON report_runs(tenant_id)",
         "CREATE INDEX IF NOT EXISTS idx_scheduled_reports_key ON scheduled_reports(report_key)",

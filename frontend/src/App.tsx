@@ -70,6 +70,7 @@ const CompliancePage = lazy(() => import("@/pages/CompliancePage").then((module)
 const HosEldPage = lazy(() => import("@/pages/HosEldPage").then((module) => ({ default: module.HosEldPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ControlTowerPage = lazy(() => import("@/pages/ControlTowerPage").then((module) => ({ default: module.ControlTowerPage })));
+const LiveMapPage = lazy(() => import("@/pages/LiveMapPage").then((module) => ({ default: module.LiveMapPage })));
 const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.CustomerEtaPage })));
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module) => ({ default: module.EntityListPage })));
@@ -149,7 +150,7 @@ export default function App() {
         <Route path="/live-dashboard" element={<RequirePermission permission="dashboard:view"><FleetOverviewPage /></RequirePermission>} />
         <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
-        <Route path="/map-view" element={<RequirePermission permission="map:view"><ControlTowerPage /></RequirePermission>} />
+        <Route path="/map-view" element={<RequirePermission permission="map:view"><LiveMapPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
         <Route path="/fleet-utilization" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
 

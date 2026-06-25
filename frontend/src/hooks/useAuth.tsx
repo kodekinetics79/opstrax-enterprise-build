@@ -25,7 +25,7 @@ function loadSession(): UserSession | null {
 type AuthContextValue = {
   session: UserSession | null;
   setSession: (session: UserSession | null) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -46,7 +46,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     session,
     setSession,
-    logout: () => setSession(null),
+    logout: async () => {
+      try {
+        const baseUrl =
+          import.meta.env.VITE_API_BASE_URL ||
+          import.meta.env.VITE_DOTNET_API_URL ||
+          "http://localhost:8088";
+        if (session?.token) {
+          await fetch(`${baseUrl}/api/auth/logout`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session.token}`,
+              Accept: "application/json",
+            },
+            credentials: "include",
+          });
+        }
+      } catch {
+        // Session may already be gone; clear local state regardless.
+      } finally {
+        setSession(null);
+      }
+    },
   }), [session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
