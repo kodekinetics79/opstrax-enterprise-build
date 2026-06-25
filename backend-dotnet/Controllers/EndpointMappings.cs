@@ -1778,7 +1778,9 @@ public static class EndpointMappings
         // ── Exception queue (jobs at risk + fleet down + recent safety) ─────────
         var exRows = await db.QueryAsync(
             @"WITH ex AS (
-                SELECT CASE WHEN j.status='Delayed' THEN 'Critical' ELSE 'Warning' END severity,
+                -- one row per delayed/at-risk vehicle (most urgent state wins)
+                SELECT DISTINCT ON (COALESCE(v.vehicle_code, j.job_code))
+                       CASE WHEN j.status='Delayed' THEN 'Critical' ELSE 'Warning' END severity,
                        v.vehicle_code vehicle, d.full_name driver,
                        CASE WHEN j.status='Delayed' THEN 'Shipment delayed' ELSE 'SLA at risk' END event,
                        '/active-shipments' action_route, 'Update ETA' action_label,
@@ -1787,25 +1789,32 @@ public static class EndpointMappings
                 LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
                 LEFT JOIN drivers d ON d.id=j.assigned_driver_id
                 WHERE j.company_id=@cid AND j.deleted_at IS NULL AND (j.status='Delayed' OR j.sla_status='At Risk')
-                UNION ALL
-                SELECT CASE WHEN v.out_of_service THEN 'Critical' ELSE 'Warning' END,
-                       v.vehicle_code, d.full_name,
-                       CASE WHEN v.out_of_service THEN 'Vehicle out of service' ELSE 'In maintenance' END,
-                       '/work-orders', 'Create WO', v.created_at, 1
+                ORDER BY COALESCE(v.vehicle_code, j.job_code),
+                         CASE WHEN j.status='Delayed' THEN 0 ELSE 1 END,
+                         COALESCE(j.updated_at, j.created_at) DESC
+              ), ev AS (
+                SELECT CASE WHEN v.out_of_service THEN 'Critical' ELSE 'Warning' END severity,
+                       v.vehicle_code vehicle, d.full_name driver,
+                       CASE WHEN v.out_of_service THEN 'Vehicle out of service' ELSE 'In maintenance' END event,
+                       '/work-orders' action_route, 'Create WO' action_label, v.created_at ts, 1 ord
                 FROM vehicles v LEFT JOIN drivers d ON d.id=v.assigned_driver_id
                 WHERE v.company_id=@cid AND v.deleted_at IS NULL AND (v.out_of_service OR v.status='Maintenance')
-                UNION ALL
-                SELECT CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END,
-                       v.vehicle_code, d.full_name, COALESCE(NULLIF(se.event_type,''),'Safety event'),
-                       '/incidents', 'Review', COALESCE(se.occurred_at, se.event_time, se.created_at), 2
+              ), sf AS (
+                SELECT CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END severity,
+                       v.vehicle_code vehicle, d.full_name driver, COALESCE(NULLIF(se.event_type,''),'Safety event') event,
+                       '/incidents' action_route, 'Review' action_label,
+                       COALESCE(se.occurred_at, se.event_time, se.created_at) ts, 2 ord
                 FROM safety_events se
                 LEFT JOIN vehicles v ON v.id=se.vehicle_id
                 LEFT JOIN drivers d ON d.id=se.driver_id
                 WHERE se.company_id=@cid AND se.deleted_at IS NULL AND se.severity IN ('Critical','High')
                   AND COALESCE(se.occurred_at, se.event_time, se.created_at) > NOW()-INTERVAL '48 hours'
+              ), ranked AS (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY ord ORDER BY ts DESC) rn
+                FROM (SELECT * FROM ex UNION ALL SELECT * FROM ev UNION ALL SELECT * FROM sf) u
               )
               SELECT severity, vehicle, driver, event, action_route, action_label, ts
-              FROM ex
+              FROM ranked WHERE rn <= 5
               ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], severity), ord, ts DESC
               LIMIT 12", Bind, ct);
 

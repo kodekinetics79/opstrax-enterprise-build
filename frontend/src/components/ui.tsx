@@ -111,6 +111,11 @@ export function SkeletonCard() {
    ============================================================ */
 export function StatusBadge({ status }: { status?: unknown }) {
   const text = String(status ?? "Open");
+  // Humanize machine tokens (e.g. "in_transit", "en_route_pickup", "assigned")
+  // into clean labels while leaving already-cased values ("At Risk") untouched.
+  const label = (/[_-]/.test(text) || /^[a-z]+$/.test(text))
+    ? text.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase())
+    : text;
   let cls: string;
   let pulse = false;
 
@@ -131,7 +136,7 @@ export function StatusBadge({ status }: { status?: unknown }) {
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-bold ${cls}`}>
       {pulse && <span className="live-dot h-1.5 w-1.5" />}
-      {text}
+      {label}
     </span>
   );
 }
