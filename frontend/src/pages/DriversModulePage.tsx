@@ -61,6 +61,43 @@ function findMatching(rows: AnyRecord[] | undefined, ...patterns: RegExp[]) {
   }) || null;
 }
 
+function regionalRequirements(countryCode: string) {
+  if (countryCode === "SA") {
+    return [
+      { title: "Saudi / GCC license", type: "license", matcher: /license|cdl|driving permit/i },
+      { title: "Medical fitness certificate", type: "medical", matcher: /medical|fitness|med cert|dot/i },
+      { title: "Iqama / work authorization", type: "workAuth", matcher: /iqama|residence|work permit|visa|residency/i },
+      { title: "Health insurance / GOSI", type: "insurance", matcher: /insurance|health|gosi/i },
+      { title: "Cold chain / hazmat endorsement", type: "endorsement", matcher: /cold chain|hazmat|dangerous goods|reefer/i },
+    ] as const;
+  }
+  if (countryCode === "AE") {
+    return [
+      { title: "UAE heavy vehicle license", type: "license", matcher: /license|cdl|driving permit/i },
+      { title: "Medical fitness certificate", type: "medical", matcher: /medical|fitness|med cert/i },
+      { title: "Emirates ID / visa", type: "workAuth", matcher: /emirates id|visa|work permit|residence/i },
+      { title: "Health insurance", type: "insurance", matcher: /insurance|health/i },
+      { title: "Dangerous goods / reefer endorsement", type: "endorsement", matcher: /dangerous goods|hazmat|cold chain|reefer/i },
+    ] as const;
+  }
+  if (countryCode === "CA") {
+    return [
+      { title: "Commercial license", type: "license", matcher: /license|cdl|class/i },
+      { title: "Medical certificate", type: "medical", matcher: /medical|med cert/i },
+      { title: "Drug / alcohol compliance", type: "drug", matcher: /drug|alcohol|consortium/i },
+      { title: "Work authorization / SIN support", type: "workAuth", matcher: /work permit|visa|sin|residence/i },
+      { title: "Cross-border / hazmat endorsement", type: "endorsement", matcher: /hazmat|dangerous goods|cross border|fast/i },
+    ] as const;
+  }
+  return [
+    { title: "CDL / commercial license", type: "license", matcher: /license|cdl|class/i },
+    { title: "Medical card", type: "medical", matcher: /medical|med cert|dot/i },
+    { title: "Drug / alcohol program", type: "drug", matcher: /drug|alcohol|consortium/i },
+    { title: "Health insurance / benefits", type: "insurance", matcher: /insurance|health/i },
+    { title: "Hazmat / specialty endorsement", type: "endorsement", matcher: /hazmat|tank|reefer|cold chain|endorsement/i },
+  ] as const;
+}
+
 function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
   const heat = String(g(row, "riskHeatScore", "risk_heat_score") ?? "");
   if (/high|critical/i.test(heat)) return "High";
@@ -303,12 +340,34 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
     if (rows.length && selectedId == null) setSelectedId(rowId(rows[0]));
   }, [rows, selectedId]);
 
-  const record = (detail.data?.record as AnyRecord) || null;
-  const documents = (detail.data?.documents as AnyRecord[]) || [];
-  const certifications = (detail.data?.certifications as AnyRecord[]) || [];
+  const detailPayload = (detail.data as AnyRecord) || {};
+  const record = (detailPayload.record as AnyRecord) || null;
+  const documents = (detailPayload.documents as AnyRecord[]) || [];
+  const certifications = (detailPayload.certifications as AnyRecord[]) || [];
+  const complianceStatus = (detailPayload.complianceStatus as AnyRecord) || null;
+  const countryCode = String(
+    g(complianceStatus || {}, "countryCode", "country_code", "profileCountryCode", "profile_country_code")
+      ?? g(record || {}, "countryCode", "country_code")
+      ?? "US"
+  );
   const licenseDoc = findMatching(documents, /license|cdl/i) || findMatching(certifications, /license|cdl/i);
   const medicalDoc = findMatching(documents, /medical|med cert|dot/i) || findMatching(certifications, /medical|dot/i);
   const insuranceDoc = findMatching(documents, /insurance|health/i);
+  const workAuthDoc = findMatching(documents, /iqama|emirates id|residence|work permit|visa|sin/i);
+  const drugDoc = findMatching(documents, /drug|alcohol|consortium/i) || findMatching(certifications, /drug|alcohol/i);
+  const endorsementDoc = findMatching(documents, /hazmat|dangerous goods|cold chain|reefer|endorsement/i) || findMatching(certifications, /hazmat|dangerous goods|cold chain|endorsement/i);
+  const requirementDocs: Record<string, AnyRecord | null> = {
+    license: licenseDoc,
+    medical: medicalDoc,
+    insurance: insuranceDoc,
+    workAuth: workAuthDoc,
+    drug: drugDoc,
+    endorsement: endorsementDoc,
+  };
+  const requirementCards = regionalRequirements(countryCode).map((item) => ({
+    ...item,
+    source: requirementDocs[item.type] || null,
+  }));
   const profileItems = record ? [
     ["Driver code", String(g(record, "driverCode", "driver_code") ?? "—")],
     ["Phone", String(g(record, "phone") ?? "—")],
@@ -318,14 +377,18 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
     ["License expiry", fmt(g(record, "licenseExpiry", "license_expiry") ?? g(licenseDoc || {}, "expiryDate", "expiry_date"))],
     ["License class", String(g(record, "licenseClass", "license_class") ?? "—")],
     ["Compliance score", String(num(g(record, "complianceScore", "compliance_score")) || "—")],
+    ["Compliance profile", String(g(complianceStatus || {}, "profileName", "profile_name", "rulesetName", "ruleset_name") ?? "—")],
+    ["Authority", String(g(complianceStatus || {}, "authority") ?? "—")],
+    ["Country", countryCode],
+    ["Overall compliance", String(g(complianceStatus || {}, "overallStatus", "overall_status") ?? "—")],
   ] : [];
   const sections = [
-    { title: "Certifications", rows: detail.data?.certifications as AnyRecord[] | undefined, fields: ["certificationType", "status", "expiryDate"] },
-    { title: "Documents", rows: detail.data?.documents as AnyRecord[] | undefined, fields: ["documentName", "documentType", "status", "expiryDate"] },
-    { title: "HOS", rows: detail.data?.hos as AnyRecord[] | undefined, fields: ["logDate", "drivingHours", "onDutyHours", "cycleHoursLeft", "status"] },
-    { title: "DVIR / Inspections", rows: detail.data?.inspections as AnyRecord[] | undefined, fields: ["inspectionType", "result", "createdAt"] },
-    { title: "Safety events", rows: detail.data?.safetyEvents as AnyRecord[] | undefined, fields: ["eventType", "severity", "reviewStatus", "eventTime"] },
-    { title: "Audit trail", rows: detail.data?.auditTrail as AnyRecord[] | undefined, fields: ["actionName", "actorName", "createdAt"] },
+    { title: "Certifications", rows: detailPayload.certifications as AnyRecord[] | undefined, fields: ["certificationType", "status", "expiryDate"] },
+    { title: "Documents", rows: detailPayload.documents as AnyRecord[] | undefined, fields: ["documentName", "documentType", "status", "expiryDate"] },
+    { title: "HOS", rows: detailPayload.hos as AnyRecord[] | undefined, fields: ["logDate", "drivingHours", "onDutyHours", "cycleHoursLeft", "status"] },
+    { title: "DVIR / Inspections", rows: detailPayload.inspections as AnyRecord[] | undefined, fields: ["inspectionType", "result", "createdAt"] },
+    { title: "Safety events", rows: detailPayload.safetyEvents as AnyRecord[] | undefined, fields: ["eventType", "severity", "reviewStatus", "eventTime"] },
+    { title: "Audit trail", rows: detailPayload.auditTrail as AnyRecord[] | undefined, fields: ["actionName", "actorName", "createdAt"] },
   ];
 
   return (
@@ -412,6 +475,27 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
               </section>
             </div>
           ) : null}
+          {record ? (
+            <section className="panel p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Market requirements</h3>
+                  <p className="text-xs text-slate-500">Region-aware driver requirements for {countryCode}, so Saudi/GCC and North American operator records are assessed against the right evidence set.</p>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {requirementCards.map((item) => (
+                  <MarketRequirementCard
+                    key={item.title}
+                    title={item.title}
+                    source={item.source}
+                    fallbackStatus={item.type === "medical" ? String(g(complianceStatus || {}, "medicalCertValid") === false ? "Review" : "Watch") : item.type === "drug" ? String(g(complianceStatus || {}, "drugTestValid") === false ? "Review" : "Watch") : item.type === "license" ? String(g(complianceStatus || {}, "licenseValid") === false ? "Review" : "Watch") : "Not captured"}
+                    fallbackExpiry={item.type === "medical" ? fmt(g(complianceStatus || {}, "medicalCertExpiry", "medical_cert_expiry")) : item.type === "drug" ? fmt(g(complianceStatus || {}, "drugTestExpiry", "drug_test_expiry")) : item.type === "license" ? fmt(g(complianceStatus || {}, "licenseExpiry", "license_expiry")) : "—"}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
           <div className="panel p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -452,6 +536,35 @@ function CredentialCard({ title, status, name, expiry }: { title: string; status
         <span className="font-medium text-slate-600">{status}</span>
         <span className="text-slate-500">Expiry {expiry}</span>
       </div>
+    </div>
+  );
+}
+
+function MarketRequirementCard({
+  title,
+  source,
+  fallbackStatus,
+  fallbackExpiry,
+}: {
+  title: string;
+  source: AnyRecord | null;
+  fallbackStatus: string;
+  fallbackExpiry: string;
+}) {
+  const status = String(g(source || {}, "status") ?? fallbackStatus ?? "Not captured");
+  const name = String(g(source || {}, "documentName", "document_name", "documentType", "document_type", "certificationType", "certification_type") ?? "No evidence linked");
+  const expiry = fmt(g(source || {}, "expiryDate", "expiry_date") ?? fallbackExpiry);
+  const tone = /valid|active|current|compliant/i.test(status)
+    ? "border-emerald-200 bg-emerald-50/60"
+    : /review|expiring|watch|warning/i.test(status)
+      ? "border-amber-200 bg-amber-50/60"
+      : "border-rose-200 bg-rose-50/60";
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</div>
+      <div className="mt-2 text-sm font-semibold text-slate-900">{name}</div>
+      <div className="mt-2 text-xs text-slate-600">{status}</div>
+      <div className="mt-1 text-xs text-slate-500">Expiry {expiry}</div>
     </div>
   );
 }

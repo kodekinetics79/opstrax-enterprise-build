@@ -2388,6 +2388,15 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
+            complianceStatus = await db.QuerySingleAsync(
+                @"SELECT dcs.*, cp.profile_name, cp.authority, cp.country_code profile_country_code, cp.ruleset_name,
+                         cp.eld_required, cp.max_drive_hours, cp.max_shift_hours, cp.min_off_duty_hours
+                  FROM driver_compliance_status dcs
+                  LEFT JOIN compliance_profiles cp ON cp.id=dcs.profile_id
+                  WHERE dcs.driver_id=@id
+                  ORDER BY dcs.updated_at DESC NULLS LAST, dcs.id DESC
+                  LIMIT 1",
+                c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await EntityTimeline(db, "Driver", id, ct),
             recommendations = await ModuleRecommendations(db, "drivers", ct),
             documents = await db.QueryAsync("SELECT * FROM driver_documents WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
