@@ -27,6 +27,9 @@ public sealed class FleetTmsSeeder(Database db, ILogger<FleetTmsSeeder> log)
                 // PR2 cold chain + assets + readiness — independently guarded so they seed
                 // whether or not PR1 already populated shipments for this company.
                 await SeedColdChainAndAssets(companyId, ct);
+
+                // PR3 last-mile logistics — independently guarded.
+                await SeedLogistics(companyId, ct);
             }
             catch (Exception ex) { log.LogWarning(ex, "[FleetTmsSeeder] seed failed for company {CompanyId}", companyId); }
         }
@@ -379,5 +382,103 @@ VALUES (@companyId, @sid, @token, 'system')",
         }
 
         log.LogInformation("[FleetTmsSeeder] seeded Fleet TMS demo data for company {CompanyId}", companyId);
+    }
+
+    private async Task SeedLogistics(long companyId, CancellationToken ct)
+    {
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_dispatch_orders WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct) > 0) return;
+        var rng = new Random((int)(companyId * 15485863));
+        string[] customers = { "Lulu Hypermarket", "Danube", "Panda Retail", "Othaim Markets", "Carrefour KSA" };
+        string[] cities = { "Riyadh", "Jeddah", "Dammam", "Mecca", "Medina" };
+        string[] areas = { "Al Olaya", "Al Malqa", "An Nahdah", "Al Rawdah", "Al Hamra" };
+        string[] drivers = { "Yousef Al-Shehri", "Majed Al-Zahrani", "Tariq Al-Ghamdi", "Nawaf Al-Mutairi" };
+        string[] riders = { "Bilal", "Imran", "Hamza", "Salman" };
+
+        var routeCodes = new List<string>();
+        for (var r = 0; r < 3; r++)
+        {
+            var routeCode = $"RT-{companyId:D2}{cities[r][..3].ToUpper()}";
+            routeCodes.Add(routeCode);
+            var planned = rng.Next(6, 14);
+            var completed = rng.Next(0, planned);
+            await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_delivery_routes (company_id, route_code, hub, territory, driver_name, vehicle_number, status, planned_stops, completed_stops, distance_km, completion_percent, current_stop, next_stop, planned_for_date, departure_time_utc, eta_complete_utc, notes)
+VALUES (@companyId, @code, @hub, @territory, @driver, @vehicle, @status, @planned, @completed, @distance, @percent, @current, @next, CURRENT_DATE, NOW() - INTERVAL '2 hours', NOW() + INTERVAL '4 hours', '')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@code", routeCode);
+                    c.Parameters.AddWithValue("@hub", $"{cities[r]} Hub");
+                    c.Parameters.AddWithValue("@territory", areas[r % areas.Length]);
+                    c.Parameters.AddWithValue("@driver", drivers[r % drivers.Length]);
+                    c.Parameters.AddWithValue("@vehicle", $"VAN-{300 + r}");
+                    c.Parameters.AddWithValue("@status", completed == 0 ? "Ready" : completed >= planned ? "Closed" : "Active");
+                    c.Parameters.AddWithValue("@planned", planned);
+                    c.Parameters.AddWithValue("@completed", completed);
+                    c.Parameters.AddWithValue("@distance", (decimal)rng.Next(40, 180));
+                    c.Parameters.AddWithValue("@percent", planned == 0 ? 0m : Math.Round(completed / (decimal)planned * 100m, 1));
+                    c.Parameters.AddWithValue("@current", $"Stop {completed}");
+                    c.Parameters.AddWithValue("@next", $"Stop {Math.Min(planned, completed + 1)}");
+                }, ct);
+        }
+
+        for (var i = 0; i < 8; i++)
+        {
+            var routeCode = routeCodes[i % routeCodes.Count];
+            var orderNumber = $"ORD-{companyId:D2}{2000 + i}";
+            var city = cities[i % cities.Length];
+            var statusPool = new[] { "Queued", "Picking", "Dispatched", "InTransit", "Delivered", "Exception" };
+            var status = statusPool[i % statusPool.Length];
+            var driver = drivers[i % drivers.Length];
+            var delivered = status == "Delivered";
+            await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_dispatch_orders (company_id, order_number, customer_name, customer_segment, sales_channel, city, area, status, priority, item_count, order_value, route_code, driver_name, vehicle_number, dispatch_notes, created_at_utc, promised_at_utc, dispatched_at_utc, delivered_at_utc, updated_at_utc)
+VALUES (@companyId, @num, @customer, @segment, @channel, @city, @area, @status, @priority, @items, @value, @route, @driver, @vehicle, '', NOW() - (@i || ' hours')::interval, NOW() + INTERVAL '6 hours', @dispatched, @deliveredAt, NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@num", orderNumber);
+                    c.Parameters.AddWithValue("@customer", customers[i % customers.Length]);
+                    c.Parameters.AddWithValue("@segment", i % 2 == 0 ? "Retail" : "Key Account");
+                    c.Parameters.AddWithValue("@channel", i % 3 == 0 ? "App" : "Portal");
+                    c.Parameters.AddWithValue("@city", city);
+                    c.Parameters.AddWithValue("@area", areas[i % areas.Length]);
+                    c.Parameters.AddWithValue("@status", status);
+                    c.Parameters.AddWithValue("@priority", i % 4 == 0 ? "High" : "Normal");
+                    c.Parameters.AddWithValue("@items", rng.Next(1, 24));
+                    c.Parameters.AddWithValue("@value", (decimal)rng.Next(150, 5200));
+                    c.Parameters.AddWithValue("@route", routeCode);
+                    c.Parameters.AddWithValue("@driver", status is "Queued" or "Picking" ? "" : driver);
+                    c.Parameters.AddWithValue("@vehicle", status is "Queued" or "Picking" ? "" : $"VAN-{300 + (i % 3)}");
+                    c.Parameters.AddWithValue("@i", i + 1);
+                    c.Parameters.AddWithValue("@dispatched", status is "Queued" or "Picking" ? DBNull.Value : DateTime.UtcNow.AddHours(-(i + 1)));
+                    c.Parameters.AddWithValue("@deliveredAt", delivered ? DateTime.UtcNow.AddHours(-2) : (object)DBNull.Value);
+                }, ct);
+
+            var stopStatus = status switch { "Delivered" => "Delivered", "Exception" => "Attempted", _ => "OutForDelivery" };
+            await db.ExecuteAsync(@"
+INSERT INTO fleet_tms_last_mile_stops (company_id, order_number, route_code, customer_name, address_line, city, region, country, status, proof_status, recipient_name, attempt_count, rider_name, time_window, eta_utc, delivered_at_utc, exception_reason, created_at_utc, updated_at_utc)
+VALUES (@companyId, @num, @route, @customer, @addr, @city, @region, 'Saudi Arabia', @status, @proof, @recipient, @attempts, @rider, @window, NOW() + (@etaHrs || ' hours')::interval, @deliveredAt, @exception, NOW(), NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@num", orderNumber);
+                    c.Parameters.AddWithValue("@route", routeCode);
+                    c.Parameters.AddWithValue("@customer", customers[i % customers.Length]);
+                    c.Parameters.AddWithValue("@addr", $"{rng.Next(1000, 9999)} {areas[i % areas.Length]} St");
+                    c.Parameters.AddWithValue("@city", city);
+                    c.Parameters.AddWithValue("@region", city);
+                    c.Parameters.AddWithValue("@status", stopStatus);
+                    c.Parameters.AddWithValue("@proof", delivered ? "POD" : "None");
+                    c.Parameters.AddWithValue("@recipient", delivered ? "Store Receiver" : "");
+                    c.Parameters.AddWithValue("@attempts", status == "Exception" ? 2 : delivered ? 1 : 0);
+                    c.Parameters.AddWithValue("@rider", status is "Queued" or "Picking" ? "" : riders[i % riders.Length]);
+                    c.Parameters.AddWithValue("@window", i % 2 == 0 ? "09:00-12:00" : "14:00-18:00");
+                    c.Parameters.AddWithValue("@etaHrs", (i % 6) + 1);
+                    c.Parameters.AddWithValue("@deliveredAt", delivered ? DateTime.UtcNow.AddHours(-2) : (object)DBNull.Value);
+                    c.Parameters.AddWithValue("@exception", status == "Exception" ? "Customer not available at first attempt." : "");
+                }, ct);
+        }
+        log.LogInformation("[FleetTmsSeeder] seeded last-mile logistics for company {CompanyId}", companyId);
     }
 }

@@ -23,7 +23,7 @@ const NAV_SECTIONS = [
   {
     label: "Dispatch",
     color: "text-cyan-700",
-    items: ["dispatch-board", "jobs", "route-plans", "last-mile-delivery"],
+    items: ["dispatch-board", "jobs", "route-plans", "last-mile-delivery", "logistics-workspace"],
   },
   {
     label: "Shipments",
