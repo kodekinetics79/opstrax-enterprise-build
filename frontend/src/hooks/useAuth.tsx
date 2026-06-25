@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { UserSession } from "@/types";
+import { authApi } from "@/services/authApi";
 
 const STORAGE_KEY = "opstrax.session.v2";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
@@ -48,20 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession,
     logout: async () => {
       try {
-        const baseUrl =
-          import.meta.env.VITE_API_BASE_URL ||
-          import.meta.env.VITE_DOTNET_API_URL ||
-          "http://localhost:8088";
-        if (session?.token) {
-          await fetch(`${baseUrl}/api/auth/logout`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${session.token}`,
-              Accept: "application/json",
-            },
-            credentials: "include",
-          });
-        }
+        // Revoke the server-side session (sends auth + CSRF via the shared client).
+        if (session?.token) await authApi.logout();
       } catch {
         // Session may already be gone; clear local state regardless.
       } finally {

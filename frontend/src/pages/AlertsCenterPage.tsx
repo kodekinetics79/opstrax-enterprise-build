@@ -4,6 +4,7 @@ import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import { AlertTriangle, BadgeCheck, BellRing, Clock3, Filter, RefreshCw, Search, ShieldAlert, Sparkles } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,15 @@ type Alert = {
   closedAt?: string;
   acknowledgedBy?: string;
   createdAt?: string;
+};
+
+type AlertsSummary = {
+  total: number;
+  critical: number;
+  high: number;
+  open: number;
+  acknowledged: number;
+  closed: number;
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -103,9 +113,9 @@ function normalizeAlert(raw: AnyRecord): Alert {
 
 function KpiCard({ label, value, accent }: { label: string; value: number | string; accent?: string }) {
   return (
-    <div className="panel flex flex-col gap-1 min-w-30">
-      <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{value}</span>
-      <span className="text-xs text-slate-500 font-medium">{label}</span>
+    <div className="rounded-2xl border border-slate-200 bg-white/85 p-4 shadow-sm backdrop-blur">
+      <span className={`text-3xl font-semibold tracking-tight ${accent ?? "text-slate-900"}`}>{value}</span>
+      <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
     </div>
   );
 }
@@ -359,9 +369,15 @@ export function AlertsCenterPage() {
   const [actionAlert, setActionAlert] = useState<Alert | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const { data, isLoading, isError, error } = useQuery({
+  const alertsQuery = useQuery({
     queryKey: ["alerts"],
     queryFn: () => alertsApi.list(),
+    refetchInterval: 15_000,
+  });
+
+  const summaryQuery = useQuery({
+    queryKey: ["alerts", "summary"],
+    queryFn: () => alertsApi.summary(),
     refetchInterval: 15_000,
   });
 
@@ -385,14 +401,29 @@ export function AlertsCenterPage() {
     setTimeout(() => setToastMsg(null), 3500);
   }
 
-  const rawAlerts = Array.isArray(data) ? (data as AnyRecord[]) : [];
+  const rawAlerts = Array.isArray(alertsQuery.data) ? (alertsQuery.data as AnyRecord[]) : [];
   const alerts = useMemo(() => rawAlerts.map(normalizeAlert), [rawAlerts]);
-
-  // KPI counts
-  const criticalCount = alerts.filter((a) => a.severity === "Critical").length;
-  const highCount = alerts.filter((a) => a.severity === "High").length;
-  const openCount = alerts.filter((a) => a.status === "Open").length;
-  const ackedCount = alerts.filter((a) => a.status === "Acknowledged").length;
+  const summary = useMemo<AlertsSummary>(() => {
+    const live = summaryQuery.data as AnyRecord | undefined;
+    if (live) {
+      return {
+        total: Number(live.total ?? alerts.length),
+        critical: Number(live.critical ?? alerts.filter((a) => a.severity === "Critical").length),
+        high: Number(live.high ?? alerts.filter((a) => a.severity === "High").length),
+        open: Number(live.open ?? alerts.filter((a) => a.status === "Open").length),
+        acknowledged: Number(live.acknowledged ?? alerts.filter((a) => a.status === "Acknowledged").length),
+        closed: Number(live.closed ?? alerts.filter((a) => a.status === "Closed").length),
+      };
+    }
+    return {
+      total: alerts.length,
+      critical: alerts.filter((a) => a.severity === "Critical").length,
+      high: alerts.filter((a) => a.severity === "High").length,
+      open: alerts.filter((a) => a.status === "Open").length,
+      acknowledged: alerts.filter((a) => a.status === "Acknowledged").length,
+      closed: alerts.filter((a) => a.status === "Closed").length,
+    };
+  }, [alerts, summaryQuery.data]);
 
   // Filter + search
   const filtered = useMemo(() => {
@@ -430,193 +461,238 @@ export function AlertsCenterPage() {
     setActionAlert(null);
   }
 
-  if (isLoading) return <LoadingState />;
-  if (isError) return <ErrorState message={(error as Error)?.message} />;
+  if (alertsQuery.isLoading) return <LoadingState />;
+  if (alertsQuery.isError) return <ErrorState message={(alertsQuery.error as Error)?.message} />;
 
   return (
     <div className="flex flex-col gap-6 py-6">
-      {/* Toast */}
       {toastMsg && (
-        <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+        <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
         </div>
       )}
 
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Alerts Center</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Real-time exception management — Safety, Maintenance, Compliance &amp; Customer</p>
+      <section className="relative overflow-hidden rounded-[32px] border border-slate-800 bg-slate-950 px-6 py-7 text-white shadow-[0_28px_80px_rgba(15,23,42,0.28)]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_0%,rgba(45,212,191,0.22),transparent_30%),radial-gradient(circle_at_90%_10%,rgba(99,102,241,0.18),transparent_28%),linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,23,42,0.92))]" />
+        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-200">
+              <BellRing className="h-3.5 w-3.5" />
+              Live exception command
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Alerts Center</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              Real-time exception management for safety, maintenance, compliance, and customer workflows.
+              Backed by live API responses, tenant scoping, and server-side permissions.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Live status</p>
+              <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white">
+                <BadgeCheck className="h-4 w-4 text-emerald-300" />
+                Backend connected
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Open queue</p>
+              <div className="mt-2 text-2xl font-semibold text-white">{summary.open}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Critical</p>
+              <div className="mt-2 flex items-center gap-2 text-2xl font-semibold text-white">
+                {summary.critical}
+                <ShieldAlert className="h-5 w-5 text-rose-300" />
+              </div>
+            </div>
+          </div>
         </div>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => exportCsv("alerts-center", filtered as unknown as AnyRecord[])}
-        >
-          Export CSV
-        </button>
-      </div>
+      </section>
 
-      {/* KPI Strip */}
-      <div className="flex flex-wrap gap-3">
-        <KpiCard label="Total Alerts" value={alerts.length} />
-        <KpiCard label="Critical" value={criticalCount} accent="text-red-600" />
-        <KpiCard label="High" value={highCount} accent="text-orange-600" />
-        <KpiCard label="Open" value={openCount} accent="text-blue-600" />
-        <KpiCard label="Acknowledged" value={ackedCount} accent="text-violet-600" />
-      </div>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <KpiCard label="Total alerts" value={summary.total} accent="text-slate-900" />
+        <KpiCard label="Critical" value={summary.critical} accent="text-rose-600" />
+        <KpiCard label="High" value={summary.high} accent="text-amber-600" />
+        <KpiCard label="Open" value={summary.open} accent="text-blue-600" />
+        <KpiCard label="Acknowledged" value={summary.acknowledged} accent="text-violet-600" />
+        <KpiCard label="Closed" value={summary.closed} accent="text-emerald-600" />
+      </section>
 
-      {/* Filters */}
-      <div className="panel flex flex-col gap-4">
-        {/* Category tabs */}
-        <div className="flex flex-wrap gap-1.5">
-          {CATEGORIES.map((cat) => (
+      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white/90 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-teal-600">Filters</p>
+              <p className="mt-1 text-sm text-slate-500">Narrow the live alert queue without leaving the command surface.</p>
+            </div>
+
             <button
-              key={cat}
               type="button"
-              onClick={() => setCategoryFilter(cat)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                categoryFilter === cat
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
+              className="inline-flex items-center gap-2 self-start rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              onClick={() => void queryClient.invalidateQueries({ queryKey: ["alerts"] })}
             >
-              {cat}
+              <RefreshCw className="h-4 w-4" />
+              Refresh
             </button>
-          ))}
-        </div>
+          </div>
 
-        {/* Row 2: severity + status + search */}
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex gap-1">
-            {SEVERITY_FILTERS.map((sev) => (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {CATEGORIES.map((cat) => (
               <button
-                key={sev}
+                key={cat}
                 type="button"
-                onClick={() => setSeverityFilter(sev)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
-                  severityFilter === sev
-                    ? "bg-slate-800 border-slate-600 text-white"
-                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                onClick={() => setCategoryFilter(cat)}
+                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                  categoryFilter === cat
+                    ? "border-teal-300 bg-teal-50 text-teal-700"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                {sev}
+                {cat}
               </button>
             ))}
           </div>
 
-          <div className="flex gap-1">
-            {STATUS_FILTERS.map((st) => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => setStatusFilter(st)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
-                  statusFilter === st
-                    ? "bg-slate-800 border-slate-600 text-white"
-                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {st}
-              </button>
-            ))}
+          <div className="mt-4 grid gap-3 xl:grid-cols-[1fr_auto_auto] xl:items-center">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                placeholder="Search alerts, entities, customers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="field w-full rounded-2xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {SEVERITY_FILTERS.map((sev) => (
+                <button
+                  key={sev}
+                  type="button"
+                  onClick={() => setSeverityFilter(sev)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+                    severityFilter === sev
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {sev}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+                    statusFilter === st
+                      ? "border-violet-300 bg-violet-50 text-violet-700"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
           </div>
-
-          <input
-            type="search"
-            placeholder="Search alerts…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
-          />
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? (
-          <EmptyState title="No alerts match your filters" subtitle="Adjust category, severity, or status filters above" />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Severity</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Alert</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Entity</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Recommended Action</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((alert) => (
-                  <tr
-                    key={String(alert.id ?? alert.alertId)}
-                    className="hover:bg-slate-50 cursor-pointer"
-                    onClick={() => setSelectedAlert(alert)}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${SEVERITY_DOT[alert.severity] ?? "bg-slate-400"}`} />
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${SEVERITY_STYLES[alert.severity] ?? ""}`}>
-                          {alert.severity}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900 leading-snug">{alert.title}</p>
-                      {alert.alertId && <p className="text-xs text-slate-400">{alert.alertId}</p>}
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{alert.category}</td>
-                    <td className="px-4 py-3 text-slate-700">{alert.entity || alert.customer || "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${STATUS_STYLES[alert.status] ?? "bg-slate-100 border-slate-200 text-slate-600"}`}>
-                        {alert.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 max-w-50 truncate">{alert.recommendedAction || "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        {canAcknowledge && alert.status === "Open" && (
-                          <button
-                            type="button"
-                            className="text-xs px-2.5 py-1 rounded-md bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 transition-colors"
-                            onClick={() => handleAction("acknowledge", alert)}
-                          >
-                            Ack
-                          </button>
-                        )}
-                        {canAcknowledge && (
-                          <button
-                            type="button"
-                            className="text-xs px-2.5 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors"
-                            onClick={() => handleAction("task", alert)}
-                          >
-                            Task
-                          </button>
-                        )}
-                        {canClose && alert.status !== "Closed" && (
-                          <button
-                            type="button"
-                            className="text-xs px-2.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 transition-colors"
-                            onClick={() => handleAction("close", alert)}
-                          >
-                            Close
-                          </button>
-                        )}
-                      </div>
-                    </td>
+        <div className="overflow-hidden">
+          {filtered.length === 0 ? (
+            <EmptyState title="No alerts match your filters" subtitle="Adjust category, severity, or status filters above." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50/80">
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Severity</th>
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Alert</th>
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Category</th>
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Entity</th>
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Status</th>
+                    <th className="px-5 py-4 text-left text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Recommended action</th>
+                    <th className="px-5 py-4 text-right text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filtered.map((alert) => (
+                    <tr
+                      key={String(alert.id ?? alert.alertId)}
+                      className="cursor-pointer transition hover:bg-slate-50/80"
+                      onClick={() => setSelectedAlert(alert)}
+                    >
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-block h-2.5 w-2.5 rounded-full ${SEVERITY_DOT[alert.severity] ?? "bg-slate-400"}`} />
+                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${SEVERITY_STYLES[alert.severity] ?? ""}`}>
+                            {alert.severity}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-slate-900">{alert.title}</p>
+                        {alert.alertId && <p className="mt-1 text-xs text-slate-400">{alert.alertId}</p>}
+                      </td>
+                      <td className="px-5 py-4 text-slate-700">{alert.category}</td>
+                      <td className="px-5 py-4 text-slate-700">{alert.entity || alert.customer || "—"}</td>
+                      <td className="px-5 py-4">
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${STATUS_STYLES[alert.status] ?? "bg-slate-100 border-slate-200 text-slate-600"}`}>
+                          {alert.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600">
+                        <span className="line-clamp-2 block max-w-[28rem]">{alert.recommendedAction || "—"}</span>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                          {canAcknowledge && alert.status === "Open" && (
+                            <button
+                              type="button"
+                              className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+                              onClick={() => handleAction("acknowledge", alert)}
+                            >
+                              Ack
+                            </button>
+                          )}
+                          {canAcknowledge && (
+                            <button
+                              type="button"
+                              className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100"
+                              onClick={() => handleAction("task", alert)}
+                            >
+                              Task
+                            </button>
+                          )}
+                          {canClose && alert.status !== "Closed" && (
+                            <button
+                              type="button"
+                              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                              onClick={() => handleAction("close", alert)}
+                            >
+                              Close
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+        <Clock3 className="h-3.5 w-3.5" />
+        Refreshed every 15 seconds from the live backend. No demo fallback is used here.
       </div>
 
-      {/* Detail Drawer */}
       <DetailDrawer
         alert={selectedAlert}
         onClose={() => setSelectedAlert(null)}
@@ -625,7 +701,6 @@ export function AlertsCenterPage() {
         onAction={handleAction}
       />
 
-      {/* Action Modal */}
       <ActionModal
         type={actionType}
         alert={actionAlert}

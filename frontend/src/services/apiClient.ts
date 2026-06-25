@@ -7,9 +7,17 @@ export const API_BASE_URL =
   import.meta.env.VITE_DOTNET_API_URL ||
   "http://localhost:8088";
 
+// Optional realtime/integrations side-service. Only default to the local dev port
+// when actually running on localhost — in production an unset VITE_NODE_EVENTS_URL
+// resolves to "" (feature disabled) instead of hammering http://localhost:8090,
+// which would otherwise spam failed requests and infinite EventSource retries.
+const isLocalhost =
+  typeof window !== "undefined" &&
+  /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
 export const NODE_EVENTS_URL =
   import.meta.env.VITE_NODE_EVENTS_URL ||
-  "http://localhost:8090";
+  (isLocalhost ? "http://localhost:8090" : "");
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -100,6 +108,9 @@ nodeApiClient.interceptors.request.use((config) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const p = JSON.parse(session) as any;
       const inner = p.session ?? p;
+      if (inner.token) {
+        config.headers.Authorization = `Bearer ${inner.token}`;
+      }
       const tid = inner?.company?.id ?? inner?.company?.companyId ?? inner?.user?.companyId ?? inner?.user?.company_id;
       if (tid) config.headers["X-Opstrax-Tenant-Id"] = String(tid);
     } catch { /* ignore */ }

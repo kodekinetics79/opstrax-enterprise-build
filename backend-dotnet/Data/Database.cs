@@ -20,10 +20,32 @@ public sealed class Database(IConfiguration configuration)
 
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
     {
-        var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(ct);
-        return connection;
+        // Retry transient open failures with backoff. Neon's serverless pooler can
+        // cold-start (scale-to-zero) or drop idle connections, so the first attempt
+        // after an idle period may transiently fail — retrying avoids surfacing a 500.
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            var connection = new NpgsqlConnection(_connectionString);
+            try
+            {
+                await connection.OpenAsync(ct);
+                return connection;
+            }
+            catch (Exception ex) when (attempt < maxAttempts && IsTransient(ex) && !ct.IsCancellationRequested)
+            {
+                await connection.DisposeAsync();
+                await Task.Delay(200 * attempt, ct); // 200ms, then 400ms
+            }
+        }
     }
+
+    private static bool IsTransient(Exception ex) => ex switch
+    {
+        NpgsqlException npg => npg.IsTransient,
+        TimeoutException => true,
+        _ => false,
+    };
 
     public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {

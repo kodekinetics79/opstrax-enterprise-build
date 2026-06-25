@@ -1,10 +1,9 @@
 import { nodeApiClient, unwrap } from "./apiClient";
 import type { AnyRecord } from "@/types";
 
-// All integration calls go to the Node.js microservice (NODE_EVENTS_URL) which
-// hosts the full connector catalog and in-memory tenant state.
-// The .NET backend's /api/integrations is intentionally NOT used here — it only
-// has the minimal DB row set (6 rows) and lacks connect/sync/configure operations.
+// Integration calls go to the Node.js backend because it owns the live connector
+// lifecycle operations (list/detail/connect/configure/sync/disconnect) and now
+// receives the authenticated user session plus tenant header from the shared client.
 const apiClient = nodeApiClient;
 
 export type IntegrationCategory =
@@ -90,4 +89,3 @@ export const integrationsApi = {
 export function isIntegrationConfig(value: AnyRecord): value is IntegrationConfig {
   return Object.values(value).every((entry) => ["string", "number", "boolean"].includes(typeof entry) || entry === null);
 }
-

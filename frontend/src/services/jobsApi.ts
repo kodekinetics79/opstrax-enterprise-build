@@ -5,20 +5,30 @@ import type { AnyRecord } from "@/types";
 
 export const jobsApi = {
   list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/jobs")), () => developmentFleetSeedData.jobs),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")), () => ({
-    totalJobsToday: developmentFleetSeedData.jobs.length,
-    unassignedJobs: developmentFleetSeedData.jobs.filter((job) => String(job.status) === "Unassigned").length,
-    assignedJobs: developmentFleetSeedData.jobs.filter((job) => String(job.status) === "Assigned").length,
-    enRoute: 0,
-    atStop: 0,
-    completed: developmentFleetSeedData.jobs.filter((job) => /Delivered|Completed/i.test(String(job.status))).length,
-    delayed: developmentFleetSeedData.jobs.filter((job) => /Delayed/i.test(String(job.status))).length,
-    slaAtRisk: developmentFleetSeedData.jobs.filter((job) => /risk/i.test(String(job.priority))).length,
-    proofPending: developmentFleetSeedData.jobs.length,
-    customerUpdatesSent: 0,
-    averageEtaAccuracy: 94,
-    revenueMarginPlaceholder: "24%",
-  })),
+  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")), () => {
+    // Offline dev safety net only — every figure is derived from the seed rows,
+    // never fabricated, so it stays consistent with the table the user sees.
+    const jobs = developmentFleetSeedData.jobs as unknown as AnyRecord[];
+    const count = (re: RegExp, field = "status") =>
+      jobs.filter((job) => re.test(String(job[field] ?? ""))).length;
+    const revenueMargin = jobs.reduce((sum, job) => sum + Number(job.marginEstimate ?? 0), 0);
+    const withEta = jobs.filter((job) => job.eta && job.slaDueAt);
+    const onTime = withEta.filter((job) => new Date(String(job.eta)) <= new Date(String(job.slaDueAt))).length;
+    return {
+      totalJobsToday: jobs.length,
+      unassignedJobs: count(/^Unassigned$/),
+      assignedJobs: count(/^Assigned$/),
+      enRoute: count(/En Route|In Progress/),
+      atStop: count(/At Stop/),
+      completed: count(/Delivered|Completed/),
+      delayed: count(/Delayed|At Risk/),
+      slaAtRisk: count(/At Risk/, "slaStatus"),
+      proofPending: count(/Pending/, "proofStatus"),
+      customerUpdatesSent: count(/Sent/, "customerUpdateStatus"),
+      averageEtaAccuracy: withEta.length ? `${Math.round((onTime / withEta.length) * 100)}%` : "N/A",
+      revenueMargin: revenueMargin ? `$${revenueMargin.toLocaleString()}` : "N/A",
+    };
+  }),
   detail: (id: string | number) => withFallback(unwrap<AnyRecord>(apiClient.get(`/api/jobs/${id}`)), () => ({ record: developmentFleetSeedData.jobs.find((job) => String(job.id) === String(id) || String(job.jobNumber) === String(id)) || developmentFleetSeedData.jobs[0], stops: [], proof: [], communications: [], auditTrail: [], recommendations: [] })),
   timeline: async () => [],
   recommendations: async () => [],

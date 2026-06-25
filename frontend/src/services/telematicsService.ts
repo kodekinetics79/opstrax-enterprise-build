@@ -441,15 +441,9 @@ function findDriverForVehicle(vehicleCode: string) {
 export const telematicsService = {
   async getDevices(): Promise<DeviceCommandRecord[]> {
     const session = getSession();
-    const fallbackRows = () => scopeDevicesForSession(state.devices, session).map(enrichDevice);
-
-    return withFallback(
-      unwrap<AnyRecord[]>(apiClient.get("/api/eld/devices")).then((rows) => {
-        const merged = mergeBackendDevices(rows);
-        return scopeDevicesForSession(merged, session).map(enrichDevice);
-      }),
-      fallbackRows,
-    );
+    const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/eld/devices"));
+    const merged = mergeBackendDevices(rows);
+    return scopeDevicesForSession(merged, session).map(enrichDevice);
   },
 
   async getDeviceById(id: string | number): Promise<DeviceDetailRecord> {
@@ -480,13 +474,18 @@ export const telematicsService = {
     const driver = vehicleCode ? findDriverForVehicle(vehicleCode) : null;
     const providerName = String(payload.provider ?? payload.manufacturer ?? "Connected provider");
     const providerCode = String(payload.providerCode ?? providerName.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-    const registered = await withFallback(
-      axios.post(`${NODE_EVENTS_URL}/api/devices/register`, payload, {
-        withCredentials: true,
-        headers: { Accept: "application/json" },
-      }).then((response) => (response.data?.data ?? response.data) as AnyRecord),
-      async () => ({} as AnyRecord),
-    );
+    const registered = await unwrap<AnyRecord>(apiClient.post("/api/devices/provision", {
+      tenantId,
+      vehicleCode,
+      deviceType: payload.deviceType ?? "ELD device",
+      manufacturer: payload.provider ?? payload.manufacturer ?? "Connected provider",
+      model: payload.deviceName ?? payload.model ?? "Device",
+      imei: payload.imei ?? payload.identifier ?? "",
+      simNumber: payload.simNumber ?? "",
+      approvalCountry: session?.company?.country ?? "US",
+      assignedVehicleCode: vehicleCode,
+      ...payload,
+    }));
 
     const device: MutableDeviceRecord = {
       id: `device-${Date.now()}`,
