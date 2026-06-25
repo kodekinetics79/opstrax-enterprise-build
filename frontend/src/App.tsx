@@ -74,7 +74,7 @@ const LiveMapPage = lazy(() => import("@/pages/LiveMapPage").then((module) => ({
 const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.CustomerEtaPage })));
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module) => ({ default: module.EntityListPage })));
-const VehiclesPage = lazy(() => import("@/pages/VehiclesPage").then((module) => ({ default: module.VehiclesPage })));
+const VehiclesModulePage = lazy(() => import("@/pages/VehiclesModulePage").then((module) => ({ default: module.VehiclesModulePage })));
 const JobsPage = lazy(() => import("@/pages/JobsPage").then((module) => ({ default: module.JobsPage })));
 const IotDevicesPage = lazy(() => import("@/pages/IotDevicesPage").then((module) => ({ default: module.IotDevicesPage })));
 const TelematicsCommandPage = lazy(() => import("@/pages/TelematicsCommandPage").then((module) => ({ default: module.TelematicsCommandPage })));
@@ -166,7 +166,8 @@ export default function App() {
         <Route path="/executive" element={<RequirePermission permission="dashboard:view"><ExecutivePage /></RequirePermission>} />
 
         {/* ── Fleet ── */}
-        <Route path="/vehicles" element={<RequirePermission permission="vehicles:view"><VehiclesPage /></RequirePermission>} />
+        <Route path="/vehicles" element={<Navigate to="/vehicles/overview" replace />} />
+        <Route path="/vehicles/*" element={<RequirePermission permission="vehicles:view"><VehiclesModulePage /></RequirePermission>} />
         <Route path="/drivers" element={<RequirePermission permission="drivers:view"><EntityListPage kind="drivers" /></RequirePermission>} />
         <Route path="/assets" element={<RequirePermission permission="vehicles:view"><EntityListPage kind="assets" /></RequirePermission>} />
         <Route path="/iot-devices" element={<RequirePermission permission="telematics:devices:view"><IotDevicesPage /></RequirePermission>} />
