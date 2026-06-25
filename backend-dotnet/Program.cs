@@ -28,6 +28,7 @@ builder.Services.AddSingleton<DispatchSchemaService>();
 builder.Services.AddSingleton<CustomerVisibilitySchemaService>();
 builder.Services.AddSingleton<DriverSchemaService>();
 builder.Services.AddSingleton<NotificationSchemaService>();
+builder.Services.AddSingleton<AlertWorkflowSchemaService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<ReportingSchemaService>();
 builder.Services.AddSingleton<ObservabilitySchemaService>();
@@ -85,6 +86,7 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "CustomerVisibility", () => scope.ServiceProvider.GetRequiredService<CustomerVisibilitySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Driver",            () => scope.ServiceProvider.GetRequiredService<DriverSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Notification",      () => scope.ServiceProvider.GetRequiredService<NotificationSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Alerts",            () => scope.ServiceProvider.GetRequiredService<AlertWorkflowSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Reporting",         () => scope.ServiceProvider.GetRequiredService<ReportingSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Observability",     () => scope.ServiceProvider.GetRequiredService<ObservabilitySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());

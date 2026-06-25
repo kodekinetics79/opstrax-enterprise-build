@@ -1362,46 +1362,102 @@ public static class EndpointMappings
         app.MapGet("/api/executive/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 10", ct: ct));
 
         // ===== ALERT RULES =====================================================
-        app.MapGet("/api/alert-rules", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
-            @"SELECT id, record_code rule_key, title name,
-                     COALESCE(tags,'Speed') category,
-                     COALESCE(status,'Active') status,
-                     secondary_value threshold,
-                     COALESCE(numeric_value,0) triggered_today,
-                     updated_at last_triggered
-              FROM module_records
-              WHERE company_id=@cid AND module_key='alert-rules' AND deleted_at IS NULL
-              ORDER BY title",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/alert-rules", AlertRulesList);
         app.MapPost("/api/alert-rules", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+            var denied = RequirePermission(http, "alerts:manage");
+            if (denied is not null) return denied;
             var c = GetCompanyId(http);
             var name = body.GetValueOrDefault("name")?.ToString() ?? "New Rule";
-            var code = $"RULE-{Guid.NewGuid():N}"[..16];
-            await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value,numeric_value) VALUES(@c,'alert-rules',@code,@name,'Active',@cat,@thr,0)",
-                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@name", name); cmd.Parameters.AddWithValue("@cat", body.GetValueOrDefault("category")?.ToString() ?? "Speed"); cmd.Parameters.AddWithValue("@thr", body.GetValueOrDefault("threshold")?.ToString() ?? ""); }, ct);
-            await audit.LogAsync("alert_rule.created", "AlertRule", 0, $"Created alert rule: {name}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { code, name }));
+            var code = body.GetValueOrDefault("ruleKey")?.ToString();
+            if (string.IsNullOrWhiteSpace(code)) code = $"ALR-{Guid.NewGuid():N}"[..16];
+            var id = await db.InsertAsync(
+                @"INSERT INTO alert_rules (
+                    tenant_id, company_id, rule_name, module_name, condition_json, status,
+                    rule_key, category, threshold_text, action_type, channels, priority, recipients, triggered_today, created_at, updated_at
+                  )
+                  VALUES (
+                    @c, @c, @name, 'operations', NULL, COALESCE(@status, 'Active'),
+                    @code, COALESCE(@cat, 'Operations'), COALESCE(@thr, ''), COALESCE(@action, 'Create operational alert'),
+                    COALESCE(@channels, 'In-App'), COALESCE(@priority, 'Medium'), COALESCE(@recipients, ''), 0, NOW(), NOW()
+                  )",
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@c", c);
+                    cmd.Parameters.AddWithValue("@code", code);
+                    cmd.Parameters.AddWithValue("@name", name);
+                    cmd.Parameters.AddWithValue("@status", body.GetValueOrDefault("status")?.ToString() ?? "Active");
+                    cmd.Parameters.AddWithValue("@cat", body.GetValueOrDefault("category")?.ToString() ?? "Operations");
+                    cmd.Parameters.AddWithValue("@thr", body.GetValueOrDefault("threshold")?.ToString() ?? "");
+                    cmd.Parameters.AddWithValue("@action", body.GetValueOrDefault("action")?.ToString() ?? "Create operational alert");
+                    cmd.Parameters.AddWithValue("@channels", body.GetValueOrDefault("channels")?.ToString() ?? "In-App");
+                    cmd.Parameters.AddWithValue("@priority", body.GetValueOrDefault("priority")?.ToString() ?? "Medium");
+                    cmd.Parameters.AddWithValue("@recipients", body.GetValueOrDefault("recipients")?.ToString() ?? "");
+                }, ct);
+            await audit.LogAsync(http, "alert_rule.created", "AlertRule", id, JsonSerializer.Serialize(new { name, ruleKey = code }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, ruleKey = code, name }, "Alert rule created"));
         });
         app.MapPut("/api/alert-rules/{id:long}", async (long id, HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+            var denied = RequirePermission(http, "alerts:manage");
+            if (denied is not null) return denied;
             var c = GetCompanyId(http);
             var name = body.GetValueOrDefault("name")?.ToString() ?? "";
-            await db.ExecuteAsync("UPDATE module_records SET title=@name, status=@st, tags=@cat, secondary_value=@thr, updated_at=NOW() WHERE id=@id AND company_id=@c AND module_key='alert-rules'",
-                cmd => { cmd.Parameters.AddWithValue("@name", name); cmd.Parameters.AddWithValue("@st", body.GetValueOrDefault("status")?.ToString() ?? "Active"); cmd.Parameters.AddWithValue("@cat", body.GetValueOrDefault("category")?.ToString() ?? "Speed"); cmd.Parameters.AddWithValue("@thr", body.GetValueOrDefault("threshold")?.ToString() ?? ""); cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
-            await audit.LogAsync("alert_rule.updated", "AlertRule", id, $"Updated alert rule {id}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { id }));
+            await db.ExecuteAsync(
+                @"UPDATE alert_rules
+                  SET rule_name = COALESCE(NULLIF(@name, ''), rule_name),
+                      status = COALESCE(@st, status),
+                      category = COALESCE(@cat, category),
+                      threshold_text = COALESCE(@thr, threshold_text),
+                      action_type = COALESCE(@action, action_type),
+                      channels = COALESCE(@channels, channels),
+                      priority = COALESCE(@priority, priority),
+                      recipients = COALESCE(@recipients, recipients),
+                      updated_at = NOW()
+                  WHERE id=@id
+                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND deleted_at IS NULL",
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@name", name);
+                    cmd.Parameters.AddWithValue("@st", body.GetValueOrDefault("status")?.ToString() ?? "Active");
+                    cmd.Parameters.AddWithValue("@cat", body.GetValueOrDefault("category")?.ToString() ?? "Operations");
+                    cmd.Parameters.AddWithValue("@thr", body.GetValueOrDefault("threshold")?.ToString() ?? "");
+                    cmd.Parameters.AddWithValue("@action", body.GetValueOrDefault("action")?.ToString() ?? "Create operational alert");
+                    cmd.Parameters.AddWithValue("@channels", body.GetValueOrDefault("channels")?.ToString() ?? "In-App");
+                    cmd.Parameters.AddWithValue("@priority", body.GetValueOrDefault("priority")?.ToString() ?? "Medium");
+                    cmd.Parameters.AddWithValue("@recipients", body.GetValueOrDefault("recipients")?.ToString() ?? "");
+                    cmd.Parameters.AddWithValue("@id", id);
+                    cmd.Parameters.AddWithValue("@c", c);
+                }, ct);
+            await audit.LogAsync(http, "alert_rule.updated", "AlertRule", id, JsonSerializer.Serialize(new { name }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id }, "Alert rule updated"));
         });
         app.MapPut("/api/alert-rules/{id:long}/toggle", async (long id, ToggleBody body, HttpContext http, Database db, AuditService audit, CancellationToken ct) => {
+            var denied = RequirePermission(http, "alerts:manage");
+            if (denied is not null) return denied;
             var c = GetCompanyId(http);
-            await db.ExecuteAsync("UPDATE module_records SET status=@s, updated_at=NOW() WHERE id=@id AND company_id=@c AND module_key='alert-rules'",
+            await db.ExecuteAsync(
+                @"UPDATE alert_rules
+                  SET status=@s, updated_at=NOW()
+                  WHERE id=@id
+                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND deleted_at IS NULL",
                 cmd => { cmd.Parameters.AddWithValue("@s", body.Enabled ? "Active" : "Paused"); cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
-            await audit.LogAsync("alert_rule.toggled", "AlertRule", id, $"Alert rule {id} {(body.Enabled ? "activated" : "paused")}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { id, enabled = body.Enabled }));
+            await audit.LogAsync(http, "alert_rule.toggled", "AlertRule", id, JsonSerializer.Serialize(new { enabled = body.Enabled }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, enabled = body.Enabled }, "Alert rule status updated"));
         });
         app.MapDelete("/api/alert-rules/{id:long}", async (long id, HttpContext http, Database db, AuditService audit, CancellationToken ct) => {
+            var denied = RequirePermission(http, "alerts:manage");
+            if (denied is not null) return denied;
             var c = GetCompanyId(http);
-            await db.ExecuteAsync("UPDATE module_records SET deleted_at=NOW() WHERE id=@id AND company_id=@c AND module_key='alert-rules'", cmd => { cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
-            await audit.LogAsync("alert_rule.deleted", "AlertRule", id, $"Deleted alert rule {id}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { id }));
+            await db.ExecuteAsync(
+                @"UPDATE alert_rules
+                  SET deleted_at=NOW(), updated_at=NOW()
+                  WHERE id=@id
+                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND deleted_at IS NULL",
+                cmd => { cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
+            await audit.LogAsync(http, "alert_rule.deleted", "AlertRule", id, ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id }, "Alert rule deleted"));
         });
 
         // ===== DRIVER MESSAGING =====================================================
@@ -6845,13 +6901,53 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // ── Alerts / Exception Management ──────────────────────────────────────────
 
     private const string AlertsSql =
-        @"SELECT id, title, body, severity, status, category, alert_type alertType, entity_type entityType, entity_id entityId,
-                 acknowledged_at acknowledgedAt, closed_at closedAt, acknowledged_by acknowledgedBy,
-                 recommended_action recommendedAction, created_at createdAt, company_id companyId
-          FROM ai_insights";
+        @"SELECT ai.id,
+                 ai.title,
+                 ai.body,
+                 ai.severity,
+                 ai.status,
+                 ai.category,
+                 ai.alert_type alertType,
+                 ai.entity_type entityType,
+                 ai.entity_id entityId,
+                 ai.acknowledged_at acknowledgedAt,
+                 ai.closed_at closedAt,
+                 COALESCE(ack.full_name, ai.acknowledged_by) acknowledgedBy,
+                 ai.recommended_action recommendedAction,
+                 ai.created_at createdAt,
+                 ai.company_id companyId,
+                 CASE
+                   WHEN ai.entity_type IN ('vehicle','Vehicle') THEN (SELECT v.vehicle_code FROM vehicles v WHERE v.id = ai.entity_id AND v.company_id = ai.company_id LIMIT 1)
+                   WHEN ai.entity_type IN ('driver','Driver') THEN (SELECT d.full_name FROM drivers d WHERE d.id = ai.entity_id AND d.company_id = ai.company_id LIMIT 1)
+                   WHEN ai.entity_type IN ('job','shipment','Job','Shipment') THEN (SELECT COALESCE(j.job_number, j.job_code) FROM jobs j WHERE j.id = ai.entity_id AND j.company_id = ai.company_id LIMIT 1)
+                   WHEN ai.entity_type IN ('customer','Customer') THEN (SELECT c.name FROM customers c WHERE c.id = ai.entity_id AND c.company_id = ai.company_id LIMIT 1)
+                   ELSE NULL
+                 END entity,
+                 CASE
+                   WHEN ai.entity_type IN ('vehicle','Vehicle') THEN '/vehicles/roster'
+                   WHEN ai.entity_type IN ('driver','Driver') THEN '/drivers/roster'
+                   WHEN ai.entity_type IN ('job','shipment','Job','Shipment') THEN '/jobs'
+                   WHEN ai.entity_type IN ('customer','Customer') THEN '/customers'
+                   WHEN ai.category = 'Maintenance' THEN '/maintenance'
+                   WHEN ai.category = 'Compliance' THEN '/compliance'
+                   WHEN ai.category = 'Safety' THEN '/safety'
+                   WHEN ai.category = 'Telematics' THEN '/iot-devices'
+                   ELSE '/alerts'
+                 END entityRoute,
+                 CASE
+                   WHEN ai.created_at >= NOW() - INTERVAL '1 hour' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 60))::INT, 'm')
+                   WHEN ai.created_at >= NOW() - INTERVAL '24 hours' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 3600))::INT, 'h')
+                   ELSE CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 86400))::INT, 'd')
+                 END age
+          FROM ai_insights ai
+          LEFT JOIN users ack
+            ON CAST(ack.id AS TEXT) = ai.acknowledged_by
+           AND ack.company_id = ai.company_id";
 
     private static async Task<IResult> AlertsSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        var denied = RequirePermission(http, "alerts:view");
+        if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var total       = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var critical    = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE severity='Critical' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
@@ -6880,7 +6976,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var row = await db.QuerySingleAsync(AlertsSql + " WHERE id=@id AND company_id=@cid LIMIT 1",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        return row is null ? Results.NotFound() : Results.Ok(ApiResponse<object>.Ok(row, "Alert detail"));
+        if (row is null) return Results.NotFound();
+
+        var tasks = await db.QueryAsync(
+            @"SELECT
+                aft.id,
+                aft.alert_id AS alert_id,
+                aft.title,
+                aft.description,
+                aft.priority,
+                aft.status,
+                aft.owner_name,
+                aft.due_at,
+                aft.closed_at,
+                aft.created_at,
+                aft.updated_at,
+                u.full_name AS assigned_to_name
+              FROM alert_follow_up_tasks aft
+              LEFT JOIN users u ON u.id = aft.assigned_to_user_id
+              WHERE aft.alert_id=@id
+                AND aft.company_id=@cid
+                AND aft.deleted_at IS NULL
+              ORDER BY aft.created_at DESC",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+
+        var auditTrail = await AuditTrail(db, "Alert", id, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { alert = row, tasks, auditTrail }, "Alert detail"));
     }
 
     private static async Task<IResult> AlertAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -6893,7 +7018,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         await db.ExecuteAsync(
             "UPDATE ai_insights SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@by WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@by", userId); }, ct);
-        await audit.LogAsync("alert.acknowledged", "Alert", id, ct: ct);
+        await audit.LogAsync(http, "alert.acknowledged", "Alert", id, JsonSerializer.Serialize(new { note }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Acknowledged", note }, "Alert acknowledged"));
     }
 
@@ -6906,7 +7031,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         await db.ExecuteAsync(
             "UPDATE ai_insights SET status='Closed', closed_at=NOW() WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        await audit.LogAsync("alert.closed", "Alert", id, ct: ct);
+        await audit.LogAsync(http, "alert.closed", "Alert", id, JsonSerializer.Serialize(new { resolution }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Closed", resolution }, "Alert closed"));
     }
 
@@ -6915,12 +7040,70 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "alerts:acknowledge");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
+        var alert = await db.QuerySingleAsync(
+            "SELECT id, title FROM ai_insights WHERE id=@id AND company_id=@cid LIMIT 1",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+        if (alert is null) return Results.NotFound(ApiResponse<object>.Fail("Alert not found"));
+
         var title = Get(body, "title")?.ToString() ?? "Follow-up task";
+        var description = Get(body, "description")?.ToString() ?? $"Created from alert #{id}";
+        var ownerName = Get(body, "owner")?.ToString() ?? "";
+        var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
         var taskId = await db.InsertAsync(
-            "INSERT INTO coaching_tasks (company_id, title, description, priority, status, created_at) VALUES (@cid, @title, @desc, 'High', 'Open', NOW())",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@title", title); c.Parameters.AddWithValue("@desc", $"Created from Alert #{id}"); }, ct);
-        await audit.LogAsync("alert.task.created", "Alert", id, ct: ct);
+            @"INSERT INTO alert_follow_up_tasks (
+                company_id, alert_id, title, description, priority, status,
+                assigned_to_user_id, created_by_user_id, owner_name, due_at, created_at, updated_at
+              )
+              VALUES (
+                @cid, @alertId, @title, @desc, COALESCE(@priority, 'High'), 'Open',
+                @assignedTo, @createdBy, NULLIF(@ownerName, ''), @dueAt, NOW(), NOW()
+              )",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@alertId", id);
+                c.Parameters.AddWithValue("@title", title);
+                c.Parameters.AddWithValue("@desc", description);
+                c.Parameters.AddWithValue("@priority", Get(body, "priority")?.ToString() ?? "High");
+                c.Parameters.AddWithValue("@assignedTo", Get(body, "assignedToUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@createdBy", userId > 0 ? userId : DBNull.Value);
+                c.Parameters.AddWithValue("@ownerName", ownerName);
+                c.Parameters.AddWithValue("@dueAt", Get(body, "dueAt") ?? DBNull.Value);
+            }, ct);
+        await audit.LogAsync(http, "alert.task.created", "Alert", id, JsonSerializer.Serialize(new { taskId, title }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { taskId, alertId = id, status = "Created", title }, "Task created"));
+    }
+
+    private static Task<IResult> AlertRulesList(HttpContext http, Database db, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "alerts:view");
+        if (denied is not null) return Task.FromResult(denied);
+
+        return OkRows(db,
+            @"SELECT
+                id,
+                COALESCE(rule_key, 'ALR-' || id::TEXT) AS ""ruleKey"",
+                COALESCE(NULLIF(rule_name, ''), 'Alert rule') AS name,
+                COALESCE(NULLIF(category, ''), NULLIF(module_name, ''), 'Operations') AS category,
+                COALESCE(threshold_text, '') AS threshold,
+                COALESCE(action_type, 'Create operational alert') AS action,
+                COALESCE(channels, 'In-App') AS channels,
+                COALESCE(priority, 'Medium') AS priority,
+                COALESCE(recipients, '') AS recipients,
+                COALESCE(status, 'Active') AS status,
+                COALESCE(triggered_today, 0) AS ""triggeredToday"",
+                last_triggered_at AS ""lastTriggered"",
+                updated_at AS ""updatedAt"",
+                created_at AS ""createdAt""
+              FROM alert_rules
+              WHERE COALESCE(company_id, tenant_id, 1) = @cid
+                AND deleted_at IS NULL
+              ORDER BY category, name",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
     // ── End Alerts ──────────────────────────────────────────────────────────────

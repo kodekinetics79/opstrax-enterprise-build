@@ -154,7 +154,8 @@ export default function App() {
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
         <Route path="/map-view" element={<RequirePermission permission="map:view"><LiveMapPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
-        <Route path="/fleet-utilization" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
+        <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
+        <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
 
         {/* ── Intelligence ── */}
         <Route path="/command-center" element={<RequirePermission permission="dashboard:view"><CommandCenterPage /></RequirePermission>} />
@@ -246,8 +247,9 @@ export default function App() {
         <Route path="/digital-forms"   element={<RequirePermission permission="safety:view"><DigitalFormsPage /></RequirePermission>} />
 
         {/* ── Fleet Ownership / Assignments ── */}
-        <Route path="/owners"      element={<RequirePermission permission="fleet:view"><FleetAssignmentsPage /></RequirePermission>} />
-        <Route path="/assignments" element={<RequirePermission permission="fleet:view"><FleetAssignmentsPage /></RequirePermission>} />
+        <Route path="/owners" element={<Navigate to="/assignments/owners" replace />} />
+        <Route path="/assignments" element={<Navigate to="/assignments/overview" replace />} />
+        <Route path="/assignments/*" element={<RequirePermission permission="fleet:view"><FleetAssignmentsPage /></RequirePermission>} />
 
         {/* ── Finance ── */}
         <Route path="/fuel-idling" element={<RequirePermission permission="fuel:view"><Batch5FinancePage kind="fuel" /></RequirePermission>} />
