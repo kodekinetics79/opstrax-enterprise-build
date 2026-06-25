@@ -156,7 +156,7 @@ export function VehiclesPage() {
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat icon={<Gauge />} label="Fleet readiness" value={`${readiness}%`} meter={readiness} accent="teal" />
+        <Stat icon={<Gauge />} label="Fleet readiness" value={`${readiness}%`} meter={readiness} />
         <Stat icon={<Boxes />} label="Available now" value={available} sub={`${rows.length ? Math.round((available / rows.length) * 100) : 0}% of fleet`} />
         <Stat icon={<ShieldAlert />} label="At risk" value={atRisk} tone={atRisk > 0 ? "rose" : "default"} sub="High risk or down" />
         <Stat icon={<Cpu />} label="Device / camera gaps" value={deviceEx} tone={deviceEx > 0 ? "amber" : "default"} sub="Telematics blind spots" />
@@ -275,7 +275,6 @@ function Stat({ icon, label, value, sub, meter, tone = "default" }:
         </div>
       ) : sub ? <p className="mt-2 text-xs text-slate-400">{sub}</p> : null}
       {meter != null && sub ? <p className="mt-2 text-xs text-slate-400">{sub}</p> : null}
-      {accent ? null : null}
     </div>
   );
 }

@@ -2128,7 +2128,7 @@ public static class EndpointMappings
         }));
     }
 
-    private static Task<IResult> Vehicles(Database db, CancellationToken ct)
+    private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
             @"SELECT v.*, d.full_name assigned_driver,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score,
@@ -2141,10 +2141,11 @@ public static class EndpointMappings
                           ELSE 'Keep in active rotation' END recommended_action
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
-              WHERE v.deleted_at IS NULL
-              ORDER BY v.vehicle_code", ct: ct);
+              WHERE v.deleted_at IS NULL AND v.company_id=@cid
+              ORDER BY v.vehicle_code",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
 
-    private static Task<IResult> Drivers(Database db, CancellationToken ct)
+    private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
             @"SELECT d.*, v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
@@ -2157,10 +2158,11 @@ public static class EndpointMappings
                           ELSE 'Ready for dispatch' END recommended_action
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
-              WHERE d.deleted_at IS NULL
-              ORDER BY d.full_name", ct: ct);
+              WHERE d.deleted_at IS NULL AND d.company_id=@cid
+              ORDER BY d.full_name",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
 
-    private static Task<IResult> Customers(Database db, CancellationToken ct)
+    private static Task<IResult> Customers(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
             @"SELECT c.*,
                      COUNT(j.id) active_jobs,
@@ -2173,9 +2175,10 @@ public static class EndpointMappings
                           ELSE 'Maintain SLA cadence' END recommended_action
               FROM customers c
               LEFT JOIN jobs j ON j.customer_id=c.id AND j.status NOT IN ('Completed','Delivered')
-              WHERE c.deleted_at IS NULL
+              WHERE c.deleted_at IS NULL AND c.company_id=@cid
               GROUP BY c.id
-              ORDER BY c.name", ct: ct);
+              ORDER BY c.name",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
 
     private static Task<IResult> Assets(Database db, CancellationToken ct)
         => OkRows(db,
@@ -2194,7 +2197,7 @@ public static class EndpointMappings
               WHERE a.deleted_at IS NULL
               ORDER BY a.asset_code", ct: ct);
 
-    private static async Task<IResult> VehicleSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> VehicleSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
@@ -2204,12 +2207,14 @@ public static class EndpointMappings
                      ROUND(AVG(data_quality_score),1) data_completeness_score,
                      ROUND(AVG(risk_score),1) average_risk_score,
                      SUM(CASE WHEN device_status <> 'Online' OR camera_status <> 'Online' THEN 1 ELSE 0 END) device_exceptions
-              FROM vehicles WHERE deleted_at IS NULL", ct: ct);
+              FROM vehicles WHERE deleted_at IS NULL AND company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static async Task<IResult> VehiclePlanningInsights(Database db, CancellationToken ct)
+    private static async Task<IResult> VehiclePlanningInsights(HttpContext http, Database db, CancellationToken ct)
     {
+        var cid = GetCompanyId(http);
         var replacementForecast = await db.QueryAsync(
             @"SELECT v.id, v.vehicle_code, v.type, v.make, v.model, v.year, v.odometer_miles, v.status,
                      v.readiness_score, v.data_quality_score, v.risk_score, v.device_status, v.camera_status,
@@ -2234,9 +2239,9 @@ public static class EndpointMappings
                        ELSE 'Keep in active rotation'
                      END recommended_action
               FROM vehicles v
-              WHERE v.deleted_at IS NULL
+              WHERE v.deleted_at IS NULL AND v.company_id=@cid
               ORDER BY capex_priority_score DESC, v.odometer_miles DESC
-              LIMIT 12", ct: ct);
+              LIMIT 12", c => c.Parameters.AddWithValue("@cid", cid), ct);
 
         var customerBusiness = await db.QueryAsync(
             @"SELECT c.id, c.customer_code, c.name customer_name, c.sla_tier, c.sla_health_score,
@@ -2253,10 +2258,10 @@ public static class EndpointMappings
                      END planning_signal
               FROM customers c
               LEFT JOIN jobs j ON j.customer_id=c.id AND j.deleted_at IS NULL
-              WHERE c.deleted_at IS NULL
+              WHERE c.deleted_at IS NULL AND c.company_id=@cid
               GROUP BY c.id
               ORDER BY COALESCE(SUM(j.revenue_estimate),0) DESC, COUNT(j.id) DESC
-              LIMIT 10", ct: ct);
+              LIMIT 10", c => c.Parameters.AddWithValue("@cid", cid), ct);
 
         var routeBusiness = await db.QueryAsync(
             @"SELECT r.id, COALESCE(r.route_code, CONCAT('ROUTE-', r.id)) route_code, COALESCE(r.route_name, r.name) route_name, r.region,
@@ -2273,28 +2278,30 @@ public static class EndpointMappings
                      END planning_signal
               FROM routes r
               LEFT JOIN jobs j ON j.route_id=r.id AND j.deleted_at IS NULL
-              WHERE r.deleted_at IS NULL
+              WHERE r.deleted_at IS NULL AND r.company_id=@cid
               GROUP BY r.id
               ORDER BY COALESCE(SUM(j.revenue_estimate),0) DESC, COUNT(j.id) DESC, r.efficiency_score DESC
-              LIMIT 10", ct: ct);
+              LIMIT 10", c => c.Parameters.AddWithValue("@cid", cid), ct);
 
         var operationalGaps = await db.QueryAsync(
             @"SELECT 'Downtime / unavailable dispatch' gap_name, COUNT(*) affected_records,
                      'Vehicles delayed, in maintenance, or carrying high risk before dispatch.' visibility
-              FROM vehicles WHERE deleted_at IS NULL AND (status IN ('Delayed','Maintenance') OR risk_score >= 55)
+              FROM vehicles WHERE deleted_at IS NULL AND company_id=@cid AND (status IN ('Delayed','Maintenance') OR risk_score >= 55)
               UNION ALL
               SELECT 'Device or camera blind spot', COUNT(*), 'Units where telematics or camera status is not online.'
-              FROM vehicles WHERE deleted_at IS NULL AND (device_status <> 'Online' OR camera_status <> 'Online')
+              FROM vehicles WHERE deleted_at IS NULL AND company_id=@cid AND (device_status <> 'Online' OR camera_status <> 'Online')
               UNION ALL
               SELECT 'Expiring vehicle documents', COUNT(*), 'Registration, inspection, insurance or other vehicle documents needing renewal.'
-              FROM vehicle_documents WHERE status IN ('Expiring Soon','Expired','Review') OR expiry_date <= CURRENT_DATE + 30 * INTERVAL '1 day'
+              FROM vehicle_documents vd
+              WHERE (vd.status IN ('Expiring Soon','Expired','Review') OR vd.expiry_date <= CURRENT_DATE + 30 * INTERVAL '1 day')
+                AND EXISTS (SELECT 1 FROM vehicles v WHERE v.id=vd.vehicle_id AND v.company_id=@cid)
               UNION ALL
               SELECT 'Cost leakage by vehicle', COUNT(*), 'Vehicles with fuel, maintenance, or margin pressure signals.'
               FROM vehicles v
-              WHERE v.deleted_at IS NULL AND (
+              WHERE v.deleted_at IS NULL AND v.company_id=@cid AND (
                 v.risk_score >= 55 OR
                 EXISTS (SELECT 1 FROM fuel_transactions ft WHERE ft.vehicle_id=v.id AND COALESCE(ft.total_cost,0) > 300)
-              )", ct: ct);
+              )", c => c.Parameters.AddWithValue("@cid", cid), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -2305,7 +2312,7 @@ public static class EndpointMappings
         }));
     }
 
-    private static async Task<IResult> DriverSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> DriverSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
@@ -2315,11 +2322,12 @@ public static class EndpointMappings
                      ROUND(AVG(compliance_score),1) data_completeness_score,
                      ROUND(AVG(safety_score),1) safety_score,
                      SUM(CASE WHEN compliance_score < 85 THEN 1 ELSE 0 END) compliance_exceptions
-              FROM drivers WHERE deleted_at IS NULL", ct: ct);
+              FROM drivers WHERE deleted_at IS NULL AND company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static async Task<IResult> CustomerSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> CustomerSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
@@ -2328,7 +2336,8 @@ public static class EndpointMappings
                      ROUND(AVG(sla_health_score),1) sla_health_score,
                      ROUND(AVG(delivery_experience_score),1) delivery_experience_score,
                      SUM(CASE WHEN sla_tier='Platinum' THEN 1 ELSE 0 END) platinum_accounts
-              FROM customers WHERE deleted_at IS NULL", ct: ct);
+              FROM customers WHERE deleted_at IS NULL AND company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
@@ -2345,13 +2354,13 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static async Task<IResult> VehicleDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> VehicleDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync(
             @"SELECT v.*, d.full_name assigned_driver,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score
-              FROM vehicles v LEFT JOIN drivers d ON d.id=v.assigned_driver_id WHERE v.id=@id AND v.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+              FROM vehicles v LEFT JOIN drivers d ON d.id=v.assigned_driver_id WHERE v.id=@id AND v.deleted_at IS NULL AND v.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -2368,13 +2377,13 @@ public static class EndpointMappings
         }));
     }
 
-    private static async Task<IResult> DriverDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> DriverDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync(
             @"SELECT d.*, v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score
-              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL AND d.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -2390,9 +2399,10 @@ public static class EndpointMappings
         }));
     }
 
-    private static async Task<IResult> CustomerDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> CustomerDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
-        var record = await db.QuerySingleAsync("SELECT * FROM customers WHERE id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct);
+        var record = await db.QuerySingleAsync("SELECT * FROM customers WHERE id=@id AND deleted_at IS NULL AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Customer not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -2563,7 +2573,7 @@ public static class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { stageMap, insights }));
     }
 
-    private static async Task<IResult> DispatchSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> DispatchSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var summary = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total, SUM(CASE WHEN status='Unassigned' THEN 1 ELSE 0 END) unassigned, SUM(CASE WHEN status='Assigned' THEN 1 ELSE 0 END) assigned,
@@ -2571,7 +2581,8 @@ public static class EndpointMappings
                      SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END) completed,
                      ROUND(AVG(100 - LEAST(risk_score, 95)),1) dispatch_readiness_score,
                      SUM(CASE WHEN sla_status='At Risk' THEN 1 ELSE 0 END) sla_watch, SUM(CASE WHEN customer_update_status <> 'Sent' THEN 1 ELSE 0 END) eta_action_queue
-              FROM jobs WHERE deleted_at IS NULL", ct: ct);
+              FROM jobs WHERE deleted_at IS NULL AND company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(summary ?? new Dictionary<string, object?>()));
     }
 
@@ -3010,7 +3021,7 @@ public static class EndpointMappings
         }, "Import preview generated")));
     }
 
-    private static Task<IResult> DispatchRecommendations(Database db, CancellationToken ct)
+    private static Task<IResult> DispatchRecommendations(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
             @"SELECT dr.*, j.job_code, COALESCE(j.job_number,j.job_code) job_number, c.name customer_name, d.full_name driver_name, v.vehicle_code
               FROM dispatch_recommendations dr
@@ -3018,7 +3029,9 @@ public static class EndpointMappings
               LEFT JOIN customers c ON c.id=j.customer_id
               LEFT JOIN drivers d ON d.id=dr.driver_id
               LEFT JOIN vehicles v ON v.id=dr.vehicle_id
-              ORDER BY dr.score DESC LIMIT 12", ct: ct);
+              WHERE dr.company_id=@cid
+              ORDER BY dr.score DESC LIMIT 12",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
 
     private static async Task<IResult> AvailableDrivers(HttpContext http, Database db, CancellationToken ct)
     {

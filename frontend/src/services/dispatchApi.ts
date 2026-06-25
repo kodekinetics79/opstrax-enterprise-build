@@ -1,17 +1,12 @@
 import { apiClient, unwrap } from "./apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { getDispatchBoardData, getDevelopmentAvailableDrivers, getDevelopmentAvailableVehicles } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
 
 export const dispatchApi = {
   // ── Board + Summary ───────────────────────────────────────────────────────
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/dispatch/summary")),
   board: () =>
-    withFallback(
-      unwrap<{ stageMap: Record<string, AnyRecord[]>; insights: AnyRecord[] }>(
-        apiClient.get("/api/dispatch/board")
-      ),
-      () => getDispatchBoardData() as { stageMap: Record<string, AnyRecord[]>; insights: AnyRecord[] },
+    unwrap<{ stageMap: Record<string, AnyRecord[]>; insights: AnyRecord[] }>(
+      apiClient.get("/api/dispatch/board")
     ),
 
   // ── Assignments ───────────────────────────────────────────────────────────
@@ -90,15 +85,9 @@ export const dispatchApi = {
 
   // ── Available pool ────────────────────────────────────────────────────────
   availableDrivers: () =>
-    withFallback(
-      unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/available-drivers")),
-      () => getDevelopmentAvailableDrivers() as AnyRecord[],
-    ),
+    unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/available-drivers")),
   availableVehicles: () =>
-    withFallback(
-      unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/available-vehicles")),
-      () => getDevelopmentAvailableVehicles() as AnyRecord[],
-    ),
+    unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/available-vehicles")),
   recommendations: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/recommendations")),
 

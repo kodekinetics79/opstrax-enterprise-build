@@ -1,5 +1,5 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getCustomerById, getCustomers, withFallback } from "@/services/fleetDomainApi";
+import { getCustomerById, getCustomers } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const customersApi = {
@@ -14,7 +14,8 @@ export const customersApi = {
   detail: (id: string | number) => getCustomerById(id),
   timeline: async (id: string | number) => [{ eventType: "account.update", title: "Customer record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review customer health", body: "Check renewal exposure, service issues and active job volume before escalating.", score: 83 }],
-  create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/customers", payload)), () => ({ ...payload, id: payload.id ?? `cus-${Date.now()}`, success: true })),
-  update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/customers/${id}`, payload)), () => ({ ...payload, id, success: true })),
-  remove: (id: string | number) => withFallback(unwrap<AnyRecord>(apiClient.delete(`/api/customers/${id}`)), () => ({ id, success: true })),
+  // Writes must be truthful — surface backend failures instead of faking success.
+  create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/customers", payload)),
+  update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/customers/${id}`, payload)),
+  remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/customers/${id}`)),
 };
