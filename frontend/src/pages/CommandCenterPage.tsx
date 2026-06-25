@@ -89,9 +89,9 @@ export function CommandCenterPage() {
   const postureTone = POSTURE[posture] ?? POSTURE.Stable;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* ── Command banner ─────────────────────────────────── */}
-      <header className="relative overflow-hidden rounded-[20px] px-6 py-5 shadow-lg"
+      <header className="relative overflow-hidden rounded-[20px] px-6 py-4 shadow-lg"
         style={{ background: "linear-gradient(120deg, #0b1220 0%, #111c2e 55%, #122a2a 100%)" }}>
         {/* hairline brand accent — restrained, no large color washes */}
         <span className="absolute inset-x-0 top-0 h-[2px]" style={{ background: "linear-gradient(90deg,#0d9488,#2563eb)" }} />
@@ -164,31 +164,30 @@ export function CommandCenterPage() {
             : "text-slate-500 bg-slate-50 border-slate-200";
           return (
             <button key={i} type="button" onClick={() => navigate(meta.route)}
-              className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+              className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
               <span className="absolute inset-x-0 top-0 h-1" style={{ background: meta.accent }} />
-              <div className="flex items-start justify-between">
-                <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${meta.ring}`}>
+              <div className="flex items-center justify-between">
+                <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${meta.ring}`}>
                   <Icon className={`h-4 w-4 ${meta.tint}`} />
                 </div>
                 {status && <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone}`}>{status}</span>}
               </div>
-              <p className="mt-3 text-3xl font-black leading-none tracking-tight text-slate-900">
+              <p className="mt-2 text-[26px] font-black leading-none tracking-tight text-slate-900">
                 {String(kpi.valueText ?? kpi.value ?? "—")}
               </p>
-              <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 {String(kpi.label ?? "")}
               </p>
-              <ArrowRight className="absolute bottom-3 right-3 h-3.5 w-3.5 text-slate-300 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
           );
         })}
       </div>
 
-      {/* ── Main: Exception queue | Fleet status + brief ───── */}
-      <div className="grid gap-5 xl:grid-cols-[1.55fr_1fr]">
-        {/* Exception queue */}
-        <section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3.5">
+      {/* ── Main: Exception queue | Fleet+Brief | Priority actions ── */}
+      <div className="grid items-stretch gap-4 xl:grid-cols-[1.5fr_1.05fr_1fr]">
+        {/* Exception queue (internal scroll, never pushes the page) */}
+        <section className="flex max-h-[460px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50">
               <AlertOctagon className="h-4 w-4 text-red-500" />
             </span>
@@ -197,8 +196,8 @@ export function CommandCenterPage() {
               <p className="text-[11px] text-slate-400">Prioritized by severity · act top-down</p>
             </div>
             <div className="ml-auto flex items-center gap-1.5">
-              {critCount > 0 && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">{critCount} Critical</span>}
-              {warnCount > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">{warnCount} Warning</span>}
+              {critCount > 0 && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">{critCount} Crit</span>}
+              {warnCount > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">{warnCount} Warn</span>}
               <button type="button" onClick={() => navigate("/alerts")} className="ml-1 inline-flex items-center gap-0.5 text-[11px] font-bold text-teal-600 hover:underline">
                 All <ArrowRight className="h-3 w-3" />
               </button>
@@ -206,35 +205,35 @@ export function CommandCenterPage() {
           </div>
 
           {exceptions.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-14">
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12">
               <CheckCircle2 className="h-9 w-9 text-emerald-400" />
               <p className="text-sm font-bold text-slate-600">No active exceptions</p>
               <p className="text-xs text-slate-400">Every monitored signal is within tolerance.</p>
             </div>
           ) : (
-            <ul className="divide-y divide-slate-50">
-              {exceptions.slice(0, 8).map((exc, i) => {
+            <ul className="flex-1 divide-y divide-slate-50 overflow-y-auto">
+              {exceptions.slice(0, 12).map((exc, i) => {
                 const sev = String(exc.severity ?? "Info");
                 const cfg = SEV[sev] ?? SEV.Info;
                 const Icon = cfg.icon;
                 const entity = [String(exc.vehicle ?? ""), String(exc.driver ?? "")].filter(Boolean).join(" · ");
                 return (
-                  <li key={i} className="group relative flex items-center gap-3 px-5 py-3 transition hover:bg-slate-50/70">
+                  <li key={i} className="group relative flex items-center gap-2.5 px-4 py-2.5 transition hover:bg-slate-50/70">
                     <span className="absolute left-0 top-0 h-full w-[3px]" style={{ background: cfg.dot }} />
-                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${cfg.ring}`} style={{ background: `${cfg.dot}14` }}>
-                      <Icon className="h-4 w-4" style={{ color: cfg.dot }} />
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cfg.dot}14` }}>
+                      <Icon className="h-3.5 w-3.5" style={{ color: cfg.dot }} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold text-slate-900">{String(exc.event ?? exc.title ?? "Exception")}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[13px] font-bold text-slate-900">{String(exc.event ?? exc.title ?? "Exception")}</span>
                         <span className={`shrink-0 rounded-full border px-1.5 py-px text-[9px] font-bold uppercase ${cfg.chip}`}>{sev}</span>
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                      <p className="truncate text-[11px] text-slate-500">
                         {entity || "Unassigned"}<span className="text-slate-300"> · </span>{String(exc.timestamp ?? exc.time ?? "")}
                       </p>
                     </div>
                     <button type="button" onClick={() => navigate(String(exc.actionRoute ?? "/alerts"))}
-                      className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700">
+                      className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700">
                       {String(exc.actionLabel ?? "View")}
                     </button>
                   </li>
@@ -244,35 +243,34 @@ export function CommandCenterPage() {
           )}
         </section>
 
-        {/* Fleet status + brief */}
-        <div className="flex flex-col gap-5">
-          {/* Fleet status donut */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Fleet status donut + Operations brief */}
+        <div className="flex flex-col gap-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <p className="section-title flex items-center gap-1.5 text-slate-500"><Truck className="h-3.5 w-3.5" /> Fleet Status</p>
               <span className="text-[11px] font-bold text-slate-400">{fleetTotal} units</span>
             </div>
-            <div className="mt-2 flex items-center gap-4">
-              <div className="relative h-[120px] w-[120px] shrink-0">
+            <div className="mt-1 flex items-center gap-3">
+              <div className="relative h-[104px] w-[104px] shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={donut} dataKey="value" innerRadius={42} outerRadius={56} paddingAngle={2} stroke="none">
+                    <Pie data={donut} dataKey="value" innerRadius={36} outerRadius={50} paddingAngle={2} stroke="none">
                       {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Pie>
                     <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-2xl font-black leading-none text-slate-900">{readinessPct}%</span>
+                  <span className="text-xl font-black leading-none text-slate-900">{readinessPct}%</span>
                   <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">ready</span>
                 </div>
               </div>
-              <div className="grid flex-1 grid-cols-2 gap-2">
+              <div className="grid flex-1 grid-cols-2 gap-1.5">
                 {FLEET_CFG.map(f => {
                   const c = Number(fleetStatus[f.key] ?? 0);
                   return (
                     <button key={f.key} type="button" onClick={() => navigate(f.route)}
-                      className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-1.5 text-left transition hover:border-slate-300">
+                      className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-left transition hover:border-slate-300">
                       <span className="h-2 w-2 rounded-full" style={{ background: f.color }} />
                       <div className="min-w-0">
                         <p className="text-base font-black leading-none text-slate-900">{c}</p>
@@ -285,12 +283,11 @@ export function CommandCenterPage() {
             </div>
           </section>
 
-          {/* AI operations brief */}
-          <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="section-title flex items-center gap-1.5 text-teal-600"><Sparkles className="h-3.5 w-3.5" /> Operations Brief</p>
-            <ul className="mt-3 space-y-2.5">
+            <ul className="mt-2.5 space-y-2">
               {(briefItems.length ? briefItems : ["Fleet operating within normal parameters."]).slice(0, 5).map((item, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-[13px] leading-snug text-slate-600">
+                <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug text-slate-600">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-br from-teal-400 to-blue-500" />
                   {item}
                 </li>
@@ -298,34 +295,31 @@ export function CommandCenterPage() {
             </ul>
           </section>
         </div>
-      </div>
 
-      {/* ── Priority actions + trends ──────────────────────── */}
-      <div className="grid gap-5 xl:grid-cols-[1fr_1.6fr]">
         {/* Priority actions */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="section-title flex items-center gap-1.5 text-rose-600"><Wrench className="h-3.5 w-3.5" /> Priority Actions</p>
-          <div className="mt-3 space-y-2">
+          <div className="mt-2.5 space-y-2">
             {priorityActions.slice(0, 4).map((a, i) => (
               <button key={i} type="button" onClick={() => navigate(String(a.entityRoute ?? a.route ?? "/alerts"))}
-                className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3.5 py-2.5 text-left transition hover:border-teal-300 hover:bg-teal-50/50">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-black text-slate-400 ring-1 ring-slate-200">{i + 1}</span>
+                className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50/50">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-[11px] font-black text-slate-400 ring-1 ring-slate-200">{i + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-bold text-slate-900">{String(a.title ?? "Action")}</p>
-                  {a.detail ? <p className="truncate text-[11px] text-slate-500">{String(a.detail)}</p> : null}
+                  <p className="truncate text-[12.5px] font-bold text-slate-900">{String(a.title ?? "Action")}</p>
+                  {a.detail ? <p className="truncate text-[10.5px] text-slate-500">{String(a.detail)}</p> : null}
                 </div>
                 <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
               </button>
             ))}
           </div>
         </section>
+      </div>
 
-        {/* Trends */}
-        <div className="grid gap-4 sm:grid-cols-3">
-          <TrendCard title="Throughput" unit="jobs · this week" color="#0d9488" type="bar"  agg="sum"  data={weeklyJobs} />
-          <TrendCard title="Cost Leakage" unit="spend · this week" color="#f59e0b" type="area" agg="sum"  data={costData} prefix="$" />
-          <TrendCard title="Safety Score" unit="fleet composite" color="#6366f1" type="area" agg="last" data={safetyTrend} />
-        </div>
+      {/* ── Trends strip ───────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <TrendCard title="Throughput" unit="jobs · this week" color="#0d9488" type="bar"  agg="sum"  data={weeklyJobs} />
+        <TrendCard title="Cost Leakage" unit="spend · this week" color="#f59e0b" type="area" agg="sum"  data={costData} prefix="$" />
+        <TrendCard title="Safety Score" unit="fleet composite" color="#6366f1" type="area" agg="last" data={safetyTrend} />
       </div>
     </div>
   );
