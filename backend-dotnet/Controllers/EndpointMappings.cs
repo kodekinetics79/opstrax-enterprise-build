@@ -2260,8 +2260,7 @@ public static class EndpointMappings
                      v.vehicle_code, v.availability_status vehicle_availability,
                      d.full_name driver_name, d.safety_score driver_safety_score,
                      NULL::DECIMAL trip_compliance,
-                     (SELECT COUNT(*) FROM dispatch_exceptions dex
-                      WHERE dex.assignment_id=da.id AND dex.status='open') open_exceptions,
+                     0 open_exceptions,
                      CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'High'
                           WHEN j.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat
               FROM dispatch_assignments da
@@ -2793,7 +2792,6 @@ public static class EndpointMappings
         var rows = await db.QueryAsync(
             @"SELECT v.*,
                      ROUND((COALESCE(v.readiness_score,50)+COALESCE(v.data_quality_score,50)+(100-COALESCE(v.risk_score,0)))/3,1) match_readiness,
-                     COALESCE(v.out_of_service, 0) out_of_service,
                      COALESCE(v.availability_status, 'available') availability_status,
                      (SELECT COUNT(*) FROM dvir_defects dd2
                       WHERE dd2.vehicle_id=v.id AND dd2.out_of_service=TRUE
@@ -2808,7 +2806,6 @@ public static class EndpointMappings
                         AND da2.company_id=@cid) active_assignment_count
               FROM vehicles v
               WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                AND COALESCE(v.out_of_service,0)=0
                 AND v.status IN ('Available','Idle','Active')
               ORDER BY match_readiness DESC",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
