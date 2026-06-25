@@ -362,20 +362,18 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         }
       />
 
-      {isFleetMaster ? (
-        <FleetPainPointCockpit
-          kind={kind}
-          config={cfg}
-          rows={rows}
-          summary={visibleSummary}
-        />
-      ) : null}
-
       {kind === "drivers" ? (
         <DriverIntelligenceBoard
           rows={scopedRows}
           activeTriage={triageFilter}
           onTriageSelect={(triage) => setTriageFilter((current) => (current === triage ? null : triage))}
+        />
+      ) : isFleetMaster ? (
+        <FleetPainPointCockpit
+          kind={kind}
+          config={cfg}
+          rows={rows}
+          summary={visibleSummary}
         />
       ) : null}
 
