@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText, Plus, Save, Search, Sparkles, Target, Trash2, UserCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
@@ -344,6 +344,19 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         actions={
           <>
             {cfg.api.create ? <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ ...cfg.defaults }); } }}><Plus className="h-4 w-4" /> Create</button> : null}
+            {cfg.api.create ? (
+              <BulkImportControls
+                kind={kind}
+                fields={cfg.fields}
+                defaults={cfg.defaults}
+                create={cfg.api.create}
+                canImport={canCreate}
+                onImported={() => {
+                  queryClient.invalidateQueries({ queryKey: [kind] });
+                  queryClient.invalidateQueries({ queryKey: [kind, "summary"] });
+                }}
+              />
+            ) : null}
             <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportCsv(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
           </>
         }
@@ -437,6 +450,162 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         />
       ) : null}
     </div>
+  );
+}
+
+/* ============================================================
+   CSV BULK IMPORT (template download + upload → bulk create)
+   ============================================================ */
+function csvCell(value: unknown): string {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function triggerCsvDownload(content: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+  a.download = filename;
+  a.click();
+}
+
+// RFC-4180-ish parser: handles quoted fields, escaped quotes ("") and commas/newlines inside quotes.
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+      continue;
+    }
+    if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (ch !== "\r") field += ch;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+}
+
+function BulkImportControls({ kind, fields, defaults, create, canImport, onImported }: {
+  kind: EntityKind;
+  fields: Field[];
+  defaults: AnyRecord;
+  create: (payload: AnyRecord) => Promise<AnyRecord>;
+  canImport: boolean;
+  onImported: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; failed: number; errors: string[] } | null>(null);
+
+  function downloadTemplate() {
+    const headers = fields.map((f) => f.key);
+    // One illustrative EXAMPLE row — the importer skips any row marked "EXAMPLE-".
+    const example = fields.map((f) => {
+      if (f.type === "select" && f.options?.length) return f.options[0];
+      if (defaults[f.key] != null && defaults[f.key] !== "") return String(defaults[f.key]);
+      if (f.type === "number") return "0";
+      if (f.type === "email") return "name@example.com";
+      return f.required ? `EXAMPLE-${f.label.replace(/\s+/g, "")}` : "";
+    });
+    const csv = [headers.join(","), example.map(csvCell).join(",")].join("\n");
+    triggerCsvDownload(csv, `${kind}_import_template.csv`);
+  }
+
+  async function handleFile(file: File) {
+    setBusy(true);
+    setResult(null);
+    try {
+      const grid = parseCsv(await file.text());
+      if (grid.length < 2) {
+        setResult({ created: 0, failed: 0, errors: ["No data rows found in the file."] });
+        return;
+      }
+      const headers = grid[0].map((h) => h.trim());
+      const keyByColumn = headers.map((h) => {
+        const match = fields.find((f) => f.key.toLowerCase() === h.toLowerCase() || f.label.toLowerCase() === h.toLowerCase());
+        return match?.key ?? null;
+      });
+      const dataRows = grid.slice(1).filter((cells) =>
+        !cells.every((c) => c.trim() === "") &&
+        !cells.some((c) => c.trim().toUpperCase().startsWith("EXAMPLE-")) // skip the template's sample row
+      );
+      if (!dataRows.length) {
+        setResult({ created: 0, failed: 0, errors: ["No data rows to import — replace the EXAMPLE row in the template with your own records."] });
+        return;
+      }
+
+      let created = 0;
+      const errors: string[] = [];
+      setProgress({ done: 0, total: dataRows.length });
+      for (let r = 0; r < dataRows.length; r++) {
+        const cells = dataRows[r];
+        const payload: AnyRecord = { ...defaults };
+        keyByColumn.forEach((key, c) => {
+          if (!key) return;
+          const raw = (cells[c] ?? "").trim();
+          if (raw === "") return;
+          const field = fields.find((f) => f.key === key);
+          payload[key] = field?.type === "number" ? Number(raw) : raw;
+        });
+        const missing = fields.filter((f) => f.required && String(payload[f.key] ?? "").trim() === "").map((f) => f.label);
+        if (missing.length) {
+          errors.push(`Row ${r + 2}: missing ${missing.join(", ")}`);
+        } else {
+          try { await create(payload); created++; }
+          catch (e) { errors.push(`Row ${r + 2}: ${e instanceof Error ? e.message : "create failed"}`); }
+        }
+        setProgress({ done: r + 1, total: dataRows.length });
+      }
+      setProgress(null);
+      if (created > 0) onImported();
+      setResult({ created, failed: errors.length, errors: errors.slice(0, 12) });
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="btn-ghost" onClick={downloadTemplate} title="Download a CSV template with the correct columns"><FileDown className="h-4 w-4" /> Template</button>
+      <button
+        type="button"
+        className="btn-ghost"
+        disabled={!canImport || busy}
+        title={!canImport ? "You do not have permission to perform this action." : "Bulk-create records from a CSV file"}
+        onClick={() => { if (canImport && !busy) inputRef.current?.click(); }}
+      >
+        <Upload className="h-4 w-4" /> {busy ? (progress ? `Importing ${progress.done}/${progress.total}` : "Importing…") : "Import CSV"}
+      </button>
+      <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" aria-label={`Import ${kind} from CSV`} title={`Import ${kind} from CSV`} onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+
+      {result ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setResult(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-slate-900">Import complete</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              <span className="font-bold text-teal-600">{result.created}</span> created
+              {" · "}
+              <span className={`font-bold ${result.failed ? "text-red-600" : "text-slate-400"}`}>{result.failed}</span> skipped/failed
+            </p>
+            {result.errors.length ? (
+              <ul className="mt-3 max-h-48 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                {result.errors.map((er, i) => <li key={i}>• {er}</li>)}
+              </ul>
+            ) : null}
+            <div className="mt-5 flex justify-end"><button type="button" className="btn-primary" onClick={() => setResult(null)}>Done</button></div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

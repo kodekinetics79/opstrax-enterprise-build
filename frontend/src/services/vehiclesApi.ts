@@ -1,5 +1,5 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getVehicleById, getVehicles, withFallback } from "@/services/fleetDomainApi";
+import { getVehicleById, getVehicles } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const vehiclesApi = {
@@ -62,9 +62,10 @@ export const vehiclesApi = {
   detail: (id: string | number) => getVehicleById(id),
   timeline: async (id: string | number) => [{ eventType: "status.update", title: "Vehicle record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review vehicle readiness", body: "Maintain service cadence and dispatch device health before assigning the next load.", score: 86 }],
-  create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)), () => ({ ...payload, id: payload.id ?? `veh-${Date.now()}`, success: true })),
-  update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)), () => ({ ...payload, id, success: true })),
-  remove: (id: string | number) => withFallback(unwrap<AnyRecord>(apiClient.delete(`/api/vehicles/${id}`)), () => ({ id, success: true })),
-  assignDriver: (id: string | number, driverId: string | number) => withFallback(unwrap<AnyRecord>(apiClient.post(`/api/vehicles/${id}/assign-driver`, { driverId })), () => ({ id, driverId, success: true })),
-  changeStatus: (id: string | number, status: string) => withFallback(unwrap<AnyRecord>(apiClient.post(`/api/vehicles/${id}/change-status`, { status })), () => ({ id, status, success: true })),
+  // Writes must be truthful — surface backend failures instead of faking success.
+  create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)),
+  update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)),
+  remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/vehicles/${id}`)),
+  assignDriver: (id: string | number, driverId: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/vehicles/${id}/assign-driver`, { driverId })),
+  changeStatus: (id: string | number, status: string) => unwrap<AnyRecord>(apiClient.post(`/api/vehicles/${id}/change-status`, { status })),
 };
