@@ -132,7 +132,7 @@ public sealed class SafetyBackgroundService(
                         c.Parameters.AddWithValue("@impact", scoreImpact);
                         c.Parameters.AddWithValue("@evTime", alert["createdAt"] ?? (object)DBNull.Value);
                         c.Parameters.AddWithValue("@hash",   evHash);
-                        c.Parameters.AddWithValue("@meta",   meta);
+                        c.Parameters.Add(new NpgsqlParameter("@meta", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = meta });
                     }, ct);
 
                 logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);

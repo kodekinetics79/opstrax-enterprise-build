@@ -1,11 +1,39 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { AlertCircle, ArrowRight, ChevronDown } from "lucide-react";
+import axios from "axios";
+import { AlertCircle, ArrowRight } from "lucide-react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
-import { demoUsers } from "@/auth/demoUsers";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
+
+function getLoginErrorMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    return "We could not complete sign-in. Please try again.";
+  }
+
+  if (error.code === "ECONNABORTED") {
+    return "OpsTrax is taking too long to respond. The backend may be waking up, so please try again in a few seconds.";
+  }
+
+  const status = error.response?.status;
+  if (status === 401) {
+    return "The email or password was not recognized. Please verify your credentials and try again.";
+  }
+  if (status === 403) {
+    return "Security verification did not complete. Refresh the page and try signing in again.";
+  }
+  if (status === 429) {
+    return "Too many sign-in attempts were detected. Wait a moment, then try again.";
+  }
+  if (!error.response) {
+    return "We could not reach the OpsTrax API. Check the connection or retry once the service is fully awake.";
+  }
+
+  return String(error.response?.data?.message ?? "We could not complete sign-in. Please try again.");
+}
 
 /* ── Telemetry particle canvas ──────────────────────────────────────────── */
 function TelemetryCanvas() {
@@ -275,11 +303,6 @@ const metrics = [
   { value: "3",   label: "open exceptions" },
 ];
 
-/* ── Demo accounts ──────────────────────────────────────────────────────── */
-const demoRoles = demoUsers.filter((u) =>
-  ["fleet_manager", "dispatcher", "safety_manager", "super_admin", "tenant_admin", "maintenance_manager"].includes(u.roleKey)
-);
-
 /* ── Main component ─────────────────────────────────────────────────────── */
 export function LoginPage() {
   const { setSession } = useAuth();
@@ -287,15 +310,21 @@ export function LoginPage() {
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
-  const [showDemo, setShowDemo]     = useState(false);
 
   const login = useMutation({
-    mutationFn: ({ email: e, password: p }: { email: string; password: string }) => authApi.login(e, p),
-    onSuccess: (session) => { setSession(session); navigate("/command-center", { replace: true }); },
+    mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
+      await authApi.bootstrap();
+      return authApi.login(e, p);
+    },
+    onSuccess: (session) => {
+      flushSync(() => {
+        setSession(session);
+      });
+      navigate(getLandingRouteForSession(session), { replace: true });
+    },
   });
 
   const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
-  const signInAs = (u: (typeof demoUsers)[0]) => login.mutate({ email: u.email, password: u.password });
 
   return (
     <div className="flex min-h-screen">
@@ -394,7 +423,7 @@ export function LoginPage() {
           {login.isError && (
             <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              Invalid email or password. Try a demo account below.
+              {getLoginErrorMessage(login.error)}
             </div>
           )}
 
@@ -426,27 +455,6 @@ export function LoginPage() {
                 : <>Sign in <ArrowRight className="h-4 w-4" /></>}
             </button>
           </form>
-
-          {/* Demo accounts */}
-          <div className="mt-8 border-t border-slate-100 pt-6">
-            <button type="button" onClick={() => setShowDemo((v) => !v)}
-              className="flex w-full items-center justify-between text-sm text-slate-500 transition hover:text-slate-700">
-              <span>Try a demo account</span>
-              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${showDemo ? "rotate-180" : ""}`} />
-            </button>
-
-            {showDemo && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {demoRoles.map((user) => (
-                  <button key={user.email} type="button" onClick={() => signInAs(user)} disabled={login.isPending}
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50">
-                    <p className="text-xs font-semibold leading-snug text-slate-800">{user.roleLabel}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{user.email.split("@")[0]}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Footer */}
           <div className="mt-8 space-y-1.5 text-center">

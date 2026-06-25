@@ -18,11 +18,8 @@ type ComplianceFallbackPayload = {
 };
 
 async function withFallback<T>(request: Promise<T>, fallback: () => MaybePromise<T>): Promise<T> {
-  try {
-    return await request;
-  } catch {
-    return fallback();
-  }
+  void fallback;
+  return await request;
 }
 
 const complianceFallback = async (): Promise<ComplianceFallbackPayload> => {

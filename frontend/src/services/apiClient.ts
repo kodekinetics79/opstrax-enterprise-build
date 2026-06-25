@@ -7,9 +7,17 @@ export const API_BASE_URL =
   import.meta.env.VITE_DOTNET_API_URL ||
   "http://localhost:8088";
 
+// Optional realtime/integrations side-service. Only default to the local dev port
+// when actually running on localhost — in production an unset VITE_NODE_EVENTS_URL
+// resolves to "" (feature disabled) instead of hammering http://localhost:8090,
+// which would otherwise spam failed requests and infinite EventSource retries.
+const isLocalhost =
+  typeof window !== "undefined" &&
+  /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
 export const NODE_EVENTS_URL =
   import.meta.env.VITE_NODE_EVENTS_URL ||
-  "http://localhost:8090";
+  (isLocalhost ? "http://localhost:8090" : "");
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -28,6 +36,10 @@ apiClient.interceptors.request.use((config) => {
       const inner = parsed.session ?? parsed;
       if (inner.token) {
         config.headers.Authorization = `Bearer ${inner.token}`;
+      }
+      const tenantId = inner.company?.id ?? inner.company?.companyId ?? inner.user?.companyId ?? inner.user?.company_id;
+      if (tenantId) {
+        config.headers["X-Opstrax-Tenant-Id"] = String(tenantId);
       }
       if (inner.csrfToken) {
         setGlobalCsrfToken(inner.csrfToken);
@@ -57,14 +69,19 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     if (error?.response?.status === 401) {
-      const hadSession = !!(localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session"));
-      localStorage.removeItem("opstrax.session.v2");
-      localStorage.removeItem("opstrax.session");
-      if (hadSession) {
-        window.alert("Your session has expired or is invalid. Please sign in again.");
-      }
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login";
+      const url = (error.config?.url ?? "") as string;
+      // Telemetry endpoints use short-lived stream tickets and a separate auth path.
+      // A 401 there means the ticket expired or was never issued — not that the main
+      // session is invalid. Let the caller handle it gracefully instead of nuking the session.
+      // Telemetry and platform endpoints self-authenticate; a 401 from them never
+      // means the tenant session is invalid, so don't clear it.
+      const skipLogout = url.includes("/api/telemetry/") || url.includes("/api/platform/");
+      if (!skipLogout) {
+        localStorage.removeItem("opstrax.session.v2");
+        localStorage.removeItem("opstrax.session");
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
       }
     }
     return Promise.reject(error);
@@ -76,3 +93,29 @@ export async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Pro
   if (!response.data.success) throw new Error(response.data.message || "API request failed");
   return response.data.data;
 }
+
+// ── Node.js microservice client ───────────────────────────────────────────────
+// Used for modules served by the Node.js event/integration backend (NODE_EVENTS_URL).
+// Auth is tenant-scoped via X-Opstrax-Tenant-Id header; no JWT check on this service.
+export const nodeApiClient = axios.create({
+  baseURL: NODE_EVENTS_URL,
+  headers: { Accept: "application/json" },
+  timeout: 15000,
+});
+
+nodeApiClient.interceptors.request.use((config) => {
+  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
+  if (session) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const p = JSON.parse(session) as any;
+      const inner = p.session ?? p;
+      if (inner.token) {
+        config.headers.Authorization = `Bearer ${inner.token}`;
+      }
+      const tid = inner?.company?.id ?? inner?.company?.companyId ?? inner?.user?.companyId ?? inner?.user?.company_id;
+      if (tid) config.headers["X-Opstrax-Tenant-Id"] = String(tid);
+    } catch { /* ignore */ }
+  }
+  return config;
+});

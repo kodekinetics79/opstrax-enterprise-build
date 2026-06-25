@@ -1,9 +1,10 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText, Plus, Save, Search, Sparkles, Target, Trash2, UserCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
@@ -20,7 +21,7 @@ type Field = {
   key: string;
   label: string;
   required?: boolean;
-  type?: "text" | "number" | "select";
+  type?: "text" | "number" | "select" | "email";
   options?: string[];
 };
 
@@ -63,6 +64,7 @@ const config: Record<EntityKind, EntityConfig> = {
       { key: "make", label: "Make" },
       { key: "model", label: "Model" },
       { key: "year", label: "Year", type: "number" },
+      { key: "odometerMiles", label: "Odometer (mi)", type: "number" },
       { key: "vin", label: "VIN" },
       { key: "plateNumber", label: "Plate Number" },
       { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
@@ -97,7 +99,7 @@ const config: Record<EntityKind, EntityConfig> = {
       { key: "driverCode", label: "Driver Code", required: true },
       { key: "fullName", label: "Full Name", required: true },
       { key: "phone", label: "Phone" },
-      { key: "email", label: "Email" },
+      { key: "email", label: "Email", type: "email" },
       { key: "licenseNumber", label: "License Number" },
       { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Suspended"] },
     ],
@@ -131,7 +133,7 @@ const config: Record<EntityKind, EntityConfig> = {
       { key: "customerCode", label: "Customer Code", required: true },
       { key: "name", label: "Customer Name", required: true },
       { key: "contactName", label: "Primary Contact" },
-      { key: "email", label: "Email" },
+      { key: "email", label: "Email", type: "email" },
       { key: "phone", label: "Phone" },
       { key: "billingAddress", label: "Billing Address" },
       { key: "shippingAddress", label: "Shipping Address" },
@@ -199,8 +201,17 @@ const config: Record<EntityKind, EntityConfig> = {
     description: "Customer jobs with pickup/drop-off, SLA/ETA, dispatch assignment, proof of delivery, communications and AI recommendations.",
     columns: ["jobCode", "customerName", "jobType", "pickupAddress", "dropoffAddress", "status", "priority", "vehicleCode", "driverName"],
     api: jobsApi,
-    fields: [],
-    defaults: {},
+    fields: [
+      { key: "jobCode", label: "Job Code", required: true },
+      { key: "customerId", label: "Customer ID", type: "number" },
+      { key: "jobType", label: "Job Type", type: "select", options: ["Delivery", "Pickup", "Transfer", "Service", "Expedited"] },
+      { key: "priority", label: "Priority", type: "select", options: ["Low", "Normal", "High", "Critical"] },
+      { key: "pickupAddress", label: "Pickup Address", required: true },
+      { key: "dropoffAddress", label: "Drop-off Address", required: true },
+      { key: "status", label: "Status", type: "select", options: ["Unassigned", "Assigned", "En Route", "At Stop", "Delivered", "Cancelled"] },
+      { key: "notes", label: "Notes" },
+    ],
+    defaults: { jobType: "Delivery", priority: "Normal", status: "Unassigned", customerId: 1 },
     kpis: [["Total Records", "total", ""], ["Active", "active", ""], ["At Risk", "atRisk", ""], ["Signals", "aiSignals", ""]],
     wow: [],
     painPoints: [],
@@ -213,6 +224,7 @@ const config: Record<EntityKind, EntityConfig> = {
 export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [statusFilter, setStatusFilter] = useState("All");
+  const [triageFilter, setTriageFilter] = useState<Triage | null>(null);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -290,6 +302,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [kind] });
+      await queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       if (selectedRecord?.id) await queryClient.invalidateQueries({ queryKey: [kind, "detail", selectedRecord.id] });
     },
   });
@@ -298,17 +312,19 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     const source = scopedRows;
     return source.filter((row) => {
       const qLower = search.toLowerCase();
-      const matchesStatus = statusFilter === "All" || 
-        String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) || 
+      const matchesStatus = statusFilter === "All" ||
+        String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) ||
         (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
 
-      const matchesSearch = !search.trim() || 
+      const matchesSearch = !search.trim() ||
         String(row.vehicleCode || row.driverCode || row.assetCode || row.customerCode || "").toLowerCase().includes(qLower) ||
         String(row.fullName || row.name || row.plateNumber || "").toLowerCase().includes(qLower);
 
-      return matchesStatus && matchesSearch;
+      const matchesTriage = kind !== "drivers" || !triageFilter || triageOf(row) === triageFilter;
+
+      return matchesStatus && matchesSearch && matchesTriage;
     });
-  }, [scopedRows, search, statusFilter]);
+  }, [scopedRows, search, statusFilter, triageFilter, kind]);
 
   useEffect(() => {
     if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
@@ -328,12 +344,31 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         actions={
           <>
             {cfg.api.create ? <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ ...cfg.defaults }); } }}><Plus className="h-4 w-4" /> Create</button> : null}
+            {cfg.api.create ? (
+              <BulkImportControls
+                kind={kind}
+                fields={cfg.fields}
+                defaults={cfg.defaults}
+                create={cfg.api.create}
+                canImport={canCreate}
+                onImported={() => {
+                  queryClient.invalidateQueries({ queryKey: [kind] });
+                  queryClient.invalidateQueries({ queryKey: [kind, "summary"] });
+                }}
+              />
+            ) : null}
             <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportCsv(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
           </>
         }
       />
 
-      {isFleetMaster ? (
+      {kind === "drivers" ? (
+        <DriverIntelligenceBoard
+          rows={scopedRows}
+          activeTriage={triageFilter}
+          onTriageSelect={(triage) => setTriageFilter((current) => (current === triage ? null : triage))}
+        />
+      ) : isFleetMaster ? (
         <FleetPainPointCockpit
           kind={kind}
           config={cfg}
@@ -355,7 +390,12 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {kind === "drivers" && triageFilter ? (
+            <button className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700" onClick={() => setTriageFilter(null)}>
+              Triage: {triageFilter} <X className="h-3 w-3" />
+            </button>
+          ) : null}
           {["All", "Active", "Available", "At Risk", "Maintenance"].map((item) => (
             <button key={item} className={statusFilter === item ? "btn-primary" : "btn-ghost"} onClick={() => setStatusFilter(item)}>{item}</button>
           ))}
@@ -365,12 +405,14 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
           {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
         <div className="space-y-4">
-          <div className="panel p-5">
-            <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
+          {kind !== "drivers" ? (
+            <div className="panel p-5">
+              <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
+              </div>
             </div>
-          </div>
+          ) : null}
           {isFleetMaster ? <RiskActionQueue kind={kind} rows={rows} /> : null}
           {(recommendations.length ? recommendations : [{ title: "Select a record", body: "Open a row to inspect detail evidence, timeline, recommendations, documents, assignments and audit trail." }]).slice(0, 3).map((item, i) => (
             <AiInsightCard key={String(item.id || i)} insight={item} />
@@ -406,6 +448,162 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         />
       ) : null}
     </div>
+  );
+}
+
+/* ============================================================
+   CSV BULK IMPORT (template download + upload → bulk create)
+   ============================================================ */
+function csvCell(value: unknown): string {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function triggerCsvDownload(content: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+  a.download = filename;
+  a.click();
+}
+
+// RFC-4180-ish parser: handles quoted fields, escaped quotes ("") and commas/newlines inside quotes.
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+      continue;
+    }
+    if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (ch !== "\r") field += ch;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ""));
+}
+
+function BulkImportControls({ kind, fields, defaults, create, canImport, onImported }: {
+  kind: EntityKind;
+  fields: Field[];
+  defaults: AnyRecord;
+  create: (payload: AnyRecord) => Promise<AnyRecord>;
+  canImport: boolean;
+  onImported: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; failed: number; errors: string[] } | null>(null);
+
+  function downloadTemplate() {
+    const headers = fields.map((f) => f.key);
+    // One illustrative EXAMPLE row — the importer skips any row marked "EXAMPLE-".
+    const example = fields.map((f) => {
+      if (f.type === "select" && f.options?.length) return f.options[0];
+      if (defaults[f.key] != null && defaults[f.key] !== "") return String(defaults[f.key]);
+      if (f.type === "number") return "0";
+      if (f.type === "email") return "name@example.com";
+      return f.required ? `EXAMPLE-${f.label.replace(/\s+/g, "")}` : "";
+    });
+    const csv = [headers.join(","), example.map(csvCell).join(",")].join("\n");
+    triggerCsvDownload(csv, `${kind}_import_template.csv`);
+  }
+
+  async function handleFile(file: File) {
+    setBusy(true);
+    setResult(null);
+    try {
+      const grid = parseCsv(await file.text());
+      if (grid.length < 2) {
+        setResult({ created: 0, failed: 0, errors: ["No data rows found in the file."] });
+        return;
+      }
+      const headers = grid[0].map((h) => h.trim());
+      const keyByColumn = headers.map((h) => {
+        const match = fields.find((f) => f.key.toLowerCase() === h.toLowerCase() || f.label.toLowerCase() === h.toLowerCase());
+        return match?.key ?? null;
+      });
+      const dataRows = grid.slice(1).filter((cells) =>
+        !cells.every((c) => c.trim() === "") &&
+        !cells.some((c) => c.trim().toUpperCase().startsWith("EXAMPLE-")) // skip the template's sample row
+      );
+      if (!dataRows.length) {
+        setResult({ created: 0, failed: 0, errors: ["No data rows to import — replace the EXAMPLE row in the template with your own records."] });
+        return;
+      }
+
+      let created = 0;
+      const errors: string[] = [];
+      setProgress({ done: 0, total: dataRows.length });
+      for (let r = 0; r < dataRows.length; r++) {
+        const cells = dataRows[r];
+        const payload: AnyRecord = { ...defaults };
+        keyByColumn.forEach((key, c) => {
+          if (!key) return;
+          const raw = (cells[c] ?? "").trim();
+          if (raw === "") return;
+          const field = fields.find((f) => f.key === key);
+          payload[key] = field?.type === "number" ? Number(raw) : raw;
+        });
+        const missing = fields.filter((f) => f.required && String(payload[f.key] ?? "").trim() === "").map((f) => f.label);
+        if (missing.length) {
+          errors.push(`Row ${r + 2}: missing ${missing.join(", ")}`);
+        } else {
+          try { await create(payload); created++; }
+          catch (e) { errors.push(`Row ${r + 2}: ${e instanceof Error ? e.message : "create failed"}`); }
+        }
+        setProgress({ done: r + 1, total: dataRows.length });
+      }
+      setProgress(null);
+      if (created > 0) onImported();
+      setResult({ created, failed: errors.length, errors: errors.slice(0, 12) });
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="btn-ghost" onClick={downloadTemplate} title="Download a CSV template with the correct columns"><FileDown className="h-4 w-4" /> Template</button>
+      <button
+        type="button"
+        className="btn-ghost"
+        disabled={!canImport || busy}
+        title={!canImport ? "You do not have permission to perform this action." : "Bulk-create records from a CSV file"}
+        onClick={() => { if (canImport && !busy) inputRef.current?.click(); }}
+      >
+        <Upload className="h-4 w-4" /> {busy ? (progress ? `Importing ${progress.done}/${progress.total}` : "Importing…") : "Import CSV"}
+      </button>
+      <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" aria-label={`Import ${kind} from CSV`} title={`Import ${kind} from CSV`} onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+
+      {result ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setResult(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-slate-900">Import complete</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              <span className="font-bold text-teal-600">{result.created}</span> created
+              {" · "}
+              <span className={`font-bold ${result.failed ? "text-red-600" : "text-slate-400"}`}>{result.failed}</span> skipped/failed
+            </p>
+            {result.errors.length ? (
+              <ul className="mt-3 max-h-48 space-y-1 overflow-y-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                {result.errors.map((er, i) => <li key={i}>• {er}</li>)}
+              </ul>
+            ) : null}
+            <div className="mt-5 flex justify-end"><button type="button" className="btn-primary" onClick={() => setResult(null)}>Done</button></div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -794,11 +992,17 @@ function DecisionBrief({ config: cfg, record }: { config: EntityConfig; record: 
 }
 
 function pickBestDriver(rows: AnyRecord[]) {
-  return [...rows].sort((a, b) => Number(b.driverReadinessScore ?? b.readinessScore ?? b.safetyScore ?? 0) - Number(a.driverReadinessScore ?? a.readinessScore ?? a.safetyScore ?? 0))[0];
+  const score = (r: AnyRecord) => Number(r.driverReadinessScore ?? r.readinessScore ?? r.safetyScore ?? 0);
+  const unassigned = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id && (r.status === "Available" || !r.assignedVehicleId));
+  const pool = unassigned.length > 0 ? unassigned : rows;
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
 }
 
 function pickBestVehicle(rows: AnyRecord[]) {
-  return [...rows].sort((a, b) => Number(b.fleetReadinessScore ?? b.readinessScore ?? b.dataQualityScore ?? 0) - Number(a.fleetReadinessScore ?? a.readinessScore ?? a.dataQualityScore ?? 0))[0];
+  const score = (r: AnyRecord) => Number(r.fleetReadinessScore ?? r.readinessScore ?? r.dataQualityScore ?? 0);
+  const unassigned = rows.filter(r => !r.assignedDriverId && !r.assigned_driver_id && (r.status === "Available" || !r.assignedDriverId));
+  const pool = unassigned.length > 0 ? unassigned : rows;
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
 }
 
 function riskValue(row: AnyRecord) {

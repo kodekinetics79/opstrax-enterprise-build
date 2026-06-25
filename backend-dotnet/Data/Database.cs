@@ -4,15 +4,48 @@ namespace Opstrax.Api.Data;
 
 public sealed class Database(IConfiguration configuration)
 {
-    private readonly string _connectionString = configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("Missing ConnectionStrings:DefaultConnection");
+    // Credentials are environment-only — never hard-coded in appsettings.json.
+    // Resolution order: ConnectionStrings:DefaultConnection (incl. the
+    // ConnectionStrings__DefaultConnection env var used by docker-compose) →
+    // the PG_CONNECTION env var (used by Render / .env). Fails fast if neither is set.
+    private readonly string _connectionString =
+        Coalesce(
+            configuration.GetConnectionString("DefaultConnection"),
+            Environment.GetEnvironmentVariable("PG_CONNECTION"))
+        ?? throw new InvalidOperationException(
+            "Database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION.");
+
+    private static string? Coalesce(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
     {
-        var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(ct);
-        return connection;
+        // Retry transient open failures with backoff. Neon's serverless pooler can
+        // cold-start (scale-to-zero) or drop idle connections, so the first attempt
+        // after an idle period may transiently fail — retrying avoids surfacing a 500.
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            var connection = new NpgsqlConnection(_connectionString);
+            try
+            {
+                await connection.OpenAsync(ct);
+                return connection;
+            }
+            catch (Exception ex) when (attempt < maxAttempts && IsTransient(ex) && !ct.IsCancellationRequested)
+            {
+                await connection.DisposeAsync();
+                await Task.Delay(200 * attempt, ct); // 200ms, then 400ms
+            }
+        }
     }
+
+    private static bool IsTransient(Exception ex) => ex switch
+    {
+        NpgsqlException npg => npg.IsTransient,
+        TimeoutException => true,
+        _ => false,
+    };
 
     public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
@@ -60,6 +93,27 @@ public sealed class Database(IConfiguration configuration)
         await using var command = new NpgsqlCommand(sql, connection);
         bind?.Invoke(command);
         return await command.ExecuteNonQueryAsync(ct);
+    }
+
+    // Runs work inside a serializable transaction, committing on success and rolling
+    // back on any exception. Use this when multiple DB writes must be atomic.
+    public async Task<T> WithTransactionAsync<T>(
+        Func<NpgsqlConnection, NpgsqlTransaction, Task<T>> work,
+        CancellationToken ct = default)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+        try
+        {
+            var result = await work(connection, tx);
+            await tx.CommitAsync(ct);
+            return result;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     // Appends RETURNING id if not already present, then returns the inserted id.

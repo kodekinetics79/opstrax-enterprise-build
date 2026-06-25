@@ -6,6 +6,8 @@ export function useEventStream() {
   const [events, setEvents] = useState<AnyRecord[]>([]);
 
   useEffect(() => {
+    // Realtime stream is optional — skip cleanly when the events service isn't configured.
+    if (!NODE_EVENTS_URL) return;
     const source = new EventSource(`${NODE_EVENTS_URL}/events/stream`);
     source.onmessage = (message) => {
       try {

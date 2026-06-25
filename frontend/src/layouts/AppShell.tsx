@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronDown, Languages, LogOut,
-  Menu, Search, X,
+  Bell, ChevronDown, ChevronRight, LogOut,
+  Menu, Search, Settings, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
-import { useI18n, LOCALES } from "@/i18n";
-import type { LocaleCode } from "@/i18n";
 
 const NAV_SECTIONS = [
   {
@@ -75,7 +73,6 @@ const NOTIFS = [
 
 export function AppShell() {
   const { session, logout } = useAuth();
-  const { locale, setLocale } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
@@ -84,9 +81,24 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState<Set<Group>>(new Set());
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [now, setNow] = useState(() => new Date());
   const notifRef = useRef<HTMLDivElement>(null);
-  const langRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // live header clock
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // current page context (group + title) for the header breadcrumb
+  const pageContext = useMemo(() => {
+    const active = modules.find((m) => m.route === location.pathname);
+    const group = NAV_SECTIONS.find((s) => active && (s.items as readonly string[]).includes(active.key));
+    return { group: group?.label ?? "Workspace", title: active?.title ?? "Dashboard" };
+  }, [location.pathname]);
 
   // close mobile sidebar & notif panel on route change
   useEffect(() => {
@@ -98,7 +110,7 @@ export function AppShell() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
-      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -128,19 +140,19 @@ export function AppShell() {
     <div className="flex h-full flex-col gap-4">
 
       {/* Brand */}
-      <div className="flex items-center gap-3 px-1 py-2">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white via-teal-50/40 to-blue-50/50 px-3 py-2.5 shadow-sm">
         <div className="shrink-0">
-          <OpsTraxLogo size={36} />
+          <OpsTraxLogo size={34} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] font-extrabold tracking-tight text-slate-950">OpsTrax</p>
+          <p className="text-[15px] font-black tracking-tight text-slate-950">OpsTrax</p>
           <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-slate-400">
             {String(session?.company?.name || "Fleet Platform")}
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="live-dot" />
-        </div>
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-600 ring-1 ring-emerald-200">
+          <span className="live-dot h-1.5 w-1.5" /> Live
+        </span>
       </div>
 
       {/* Navigation */}
@@ -177,22 +189,22 @@ export function AppShell() {
                         key={module.key}
                         to={module.route}
                         className={({ isActive }) =>
-                          `relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all duration-150 ${
+                          `group relative flex items-center gap-2.5 rounded-xl py-2 pl-3.5 pr-3 text-sm transition-all duration-150 ${
                             isActive
-                              ? "bg-gradient-to-r from-blue-50 to-teal-50 text-slate-950 ring-1 ring-blue-200"
-                              : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                              ? "bg-gradient-to-r from-teal-50 via-blue-50 to-transparent font-semibold text-slate-950 shadow-sm ring-1 ring-blue-200/70"
+                              : "text-slate-600 hover:translate-x-0.5 hover:bg-slate-100 hover:text-slate-950"
                           }`
                         }
                         >
                           {({ isActive }) => (
                             <>
                               {isActive && <span className="nav-active-bar" />}
-                              <Icon
-                                className={`h-4 w-4 shrink-0 transition-colors ${
-                                isActive ? section.color : "text-slate-400"
-                                }`}
-                              />
-                              <span className="truncate font-medium">{module.title}</span>
+                              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                                isActive ? "bg-white shadow-sm ring-1 ring-slate-200/80" : "bg-transparent group-hover:bg-white/70"
+                              }`}>
+                                <Icon className={`h-4 w-4 shrink-0 transition-colors ${isActive ? section.color : "text-slate-400 group-hover:text-slate-600"}`} />
+                              </span>
+                              <span className="truncate">{module.title}</span>
                             </>
                           )}
                       </NavLink>
@@ -274,19 +286,51 @@ export function AppShell() {
               </button>
 
               {/* Search */}
-              <div className="relative w-full max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <div className="relative flex-1 min-w-0 max-w-xs">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
-                  className="field h-8 rounded-lg py-0 pl-9 pr-10 text-[13px]"
-                  placeholder="Search anything..."
+                  className="field h-8 w-full rounded-lg py-0 pl-9 pr-10 text-[13px]"
+                  placeholder="Search vehicles, drivers, jobs…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && searchQuery.trim()) {
+                      const q = searchQuery.trim().toLowerCase();
+                      if (q.includes("vehicle") || q.match(/^trk|^van|^box/)) navigate("/vehicles");
+                      else if (q.includes("driver")) navigate("/drivers");
+                      else if (q.includes("job") || q.includes("dispatch")) navigate("/dispatch-board");
+                      else if (q.includes("safety") || q.includes("incident")) navigate("/incidents");
+                      else if (q.includes("maint") || q.includes("work order")) navigate("/work-orders");
+                      else if (q.includes("alert")) navigate("/alerts");
+                      else navigate("/command-center");
+                      setSearchQuery("");
+                    }
+                  }}
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 hidden items-center gap-0.5 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400 md:flex">
-                  ⌘K
+                  ↵
+                </span>
+              </div>
+
+              {/* Page context breadcrumb (fills the centre gap) */}
+              <div className="ml-1 hidden min-w-0 items-center gap-1.5 border-l border-slate-200 pl-4 lg:flex">
+                <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-slate-400">{pageContext.group}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                <span className="truncate text-[13px] font-bold text-slate-800">{pageContext.title}</span>
+              </div>
+
+              {/* Live clock */}
+              <div className="ml-auto hidden flex-col items-end leading-none md:flex">
+                <span className="font-mono text-[15px] font-bold tabular-nums text-slate-800">
+                  {now.toLocaleTimeString("en-GB", { hour12: false })}
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  {now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" })}
                 </span>
               </div>
 
               {/* Right section */}
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-2 md:ml-3 md:border-l md:border-slate-200 md:pl-3">
 
                 {/* Live status */}
                 <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
@@ -294,32 +338,7 @@ export function AppShell() {
                   Live
                 </div>
 
-                {/* Language selector */}
-                <div className="relative" ref={langRef}>
-                  <button
-                    type="button"
-                    title="Switch language"
-                    className="icon-btn relative h-8 w-8"
-                    onClick={() => setLangOpen((v) => !v)}
-                  >
-                    <Languages className="h-3.5 w-3.5" />
-                  </button>
-                  {langOpen && (
-                    <div className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[220px] overflow-hidden p-1">
-                      {(Object.entries(LOCALES) as [LocaleCode, typeof LOCALES[LocaleCode]][]).map(([code, meta]) => (
-                        <button
-                          key={code}
-                          type="button"
-                          onClick={() => { setLocale(code); setLangOpen(false); }}
-                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-[12px] transition hover:bg-slate-50 ${locale === code ? "text-teal-700 font-semibold" : "text-slate-500"}`}
-                        >
-                          <span>{meta.nativeLabel}</span>
-                          {meta.rtl && <span className="text-[9px] font-bold text-amber-700 border border-amber-300 rounded px-1">RTL</span>}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* Translation feature is under development — hidden from demo */}
 
                 {/* Notifications */}
                 <div className="relative" ref={notifRef}>
@@ -369,15 +388,60 @@ export function AppShell() {
                   )}
                 </div>
 
-                {/* Avatar / sign-out */}
-                <button
-                  type="button"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
-                  title={`Signed in as ${session?.role || "Admin"} — click to sign out`}
-                  onClick={logout}
-                >
-                  {initials}
-                </button>
+                {/* Avatar / profile dropdown */}
+                <div className="relative" ref={profileRef}>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
+                    title="My profile"
+                    onClick={() => setProfileOpen((v) => !v)}
+                  >
+                    {initials}
+                  </button>
+                  {profileOpen && (
+                    <div className="panel absolute right-0 top-full z-50 mt-2 w-55 overflow-hidden p-0 shadow-lg">
+                      {/* User info */}
+                      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-100 to-blue-100 text-[14px] font-extrabold text-teal-700">
+                          {initials}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-900 truncate">{String(session?.user?.["name"] ?? session?.role ?? "User")}</p>
+                          <p className="text-[11px] text-slate-500 truncate">{session?.role || "Admin"}</p>
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      <div className="py-1">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                          onClick={() => { navigate("/settings"); setProfileOpen(false); }}
+                        >
+                          <Settings className="h-4 w-4 text-slate-400" />
+                          Settings
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                          onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
+                        >
+                          <User className="h-4 w-4 text-slate-400" />
+                          User Management
+                        </button>
+                      </div>
+                      <div className="border-t border-slate-100 py-1">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-red-600 hover:bg-red-50 transition"
+                          onClick={() => { logout(); setProfileOpen(false); }}
+                        >
+                          <LogOut className="h-4 w-4" />
+                          Sign out
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

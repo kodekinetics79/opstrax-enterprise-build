@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import type { UserSession } from "@/types";
+import { authApi } from "@/services/authApi";
 
 const STORAGE_KEY = "opstrax.session.v2";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
@@ -25,7 +26,7 @@ function loadSession(): UserSession | null {
 type AuthContextValue = {
   session: UserSession | null;
   setSession: (session: UserSession | null) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -46,7 +47,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     session,
     setSession,
-    logout: () => setSession(null),
+    logout: async () => {
+      try {
+        // Revoke the server-side session (sends auth + CSRF via the shared client).
+        if (session?.token) await authApi.logout();
+      } catch {
+        // Session may already be gone; clear local state regardless.
+      } finally {
+        setSession(null);
+      }
+    },
   }), [session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

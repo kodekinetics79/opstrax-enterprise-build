@@ -35,7 +35,9 @@ public class CsrfMiddleware
 
         // Validate CSRF token for state-changing requests (POST, PUT, DELETE)
         if (!SAFE_METHODS.Contains(context.Request.Method) &&
-            !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(path, "/api/platform/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(path, "/api/platform/auth/logout", StringComparison.OrdinalIgnoreCase))
         {
             var cookieToken = context.Request.Cookies[CSRF_COOKIE_NAME];
             var headerToken = context.Request.Headers[CSRF_TOKEN_HEADER].ToString();

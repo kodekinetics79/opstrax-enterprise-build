@@ -3,7 +3,8 @@ import type { AnyRecord } from "@/types";
 import { getFuelSummary, getFuelTransactions } from "@/data/developmentFleetSeedData";
 
 async function withFallback<T>(req: Promise<T>, fb: () => T | Promise<T>): Promise<T> {
-  try { return await req; } catch { return fb(); }
+  void fb;
+  return await req;
 }
 
 export const fuelApi = {

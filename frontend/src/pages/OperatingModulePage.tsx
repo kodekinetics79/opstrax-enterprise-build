@@ -34,7 +34,6 @@ import {
   StatusBadge,
   LoadingState,
 } from "@/components/ui";
-import { Fleet360MapView } from "@/components/Fleet360MapView";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -1321,7 +1320,6 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
 
   if (moduleKey === "live-dashboard") return <LiveDashboardPage />;
   if (moduleKey === "alerts") return <AlertsPage />;
-  if (moduleKey === "map-view") return <Fleet360MapView />;
   if (moduleKey === "price-simulation") return <PriceSimulationPage />;
   if (moduleKey === "dispatch-board") return <DispatchBoardPage />;
 

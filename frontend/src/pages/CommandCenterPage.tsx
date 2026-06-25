@@ -1,375 +1,383 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
 import {
-  Activity, AlertTriangle, CheckCircle2, ChevronRight, Clock,
-  Download, Package, RadioTower, ShieldCheck, Truck, Zap,
+  Activity, AlertOctagon, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight,
+  CheckCircle2, Clock, Download, Gauge, Package, RadioTower,
+  RefreshCw, ShieldCheck, Sparkles, Truck, Wrench, Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart,
+  ResponsiveContainer, Tooltip,
 } from "recharts";
-import { ErrorState, KpiCard, LoadingState, PageHeader, exportCsv } from "@/components/ui";
+import { exportCsv } from "@/components/ui";
 import { commandCenterApi } from "@/services/commandCenterApi";
 import type { AnyRecord } from "@/types";
 
-const FLEET_STATUS_CONFIG = [
-  { key: "driving",  label: "Driving",  color: "bg-teal-500",  route: "/vehicles",    icon: <Truck className="h-5 w-5 text-teal-600" /> },
-  { key: "idling",   label: "Idling",   color: "bg-amber-400", route: "/vehicles",    icon: <Zap className="h-5 w-5 text-amber-500" /> },
-  { key: "parked",   label: "Parked",   color: "bg-slate-400", route: "/vehicles",    icon: <Clock className="h-5 w-5 text-slate-500" /> },
-  { key: "offline",  label: "Offline",  color: "bg-red-400",   route: "/iot-devices", icon: <RadioTower className="h-5 w-5 text-red-500" /> },
-];
-
-const KPI_ICONS = [
-  <Package className="h-4 w-4" />,
-  <AlertTriangle className="h-4 w-4" />,
-  <Clock className="h-4 w-4" />,
-  <Truck className="h-4 w-4" />,
-  <ShieldCheck className="h-4 w-4" />,
-];
-
-const SEVERITY: Record<string, { badge: string; dot: string; row: string }> = {
-  Critical: {
-    badge: "badge badge-danger",
-    dot: "mt-1 h-2 w-2 shrink-0 rounded-full bg-red-500 animate-pulse",
-    row: "border-l-[3px] border-red-300 bg-red-50/40",
-  },
-  Warning: {
-    badge: "badge badge-warning",
-    dot: "mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400",
-    row: "border-l-[3px] border-amber-300 bg-amber-50/30",
-  },
-  Info: {
-    badge: "badge badge-info",
-    dot: "mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-400",
-    row: "",
-  },
+/* ── Severity tokens ─────────────────────────────────────── */
+const SEV: Record<string, { dot: string; ring: string; chip: string; bar: string; icon: typeof AlertOctagon }> = {
+  Critical: { dot: "#ef4444", ring: "ring-red-200",    chip: "bg-red-50 text-red-700 border-red-200",       bar: "bg-red-500",   icon: AlertOctagon },
+  Warning:  { dot: "#f59e0b", ring: "ring-amber-200",  chip: "bg-amber-50 text-amber-700 border-amber-200",  bar: "bg-amber-400", icon: AlertTriangle },
+  Info:     { dot: "#3b82f6", ring: "ring-blue-200",   chip: "bg-blue-50 text-blue-700 border-blue-200",     bar: "bg-blue-400",  icon: Activity },
 };
 
+/* ── KPI presentation (icon + accent per slot) ───────────── */
+const KPI_META = [
+  { icon: Package,       tint: "text-teal-600",   ring: "bg-teal-50",   accent: "#0d9488", route: "/active-shipments" },
+  { icon: AlertTriangle, tint: "text-amber-600",  ring: "bg-amber-50",  accent: "#d97706", route: "/alerts" },
+  { icon: Clock,         tint: "text-rose-600",   ring: "bg-rose-50",   accent: "#e11d48", route: "/dispatch" },
+  { icon: Truck,         tint: "text-blue-600",   ring: "bg-blue-50",   accent: "#2563eb", route: "/vehicles" },
+  { icon: ShieldCheck,   tint: "text-indigo-600", ring: "bg-indigo-50", accent: "#4f46e5", route: "/incidents" },
+];
+
+const FLEET_CFG = [
+  { key: "driving", label: "Driving", color: "#0d9488", icon: Truck,     route: "/vehicles" },
+  { key: "idling",  label: "Idling",  color: "#f59e0b", icon: Zap,       route: "/vehicles" },
+  { key: "parked",  label: "Parked",  color: "#64748b", icon: Clock,     route: "/vehicles" },
+  { key: "offline", label: "Offline", color: "#ef4444", icon: RadioTower, route: "/iot-devices" },
+];
+
+const POSTURE: Record<string, { chip: string; dot: string }> = {
+  Elevated: { chip: "border-red-200 bg-red-50 text-red-700",         dot: "#ef4444" },
+  Guarded:  { chip: "border-amber-200 bg-amber-50 text-amber-700",   dot: "#f59e0b" },
+  Stable:   { chip: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "#10b981" },
+};
+
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/* ── Page ────────────────────────────────────────────────── */
 export function CommandCenterPage() {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ["command-center"],
     queryFn: commandCenterApi.summary,
     refetchInterval: 15_000,
   });
   const navigate = useNavigate();
 
-  if (isLoading || !data) return <LoadingState />;
-  if (isError) return <ErrorState message={error instanceof Error ? error.message : "Unable to load dashboard data."} />;
-
-  const kpis            = (data.kpis as AnyRecord[]) || [];
-  const fleetStatus     = (data.fleetStatus as AnyRecord) || {};
-  const exceptions      = (data.exceptions as AnyRecord[]) || [];
-  const briefItems      = (data.briefItems as string[]) || [];
-  const priorityActions = (data.priorityActions as AnyRecord[]) || [];
-  const charts          = (data.charts as AnyRecord) || {};
-
-  const weeklyJobs  = ((charts.weeklyJobs  as number[]) || []).map((v, i) => ({ day: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][i] ?? `D${i+1}`, value: v }));
-  const costData    = ((charts.costLeakage as number[]) || []).map((v, i) => ({ week: `W${i+1}`, value: v }));
-  const safetyTrend = ((charts.safetyScore as number[]) || []).map((v, i) => ({ day: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][i] ?? `D${i+1}`, value: v }));
-
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Command Center"
-        title="Fleet Operations"
-        description="Exception queue, dispatch status, safety posture and cost exposure — refreshed every 15 seconds."
-        actions={
-          <>
-            <button type="button" className="btn-primary" onClick={() => navigate("/alerts")}>
-              Acknowledge Risks
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => exportCsv("command-center-brief", kpis)}>
-              <Download className="h-4 w-4" /> Export Brief
-            </button>
-          </>
-        }
-      />
-
-      {/* 5-KPI Row */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
-        {kpis.slice(0, 5).map((kpi, i) => {
-          const target = resolveKpiTarget(String(kpi.label ?? ""));
-          const card = (
-            <KpiCard
-              label={String(kpi.label)}
-              value={String(kpi.valueText || kpi.value || "--")}
-              trend={String(kpi.trend || "Updated now")}
-              status={String(kpi.status || "Active")}
-              icon={KPI_ICONS[i]}
-            />
-          );
-          return target ? (
-            <button key={String(kpi.id || i)} type="button" className="block w-full text-left" onClick={() => navigate(target.route)} title={target.title}>
-              {card}
-            </button>
-          ) : (
-            <div key={String(kpi.id || i)}>{card}</div>
-          );
-        })}
-      </div>
-
-      {/* Fleet Status Bar */}
-      <div className="grid gap-4 md:grid-cols-4">
-        {FLEET_STATUS_CONFIG.map(({ key, label, color, route, icon }) => {
-          const count = Number(fleetStatus[key] ?? 0);
-          const total = (Object.values(fleetStatus) as unknown[]).reduce<number>((s, v) => s + Number(v), 0) || 1;
-          const pct   = Math.round((count / total) * 100);
-          return (
-            <button key={key} type="button" className="panel flex items-center gap-4 p-4 text-left transition hover:border-slate-300" onClick={() => navigate(route)}>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50">{icon}</div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">{label}</p>
-                <p className="mt-0.5 text-2xl font-bold text-slate-900">{count}</p>
-                <div className="mt-1.5 h-1 w-full rounded-full bg-slate-100">
-                  <div className={`h-1 rounded-full ${color}`} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-              <span className="text-xs font-medium text-slate-400">{pct}%</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Exception Queue + Brief + Actions */}
-      <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-        <ExceptionQueue exceptions={exceptions} navigate={navigate} />
-        <div className="flex flex-col gap-4">
-          <OperationsBrief items={briefItems} />
-          <ActionPanel actions={priorityActions} navigate={navigate} />
-        </div>
-      </div>
-
-      {/* Charts Row */}
-      <div className="grid gap-6 xl:grid-cols-3">
-        <ChartPanel title="Operations Throughput" subtitle="Jobs completed per day — this week">
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={weeklyJobs}>
-              <defs>
-                <linearGradient id="opsThroughput" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#2dd4bf" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="day"   stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <YAxis                 stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }} />
-              <Area type="monotone" dataKey="value" stroke="#2dd4bf" strokeWidth={2} fill="url(#opsThroughput)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-
-        <ChartPanel title="Cost Leakage by Week" subtitle="SAR (K) — unrecovered operational spend">
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={costData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="week"  stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <YAxis                 stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }} />
-              <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-
-        <ChartPanel title="Safety Score Trend" subtitle="Fleet composite score (0–100)">
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={safetyTrend}>
-              <defs>
-                <linearGradient id="safetyGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="day"        stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <YAxis domain={[50, 100]}   stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }} />
-              <Area type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} fill="url(#safetyGrad)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-      </div>
-    </div>
+  if (isLoading || !data) return <CenterState spin label="Synchronizing command center…" />;
+  if (isError) return (
+    <CenterState
+      label="Command feed unavailable"
+      sub="The operations API did not respond."
+      action={<button type="button" onClick={() => refetch()} className="btn-primary h-9 px-4 text-xs mt-3">Reconnect</button>}
+    />
   );
-}
 
-/* ── Exception Queue ─────────────────────────────────────── */
-function ExceptionQueue({
-  exceptions,
-  navigate,
-}: {
-  exceptions: AnyRecord[];
-  navigate: (path: string) => void;
-}) {
-  const criticalCount = exceptions.filter((e) => String(e.severity) === "Critical").length;
-  const warningCount  = exceptions.filter((e) => String(e.severity) === "Warning").length;
+  const kpis            = (data.kpis            as AnyRecord[]) ?? [];
+  const fleetStatus     = (data.fleetStatus     as AnyRecord)  ?? {};
+  const exceptions      = (data.exceptions      as AnyRecord[]) ?? [];
+  const briefItems      = (data.briefItems      as string[])   ?? [];
+  const priorityActions = (data.priorityActions as AnyRecord[]) ?? [];
+  const charts          = (data.charts          as AnyRecord)  ?? {};
+
+  const fleetTotal   = Number(data.fleetTotal ?? 0) || FLEET_CFG.reduce((s, f) => s + Number(fleetStatus[f.key] ?? 0), 0) || 1;
+  const readinessPct = Number(data.readinessPct ?? Math.round(((Number(fleetStatus.driving ?? 0) + Number(fleetStatus.idling ?? 0)) / fleetTotal) * 100));
+  const posture      = String(data.posture ?? "Stable");
+  const critCount    = Number(data.criticalCount ?? exceptions.filter(e => e.severity === "Critical").length);
+  const warnCount    = Number(data.warningCount ?? exceptions.filter(e => e.severity === "Warning").length);
+
+  const weeklyJobs  = ((charts.weeklyJobs  as number[]) ?? []).map((v, i) => ({ d: DOW[i] ?? String(i + 1), v: Number(v) }));
+  const costData    = ((charts.costLeakage as number[]) ?? []).map((v, i) => ({ d: `D${i + 1}`, v: Number(v) }));
+  const safetyTrend = ((charts.safetyScore as number[]) ?? []).map((v, i) => ({ d: `P${i + 1}`, v: Number(v) }));
+
+  const donut = FLEET_CFG.map(f => ({ name: f.label, value: Number(fleetStatus[f.key] ?? 0), color: f.color }));
+  const postureTone = POSTURE[posture] ?? POSTURE.Stable;
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="section-title">Exception Queue</h2>
-            {criticalCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                {criticalCount} Critical
+    <div className="space-y-4">
+      {/* ── Command banner — light glass, brand-tinted ─────── */}
+      <header className="relative overflow-hidden rounded-[20px] border border-white/70 px-6 py-4 shadow-sm ring-1 ring-slate-200/70 backdrop-blur-xl"
+        style={{ background: "linear-gradient(120deg,#ffffff 0%,#f0fdfa 36%,#eff6ff 68%,#f5f3ff 100%)" }}>
+        {/* soft glass blobs for depth */}
+        <span className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-teal-300/20 blur-3xl" />
+        <span className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full bg-blue-300/15 blur-3xl" />
+        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: "linear-gradient(90deg,#0d9488,#2563eb,#7c3aed)" }} />
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-700 ring-1 ring-teal-200/70">
+                <Gauge className="h-3 w-3" /> Operations
               </span>
-            )}
-            {warningCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">
-                {warningCount} Warning
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
               </span>
-            )}
+              <span className="text-[11px] font-semibold text-slate-500">Live · refreshes every 15s</span>
+              {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-500" />}
+            </div>
+            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-[26px]">
+              Command Center
+              <span className="ml-2 text-base font-medium text-slate-400">· Fleet Operations</span>
+            </h1>
+            <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
+              {critCount > 0
+                ? <><span className="font-bold text-red-600">{critCount} critical</span> and {warnCount} warning signal{warnCount === 1 ? "" : "s"} on the board — act on the queue before the next dispatch window.</>
+                : warnCount > 0
+                  ? <><span className="font-bold text-amber-600">{warnCount} warning{warnCount === 1 ? "" : "s"}</span> in play — fleet is holding but watch the exception queue.</>
+                  : "Fleet operating within normal parameters across every monitored signal."}
+            </p>
           </div>
-          <p className="mt-0.5 text-xs text-slate-400">Requires operator action · sorted by severity</p>
-        </div>
-        <button
-          type="button"
-          className="text-xs font-medium text-teal-600 hover:underline"
-          onClick={() => navigate("/alerts")}
-        >
-          View all →
-        </button>
-      </div>
 
-      {exceptions.length === 0 ? (
-        <div className="py-10 text-center">
-          <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-400" />
-          <p className="mt-2 text-sm font-semibold text-slate-600">No active exceptions</p>
-          <p className="text-xs text-slate-400">Fleet is operating within normal parameters</p>
-        </div>
-      ) : (
-        <ul className="divide-y divide-slate-100">
-          {exceptions.map((exc, i) => {
-            const sev = String(exc.severity || "Info");
-            const cfg = SEVERITY[sev] ?? SEVERITY.Info;
-            const entity = [String(exc.vehicle || ""), String(exc.driver || "")]
-              .filter(Boolean)
-              .join(" · ");
-
-            return (
-              <li key={String(exc.id || i)} className={`flex items-start gap-3 px-5 py-3.5 ${cfg.row}`}>
-                <span className={cfg.dot} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className={cfg.badge}>{sev}</span>
-                    {entity && (
-                      <span className="text-sm font-semibold text-slate-900">{entity}</span>
-                    )}
-                    <span className="text-xs text-slate-300">·</span>
-                    <span className="text-sm text-slate-700">{String(exc.event || exc.title || "")}</span>
-                  </div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                    {String(exc.slaImpact || exc.body || "")}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-slate-400">{String(exc.timestamp || exc.time || "")}</p>
-                </div>
-                <button
-                  type="button"
-                  className="btn-ghost h-7 shrink-0 gap-1 px-3 text-xs"
-                  onClick={() => navigate(String(exc.actionRoute || "/alerts"))}
-                >
-                  {String(exc.actionLabel || "View")}
-                  <ChevronRight className="h-3 w-3" />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/* ── Operations Brief ────────────────────────────────────── */
-function OperationsBrief({ items }: { items: string[] }) {
-  const bullets = items.length > 0 ? items : [
-    "Fleet is operating within normal parameters — 9 vehicles on active routes.",
-    "No critical SLA breaches active. 2 shipments approaching ETA threshold.",
-    "Maintenance queue clear — next PM service due in 3 days on TRK-106.",
-  ];
-
-  return (
-    <div className="panel p-5">
-      <div className="mb-3 flex items-center gap-2">
-        <Activity className="h-4 w-4 text-teal-600" />
-        <h2 className="section-title">Operations Brief</h2>
-        <span className="ml-auto text-[10px] text-slate-400">Updated 38 sec ago</span>
-      </div>
-      <ul className="space-y-2.5">
-        {bullets.slice(0, 5).map((item, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-sm leading-relaxed text-slate-700">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-500" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/* ── Recommended Actions ─────────────────────────────────── */
-function ActionPanel({
-  actions,
-  navigate,
-}: {
-  actions: AnyRecord[];
-  navigate: (path: string) => void;
-}) {
-  return (
-    <div className="panel flex-1 p-5">
-      <h2 className="section-title mb-3">Recommended Actions</h2>
-      {actions.length === 0 ? (
-        <p className="text-sm text-slate-400">No actions required at this time.</p>
-      ) : (
-        <ul className="space-y-2">
-          {actions.slice(0, 5).map((action, i) => (
-            <li
-              key={String(action.id || i)}
-              className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-900">{String(action.title || "Action")}</p>
-                {!!action.body && (
-                  <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{String(action.body)}</p>
-                )}
-              </div>
-              <button
-                type="button"
-                className="btn-ghost h-7 shrink-0 gap-1 px-3 text-xs"
-                onClick={() => navigate(String(action.entityRoute || action.route || "/alerts"))}
-              >
-                {String(action.actionLabel || "View")}
-                <ChevronRight className="h-3 w-3" />
+          <div className="flex flex-col items-end gap-3">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${postureTone.chip}`}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: postureTone.dot }} />
+              {posture} posture
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => navigate("/alerts")} className="btn-primary h-9 gap-1.5 px-3.5 text-xs">
+                <ShieldCheck className="h-3.5 w-3.5" /> Acknowledge Risks
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
+              <button type="button" onClick={() => exportCsv("command-center", kpis)} className="btn-ghost h-9 gap-1.5 px-3.5 text-xs">
+                <Download className="h-3.5 w-3.5" /> Export
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── KPI strip ──────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {kpis.slice(0, 5).map((kpi, i) => {
+          const meta = KPI_META[i] ?? KPI_META[0];
+          const Icon = meta.icon;
+          const status = String(kpi.status ?? "");
+          const tone = /risk|critical|warn/i.test(status) ? "text-rose-600 bg-rose-50 border-rose-200"
+            : /clear|on track|active/i.test(status) ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+            : "text-slate-500 bg-slate-50 border-slate-200";
+          return (
+            <button key={i} type="button" onClick={() => navigate(meta.route)}
+              className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+              <span className="absolute inset-x-0 top-0 h-1" style={{ background: meta.accent }} />
+              <div className="flex items-center justify-between">
+                <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${meta.ring}`}>
+                  <Icon className={`h-4 w-4 ${meta.tint}`} />
+                </div>
+                {status && <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone}`}>{status}</span>}
+              </div>
+              <p className="mt-2 text-[26px] font-black leading-none tracking-tight text-slate-900">
+                {String(kpi.valueText ?? kpi.value ?? "—")}
+              </p>
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                {String(kpi.label ?? "")}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Main: Exception queue | Fleet+Brief | Priority actions ── */}
+      <div className="grid items-stretch gap-4 xl:grid-cols-[1.5fr_1.05fr_1fr]">
+        {/* Exception queue (internal scroll, never pushes the page) */}
+        <section className="flex max-h-[460px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50">
+              <AlertOctagon className="h-4 w-4 text-red-500" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-slate-900">Live Exception Queue</p>
+              <p className="text-[11px] text-slate-400">Prioritized by severity · act top-down</p>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5">
+              {critCount > 0 && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">{critCount} Crit</span>}
+              {warnCount > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">{warnCount} Warn</span>}
+              <button type="button" onClick={() => navigate("/alerts")} className="ml-1 inline-flex items-center gap-0.5 text-[11px] font-bold text-teal-600 hover:underline">
+                All <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+
+          {exceptions.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12">
+              <CheckCircle2 className="h-9 w-9 text-emerald-400" />
+              <p className="text-sm font-bold text-slate-600">No active exceptions</p>
+              <p className="text-xs text-slate-400">Every monitored signal is within tolerance.</p>
+            </div>
+          ) : (
+            <ul className="flex-1 divide-y divide-slate-50 overflow-y-auto">
+              {exceptions.slice(0, 12).map((exc, i) => {
+                const sev = String(exc.severity ?? "Info");
+                const cfg = SEV[sev] ?? SEV.Info;
+                const Icon = cfg.icon;
+                const entity = [String(exc.vehicle ?? ""), String(exc.driver ?? "")].filter(Boolean).join(" · ");
+                return (
+                  <li key={i} className="group relative flex items-center gap-2.5 px-4 py-2.5 transition hover:bg-slate-50/70">
+                    <span className="absolute left-0 top-0 h-full w-[3px]" style={{ background: cfg.dot }} />
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cfg.dot}14` }}>
+                      <Icon className="h-3.5 w-3.5" style={{ color: cfg.dot }} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[13px] font-bold text-slate-900">{String(exc.event ?? exc.title ?? "Exception")}</span>
+                        <span className={`shrink-0 rounded-full border px-1.5 py-px text-[9px] font-bold uppercase ${cfg.chip}`}>{sev}</span>
+                      </div>
+                      <p className="truncate text-[11px] text-slate-500">
+                        {entity || "Unassigned"}<span className="text-slate-300"> · </span>{String(exc.timestamp ?? exc.time ?? "")}
+                      </p>
+                    </div>
+                    <button type="button" onClick={() => navigate(String(exc.actionRoute ?? "/alerts"))}
+                      className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700">
+                      {String(exc.actionLabel ?? "View")}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Fleet status donut + Operations brief */}
+        <div className="flex flex-col gap-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <p className="section-title flex items-center gap-1.5 text-slate-500"><Truck className="h-3.5 w-3.5" /> Fleet Status</p>
+              <span className="text-[11px] font-bold text-slate-400">{fleetTotal} units</span>
+            </div>
+            <div className="mt-1 flex items-center gap-3">
+              <div className="relative h-[104px] w-[104px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donut} dataKey="value" innerRadius={36} outerRadius={50} paddingAngle={2} stroke="none">
+                      {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-xl font-black leading-none text-slate-900">{readinessPct}%</span>
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">ready</span>
+                </div>
+              </div>
+              <div className="grid flex-1 grid-cols-2 gap-1.5">
+                {FLEET_CFG.map(f => {
+                  const c = Number(fleetStatus[f.key] ?? 0);
+                  return (
+                    <button key={f.key} type="button" onClick={() => navigate(f.route)}
+                      className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-left transition hover:border-slate-300">
+                      <span className="h-2 w-2 rounded-full" style={{ background: f.color }} />
+                      <div className="min-w-0">
+                        <p className="text-base font-black leading-none text-slate-900">{c}</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{f.label}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="section-title flex items-center gap-1.5 text-teal-600"><Sparkles className="h-3.5 w-3.5" /> Operations Brief</p>
+            <ul className="mt-2.5 space-y-2">
+              {(briefItems.length ? briefItems : ["Fleet operating within normal parameters."]).slice(0, 5).map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug text-slate-600">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-br from-teal-400 to-blue-500" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+
+        {/* Priority actions */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="section-title flex items-center gap-1.5 text-rose-600"><Wrench className="h-3.5 w-3.5" /> Priority Actions</p>
+          <div className="mt-2.5 space-y-2">
+            {priorityActions.slice(0, 4).map((a, i) => (
+              <button key={i} type="button" onClick={() => navigate(String(a.entityRoute ?? a.route ?? "/alerts"))}
+                className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50/50">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-[11px] font-black text-slate-400 ring-1 ring-slate-200">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12.5px] font-bold text-slate-900">{String(a.title ?? "Action")}</p>
+                  {a.detail ? <p className="truncate text-[10.5px] text-slate-500">{String(a.detail)}</p> : null}
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      {/* ── Trends strip ───────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <TrendCard title="Throughput" unit="jobs · this week" color="#0d9488" type="bar"  agg="sum"  data={weeklyJobs} />
+        <TrendCard title="Cost Leakage" unit="spend · this week" color="#f59e0b" type="area" agg="sum"  data={costData} prefix="$" />
+        <TrendCard title="Safety Score" unit="fleet composite" color="#6366f1" type="area" agg="last" data={safetyTrend} />
+      </div>
     </div>
   );
 }
 
-/* ── Chart Panel ─────────────────────────────────────────── */
-function ChartPanel({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+/* ── Trend card (current value + delta + chart) ──────────── */
+function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
+  title: string; unit: string; color: string; type: "area" | "bar";
+  agg: "sum" | "last"; data: { d: string; v: number }[]; prefix?: string;
+}) {
+  const values = data.map(d => d.v);
+  const last = values.length ? values[values.length - 1] : 0;
+  const prev = values.length > 1 ? values[values.length - 2] : last;
+  const headline = agg === "sum" ? values.reduce((s, v) => s + v, 0) : last;
+  const delta = last - prev;
+  const pct = prev !== 0 ? Math.round((delta / prev) * 100) : 0;
+  const showDelta = agg === "last" && delta !== 0;
+  const peak = Math.max(1, ...values);
+  const gradId = `grad-${title.replace(/\s/g, "")}`;
+  const fmt = (n: number) => prefix + (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n)}`);
+
   return (
-    <div className="panel p-5">
-      <h2 className="section-title">{title}</h2>
-      <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p>
-      <div className="mt-4">{children}</div>
+    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{title}</p>
+          <p className="text-[10px] text-slate-400">{unit}</p>
+        </div>
+        {showDelta && (
+          <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${delta > 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+            {delta > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+            {Math.abs(pct)}%
+          </span>
+        )}
+      </div>
+      <p className="mt-1.5 text-2xl font-black leading-none text-slate-900">{fmt(headline)}</p>
+      <div className="mt-2 h-14">
+        <ResponsiveContainer width="100%" height="100%">
+          {type === "bar" ? (
+            <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: "#64748b", fontSize: 10 }} />
+              <Bar dataKey="v" radius={[3, 3, 0, 0]}>
+                {data.map((d, i) => <Cell key={i} fill={d.v >= peak * 0.66 ? color : `${color}66`} />)}
+              </Bar>
+            </BarChart>
+          ) : (
+            <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} labelStyle={{ display: "none" }} />
+              <Area type="monotone" dataKey="v" stroke={color} strokeWidth={2} fill={`url(#${gradId})`} dot={false} />
+            </AreaChart>
+          )}
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
 
-/* ── KPI click targets ───────────────────────────────────── */
-function resolveKpiTarget(label: string) {
-  const t = label.toLowerCase();
-  if (/shipment|load|delivery|eta|pod/.test(t))         return { route: "/active-shipments", title: "Open shipments" };
-  if (/sla|exception|breach/.test(t))                   return { route: "/alerts",            title: "Open alerts" };
-  if (/overdue|assignment|unassigned|dispatch/.test(t)) return { route: "/dispatch",          title: "Open dispatch" };
-  if (/fleet|on road|driving|vehicle/.test(t))          return { route: "/vehicles",          title: "Open vehicles" };
-  if (/safety|event|incident|score/.test(t))            return { route: "/incidents",         title: "Open safety" };
-  return null;
+const tipStyle = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 11, padding: "4px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.08)" } as const;
+
+/* ── Loading / error state ───────────────────────────────── */
+function CenterState({ spin, label, sub, action }: { spin?: boolean; label: string; sub?: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex h-[60vh] items-center justify-center">
+      <div className="flex flex-col items-center gap-2 text-center">
+        {spin
+          ? <RefreshCw className="h-7 w-7 animate-spin text-teal-500" />
+          : <AlertTriangle className="h-8 w-8 text-rose-400" />}
+        <p className="text-sm font-bold text-slate-700">{label}</p>
+        {sub && <p className="text-xs text-slate-400">{sub}</p>}
+        {action}
+      </div>
+    </div>
+  );
 }

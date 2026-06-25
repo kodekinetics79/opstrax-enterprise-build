@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCircle2, Download, Edit3, Pause, Play, Plus, ShieldAlert, Trash2, X, Zap } from "lucide-react";
 import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
-import { apiClient } from "@/services/apiClient";
+import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
 
 const CATEGORIES = ["All", "Speed", "Idling", "Geofence", "HOS", "Maintenance", "Safety", "Fuel", "Temperature"] as const;
@@ -11,38 +11,20 @@ type Category = typeof CATEGORIES[number];
 
 const CHANNELS = ["Email", "SMS", "In-App", "Webhook"] as const;
 
-const SEED_RULES: AnyRecord[] = [
-  { id: 1,  name: "Speeding — Highway",        category: "Speed",       threshold: "75 mph",           action: "Alert + Coaching task",   channels: "Email, In-App", status: "Active",   priority: "High",     lastTriggered: "2 hrs ago",   triggeredToday: 3 },
-  { id: 2,  name: "Speeding — Urban Zone",     category: "Speed",       threshold: "40 mph",           action: "Alert + Driver message",  channels: "SMS, In-App",   status: "Active",   priority: "Critical", lastTriggered: "45 min ago",  triggeredToday: 1 },
-  { id: 3,  name: "Extended Idling",           category: "Idling",      threshold: "10 minutes",       action: "Driver alert",            channels: "In-App",        status: "Active",   priority: "Medium",   lastTriggered: "1 hr ago",    triggeredToday: 5 },
-  { id: 4,  name: "Geofence — Customer Site",  category: "Geofence",    threshold: "Entry/Exit",       action: "ETA notification + Log",  channels: "Email, In-App", status: "Active",   priority: "Low",      lastTriggered: "22 min ago",  triggeredToday: 8 },
-  { id: 5,  name: "HOS — 30-Min Warning",      category: "HOS",         threshold: "30 min remaining", action: "Driver + Dispatch alert", channels: "SMS, In-App",   status: "Active",   priority: "High",     lastTriggered: "3 hrs ago",   triggeredToday: 2 },
-  { id: 6,  name: "HOS — Violation",           category: "HOS",         threshold: "0 min remaining",  action: "Emergency alert",         channels: "SMS, Email",    status: "Active",   priority: "Critical", lastTriggered: "Yesterday",   triggeredToday: 0 },
-  { id: 7,  name: "PM-A Service Overdue",      category: "Maintenance", threshold: "0 days overdue",   action: "Work order + Alert",      channels: "Email, In-App", status: "Active",   priority: "High",     lastTriggered: "Today",       triggeredToday: 1 },
-  { id: 8,  name: "Hard Braking Event",        category: "Safety",      threshold: "0.4g deceleration", action: "Safety event + Coaching", channels: "In-App",       status: "Active",   priority: "Medium",   lastTriggered: "4 hrs ago",   triggeredToday: 2 },
-  { id: 9,  name: "Fuel Card — Off Route",     category: "Fuel",        threshold: "5+ miles off route","action": "Fraud alert",           channels: "Email, SMS",    status: "Active",   priority: "High",     lastTriggered: "Yesterday",   triggeredToday: 0 },
-  { id: 10, name: "Reefer Temp Deviation",     category: "Temperature", threshold: "±3°F from setpoint", action: "Driver + Ops alert",    channels: "SMS, Email",    status: "Active",   priority: "Critical", lastTriggered: "6 hrs ago",   triggeredToday: 1 },
-  { id: 11, name: "Dashcam — Phone Use",       category: "Safety",      threshold: "Any detection",    action: "Safety event + Coaching", channels: "In-App, Email", status: "Active",   priority: "High",     lastTriggered: "2 hrs ago",   triggeredToday: 1 },
-  { id: 12, name: "Sensor Offline",            category: "Maintenance", threshold: "> 15 minutes",     action: "Device alert",            channels: "Email, In-App", status: "Paused",   priority: "Medium",   lastTriggered: "3 days ago",  triggeredToday: 0 },
-  { id: 13, name: "Speeding — School Zone",    category: "Speed",       threshold: "25 mph",           action: "Immediate escalation",    channels: "SMS, Email",    status: "Active",   priority: "Critical", lastTriggered: "5 days ago",  triggeredToday: 0 },
-  { id: 14, name: "Geofence — Restricted Area",category: "Geofence",   threshold: "Entry",            action: "Immediate alert",         channels: "SMS, In-App",   status: "Active",   priority: "High",     lastTriggered: "2 days ago",  triggeredToday: 0 },
-  { id: 15, name: "Battery / ELD Low Voltage", category: "Maintenance", threshold: "< 11.8V",          action: "Device health alert",     channels: "In-App",        status: "Active",   priority: "Medium",   lastTriggered: "1 day ago",   triggeredToday: 0 },
-  { id: 16, name: "Driver Seatbelt",           category: "Safety",      threshold: "Any non-use",      action: "Driver + Coaching",       channels: "In-App",        status: "Paused",   priority: "Medium",   lastTriggered: "1 week ago",  triggeredToday: 0 },
-];
-
 async function fetchRules(): Promise<AnyRecord[]> {
-  try {
-    const res = await apiClient.get("/api/alert-rules");
-    const data = (res.data as AnyRecord[]) ?? [];
-    return data.length ? data : SEED_RULES;
-  } catch {
-    return SEED_RULES;
-  }
+  return unwrap<AnyRecord[]>(apiClient.get("/api/alert-rules"));
 }
-async function createRule(payload: AnyRecord) { return apiClient.post("/api/alert-rules", { json: payload }); }
-async function updateRule(id: string, payload: AnyRecord) { return apiClient.put(`/api/alert-rules/${id}`, { json: payload }); }
+async function createRule(payload: AnyRecord) { return apiClient.post("/api/alert-rules", payload); }
+async function updateRule(id: string, payload: AnyRecord) { return apiClient.put(`/api/alert-rules/${id}`, payload); }
 async function deleteRule(id: string) { return apiClient.delete(`/api/alert-rules/${id}`); }
-async function toggleRule(id: string, enabled: boolean) { return apiClient.put(`/api/alert-rules/${id}/toggle`, { json: { enabled } }); }
+async function toggleRule(id: string, enabled: boolean) { return apiClient.put(`/api/alert-rules/${id}/toggle`, { enabled }); }
+
+function formatLastTriggered(value: unknown) {
+  if (!value) return "Never triggered";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
 
 const FIELDS: [string, string, string?][] = [
   ["name",       "Rule Name"],
@@ -99,14 +81,14 @@ export function AlertRulesPage() {
   const channelSet    = [...new Set(rules.flatMap((r) => String(r.channels ?? "").split(/,\s*/)))].filter(Boolean).length;
 
   if (rulesQ.isLoading) return <LoadingState />;
-  if (rulesQ.isError) return <ErrorState message="Unable to load alert rules." />;
+  if (rulesQ.isError) return <ErrorState message={rulesQ.error instanceof Error ? rulesQ.error.message : "Unable to load alert rules."} />;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Alert Rules"
-        title="Configurable alert thresholds and escalation channels"
-        description="Define speed, idling, geofence, HOS, maintenance, safety and fuel rules — assign notification channels and set escalation priorities."
+        title="Live alert thresholds and escalation channels"
+        description="These rules are now backed by the alert rules table in the backend, not a seeded frontend fallback. Changes here update the live alert-control record for the active tenant."
         actions={
           <>
             <button type="button" className="btn-primary" onClick={() => setEditing({ status: "Active", priority: "Medium", category: "Speed" })} disabled={!canManage} title={!canManage ? "You do not have permission." : undefined}>
@@ -156,7 +138,7 @@ export function AlertRulesPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!filtered.length && (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">No alert rules match this filter.</td></tr>
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">No live alert rules are available for this tenant yet.</td></tr>
               )}
               {filtered.map((r) => {
                 const isActive = String(r.status) === "Active";
@@ -183,7 +165,7 @@ export function AlertRulesPage() {
                         : <span className="text-slate-300">—</span>
                       }
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{String(r.lastTriggered ?? "—")}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{formatLastTriggered(r.lastTriggered)}</td>
                     <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">

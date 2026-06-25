@@ -54,11 +54,12 @@
 
 | Role | Email | Password |
 |---|---|---|
-| Company Admin | admin@opstrax.com | Admin@12345 |
-| Dispatcher | dispatcher@opstrax.com | Admin@12345 |
-| Driver | driver@opstrax.com | Admin@12345 |
-| Mechanic | mechanic@opstrax.com | Admin@12345 |
-| Customer | customer@opstrax.com | Admin@12345 |
+| Super Admin | superadmin@opstrax.com | demo123 |
+| Company Admin | admin@opstrax.com | demo123 |
+| Dispatcher | dispatcher@opstrax.com | demo123 |
+| Driver | driver@opstrax.com | demo123 |
+| Mechanic | mechanic@opstrax.com | demo123 |
+| Customer | customer@opstrax.com | demo123 |
 
 All demo accounts are pre-seeded with realistic operational data. No configuration required.
 

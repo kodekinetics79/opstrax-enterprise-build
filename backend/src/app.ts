@@ -8,10 +8,14 @@ import healthRoutes from "./modules/health/health.routes";
 import tenantConfigRoutes from "./modules/tenant-config/tenantConfig.routes";
 import complianceRoutes from "./modules/compliance/compliance.routes";
 import deviceRoutes from "./modules/devices/device.routes";
+import authRoutes from "./modules/auth/auth.routes";
 import industryRoutes from "./modules/industry/industry.routes";
+import integrationsRoutes from "./modules/integrations/integrations.routes";
 import telemetryRoutes from "./modules/telemetry/telemetry.routes";
 
 import { errorHandler } from "./middleware/errorHandler";
+import { pingDatabase } from "./lib/db";
+import { ok, fail } from "./lib/httpEnvelope";
 
 export const app = express();
 const requestWindows = new Map<string, { windowStart: number; count: number }>();
@@ -45,7 +49,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   if (
     req.path === "/api/health" ||
     req.path === "/api/ready" ||
-    req.path === "/api/auth/login" ||
+    req.path.startsWith("/api/auth/") ||
     (req.method === "GET" && req.path.startsWith("/api/customer-eta/track/"))
   ) {
     return next();
@@ -73,24 +77,33 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.use("/api/health", healthRoutes);
 app.get("/api/ready", async (_req, res) => {
-  res.status(200).json({
-    success: true,
-    data: {
-      service: "fleet-backend",
-      status: "ready",
-      dependencies: {
-        database: "not-configured",
-      },
-      timestamp: new Date().toISOString(),
-    },
-    message: "Ready",
-    errors: [],
-  });
+  try {
+    const db = await pingDatabase();
+    res.status(200).json(
+      ok(
+        {
+          service: "fleet-backend",
+          status: db.ok ? "ready" : "degraded",
+          dependencies: {
+            database: db.ok ? "connected" : "unavailable",
+          },
+          timestamp: new Date().toISOString(),
+        },
+        "Ready"
+      )
+    );
+  } catch (error) {
+    res.status(503).json(
+      fail("Ready check failed", [error instanceof Error ? error.message : "Database not reachable"])
+    );
+  }
 });
+app.use("/api/auth", authRoutes);
 app.use("/api/tenant", tenantConfigRoutes);
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/industry-modules", industryRoutes);
+app.use("/api/integrations", integrationsRoutes);
 app.use("/api/telemetry", telemetryRoutes);
 
 app.use(errorHandler);

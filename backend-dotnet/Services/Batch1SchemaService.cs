@@ -43,10 +43,12 @@ public sealed class Batch1SchemaService(Database db)
 
     private static readonly ColumnDefinition[] Columns =
     [
-        new("vehicles", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
-        new("vehicles", "device_status", "VARCHAR(60) NOT NULL DEFAULT 'Online'"),
-        new("vehicles", "camera_status", "VARCHAR(60) NOT NULL DEFAULT 'Online'"),
-        new("vehicles", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("vehicles", "risk_score",          "DECIMAL(6,2) NOT NULL DEFAULT 10"),
+        new("vehicles", "device_status",       "VARCHAR(60) NOT NULL DEFAULT 'Online'"),
+        new("vehicles", "camera_status",       "VARCHAR(60) NOT NULL DEFAULT 'Online'"),
+        new("vehicles", "deleted_at",          "TIMESTAMPTZ NULL"),
+        new("vehicles", "out_of_service",      "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("vehicles", "availability_status", "VARCHAR(60) NULL"),
         new("drivers", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
         new("drivers", "compliance_score", "DECIMAL(6,2) NOT NULL DEFAULT 95"),
         new("drivers", "deleted_at", "TIMESTAMPTZ NULL"),
