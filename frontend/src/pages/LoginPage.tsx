@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { AlertCircle, ArrowRight, ChevronDown } from "lucide-react";
+import { AlertCircle, ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
-import { demoUsers } from "@/auth/demoUsers";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
 /* ── Telemetry particle canvas ──────────────────────────────────────────── */
@@ -275,11 +274,6 @@ const metrics = [
   { value: "3",   label: "open exceptions" },
 ];
 
-/* ── Demo accounts ──────────────────────────────────────────────────────── */
-const demoRoles = demoUsers.filter((u) =>
-  ["fleet_manager", "dispatcher", "safety_manager", "super_admin", "tenant_admin", "maintenance_manager"].includes(u.roleKey)
-);
-
 /* ── Main component ─────────────────────────────────────────────────────── */
 export function LoginPage() {
   const { setSession } = useAuth();
@@ -287,7 +281,6 @@ export function LoginPage() {
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
-  const [showDemo, setShowDemo]     = useState(false);
 
   const login = useMutation({
     mutationFn: ({ email: e, password: p }: { email: string; password: string }) => authApi.login(e, p),
@@ -295,7 +288,6 @@ export function LoginPage() {
   });
 
   const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
-  const signInAs = (u: (typeof demoUsers)[0]) => login.mutate({ email: u.email, password: u.password });
 
   return (
     <div className="flex min-h-screen">
@@ -394,7 +386,7 @@ export function LoginPage() {
           {login.isError && (
             <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              Invalid email or password. Try a demo account below.
+              Invalid email or password. Please try again.
             </div>
           )}
 
@@ -426,27 +418,6 @@ export function LoginPage() {
                 : <>Sign in <ArrowRight className="h-4 w-4" /></>}
             </button>
           </form>
-
-          {/* Demo accounts */}
-          <div className="mt-8 border-t border-slate-100 pt-6">
-            <button type="button" onClick={() => setShowDemo((v) => !v)}
-              className="flex w-full items-center justify-between text-sm text-slate-500 transition hover:text-slate-700">
-              <span>Try a demo account</span>
-              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${showDemo ? "rotate-180" : ""}`} />
-            </button>
-
-            {showDemo && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {demoRoles.map((user) => (
-                  <button key={user.email} type="button" onClick={() => signInAs(user)} disabled={login.isPending}
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50">
-                    <p className="text-xs font-semibold leading-snug text-slate-800">{user.roleLabel}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{user.email.split("@")[0]}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Footer */}
           <div className="mt-8 space-y-1.5 text-center">
