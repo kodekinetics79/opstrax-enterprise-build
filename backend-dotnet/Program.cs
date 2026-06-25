@@ -47,6 +47,7 @@ builder.Services.AddScoped<DataRetentionService>();
 builder.Services.AddScoped<ExportGovernanceService>();
 builder.Services.AddScoped<PasswordPolicyService>();
 builder.Services.AddHostedService<TelemetryBackgroundService>();
+builder.Services.AddHostedService<TelemetrySimulatorBackgroundService>();
 builder.Services.AddHostedService<SafetyBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();

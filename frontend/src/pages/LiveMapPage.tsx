@@ -7,7 +7,6 @@ import {
   Layers,
   MapPin,
   Navigation,
-  RadioTower,
   Route,
   Satellite,
   Search,
@@ -21,7 +20,7 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import { controlTowerApi } from "@/services/controlTowerApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
-import { AiInsightCard, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
@@ -165,11 +164,12 @@ export function LiveMapPage() {
       <PageHeader
         eyebrow="Operations"
         title="Live Fleet Map"
-        description="Real-time vehicle positions, geofences and driver locations streamed live from the fleet — backed by the operational database and GPS telemetry."
+        description="Real-time vehicle positions, status and geofences — streamed live from the operational database."
         actions={
           telemetry.connected ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700">
-              <Wifi className="h-3.5 w-3.5" /> GPS stream live · {telemetry.positions.length} vehicles
+              <Wifi className="h-3.5 w-3.5" /> GPS live · {telemetry.positions.length} units
+              {telemetry.lastUpdated ? <span className="font-medium text-teal-600/70">· {telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">
@@ -179,53 +179,25 @@ export function LiveMapPage() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <KpiCard label="Tracked Vehicles" value={String(kpis.trackedEntities ?? liveEntities.length)} status="Active" />
-        <KpiCard label="Online Devices" value={String(kpis.onlineDevices ?? 0)} status="Live" />
-        <KpiCard label="Online Cameras" value={String(kpis.onlineCameras ?? 0)} status="Live" />
-        <KpiCard label="Telemetry Quality" value={String(kpis.telemetryQuality ?? "--")} status="Healthy" />
-        <KpiCard label="High Risk Units" value={String(kpis.highRiskUnits ?? 0)} status="Review" />
-        <KpiCard label="Speed Alerts" value={String(kpis.speedAlerts ?? 0)} status="Warning" />
-      </div>
-
+      {/* Status segmentation — the single primary metric row. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatusBoardCard
-          label="All Units"
-          count={liveEntities.length}
-          tone="slate"
-          active={activeFilter === "All"}
-          onClick={() => setActiveFilter("All")}
-        />
-        <StatusBoardCard
-          label="Moving"
-          count={buckets.Moving}
-          tone="teal"
-          active={activeFilter === "Moving"}
-          onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")}
-        />
-        <StatusBoardCard
-          label="Idle / Parked"
-          count={buckets.Idle}
-          tone="indigo"
-          active={activeFilter === "Idle"}
-          onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")}
-        />
-        <StatusBoardCard
-          label="Offline"
-          count={buckets.Offline}
-          tone="rose"
-          active={activeFilter === "Offline"}
-          onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")}
-        />
+        <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
+        <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
+        <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
+        <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_.6fr]">
-        <section className="panel p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid items-stretch gap-5 xl:grid-cols-[1.55fr_.45fr]">
+        {/* Hero map */}
+        <section className="panel flex flex-col p-5">
+          <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Live Operations Map</h2>
-            <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-              Showing {visibleEntities.length} of {liveEntities.length} tracked units
-            </span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
+              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.onlineDevices ?? 0)} label="devices" />
+              <MetaStat icon={<Camera className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.onlineCameras ?? 0)} label="cameras" />
+              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={String(kpis.telemetryQuality ?? "--")} label="quality" />
+              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.speedAlerts ?? 0)} label="speed alerts" />
+            </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -234,26 +206,31 @@ export function LiveMapPage() {
                 type="button"
                 key={filter}
                 className={filter === activeFilter ? "btn-primary py-1.5 text-xs" : "btn-ghost py-1.5 text-xs"}
-                onClick={() => setActiveFilter(filter)}
+                onClick={() => setActiveFilter(activeFilter === filter ? "All" : filter)}
               >
                 {filter}
               </button>
             ))}
-            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
             <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
             <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
+            <span className="ml-auto text-xs font-semibold text-slate-400">{visibleEntities.length} of {liveEntities.length} shown</span>
           </div>
 
-          <div className="map-surface mt-4 h-[640px]">
+          <div className="map-surface mt-4 min-h-[560px] flex-1">
             <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
           </div>
         </section>
 
-        <aside className="space-y-6">
-          <section className="panel p-5">
+        {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
+        <aside className="panel flex max-h-[760px] flex-col overflow-hidden p-0">
+          <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Live Roster</h2>
-              <span className="text-xs font-semibold text-slate-400">{visibleEntities.length} units</span>
+              <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${telemetry.connected ? "text-teal-600" : "text-slate-400"}`}>
+                <span className={`h-2 w-2 rounded-full ${telemetry.connected ? "animate-pulse bg-teal-500" : "bg-slate-300"}`} />
+                {telemetry.connected ? "Live" : "Reconnecting"}
+              </span>
             </div>
             <div className="relative mt-3">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -264,53 +241,47 @@ export function LiveMapPage() {
                 placeholder="Vehicle code, driver, status…"
               />
             </div>
-            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
-              {visibleEntities.length === 0 ? (
-                <p className="text-sm text-slate-500">No vehicles match the current filters.</p>
+          </div>
+
+          <div className="min-h-[180px] flex-1 space-y-2 overflow-y-auto px-4 py-3">
+            {visibleEntities.length === 0 ? (
+              <p className="px-1 py-6 text-center text-sm text-slate-500">No vehicles match the current filters.</p>
+            ) : (
+              visibleEntities.map((entity) => (
+                <RosterRow key={String(entity.id ?? entity.vehicleId ?? entity.label)} entity={entity} onClick={() => focusOn(entity)} />
+              ))
+            )}
+          </div>
+
+          <div className="border-t border-slate-100 px-4 py-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                Telemetry Alerts{openAlerts.length > 0 ? ` · ${openAlerts.length}` : ""}
+              </h3>
+            </div>
+            <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">
+              {openAlerts.length === 0 ? (
+                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
               ) : (
-                visibleEntities.map((entity) => (
-                  <RosterRow key={String(entity.id ?? entity.vehicleId ?? entity.label)} entity={entity} onClick={() => focusOn(entity)} />
+                openAlerts.slice(0, 6).map((alert) => (
+                  <TelemetryAlertRow
+                    key={String(alert.id)}
+                    alert={alert}
+                    onAck={() => ackAlert.mutate(Number(alert.id))}
+                    onResolve={() => resolveAlert.mutate(Number(alert.id))}
+                  />
                 ))
               )}
             </div>
-          </section>
-
-          <section className="panel p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="section-title">Live Status</h2>
-              <StatusBadge status={telemetry.connected ? "Connected" : "Reconnecting"} />
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <StatTile icon={<Satellite className="h-4 w-4 text-teal-600" />} label="Online devices" value={String(kpis.onlineDevices ?? 0)} />
-              <StatTile icon={<Camera className="h-4 w-4 text-violet-600" />} label="Online cameras" value={String(kpis.onlineCameras ?? 0)} />
-              <StatTile icon={<Gauge className="h-4 w-4 text-blue-600" />} label="Fleet readiness" value={String(kpis.fleetReadiness ?? "--")} />
-              <StatTile icon={<RadioTower className="h-4 w-4 text-emerald-600" />} label="Last GPS sync" value={telemetry.lastUpdated ? telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"} />
-            </div>
-          </section>
-
-          <section className="panel p-5">
-            <h2 className="section-title">Telemetry Alerts{openAlerts.length > 0 ? ` (${openAlerts.length})` : ""}</h2>
-            <div className="mt-4">
-              {openAlerts.length === 0 ? (
-                <p className="flex items-center gap-2 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
-              ) : (
-                <div className="space-y-3">
-                  {openAlerts.slice(0, 6).map((alert) => (
-                    <TelemetryAlertRow
-                      key={String(alert.id)}
-                      alert={alert}
-                      onAck={() => ackAlert.mutate(Number(alert.id))}
-                      onResolve={() => resolveAlert.mutate(Number(alert.id))}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {recommendations.slice(0, 2).map((item) => <AiInsightCard key={String(item.id)} insight={item} />)}
+          </div>
         </aside>
       </div>
+
+      {recommendations.length > 0 && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {recommendations.slice(0, 2).map((item) => <AiInsightCard key={String(item.id)} insight={item} />)}
+        </div>
+      )}
 
       <VehicleDetailDrawer detail={detail.data} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
     </div>
@@ -324,22 +295,25 @@ const BOARD_TONES: Record<string, { dot: string; activeBorder: string; activeBg:
   rose:   { dot: "bg-rose-500",    activeBorder: "border-rose-400",    activeBg: "bg-rose-50",    text: "text-rose-700" },
 };
 
-function StatusBoardCard({ label, count, tone, active, onClick }: { label: string; count: number; tone: keyof typeof BOARD_TONES; active: boolean; onClick: () => void }) {
+function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { label: string; count: number; tone: keyof typeof BOARD_TONES; meaning: string; active: boolean; onClick: () => void }) {
   const t = BOARD_TONES[tone];
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
-        active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300"
+      className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
+        active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >
-      <div className="flex items-center gap-2.5">
-        <span className={`h-2.5 w-2.5 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
-        <span className="text-sm font-semibold text-slate-600">{label}</span>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+          <span className="truncate text-sm font-semibold text-slate-700">{label}</span>
+        </div>
+        <p className="mt-1 pl-[18px] text-[11px] font-medium text-slate-400">{meaning}</p>
       </div>
-      <span className={`text-2xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
   );
 }
@@ -398,12 +372,13 @@ function LayerToggle({ label, icon, active, onClick }: { label: string; icon: Re
   );
 }
 
-function StatTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function MetaStat({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
   return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-      <div className="flex items-center gap-1.5 text-xs text-slate-500">{icon}{label}</div>
-      <p className="mt-1 text-lg font-bold text-slate-900">{value}</p>
-    </div>
+    <span className="inline-flex items-center gap-1.5">
+      {icon}
+      <span className="font-bold text-slate-700">{value}</span>
+      <span className="text-slate-400">{label}</span>
+    </span>
   );
 }
 
