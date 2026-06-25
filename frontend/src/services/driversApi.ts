@@ -12,7 +12,8 @@ export const driversApi = {
     total: rows.length,
   })),
   detail: (id: string | number) => getDriverById(id),
-  timeline: async (id: string | number) => [{ eventType: "status.update", title: "Driver record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
+  // Recommendations are sourced from the live detail payload (driver detail returns them);
+  // this satisfies the EntityApi contract and is the offline fallback only.
   recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review driver fit", body: "Match vehicle assignment, HOS posture and compliance coverage before dispatching the next load.", score: 84 }],
   create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/drivers", payload)), () => ({ ...payload, id: payload.id ?? `drv-${Date.now()}`, success: true })),
   update: (id: string | number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/drivers/${id}`, payload)), () => ({ ...payload, id, success: true })),
