@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileText
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
-import { DriverIntelligenceBoard } from "@/components/DriverIntelligenceBoard";
+import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
@@ -224,6 +224,7 @@ const config: Record<EntityKind, EntityConfig> = {
 export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [statusFilter, setStatusFilter] = useState("All");
+  const [triageFilter, setTriageFilter] = useState<Triage | null>(null);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -311,17 +312,19 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     const source = scopedRows;
     return source.filter((row) => {
       const qLower = search.toLowerCase();
-      const matchesStatus = statusFilter === "All" || 
-        String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) || 
+      const matchesStatus = statusFilter === "All" ||
+        String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) ||
         (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
 
-      const matchesSearch = !search.trim() || 
+      const matchesSearch = !search.trim() ||
         String(row.vehicleCode || row.driverCode || row.assetCode || row.customerCode || "").toLowerCase().includes(qLower) ||
         String(row.fullName || row.name || row.plateNumber || "").toLowerCase().includes(qLower);
 
-      return matchesStatus && matchesSearch;
+      const matchesTriage = kind !== "drivers" || !triageFilter || triageOf(row) === triageFilter;
+
+      return matchesStatus && matchesSearch && matchesTriage;
     });
-  }, [scopedRows, search, statusFilter]);
+  }, [scopedRows, search, statusFilter, triageFilter, kind]);
 
   useEffect(() => {
     if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
@@ -355,7 +358,13 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         />
       ) : null}
 
-      {kind === "drivers" ? <DriverIntelligenceBoard rows={rows} /> : null}
+      {kind === "drivers" ? (
+        <DriverIntelligenceBoard
+          rows={scopedRows}
+          activeTriage={triageFilter}
+          onTriageSelect={(triage) => setTriageFilter((current) => (current === triage ? null : triage))}
+        />
+      ) : null}
 
       {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
 
@@ -370,7 +379,12 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {kind === "drivers" && triageFilter ? (
+            <button className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700" onClick={() => setTriageFilter(null)}>
+              Triage: {triageFilter} <X className="h-3 w-3" />
+            </button>
+          ) : null}
           {["All", "Active", "Available", "At Risk", "Maintenance"].map((item) => (
             <button key={item} className={statusFilter === item ? "btn-primary" : "btn-ghost"} onClick={() => setStatusFilter(item)}>{item}</button>
           ))}

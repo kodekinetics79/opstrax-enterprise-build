@@ -8,7 +8,7 @@ import type { AnyRecord } from "@/types";
 // who can I put on a load right now, whose credentials are about to lapse, and who needs
 // coaching before the next safety event.
 
-type Triage = "ready" | "onduty" | "watch" | "blocked";
+export type Triage = "ready" | "onduty" | "watch" | "blocked";
 
 const TRIAGE: Record<Triage, { label: string; help: string; color: string; bg: string; border: string; text: string }> = {
   ready:   { label: "Ready to dispatch", help: "Available, compliant, credentials current", color: "#059669", bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700" },
@@ -32,7 +32,7 @@ function daysUntil(value: unknown): number | null {
   return Math.ceil((date.getTime() - Date.now()) / 86_400_000);
 }
 
-function triageOf(row: AnyRecord): Triage {
+export function triageOf(row: AnyRecord): Triage {
   const status = String(row.status ?? "");
   const compliance = num(row, "complianceScore", "compliance_score");
   const risk = num(row, "riskScore", "risk_score");
@@ -50,7 +50,11 @@ function driverName(row: AnyRecord) {
   return String(row.fullName ?? row.full_name ?? row.driverCode ?? row.driver_code ?? `Driver ${row.id}`);
 }
 
-export function DriverIntelligenceBoard({ rows }: { rows: AnyRecord[] }) {
+export function DriverIntelligenceBoard({ rows, activeTriage, onTriageSelect }: {
+  rows: AnyRecord[];
+  activeTriage?: Triage | null;
+  onTriageSelect?: (triage: Triage) => void;
+}) {
   const model = useMemo(() => {
     const buckets: Record<Triage, AnyRecord[]> = { ready: [], onduty: [], watch: [], blocked: [] };
     for (const row of rows) buckets[triageOf(row)].push(row);
@@ -96,15 +100,27 @@ export function DriverIntelligenceBoard({ rows }: { rows: AnyRecord[] }) {
           {lanes.map((lane) => {
             const meta = TRIAGE[lane.key];
             const pct = model.total ? Math.round((lane.value / model.total) * 100) : 0;
+            const active = activeTriage === lane.key;
+            const interactive = Boolean(onTriageSelect);
             return (
-              <div key={lane.key} className={`rounded-2xl border ${meta.border} ${meta.bg} p-4`}>
-                <p className={`text-sm font-black ${meta.text}`}>{meta.label}</p>
+              <button
+                key={lane.key}
+                type="button"
+                onClick={() => onTriageSelect?.(lane.key)}
+                aria-pressed={active ? "true" : "false"}
+                className={`rounded-2xl border p-4 text-left transition ${meta.border} ${meta.bg} ${interactive ? "cursor-pointer hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" : "cursor-default"} ${active ? "ring-2 ring-offset-1" : ""}`}
+                style={active ? { boxShadow: `0 0 0 2px ${meta.color}` } : undefined}
+              >
+                <p className={`flex items-center justify-between text-sm font-black ${meta.text}`}>
+                  {meta.label}
+                  {active ? <span className="text-[10px] font-bold uppercase tracking-wide">Filtering</span> : null}
+                </p>
                 <p className="mt-2 text-3xl font-black text-slate-950">{lane.value}</p>
                 <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/70">
                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta.color }} />
                 </div>
                 <p className="mt-2 text-[11px] leading-tight text-slate-500">{meta.help}</p>
-              </div>
+              </button>
             );
           })}
         </div>
