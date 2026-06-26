@@ -12,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<Database>();
+builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddSingleton<Batch1SchemaService>();
 builder.Services.AddSingleton<Batch2SchemaService>();
