@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Opstrax.Api.Data;
@@ -8,11 +10,54 @@ namespace Opstrax.Api.Seed;
 // repo's raw-Npgsql layer. Idempotent and tenant-scoped: for every company that has
 // zero fleet_tms_shipments it inserts a small representative dataset so the workspace
 // renders real rows instead of an empty state. Never touches existing tables.
-public sealed class FleetTmsSeeder(Database db, ILogger<FleetTmsSeeder> log)
+//
+// PRODUCTION SAFETY: demo/test fleet data must never be created automatically in a
+// production tenant. Seeding is gated behind ENABLE_FLEET_DEMO_SEED. Resolution order:
+//   1. env ENABLE_FLEET_DEMO_SEED (true/false)        → honoured verbatim
+//   2. config "Fleet:EnableDemoSeed"                  → honoured verbatim
+//   3. config "ENABLE_FLEET_DEMO_SEED"                → honoured verbatim
+//   4. nothing configured at all                      → true only in Development,
+//                                                       false everywhere else
+// appsettings.json is gitignored (env-only config), so the binding guarantee lives
+// HERE in code: a fresh Production/Staging deploy with no flag set never auto-seeds.
+// Demo shipments are created only when an operator explicitly opts in with
+// ENABLE_FLEET_DEMO_SEED=true (dev/demo box).
+// The Saudi region reference table is neutral lookup data (not demo shipments) and is
+// always ensured so the readiness UI has its lookups regardless of the gate.
+public sealed class FleetTmsSeeder(Database db, ILogger<FleetTmsSeeder> log, IConfiguration configuration, IHostEnvironment environment)
 {
+    // Exposed for tests / startup logging — true when demo shipment seeding is permitted.
+    public bool DemoSeedEnabled => ResolveDemoSeedEnabled();
+
+    private bool ResolveDemoSeedEnabled()
+    {
+        var raw = Environment.GetEnvironmentVariable("ENABLE_FLEET_DEMO_SEED")
+                  ?? configuration["Fleet:EnableDemoSeed"]
+                  ?? configuration["ENABLE_FLEET_DEMO_SEED"];
+        if (!string.IsNullOrWhiteSpace(raw) && bool.TryParse(raw.Trim(), out var explicitValue))
+            return explicitValue;
+        // Unset → enabled only in Development; never auto-seed Production/Staging.
+        return environment.IsDevelopment();
+    }
+
     public async Task EnsureAsync(CancellationToken ct = default)
     {
+        // Neutral reference lookup — always present, not demo content.
         await SeedSaudiRegions(ct);
+
+        if (!ResolveDemoSeedEnabled())
+        {
+            log.LogInformation(
+                "[FleetTmsSeeder] demo seed skipped (environment={Environment}, ENABLE_FLEET_DEMO_SEED unset/false). No demo shipments created.",
+                environment.EnvironmentName);
+            return;
+        }
+
+        await SeedDemoCompaniesAsync(ct);
+    }
+
+    private async Task SeedDemoCompaniesAsync(CancellationToken ct)
+    {
         var companies = await db.QueryAsync("SELECT id, name FROM companies WHERE status='Active' ORDER BY id", ct: ct);
         foreach (var company in companies)
         {
