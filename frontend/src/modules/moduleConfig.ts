@@ -81,6 +81,7 @@ export const modules: ModuleConfig[] = [
   { key: "route-plans",        title: "Route Plans",        route: "/route-plans",        group: "Transport Operations", description: "Route library, lane risk, distance, duration, toll and vehicle fit.", accent: "purple", requiredPermission: "dispatch.view" },
   { key: "proof-of-delivery",  title: "Proof of Delivery",  route: "/proof-of-delivery",  group: "Transport Operations", description: "POD capture, GPS verification, photos, signature and invoice readiness.", accent: "green",  requiredPermission: "shipments:view" },
   { key: "last-mile-delivery", title: "Last Mile Delivery", route: "/last-mile-delivery", group: "Transport Operations", description: "Final-mile runs with ETA, proof, stop status and customer experience.", accent: "blue",   requiredPermission: "dispatch.view" },
+  { key: "logistics-workspace", title: "Logistics Workspace", route: "/logistics-workspace", group: "Transport Operations", description: "Last-mile command: dispatch orders, delivery routes and live stop progression with deliver/attempt/reschedule actions.", accent: "blue", requiredPermission: "dispatch:view" },
 
   { key: "fleet-utilization", title: "Fleet Utilization", route: "/fleet-utilization", group: "Fleet", description: "Vehicle utilization %, idle time, fuel efficiency, active hours and per-vehicle productivity analytics.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "fleet-workspace", title: "Fleet TMS Workspace", route: "/fleet-workspace", group: "Fleet", description: "Shipment lifecycle, POD verification, public tracking links, vehicles, tracking, maintenance and fuel in one operations cockpit.", accent: "teal", requiredPermission: "fleet:view" },
@@ -164,6 +165,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "route-plans": Route,
   "proof-of-delivery": FileCheck2,
   "last-mile-delivery": MapPinned,
+  "logistics-workspace": Map,
   vehicles: Truck,
   drivers: Users,
   owners: UserCog,

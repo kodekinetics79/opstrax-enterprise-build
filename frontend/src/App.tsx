@@ -78,6 +78,7 @@ const PublicShipmentTrackingPage = lazy(() => import("@/pages/PublicShipmentTrac
 const FleetColdChainPage = lazy(() => import("@/pages/FleetColdChainPage").then((module) => ({ default: module.FleetColdChainPage })));
 const FleetAssetManagementPage = lazy(() => import("@/pages/FleetAssetManagementPage").then((module) => ({ default: module.FleetAssetManagementPage })));
 const FleetSaudiReadinessPage = lazy(() => import("@/pages/FleetSaudiReadinessPage").then((module) => ({ default: module.FleetSaudiReadinessPage })));
+const DispatchWorkspacePage = lazy(() => import("@/pages/DispatchWorkspacePage").then((module) => ({ default: module.DispatchWorkspacePage })));
 const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module) => ({ default: module.EntityListPage })));
 const VehiclesModulePage = lazy(() => import("@/pages/VehiclesModulePage").then((module) => ({ default: module.VehiclesModulePage })));
 const DriversModulePage = lazy(() => import("@/pages/DriversModulePage").then((module) => ({ default: module.DriversModulePage })));
@@ -202,6 +203,7 @@ export default function App() {
         <Route path="/fleet-cold-chain" element={<RequirePermission permission="fleet:view"><FleetColdChainPage /></RequirePermission>} />
         <Route path="/fleet-assets" element={<RequirePermission permission="fleet:view"><FleetAssetManagementPage /></RequirePermission>} />
         <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><FleetSaudiReadinessPage /></RequirePermission>} />
+        <Route path="/logistics-workspace" element={<RequirePermission permission="dispatch:view"><DispatchWorkspacePage mode="dispatch" /></RequirePermission>} />
 
         {/* ── Maintenance ── */}
         <Route path="/maintenance" element={<RequirePermission permission="maintenance:view"><MaintenanceCommandPage /></RequirePermission>} />
