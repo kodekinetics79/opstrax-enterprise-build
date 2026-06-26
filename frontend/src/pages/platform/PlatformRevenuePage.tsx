@@ -15,6 +15,9 @@ export function PlatformRevenuePage() {
   const [tenantId, setTenantId] = useState<number | null>(null);
   const [usage, setUsage] = useState<AnyRecord | null>(null);
   const [invoice, setInvoice] = useState<AnyRecord | null>(null);
+  const [marketPacks, setMarketPacks] = useState<AnyRecord[]>([]);
+  const [tenantPacks, setTenantPacks] = useState<Record<string, string>>({});
+  const [complianceUsage, setComplianceUsage] = useState<AnyRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -22,14 +25,16 @@ export function PlatformRevenuePage() {
   useEffect(() => {
     (async () => {
       try {
-        const [pk, mt, tn] = await Promise.all([
+        const [pk, mt, tn, mp] = await Promise.all([
           platformApi.modulePackages(),
           platformApi.meters(),
           platformApi.tenants(),
+          platformApi.marketPacks(),
         ]);
         setPackages((pk?.items as AnyRecord[]) ?? []);
         setMeters((mt?.items as AnyRecord[]) ?? []);
         setTenants((tn as AnyRecord[]) ?? []);
+        setMarketPacks((mp?.items as AnyRecord[]) ?? []);
         if ((tn ?? []).length > 0) setTenantId(Number(tn[0].id));
       } catch (e: any) {
         setError(e?.message ?? "Failed to load revenue data");
@@ -39,14 +44,28 @@ export function PlatformRevenuePage() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (tenantId == null) return;
+  function reloadTenant(id: number) {
     setBusy(true);
-    Promise.all([platformApi.tenantUsage(tenantId), platformApi.invoicePreview(tenantId)])
-      .then(([u, inv]) => { setUsage(u); setInvoice(inv); })
+    Promise.all([platformApi.tenantUsage(id), platformApi.invoicePreview(id), platformApi.tenantMarketPacks(id), platformApi.complianceUsage(id)])
+      .then(([u, inv, tmp, cu]) => {
+        setUsage(u); setInvoice(inv); setComplianceUsage(cu);
+        const map: Record<string, string> = {};
+        for (const p of ((tmp?.items as AnyRecord[]) ?? [])) map[p.packCode] = p.status;
+        setTenantPacks(map);
+      })
       .catch((e: any) => setError(e?.message ?? "Failed to load tenant revenue"))
       .finally(() => setBusy(false));
-  }, [tenantId]);
+  }
+
+  useEffect(() => { if (tenantId != null) reloadTenant(tenantId); }, [tenantId]);
+
+  function toggleMarketPack(packCode: string, enable: boolean) {
+    if (tenantId == null) return;
+    setBusy(true);
+    platformApi.setTenantMarketPack(tenantId, { packCode, status: enable ? "active" : "disabled" })
+      .then(() => reloadTenant(tenantId))
+      .catch((e: any) => { setError(e?.message ?? "Failed to update market pack"); setBusy(false); });
+  }
 
   if (loading) return <PLoading />;
   if (error) return <PError message={error} />;
@@ -86,6 +105,41 @@ export function PlatformRevenuePage() {
             </tbody>
           </table>
         </div>
+      </PCard>
+
+      <PCard>
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="text-sm font-semibold text-white/90">Market Packs — {tenants.find((t) => Number(t.id) === tenantId)?.name ?? "tenant"}</h3>
+        </div>
+        <p className="mt-1 text-xs text-white/40">Paid regional add-ons. Enable/disable per tenant — deny-by-default; tenants cannot self-enable.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {marketPacks.map((p) => {
+            const enabled = tenantPacks[p.code] === "active";
+            return (
+              <div key={p.code} className="rounded-xl border border-white/10 p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-white/90">{p.name}</p>
+                    <p className="text-xs text-white/40">{p.region} · {p.defaultCurrency} · {formatMoney(p.basePriceCents, "USD")}/mo</p>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${enabled ? "bg-teal-400/15 text-teal-300" : "bg-white/5 text-white/40"}`}>{enabled ? "Enabled" : "Disabled"}</span>
+                </div>
+                <div className="mt-3">
+                  <PButton variant={enabled ? "danger" : "primary"} disabled={busy || tenantId == null} onClick={() => toggleMarketPack(p.code, !enabled)}>
+                    {enabled ? "Disable" : "Enable"}
+                  </PButton>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {complianceUsage && (
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <PKpi label="Compliance docs" value={String(complianceUsage?.totals?.complianceDocuments ?? 0)} />
+            <PKpi label="Inspections" value={String(complianceUsage?.totals?.inspections ?? 0)} />
+            <PKpi label="Expiry events" value={String(complianceUsage?.totals?.expiryEvents ?? 0)} />
+          </div>
+        )}
       </PCard>
 
       <PCard>
