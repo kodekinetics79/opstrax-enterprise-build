@@ -42,6 +42,7 @@ builder.Services.AddSingleton<SecuritySchemaService>();
 builder.Services.AddSingleton<PlatformSchemaService>();
 // Fleet TMS (PR1) — shipment lifecycle, POD workflow & public tracking (additive)
 builder.Services.AddSingleton<FleetTmsSchemaService>();
+builder.Services.AddSingleton<FleetTmsColdChainSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
 builder.Services.AddScoped<SecurityEventService>();
@@ -97,6 +98,7 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "FleetTmsColdChain",  () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
 }
 
@@ -423,6 +425,7 @@ EndpointMappings.MapP9OpsEndpoints(app);
 EndpointMappings.MapP10SecurityEndpoints(app);
 EndpointMappings.MapFleetHealthEndpoints(app);
 app.MapFleetTmsEndpoints();
+app.MapFleetTmsColdChainEndpoints();
 
 app.Run();
 
