@@ -40,6 +40,9 @@ builder.Services.AddScoped<OpsMetricsService>();
 builder.Services.AddSingleton<SecuritySchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
+// Fleet TMS (PR1) — shipment lifecycle, POD workflow & public tracking (additive)
+builder.Services.AddSingleton<FleetTmsSchemaService>();
+builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
 builder.Services.AddScoped<SecurityEventService>();
 builder.Services.AddScoped<SsoConnectionService>();
@@ -93,6 +96,8 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Observability",     () => scope.ServiceProvider.GetRequiredService<ObservabilitySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
 }
 
 app.Use(async (context, next) =>
@@ -130,7 +135,10 @@ app.UseWhen(
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
                 // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                 path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)))
+                 path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||
+                // Fleet TMS public shipment tracking — token-scoped, expiring, revocable; no user session
+                (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)))
             {
                 await next();
                 return;
@@ -414,6 +422,7 @@ app.MapPlatformEndpoints();
 EndpointMappings.MapP9OpsEndpoints(app);
 EndpointMappings.MapP10SecurityEndpoints(app);
 EndpointMappings.MapFleetHealthEndpoints(app);
+app.MapFleetTmsEndpoints();
 
 app.Run();
 

@@ -18,7 +18,7 @@ const NAV_SECTIONS = [
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "fleet-utilization", "assignments"],
+    items: ["vehicles", "drivers", "fleet-utilization", "fleet-workspace", "assignments"],
   },
   {
     label: "Dispatch",
