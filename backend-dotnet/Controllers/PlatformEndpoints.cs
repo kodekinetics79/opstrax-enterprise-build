@@ -102,7 +102,8 @@ public static class PlatformEndpoints
     }
 
     // Returns the principal when authorized, or an IResult error (401/403) to short-circuit.
-    private static async Task<(PlatformPrincipal? Principal, IResult? Error)> RequireAsync(
+    // internal so sibling endpoint modules (e.g. RevenueEndpoints) reuse one platform guard.
+    internal static async Task<(PlatformPrincipal? Principal, IResult? Error)> RequireAsync(
         HttpContext http, Database db, string permission, CancellationToken ct)
     {
         var principal = await AuthenticateAsync(http, db, ct);

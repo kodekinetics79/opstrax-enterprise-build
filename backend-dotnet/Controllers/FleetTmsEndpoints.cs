@@ -75,6 +75,22 @@ public static class FleetTmsEndpoints
     private static IResult NotFound(string message = "Not found") => Results.NotFound(ApiResponse<object>.Fail(message));
     private static IResult Bad(string message) => Results.BadRequest(ApiResponse<object>.Fail(message));
 
+    // ── Entitlement + usage helpers (revenue foundation) ────────────────────────
+    private static Opstrax.Api.Services.EntitlementService Ent(Database db) => new(db);
+
+    // Returns a 403 IResult when the tenant's plan blocks the module, else null.
+    private static async Task<IResult?> RequireModule(HttpContext http, Database db, string moduleKey, CancellationToken ct)
+    {
+        var decision = await Ent(db).CheckModuleAsync(CompanyId(http), moduleKey, ct);
+        return decision.Allowed
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Feature not entitled", decision.Reason ?? moduleKey),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    private static Task Meter(Database db, HttpContext http, string meterKey, string? reference = null, CancellationToken ct = default)
+        => Ent(db).RecordAsync(CompanyId(http), meterKey, 1, reference, Actor(http), ct);
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static async Task<Dictionary<string, object?>?> FindShipment(Database db, long companyId, long id, CancellationToken ct)
@@ -212,6 +228,9 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
 
     private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page, int pageSize, CancellationToken ct)
     {
+        // Fuel Intelligence entitlement — fuel analytics requires the Fuel package.
+        if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.Fuel, ct) is { } denied)
+            return denied;
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 200 ? 20 : pageSize;
@@ -309,6 +328,7 @@ WHERE id=@id AND company_id=@companyId",
                 c.Parameters.AddWithValue("@companyId", companyId);
             }, ct);
         if (rows == 0) return NotFound();
+        await Meter(db, http, "fuel_transactions.monthly", $"fuel:{id}", ct);
         return Ok(await RowById(db, "fleet_tms_fuel_events", companyId, id, ct)!);
     }
 
@@ -331,6 +351,7 @@ WHERE id=@id AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@notes", S(req.Notes)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
 
         await LogEvent(db, companyId, id, "InvoiceReady", "Shipment marked invoice-ready.", Actor(http), "Private", ct);
+        await Meter(db, http, "invoice_ready.monthly", $"shipment:{id}", ct);
         return Ok(await RowById(db, "fleet_tms_shipments", companyId, id, ct)!);
     }
 
@@ -467,6 +488,11 @@ WHERE id=@stopId AND shipment_id=@sid AND company_id=@companyId",
     private static async Task<IResult> CreateTrackingLink(HttpContext http, long shipmentId, TrackingLinkRequest req, Database db, CancellationToken ct)
     {
         var companyId = CompanyId(http);
+        // Customer Visibility entitlement — tenant cannot generate a customer tracking
+        // link unless the Customer Visibility package / fleet.customer_tracking module
+        // is enabled for the company.
+        if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.CustomerTracking, ct) is { } denied)
+            return denied;
         if (await FindShipment(db, companyId, shipmentId, ct) is null) return NotFound();
         var token = string.IsNullOrWhiteSpace(req.Token) ? Guid.NewGuid().ToString("N") : req.Token.Trim();
         var id = await db.InsertAsync(@"
@@ -481,6 +507,7 @@ VALUES (@companyId, @sid, @token, @expires, @sharedBy, NOW())",
                 c.Parameters.AddWithValue("@sharedBy", Actor(http));
             }, ct);
         await LogEvent(db, companyId, shipmentId, "TrackingLinkCreated", "Customer tracking link generated.", Actor(http), "Public", ct);
+        await Meter(db, http, "tracking_links.monthly", $"shipment:{shipmentId}", ct);
         return Ok(await RowById(db, "fleet_tms_tracking_links", companyId, id, ct)!);
     }
 
@@ -588,6 +615,7 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
         await db.ExecuteAsync("UPDATE fleet_tms_pods SET status='Submitted', updated_at=NOW() WHERE id=@podId AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@podId", podId); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         await LogEvent(db, companyId, shipmentId, "PodSubmitted", "POD submitted for verification.", Actor(http), "Private", ct);
+        await Meter(db, http, "pod.monthly", $"shipment:{shipmentId}", ct);
         return Ok(await RowById(db, "fleet_tms_pods", companyId, podId, ct)!);
     }
 
