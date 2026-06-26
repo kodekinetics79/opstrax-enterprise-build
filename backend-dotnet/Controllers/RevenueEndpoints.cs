@@ -207,6 +207,19 @@ public static class RevenueEndpoints
             }
         }
 
+        // Market-pack add-on lines (active tenant_market_packs → base price, or override).
+        var marketPacks = await db.QueryAsync("""
+            SELECT t.pack_code, COALESCE(t.price_override_cents, mp.base_price_cents) AS price, mp.name
+            FROM tenant_market_packs t JOIN market_packs mp ON mp.code = t.pack_code
+            WHERE t.company_id=@c AND t.status='active'
+            """, c => c.Parameters.AddWithValue("@c", companyId), ct);
+        foreach (var mp in marketPacks)
+        {
+            long price = mp["price"] is { } p and not DBNull ? Convert.ToInt64(p) : 0;
+            lineItems.Add(new { description = $"Market Pack — {mp["name"]}", quantity = 1, unitPriceCents = price, amountCents = price });
+            total += price;
+        }
+
         return new
         {
             period,
@@ -215,7 +228,7 @@ public static class RevenueEndpoints
             status = sub?["status"] ?? "none",
             lineItems,
             totalCents = total,
-            note = sub is null ? "No active subscription for this tenant." : null,
+            note = sub is null && marketPacks.Count == 0 ? "No active subscription for this tenant." : null,
         };
     }
 }

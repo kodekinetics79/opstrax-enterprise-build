@@ -44,6 +44,9 @@ builder.Services.AddSingleton<PlatformSchemaService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
+// Market-pack engine (Canada/NA + Saudi/GCC) — regional capability + compliance
+builder.Services.AddSingleton<MarketPackSchemaService>();
+builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
 // Fleet TMS (PR1) — shipment lifecycle, POD workflow & public tracking (additive)
 builder.Services.AddSingleton<FleetTmsSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainSchemaService>();
@@ -103,10 +106,12 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChain",  () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsLogistics",  () => scope.ServiceProvider.GetRequiredService<FleetTmsLogisticsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
+    await RunSchemaStep(app, "MarketPackSeed",      () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.MarketPackSeeder>().EnsureAsync());
 }
 
 app.Use(async (context, next) =>
@@ -435,6 +440,7 @@ app.MapFleetTmsEndpoints();
 app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapRevenueEndpoints();
+app.MapMarketPackEndpoints();
 
 app.Run();
 

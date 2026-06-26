@@ -17,6 +17,22 @@ public sealed class EntitlementService(Database db)
 
     public static string CurrentPeriodKey() => DateTime.UtcNow.ToString("yyyy-MM");
 
+    // ── Market packs (paid add-ons; DENY-BY-DEFAULT) ────────────────────────
+    // Unlike core fleet modules (allow-unless-disabled), a market pack is only
+    // accessible when the tenant has an ACTIVE tenant_market_packs assignment.
+    public async Task<bool> HasMarketPackAsync(long companyId, string packCode, CancellationToken ct = default)
+    {
+        var n = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM tenant_market_packs WHERE company_id=@c AND pack_code=@p AND status='active'",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@p", packCode); }, ct);
+        return n > 0;
+    }
+
+    public async Task<EntitlementDecision> CheckMarketPackAsync(long companyId, string packCode, CancellationToken ct = default)
+        => await HasMarketPackAsync(companyId, packCode, ct)
+            ? new EntitlementDecision(true, null)
+            : new EntitlementDecision(false, $"Market pack '{packCode}' is not enabled for this tenant.");
+
     // Is the module enabled for this tenant? Blocked only on explicit disable.
     public async Task<EntitlementDecision> CheckModuleAsync(long companyId, string moduleKey, CancellationToken ct = default)
     {
