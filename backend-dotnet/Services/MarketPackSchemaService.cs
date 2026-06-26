@@ -40,6 +40,16 @@ public sealed class MarketPackSchemaService(Database db)
         public const string TaxReadiness = "compliance.tax_readiness";
     }
 
+    // Canonical pack → market feature module key. Pure + testable; used by platform
+    // enable/disable to mirror a pack assignment into tenant_entitlements and by the
+    // deny-by-default enforcement.
+    public static string ModuleKeyForPack(string packCode) => packCode switch
+    {
+        Packs.CanadaNa => Features.MarketCanadaNa,
+        Packs.SaudiGcc => Features.MarketSaudiGcc,
+        _ => $"market.{packCode}",
+    };
+
     public async Task EnsureAsync()
     {
         await CoreTablesAsync();

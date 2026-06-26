@@ -68,10 +68,11 @@ public static class MarketPackEndpoints
     private static string Str(Dictionary<string, object?> b, string k) => b.TryGetValue(k, out var v) ? v?.ToString() ?? "" : "";
     private static DateTime? DateOf(Dictionary<string, object?> b, string k) => DateTime.TryParse(Str(b, k), out var d) ? d.Date : null;
 
-    private static string ExpiryStatus(DateTime? expiry)
+    // Public + pure so it is unit-testable. valid (>30d) | expiring (0–30d) | expired (<0)
+    public static string ExpiryStatus(DateTime? expiry, DateTime? today = null)
     {
         if (expiry is null) return "valid";
-        var days = (expiry.Value.Date - DateTime.UtcNow.Date).TotalDays;
+        var days = (expiry.Value.Date - (today ?? DateTime.UtcNow).Date).TotalDays;
         return days < 0 ? "expired" : days <= 30 ? "expiring" : "valid";
     }
 
@@ -488,7 +489,7 @@ public static class MarketPackEndpoints
             c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@p", packCode); c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@po", (object?)priceOverride ?? DBNull.Value); c.Parameters.AddWithValue("@by", principal!.Email); }, ct);
 
         // Mirror into tenant_entitlements so the feature module key is enabled/disabled.
-        var moduleKey = packCode == MarketPackSchemaService.Packs.CanadaNa ? MarketPackSchemaService.Features.MarketCanadaNa : MarketPackSchemaService.Features.MarketSaudiGcc;
+        var moduleKey = MarketPackSchemaService.ModuleKeyForPack(packCode);
         await db.ExecuteAsync("""
             INSERT INTO tenant_entitlements (company_id, module_key, enabled, source, updated_by, updated_at)
             VALUES (@c,@m,@en,'market_pack',@by,NOW())
