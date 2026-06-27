@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, EmptyState, PageHeader } from "@/components/ui";
 import { maintenance as seedMaintenance, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -325,20 +325,19 @@ export function MaintenancePlanningPage() {
 
   return (
     <div className="flex flex-col gap-6 py-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{descriptions[tab]}</p>
-        </div>
-        <button type="button" className="btn-secondary text-sm" onClick={exportFns[tab]}>Export CSV</button>
-      </div>
+      <PageHeader
+        eyebrow="Maintenance"
+        title={titles[tab]}
+        description={descriptions[tab]}
+        actions={
+          <button type="button" className="btn-primary text-sm" onClick={exportFns[tab]}>Export CSV</button>
+        }
+      />
 
-      <div className="panel flex gap-1 p-1.5">
+      <div className="panel flex gap-1.5 p-2">
         {TABS.map((t) => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
-            }`}>{t.label}</button>
+            className={tab === t.key ? "control-tab control-tab-active" : "control-tab"}>{t.label}</button>
         ))}
       </div>
 

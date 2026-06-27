@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, Boxes, ClipboardList, Gauge, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize, PageHeader } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
@@ -77,29 +77,15 @@ export function VehiclesModulePage() {
   const readiness = Math.round(num(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score) || avg(rows, "fleetReadinessScore"));
 
   const shellBanner = (
-    <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/80 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.16),rgba(59,130,246,0.14),rgba(99,102,241,0.10))]" />
-      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-teal-200/35 blur-3xl" />
-      <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 shadow-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Fleet module
-          </div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Vehicles</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Split into focused subviews so users can get to the right fleet task without scrolling through one oversized page.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
-            Export fleet
-          </button>
-          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10 bg-gradient-to-r from-teal-600 to-blue-600 shadow-md shadow-blue-200/60 hover:from-teal-500 hover:to-blue-500">
-            Open roster <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-    </header>
+    <PageHeader
+      eyebrow="Fleet"
+      title="Vehicles"
+      description="Split into focused subviews so users can get to the right fleet task without scrolling through one oversized page."
+      actions={<>
+        <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost">Export fleet</button>
+        <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary">Open roster <ArrowRight className="h-4 w-4" /></button>
+      </>}
+    />
   );
 
   return (

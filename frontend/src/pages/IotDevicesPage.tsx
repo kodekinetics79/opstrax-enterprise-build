@@ -525,7 +525,7 @@ export function IotDevicesPage() {
 
       {selectedId ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
             {detailQ.isLoading ? (
               <LoadingState />
@@ -691,11 +691,11 @@ function DeviceDetailDrawer({
 
   return (
     <>
-      <p className="section-title text-teal-300">Device Detail</p>
+      <p className="section-title text-teal-600">Device Detail</p>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white">{device.deviceName}</h2>
-          <p className="mt-1 text-sm text-slate-400">{device.deviceType} · {device.provider} · {device.serialNumber || device.identifier}</p>
+          <h2 className="text-2xl font-bold text-slate-900">{device.deviceName}</h2>
+          <p className="mt-1 text-sm text-slate-500">{device.deviceType} · {device.provider} · {device.serialNumber || device.identifier}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge status={device.connectionStatus} />
@@ -817,9 +817,9 @@ function DeviceDetailDrawer({
         <p className="section-title">Installation Checklist</p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {(detail.installations[0]?.checklist ?? []).map((item: AnyRecord) => (
-            <div key={String(item.item)} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <div key={String(item.item)} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-white">{String(item.item)}</p>
+                <p className="font-semibold text-slate-900">{String(item.item)}</p>
                 <StatusBadge status={String(item.status)} />
               </div>
             </div>
@@ -845,13 +845,13 @@ function ActionButton({ label, icon, allowed, onClick }: { label: string; icon: 
 
 function InfoBlock({ title, items }: { title: string; items: Array<[string, string]> }) {
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
-      <p className="text-sm font-semibold text-white">{title}</p>
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
       <div className="mt-4 space-y-2">
         {items.map(([label, value]) => (
-          <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.05] bg-black/10 px-3 py-2">
+          <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
             <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-            <span className="text-right text-sm text-slate-200">{value || "—"}</span>
+            <span className="text-right text-sm text-slate-700">{value || "—"}</span>
           </div>
         ))}
       </div>
@@ -902,8 +902,8 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 
 function PanelSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
-      <p className="text-sm font-semibold text-white">{title}</p>
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
       <div className="mt-4">{children}</div>
     </div>
   );
@@ -913,9 +913,9 @@ function MiniGrid({ rows }: { rows: Array<[string, string]> }) {
   return (
     <div className="space-y-2">
       {rows.map(([label, value]) => (
-        <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.05] bg-black/10 px-3 py-2">
+        <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-          <span className="text-right text-sm text-slate-200">{value}</span>
+          <span className="text-right text-sm text-slate-700">{value}</span>
         </div>
       ))}
     </div>
@@ -924,17 +924,17 @@ function MiniGrid({ rows }: { rows: Array<[string, string]> }) {
 
 function TimelineList({ rows, emptyText }: { rows: Array<{ title: string; subtitle: string; meta: string }>; emptyText: string }) {
   if (!rows.length) {
-    return <p className="text-sm text-slate-400">{emptyText}</p>;
+    return <p className="text-sm text-slate-500">{emptyText}</p>;
   }
 
   return (
     <div className="space-y-3">
       {rows.map((row) => (
-        <div key={`${row.title}-${row.meta}`} className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+        <div key={`${row.title}-${row.meta}`} className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-medium text-white">{row.title}</p>
-              <p className="mt-1 text-sm text-slate-400">{row.subtitle}</p>
+              <p className="font-medium text-slate-900">{row.title}</p>
+              <p className="mt-1 text-sm text-slate-500">{row.subtitle}</p>
             </div>
             <span className="text-xs text-slate-500">{row.meta}</span>
           </div>

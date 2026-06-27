@@ -10,6 +10,7 @@ import { maintenanceApi } from "@/services/maintenanceApi";
 import { safetyApi } from "@/services/safetyApi";
 import { coachingApi } from "@/services/coachingApi";
 import { useHasPermission } from "@/hooks/usePermission";
+import { PageHeader } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Severity helpers ────────────────────────────────────────────────────────
@@ -1016,29 +1017,24 @@ export function FleetHealthPage() {
 
       <div className="space-y-6">
         {/* Page header */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Activity className="h-5 w-5 text-slate-500" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Operations</span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Fleet Health & Safety</h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Dispatch readiness · Maintenance risk · Driver safety — unified operating view
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              summary.refetch();
-              risks.refetch();
-            }}
-            className="flex items-center gap-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-4 py-2.5 hover:bg-slate-50 hover:border-slate-300 transition-colors shadow-sm self-start"
-          >
-            <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-blue-500" : ""}`} />
-            Refresh
-          </button>
-        </div>
+        <PageHeader
+          eyebrow="Fleet Health"
+          title="Fleet Health & Safety"
+          description="Dispatch readiness · Maintenance risk · Driver safety — unified operating view"
+          actions={
+            <button
+              type="button"
+              onClick={() => {
+                summary.refetch();
+                risks.refetch();
+              }}
+              className="btn-ghost"
+            >
+              <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-blue-500" : ""}`} />
+              Refresh
+            </button>
+          }
+        />
 
         {/* Readiness strip */}
         <ReadinessStrip summary={summaryData} />

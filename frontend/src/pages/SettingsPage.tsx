@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Bell, Building2, Check, Code2, ExternalLink, Globe, Key, Languages, Lock, Mail, Phone, Settings, Shield, Webhook } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 import { useLocalizationSettings, useUpdateLocaleSettings, useUpdateUserPreferences } from "@/hooks/useBatch6";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -216,21 +217,20 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6 py-6 max-w-3xl">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-          <Settings className="h-5 w-5 text-slate-400" />{t("settings")}
-        </h1>
-        <p className="text-sm text-slate-500 mt-0.5">Platform preferences, notifications, security and API access</p>
-      </div>
+      <PageHeader
+        eyebrow="Admin"
+        title={t("settings")}
+        description="Platform preferences, notifications, security and API access"
+      />
 
       {/* Tab bar */}
-      <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 flex-wrap">
+      <div className="flex gap-1.5 p-2 flex-wrap">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             type="button"
             key={key}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+            className={`control-tab flex items-center gap-1.5 ${tab === key ? "control-tab-active" : ""}`}
           >
             <Icon className="h-3.5 w-3.5" />{label}
           </button>

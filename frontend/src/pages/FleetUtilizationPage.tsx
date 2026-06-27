@@ -21,7 +21,7 @@ import {
   YAxis,
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type UtilSection = "overview" | "capacity" | "efficiency" | "opportunities";
@@ -282,37 +282,15 @@ export function FleetUtilizationPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.14),rgba(14,165,233,0.12),rgba(249,115,22,0.12))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-sky-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Capacity intelligence
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Fleet Utilization</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Reframed as an operations command surface so dispatch, fleet and maintenance can see where capacity is stuck, leaking or ready to be redeployed.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])}
-              className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
-            >
-              Export live view
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/dispatch")}
-              className="btn-primary h-10 bg-gradient-to-r from-teal-600 to-sky-600 shadow-md shadow-sky-200/60 hover:from-teal-500 hover:to-sky-500"
-            >
-              Open dispatch coverage <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Capacity Intelligence"
+        title="Fleet Utilization"
+        description="Reframed as an operations command surface so dispatch, fleet and maintenance can see where capacity is stuck, leaking or ready to be redeployed."
+        actions={<>
+          <button type="button" onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])} className="btn-ghost">Export live view</button>
+          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary">Open dispatch coverage <ArrowRight className="h-4 w-4" /></button>
+        </>}
+      />
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-4">

@@ -4,7 +4,7 @@ import {
   Eye, EyeOff, Users, Clock, Filter, SortAsc, Save, Calendar,
   X, ChevronDown, ChevronRight,
 } from "lucide-react";
-import { LoadingState, EmptyState } from "@/components/ui";
+import { LoadingState, EmptyState, PageHeader } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   useDatasets,
@@ -618,25 +618,20 @@ export function ReportsPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">Reports</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Build, save, and export reports from live fleet data. All queries are validated server-side against a whitelisted dataset registry.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Analytics"
+        title="Reports"
+        description="Build, save, and export reports from live fleet data. All queries are validated server-side against a whitelisted dataset registry."
+      />
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200">
+      <div className="flex gap-1.5 p-2">
         {(["builder", "saved"] as Tab[]).map((t) => (
           <button
             type="button"
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === t ? "border-blue-500 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
+            className={`control-tab ${tab === t ? "control-tab-active" : ""}`}
           >
             {t === "builder" ? (
               <><BookOpen className="inline h-3.5 w-3.5 mr-1.5" />Report Builder</>

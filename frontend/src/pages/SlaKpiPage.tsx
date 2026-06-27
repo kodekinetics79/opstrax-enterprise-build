@@ -10,7 +10,7 @@ import {
   useSlaSummary, useSlaRecords, useSlaBreaches,
   useAcknowledgeSlaBreache, useResolveSlaBreache,
 } from "@/hooks/useBatch7";
-import { exportCsv } from "@/components/ui";
+import { exportCsv, PageHeader } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Seed fallback data ────────────────────────────────────────────────────────
@@ -178,15 +178,16 @@ export function SlaKpiPage() {
     <div className="space-y-6">
 
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900">SLA / KPI Center</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Key performance indicators, SLA compliance, breach exposure and AI recommendations</p>
-        </div>
-        <button type="button" className="btn-secondary flex items-center gap-2 text-sm" onClick={handleExport}>
-          <Download className="h-4 w-4" />Export
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Reports"
+        title="SLA / KPI Center"
+        description="Key performance indicators, SLA compliance, breach exposure and AI recommendations"
+        actions={
+          <button type="button" className="btn-primary flex items-center gap-2 text-sm" onClick={handleExport}>
+            <Download className="h-4 w-4" />Export
+          </button>
+        }
+      />
 
       {/* Summary strip */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
@@ -220,13 +221,13 @@ export function SlaKpiPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 pb-px">
+      <div className="flex gap-1.5 p-2">
         {TABS.map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-50 text-teal-700 border border-b-0 border-teal-300" : "text-slate-500 hover:text-slate-700"}`}
+            className={`control-tab ${tab === t ? "control-tab-active" : ""}`}
           >
             {t}
           </button>
@@ -237,9 +238,9 @@ export function SlaKpiPage() {
       {tab === "KPI Dashboard" && (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setFilterCat("")} className={`rounded-full border px-3 py-1 text-xs font-bold transition ${!filterCat ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 text-slate-500 hover:text-slate-700"}`}>All</button>
+            <button type="button" onClick={() => setFilterCat("")} className={`control-tab ${!filterCat ? "control-tab-active" : ""}`}>All</button>
             {kpiCategories.map((c) => (
-              <button key={c} type="button" onClick={() => setFilterCat(c === filterCat ? "" : c)} className={`rounded-full border px-3 py-1 text-xs font-bold transition ${filterCat === c ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 text-slate-500 hover:text-slate-700"}`}>{c}</button>
+              <button key={c} type="button" onClick={() => setFilterCat(c === filterCat ? "" : c)} className={`control-tab ${filterCat === c ? "control-tab-active" : ""}`}>{c}</button>
             ))}
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -252,9 +253,9 @@ export function SlaKpiPage() {
       {tab === "SLA Records" && (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setFilterSlaType("")} className={`rounded-full border px-3 py-1 text-xs font-bold transition ${!filterSlaType ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 text-slate-500 hover:text-slate-700"}`}>All Types</button>
+            <button type="button" onClick={() => setFilterSlaType("")} className={`control-tab ${!filterSlaType ? "control-tab-active" : ""}`}>All Types</button>
             {slaTypes.map((t) => (
-              <button key={t} type="button" onClick={() => setFilterSlaType(t === filterSlaType ? "" : t)} className={`rounded-full border px-3 py-1 text-xs font-bold transition ${filterSlaType === t ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 text-slate-500 hover:text-slate-700"}`}>{t}</button>
+              <button key={t} type="button" onClick={() => setFilterSlaType(t === filterSlaType ? "" : t)} className={`control-tab ${filterSlaType === t ? "control-tab-active" : ""}`}>{t}</button>
             ))}
           </div>
           <div className="panel overflow-x-auto">
