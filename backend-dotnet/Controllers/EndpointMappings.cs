@@ -1547,8 +1547,13 @@ public static class EndpointMappings
     {
         ["Super Admin"]              = ["*"],
         ["Tenant Admin"]             = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","customers:view","customers:create","customers:update","customers:delete","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","maintenance:view","maintenance:create","maintenance:update","maintenance:close","compliance:view","compliance:update","compliance:export","compliance:manage","alerts:view","alerts:acknowledge","alerts:close","reports:view","reports:export","users:view","users:create","users:update","users:delete","roles:view","roles:update","settings:view","settings:update","audit:view","notifications:view","notifications:manage","messages:send","escalation:manage","ops:view","security:view","security:manage","access_review:view","access_review:manage"],
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage"],
-        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send"],
+        ["Fleet Owner"]              = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","billing:manage","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","settings:view","settings:update","fleet.read","fleet.manage","fleet.admin"],
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","fleet.read","fleet.manage"],
+        // NOTE: customer_portal:manage (customer tracking-link management) is a
+        // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
+        // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
+        // customer visibility links — see P41HardeningTests.
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send"],
         ["Driver"]                   = ["driver:self","dispatch:view","shipments:view","vehicles:view","drivers:view","safety:view","maintenance:create","compliance:view","alerts:view","notifications:view","messages:send"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view","notifications:view"],
         ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
@@ -1560,6 +1565,10 @@ public static class EndpointMappings
         ["Customer Service"]         = ["customers:view","customer_portal:view","dispatch:view","crm:view"],
         ["Customer Portal User"]     = ["customer_portal:view","shipments:view"],
         ["Reseller / Partner Admin"] = ["*"],
+        // ── Fleet/TMS personas (additive, permission-scoped) ──
+        ["Carrier Partner"]          = ["dashboard:view","shipments:view","carriers:view","dispatch:view","fleet.shipments.view","fleet.carriers.view","notifications:view"],
+        ["Finance/Billing User"]     = ["dashboard:view","billing:view","billing:manage","reports:view","reports:export","shipments:view","customers:view","fleet.billing.view","fleet.billing.manage","fleet.read"],
+        ["Customer Viewer"]          = ["customer_portal:view","shipments:view","fleet.pod.view","fleet.tracking.view","fleet.shipments.view"],
     };
 
     public static async Task<string[]> ResolvePermissionsAsync(Dictionary<string, object?> user, Database db, CancellationToken ct)
@@ -1705,6 +1714,43 @@ public static class EndpointMappings
             "audit:view" or "audit.view" => ["audit:view", "audit.view", "reports.manage", "reports:manage"],
 
             "customer_portal:view" or "customer-portal:view" or "customer_portal.view" => ["customer_portal:view", "customer-portal:view", "customer_portal.view"],
+
+            // ── Fleet/TMS first-class permission taxonomy (additive) ──────────────
+            // New canonical fleet.* keys map onto the permissions existing roles
+            // already hold, so introducing them never strips access from a user who
+            // was granted the legacy coarse/granular tokens. New endpoints (carriers,
+            // fuel, billing, POD, booking, customer-tracking) guard with these keys.
+            "fleet.read" or "fleet:read" => ["fleet.read", "fleet:read", "fleet:view", "fleet.view", "vehicles:view", "dashboard:view"],
+            "fleet.manage" or "fleet:manage:all" or "fleet.admin" or "fleet:admin" => ["fleet.manage", "fleet:manage", "fleet.admin", "fleet:admin", "vehicles:create", "vehicles:update", "vehicles:delete", "vehicles:assign", "settings:update"],
+
+            "fleet.shipments.view" => ["fleet.shipments.view", "shipments:view", "shipments.view", "orders:view", "dispatch:view"],
+            "fleet.shipments.manage" => ["fleet.shipments.manage", "shipments:create", "shipments:update", "shipments:delete", "shipments:export", "shipments:manage", "shipments.manage", "orders:manage", "dispatch:manage", "dispatch.manage", "dispatch:create", "dispatch:update"],
+
+            "fleet.vehicles.view" => ["fleet.vehicles.view", "vehicles:view", "fleet:view", "fleet.view"],
+            "fleet.vehicles.manage" => ["fleet.vehicles.manage", "vehicles:create", "vehicles:update", "vehicles:delete", "vehicles:assign", "fleet:manage", "fleet.manage"],
+
+            "fleet.tracking.view" => ["fleet.tracking.view", "fleet:view", "fleet.view", "dispatch:view", "vehicles:view"],
+
+            "fleet.maintenance.view" => ["fleet.maintenance.view", "maintenance:view", "maintenance.view"],
+            "fleet.maintenance.manage" => ["fleet.maintenance.manage", "maintenance:create", "maintenance:update", "maintenance:close", "maintenance:manage", "maintenance.manage"],
+
+            "fleet.fuel.view" => ["fleet.fuel.view", "fuel:view", "fuel.view", "fleet:view", "fleet.view"],
+            "fleet.fuel.manage" => ["fleet.fuel.manage", "fuel:manage", "fuel.manage", "fleet:manage", "fleet.manage"],
+
+            "fleet.pod.view" => ["fleet.pod.view", "shipments:view", "dispatch:view", "customer_portal:view"],
+            "fleet.pod.manage" => ["fleet.pod.manage", "shipments:update", "shipments:manage", "dispatch:manage", "driver:self"],
+
+            "fleet.customer_tracking.manage" => ["fleet.customer_tracking.manage", "customer_portal:manage", "customer-portal:manage", "dispatch:manage"],
+
+            "fleet.carriers.view" => ["fleet.carriers.view", "carriers:view", "carriers.view", "fleet:view", "dispatch:view"],
+            "fleet.carriers.manage" => ["fleet.carriers.manage", "carriers:manage", "carriers.manage", "dispatch:manage"],
+
+            "fleet.booking.view" => ["fleet.booking.view", "shipments:view", "dispatch:view"],
+            "fleet.booking.manage" => ["fleet.booking.manage", "shipments:create", "shipments:manage", "dispatch:manage", "dispatch:create"],
+
+            "fleet.billing.view" => ["fleet.billing.view", "billing:view", "billing.view", "reports:view"],
+            "fleet.billing.manage" => ["fleet.billing.manage", "billing:manage", "billing.manage"],
+
             _ => [permission],
         };
     }

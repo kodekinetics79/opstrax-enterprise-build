@@ -58,6 +58,11 @@ public static class FleetTmsEndpoints
         app.MapGet("/api/public/shipments/track/{token}", PublicTrack);
         app.MapGet("/api/public/shipments/track/{token}/events", PublicTrackEvents);
         app.MapGet("/api/public/shipments/track/{token}/pod", PublicTrackPod);
+        // POD asset proxy — raw signature/photo/document storage URLs are NEVER
+        // returned to anonymous callers; instead the public payload exposes this
+        // token-scoped proxy path. Access is re-validated (token must be live &
+        // unrevoked) on every fetch and only served from allowlisted storage hosts.
+        app.MapGet("/api/public/shipments/track/{token}/pod/{podId:long}/asset/{kind}", PublicTrackPodAsset);
     }
 
     private static long CompanyId(HttpContext http) => EndpointMappings.GetCompanyId(http);
@@ -69,6 +74,22 @@ public static class FleetTmsEndpoints
     private static IResult Ok<T>(T data, string message = "") => Results.Ok(ApiResponse<object>.Ok(data!, message));
     private static IResult NotFound(string message = "Not found") => Results.NotFound(ApiResponse<object>.Fail(message));
     private static IResult Bad(string message) => Results.BadRequest(ApiResponse<object>.Fail(message));
+
+    // ── Entitlement + usage helpers (revenue foundation) ────────────────────────
+    private static Opstrax.Api.Services.EntitlementService Ent(Database db) => new(db);
+
+    // Returns a 403 IResult when the tenant's plan blocks the module, else null.
+    private static async Task<IResult?> RequireModule(HttpContext http, Database db, string moduleKey, CancellationToken ct)
+    {
+        var decision = await Ent(db).CheckModuleAsync(CompanyId(http), moduleKey, ct);
+        return decision.Allowed
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Feature not entitled", decision.Reason ?? moduleKey),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    private static Task Meter(Database db, HttpContext http, string meterKey, string? reference = null, CancellationToken ct = default)
+        => Ent(db).RecordAsync(CompanyId(http), meterKey, 1, reference, Actor(http), ct);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -207,6 +228,9 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
 
     private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page, int pageSize, CancellationToken ct)
     {
+        // Fuel Intelligence entitlement — fuel analytics requires the Fuel package.
+        if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.Fuel, ct) is { } denied)
+            return denied;
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 200 ? 20 : pageSize;
@@ -304,6 +328,7 @@ WHERE id=@id AND company_id=@companyId",
                 c.Parameters.AddWithValue("@companyId", companyId);
             }, ct);
         if (rows == 0) return NotFound();
+        await Meter(db, http, "fuel_transactions.monthly", $"fuel:{id}", ct);
         return Ok(await RowById(db, "fleet_tms_fuel_events", companyId, id, ct)!);
     }
 
@@ -326,6 +351,7 @@ WHERE id=@id AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@notes", S(req.Notes)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
 
         await LogEvent(db, companyId, id, "InvoiceReady", "Shipment marked invoice-ready.", Actor(http), "Private", ct);
+        await Meter(db, http, "invoice_ready.monthly", $"shipment:{id}", ct);
         return Ok(await RowById(db, "fleet_tms_shipments", companyId, id, ct)!);
     }
 
@@ -462,6 +488,11 @@ WHERE id=@stopId AND shipment_id=@sid AND company_id=@companyId",
     private static async Task<IResult> CreateTrackingLink(HttpContext http, long shipmentId, TrackingLinkRequest req, Database db, CancellationToken ct)
     {
         var companyId = CompanyId(http);
+        // Customer Visibility entitlement — tenant cannot generate a customer tracking
+        // link unless the Customer Visibility package / fleet.customer_tracking module
+        // is enabled for the company.
+        if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.CustomerTracking, ct) is { } denied)
+            return denied;
         if (await FindShipment(db, companyId, shipmentId, ct) is null) return NotFound();
         var token = string.IsNullOrWhiteSpace(req.Token) ? Guid.NewGuid().ToString("N") : req.Token.Trim();
         var id = await db.InsertAsync(@"
@@ -476,6 +507,7 @@ VALUES (@companyId, @sid, @token, @expires, @sharedBy, NOW())",
                 c.Parameters.AddWithValue("@sharedBy", Actor(http));
             }, ct);
         await LogEvent(db, companyId, shipmentId, "TrackingLinkCreated", "Customer tracking link generated.", Actor(http), "Public", ct);
+        await Meter(db, http, "tracking_links.monthly", $"shipment:{shipmentId}", ct);
         return Ok(await RowById(db, "fleet_tms_tracking_links", companyId, id, ct)!);
     }
 
@@ -583,6 +615,7 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
         await db.ExecuteAsync("UPDATE fleet_tms_pods SET status='Submitted', updated_at=NOW() WHERE id=@podId AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@podId", podId); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         await LogEvent(db, companyId, shipmentId, "PodSubmitted", "POD submitted for verification.", Actor(http), "Private", ct);
+        await Meter(db, http, "pod.monthly", $"shipment:{shipmentId}", ct);
         return Ok(await RowById(db, "fleet_tms_pods", companyId, podId, ct)!);
     }
 
@@ -688,8 +721,8 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
         var events = await db.QueryAsync(
             "SELECT event_type, message, occurred_at_utc FROM fleet_tms_shipment_events WHERE company_id=@companyId AND shipment_id=@sid AND visibility <> 'Private' ORDER BY occurred_at_utc DESC",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); }, ct);
-        var pod = await db.QueryAsync(
-            "SELECT recipient_name, delivery_condition, status, captured_at, verified_at, signature_url, photo_url, document_url FROM fleet_tms_pods WHERE company_id=@companyId AND shipment_id=@sid AND status <> 'Rejected'",
+        var podRows = await db.QueryAsync(
+            "SELECT id, recipient_name, delivery_condition, status, captured_at, verified_at, signature_url, photo_url, document_url FROM fleet_tms_pods WHERE company_id=@companyId AND shipment_id=@sid AND status <> 'Rejected'",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); }, ct);
 
         return Ok(new
@@ -702,8 +735,37 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
             deliveredAtUtc = shipment["deliveredAtUtc"],
             stops,
             publicEvents = events,
-            pod,
+            pod = podRows.Select(p => SafePublicPod(token, p)),
         });
+    }
+
+    // Projects a POD row into a public-safe shape. Raw storage URLs are stripped and
+    // replaced with token-scoped proxy paths + boolean availability flags, so the
+    // anonymous payload never discloses a directly-fetchable asset URL.
+    private static object SafePublicPod(string token, Dictionary<string, object?> p)
+    {
+        var podId = Convert.ToInt64(p["id"]);
+        string? Proxy(string column)
+        {
+            var raw = p.TryGetValue(column, out var v) ? v?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            var kind = column.Replace("_url", "");
+            return $"/api/public/shipments/track/{token}/pod/{podId}/asset/{kind}";
+        }
+        return new
+        {
+            recipientName = p.GetValueOrDefault("recipientName"),
+            deliveryCondition = p.GetValueOrDefault("deliveryCondition"),
+            status = p.GetValueOrDefault("status"),
+            capturedAt = p.GetValueOrDefault("capturedAt"),
+            verifiedAt = p.GetValueOrDefault("verifiedAt"),
+            hasSignature = !string.IsNullOrWhiteSpace(p.GetValueOrDefault("signatureUrl")?.ToString()),
+            hasPhoto = !string.IsNullOrWhiteSpace(p.GetValueOrDefault("photoUrl")?.ToString()),
+            hasDocument = !string.IsNullOrWhiteSpace(p.GetValueOrDefault("documentUrl")?.ToString()),
+            signatureUrl = Proxy("signature_url"),
+            photoUrl = Proxy("photo_url"),
+            documentUrl = Proxy("document_url"),
+        };
     }
 
     private static async Task<IResult> PublicTrackEvents(string token, Database db, CancellationToken ct)
@@ -720,10 +782,73 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
     {
         var link = await ResolveLink(db, token, ct);
         if (link is null) return NotFound();
-        var items = await db.QueryAsync(
-            "SELECT recipient_name, delivery_condition, status, captured_at, verified_at, signature_url, photo_url, document_url FROM fleet_tms_pods WHERE company_id=@companyId AND shipment_id=@sid AND status <> 'Rejected'",
+        var rows = await db.QueryAsync(
+            "SELECT id, recipient_name, delivery_condition, status, captured_at, verified_at, signature_url, photo_url, document_url FROM fleet_tms_pods WHERE company_id=@companyId AND shipment_id=@sid AND status <> 'Rejected'",
             c => { c.Parameters.AddWithValue("@companyId", Convert.ToInt64(link["companyId"])); c.Parameters.AddWithValue("@sid", Convert.ToInt64(link["shipmentId"])); }, ct);
-        return Ok(new { items });
+        return Ok(new { items = rows.Select(p => SafePublicPod(token, p)) });
+    }
+
+    // Token-scoped POD asset proxy. Re-validates the tracking link on every request
+    // (expiry + revocation enforced by ResolveLink) and only streams assets from
+    // operator-allowlisted storage hosts (config Fleet:PodAssetAllowedHosts) — this
+    // prevents SSRF to arbitrary hosts and ensures revoking a link immediately cuts
+    // off proof images. Assets on non-allowlisted hosts are reported unavailable
+    // (404) until private/secure storage is configured.
+    private static async Task<IResult> PublicTrackPodAsset(
+        string token, long podId, string kind, Database db, IConfiguration config, IHttpClientFactory httpFactory, CancellationToken ct)
+    {
+        var column = kind switch
+        {
+            "signature" => "signature_url",
+            "photo" => "photo_url",
+            "document" => "document_url",
+            _ => null,
+        };
+        if (column is null) return NotFound();
+
+        var link = await ResolveLink(db, token, ct);
+        if (link is null) return NotFound();
+
+        var pod = await db.QuerySingleAsync(
+            $"SELECT {column} AS asset_url FROM fleet_tms_pods WHERE id=@podId AND company_id=@companyId AND shipment_id=@sid AND status <> 'Rejected'",
+            c => { c.Parameters.AddWithValue("@podId", podId); c.Parameters.AddWithValue("@companyId", Convert.ToInt64(link["companyId"])); c.Parameters.AddWithValue("@sid", Convert.ToInt64(link["shipmentId"])); }, ct);
+        var rawUrl = pod?.GetValueOrDefault("assetUrl")?.ToString();
+        if (string.IsNullOrWhiteSpace(rawUrl)) return NotFound();
+
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            !IsAllowlistedHost(config, uri.Host))
+        {
+            // Asset exists but lives on a host we will not proxy (open/untrusted
+            // storage). Do not disclose or fetch it — treat as not-yet-available.
+            return Results.Json(ApiResponse<object>.Fail("Asset unavailable", "POD asset storage is not yet secured for public delivery."), statusCode: StatusCodes.Status404NotFound);
+        }
+
+        var client = httpFactory.CreateClient("pod-assets");
+        client.Timeout = TimeSpan.FromSeconds(15);
+        try
+        {
+            var upstream = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!upstream.IsSuccessStatusCode) return NotFound();
+            var contentType = upstream.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            var bytes = await upstream.Content.ReadAsByteArrayAsync(ct);
+            return Results.File(bytes, contentType);
+        }
+        catch (Exception)
+        {
+            return NotFound();
+        }
+    }
+
+    private static bool IsAllowlistedHost(IConfiguration config, string host)
+    {
+        var configured = config["Fleet:PodAssetAllowedHosts"]
+                         ?? Environment.GetEnvironmentVariable("FLEET_POD_ASSET_ALLOWED_HOSTS");
+        if (string.IsNullOrWhiteSpace(configured)) return false; // closed by default
+        return configured
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(allowed => string.Equals(allowed, host, StringComparison.OrdinalIgnoreCase)
+                            || host.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase));
     }
 }
 

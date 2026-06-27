@@ -127,4 +127,17 @@ export const platformApi = {
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
   audit: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/audit")),
   roles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/roles")),
+
+  // Opstrax revenue foundation
+  modulePackages: () => unwrap<AnyRecord>(platformClient.get("/api/platform/opstrax/module-packages")),
+  meters: () => unwrap<AnyRecord>(platformClient.get("/api/platform/opstrax/meters")),
+  tenantUsage: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/usage`)),
+  invoicePreview: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/invoice-preview`)),
+  setOverride: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/opstrax/tenants/${id}/overrides`, body)),
+
+  // Market packs
+  marketPacks: () => unwrap<AnyRecord>(platformClient.get("/api/platform/opstrax/market-packs")),
+  tenantMarketPacks: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/market-packs`)),
+  setTenantMarketPack: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/opstrax/tenants/${id}/market-packs`, body)),
+  complianceUsage: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/compliance-usage`)),
 };
