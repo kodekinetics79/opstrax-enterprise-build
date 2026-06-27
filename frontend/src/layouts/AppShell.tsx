@@ -18,12 +18,12 @@ const NAV_SECTIONS = [
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "fleet-utilization", "assignments"],
+    items: ["vehicles", "drivers", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "assignments"],
   },
   {
     label: "Dispatch",
     color: "text-cyan-700",
-    items: ["dispatch-board", "jobs", "route-plans", "last-mile-delivery"],
+    items: ["dispatch-board", "jobs", "route-plans", "last-mile-delivery", "logistics-workspace"],
   },
   {
     label: "Shipments",

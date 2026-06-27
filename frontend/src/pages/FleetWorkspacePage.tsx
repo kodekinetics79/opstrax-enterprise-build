@@ -1,0 +1,1047 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BadgeInfo,
+  CheckCircle2,
+  ChevronRight,
+  ClipboardList,
+  Fuel,
+  MapPinned,
+  Package,
+  Sparkles,
+  Truck,
+  Wrench,
+} from 'lucide-react';
+import { notifyApiError } from '@/services/fleetTmsApi';
+import {
+  fleetApi,
+  fleetCommercialApi,
+  type BookingRequest,
+  type Carrier,
+  type FleetFuelEvent,
+  type FleetMaintenanceTicket,
+  type FleetOverview,
+  type FleetShipment,
+  type FleetTrackingPoint,
+  type FleetVehicle,
+  type QuoteRequest,
+} from '@/services/fleetTmsApi';
+import { ShipmentLifecycleDrawer } from '../components/fleet/ShipmentLifecycleDrawer';
+
+type FleetMode = 'command' | 'shipments' | 'vehicles' | 'tracking' | 'maintenance' | 'fuel' | 'carriers';
+
+const MODULES: Record<FleetMode, {
+  label: string;
+  title: string;
+  subtitle: string;
+  accent: string;
+  path: string;
+  summary: string;
+}> = {
+  command: {
+    label: 'Fleet Command Center',
+    title: 'Run fleet health, safety posture, and shipment flow from one command surface.',
+    subtitle: 'Give operations leaders one credible view of movement, readiness, service risk, and cost pressure without bouncing between maintenance, tracking, and load spreadsheets.',
+    accent: 'from-emerald-600 via-cyan-500 to-sky-400',
+    path: '/fleet',
+    summary: 'This is the operational story clients want to see at first glance: moving freight, healthy assets, and the controls to keep service reliable.',
+  },
+  shipments: {
+    label: 'Shipments & Loads',
+    title: 'Turn freight demand into a movement plan that is commercially and operationally credible.',
+    subtitle: 'Keep booked loads, route ownership, carrier alignment, proof readiness, and shipment state visible in one premium workspace.',
+    accent: 'from-cyan-600 via-sky-500 to-blue-400',
+    path: '/fleet/shipments',
+    summary: 'Customers trust movement visibility when the platform shows more than a list: it shows accountability, timing, and real shipment progression.',
+  },
+  vehicles: {
+    label: 'Vehicle Management',
+    title: 'Make live vehicle status impossible to misread.',
+    subtitle: 'Surface assignment, readiness, service timing, fuel posture, and capacity in a way that helps transport teams act before asset issues damage execution.',
+    accent: 'from-sky-600 via-indigo-500 to-violet-400',
+    path: '/fleet/vehicles',
+    summary: 'The strongest fleet products make asset readiness feel obvious. This screen is designed to give that confidence immediately.',
+  },
+  tracking: {
+    label: 'Live Tracking',
+    title: 'Turn the live fleet map into an operating advantage, not a decorative widget.',
+    subtitle: 'Show movement, geofences, ETA risk, and tracking exceptions in a glassy surface that still feels grounded enough for daily dispatch use.',
+    accent: 'from-blue-600 via-cyan-500 to-emerald-400',
+    path: '/fleet/tracking',
+    summary: 'Visibility matters when it changes behaviour. This module is meant to help teams intervene faster, not just admire pins on a map.',
+  },
+  maintenance: {
+    label: 'Maintenance',
+    title: 'Make fleet safety and maintenance posture visible before downtime spreads.',
+    subtitle: 'Track work orders, service readiness, vendors, downtime, and cost posture so the fleet stays safe, available, and commercially usable.',
+    accent: 'from-orange-500 via-amber-500 to-yellow-400',
+    path: '/fleet/maintenance',
+    summary: 'A healthy fleet is not back-office admin. It is one of the clearest drivers of operational trust and margin protection.',
+  },
+  fuel: {
+    label: 'Fuel Analytics',
+    title: 'Make fuel spend feel governed, explainable, and worth reviewing daily.',
+    subtitle: 'Expose anomalies, card usage, location context, and vehicle trends so teams can spot leakage early and back every number with real events.',
+    accent: 'from-emerald-600 via-lime-500 to-teal-400',
+    path: '/fleet/fuel',
+    summary: 'Fuel is one of the fastest ways to lose confidence in a fleet operation. This surface turns it into business intelligence instead.',
+  },
+  carriers: {
+    label: 'Carriers & Quotes',
+    title: 'Keep external capacity disciplined instead of informal.',
+    subtitle: 'Bring carrier quality, quote demand, booking pressure, and commercial readiness into the same operating narrative as the rest of the fleet.',
+    accent: 'from-violet-600 via-fuchsia-500 to-cyan-400',
+    path: '/fleet/carriers',
+    summary: 'Subcontracted capacity should feel governed and visible, not hidden in side channels or static documents.',
+  },
+};
+
+const MODE_ORDER: FleetMode[] = ['command', 'shipments', 'vehicles', 'tracking', 'maintenance', 'fuel', 'carriers'];
+
+export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: FleetMode }) {
+  const [mode, setMode] = useState<FleetMode>(initialMode);
+  const config = MODULES[mode];
+  const [overview, setOverview] = useState<FleetOverview | null>(null);
+  const [shipments, setShipments] = useState<FleetShipment[]>([]);
+  const [vehicles, setVehicles] = useState<FleetVehicle[]>([]);
+  const [tracking, setTracking] = useState<FleetTrackingPoint[]>([]);
+  const [maintenance, setMaintenance] = useState<FleetMaintenanceTicket[]>([]);
+  const [fuel, setFuel] = useState<FleetFuelEvent[]>([]);
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
+  const [bookings, setBookings] = useState<BookingRequest[]>([]);
+  const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
+  const [selectedShipment, setSelectedShipment] = useState<FleetShipment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const refreshAll = async () => {
+    const [ov, shipmentRes, vehicleRes, trackingRes, maintenanceRes, fuelRes, carrierRes, bookingRes, quoteRes] = await Promise.all([
+      fleetApi.overview(),
+      fleetApi.shipments({ pageSize: 12 }),
+      fleetApi.vehicles(),
+      fleetApi.tracking({ pageSize: 12 }),
+      fleetApi.maintenance({ pageSize: 12 }),
+      fleetApi.fuel({ pageSize: 12 }),
+      fleetCommercialApi.carriers().catch(() => ({ items: [] as Carrier[] })),
+      fleetCommercialApi.bookingRequests().catch(() => ({ items: [] as BookingRequest[] })),
+      fleetCommercialApi.quoteRequests().catch(() => ({ items: [] as QuoteRequest[] })),
+    ]);
+    setOverview(ov);
+    setShipments(shipmentRes.items);
+    setVehicles(vehicleRes.items);
+    setTracking(trackingRes.items);
+    setMaintenance(maintenanceRes.items);
+    setFuel(fuelRes.items);
+    setCarriers(carrierRes.items);
+    setBookings(bookingRes.items);
+    setQuotes(quoteRes.items);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const [ov, shipmentRes, vehicleRes, trackingRes, maintenanceRes, fuelRes, carrierRes, bookingRes, quoteRes] = await Promise.all([
+          fleetApi.overview(),
+          fleetApi.shipments({ pageSize: 12 }),
+          fleetApi.vehicles(),
+          fleetApi.tracking({ pageSize: 12 }),
+          fleetApi.maintenance({ pageSize: 12 }),
+          fleetApi.fuel({ pageSize: 12 }),
+          fleetCommercialApi.carriers().catch(() => ({ items: [] as Carrier[] })),
+          fleetCommercialApi.bookingRequests().catch(() => ({ items: [] as BookingRequest[] })),
+          fleetCommercialApi.quoteRequests().catch(() => ({ items: [] as QuoteRequest[] })),
+        ]);
+        if (cancelled) return;
+        setOverview(ov);
+        setShipments(shipmentRes.items);
+        setVehicles(vehicleRes.items);
+        setTracking(trackingRes.items);
+        setMaintenance(maintenanceRes.items);
+        setFuel(fuelRes.items);
+        setCarriers(carrierRes.items);
+        setBookings(bookingRes.items);
+        setQuotes(quoteRes.items);
+      } catch (err) {
+        if (!cancelled) notifyApiError(err, 'Unable to load fleet workspace.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    if (!overview) return [];
+    const s = overview.summary;
+    return [
+      { label: 'Active shipments', value: s.activeShipments.toString(), hint: 'Booked + moving', icon: Package },
+      { label: 'Fleet available', value: s.activeVehicles.toString(), hint: 'Ready for assignment', icon: Truck },
+      { label: 'Open maintenance', value: s.openMaintenance.toString(), hint: 'Needs planning', icon: Wrench },
+      { label: 'Fuel alerts', value: s.fuelAlerts.toString(), hint: 'Review anomalies', icon: Fuel },
+    ];
+  }, [overview]);
+
+  const valuePillars = useMemo(() => {
+    switch (mode) {
+      case 'shipments':
+        return ['Shipment accountability', 'Proof readiness', 'Load clarity'];
+      case 'vehicles':
+        return ['Live vehicle status', 'Service readiness', 'Asset utilisation'];
+      case 'tracking':
+        return ['Live fleet map', 'ETA discipline', 'Exception visibility'];
+      case 'maintenance':
+        return ['Fleet health', 'Safety posture', 'Downtime control'];
+      case 'fuel':
+        return ['Spend governance', 'Anomaly detection', 'Usage traceability'];
+      case 'carriers':
+        return ['Carrier governance', 'Commercial discipline', 'Capacity confidence'];
+      default:
+        return ['Fleet health', 'Service reliability', 'Operational truth'];
+    }
+  }, [mode]);
+
+  const commandSignals = useMemo(() => {
+    const topShipment = shipments[0];
+    const topVehicle = vehicles[0];
+    const topCarrier = carriers[0];
+
+    switch (mode) {
+      case 'shipments':
+        return [
+          {
+            label: 'Freight in motion',
+            value: `${shipments.filter((shipment) => shipment.status === 'In Transit').length}`,
+            note: 'Loads currently carrying customer and margin expectations.',
+          },
+          {
+            label: 'Proof exposure',
+            value: `${shipments.filter((shipment) => shipment.status !== 'Delivered').length}`,
+            note: 'Shipments still moving toward final proof or confirmation.',
+          },
+          {
+            label: 'Lead shipment',
+            value: topShipment?.shipmentNumber ?? 'Awaiting first load',
+            note: topShipment ? `${topShipment.customerName} · ${topShipment.destination}` : 'Once loads arrive, this board will prioritise them here.',
+          },
+        ];
+      case 'vehicles':
+        return [
+          {
+            label: 'Ready assets',
+            value: `${vehicles.filter((vehicle) => vehicle.status === 'Available').length}`,
+            note: 'Vehicles immediately usable for fresh assignments.',
+          },
+          {
+            label: 'Service exposure',
+            value: `${vehicles.filter((vehicle) => vehicle.healthStatus !== 'Healthy').length}`,
+            note: 'Assets likely to impact reliability or utilisation if ignored.',
+          },
+          {
+            label: 'Most visible unit',
+            value: topVehicle?.vehicleNumber ?? 'No active unit',
+            note: topVehicle ? `${topVehicle.type} · ${topVehicle.lastKnownLocation}` : 'Live status populates here when data is present.',
+          },
+        ];
+      case 'tracking':
+        return [
+          {
+            label: 'Live movement',
+            value: `${tracking.filter((point) => point.status === 'In Transit').length}`,
+            note: 'Tracking events currently showing movement on road.',
+          },
+          {
+            label: 'Alerted telemetry',
+            value: `${tracking.filter((point) => point.alertType).length}`,
+            note: 'Records already carrying alert semantics or exception risk.',
+          },
+          {
+            label: 'Fastest moving load',
+            value: `${Math.max(0, ...tracking.map((point) => point.speedKph)).toFixed(0)} km/h`,
+            note: 'A useful signal when dispatch wants to see whether the road is flowing.',
+          },
+        ];
+      case 'maintenance':
+        return [
+          {
+            label: 'Open work orders',
+            value: `${maintenance.filter((ticket) => ticket.status !== 'Closed').length}`,
+            note: 'Maintenance items still influencing downtime or readiness.',
+          },
+          {
+            label: 'Safety-critical pressure',
+            value: `${maintenance.filter((ticket) => ticket.priority === 'High' || ticket.priority === 'Critical').length}`,
+            note: 'Tickets that deserve immediate fleet leadership attention.',
+          },
+          {
+            label: 'Most exposed asset',
+            value: maintenance[0]?.vehicleNumber ?? 'No active ticket',
+            note: maintenance[0] ? `${maintenance[0].workOrderNumber} · ${maintenance[0].vendorName}` : 'Service pressure shows here once work enters the queue.',
+          },
+        ];
+      case 'fuel':
+        return [
+          {
+            label: 'Fuel events logged',
+            value: `${fuel.length}`,
+            note: 'Recorded fueling events visible to finance and fleet control.',
+          },
+          {
+            label: 'Anomaly review',
+            value: `${fuel.filter((event) => event.anomalyFlag).length}`,
+            note: 'Events already marked for manual or commercial review.',
+          },
+          {
+            label: 'Spend in sample',
+            value: `${fuel.reduce((sum, event) => sum + event.cost, 0).toFixed(0)}`,
+            note: 'Visible spend tied directly to the event rows on this page.',
+          },
+        ];
+      case 'carriers':
+        return [
+          {
+            label: 'Carrier panel',
+            value: `${carriers.length}`,
+            note: 'External capacity partners visible in the operating system.',
+          },
+          {
+            label: 'Booking pressure',
+            value: `${bookings.length}`,
+            note: 'Requests waiting for carrier commitment or allocation.',
+          },
+          {
+            label: 'Lead partner',
+            value: topCarrier?.name ?? 'No carrier selected',
+            note: topCarrier ? `${topCarrier.region} · ${topCarrier.serviceType}` : 'Carrier strength surfaces here when records are available.',
+          },
+        ];
+      default:
+        return [
+          {
+            label: 'Fleet on trip',
+            value: `${overview?.summary.onTripVehicles ?? 0}`,
+            note: 'Vehicles currently committed to active movement.',
+          },
+          {
+            label: 'Delivered today',
+            value: `${overview?.summary.deliveredToday ?? 0}`,
+            note: 'Loads already closed successfully in today’s operating cycle.',
+          },
+          {
+            label: 'Commercial confidence',
+            value: `${overview?.summary.deliveredRate.toFixed(1) ?? '0.0'}%`,
+            note: 'Delivery completion rate visible to operations leadership.',
+          },
+        ];
+    }
+  }, [bookings.length, carriers, fuel, maintenance, mode, overview, shipments, tracking, vehicles]);
+
+  const actionNarrative = useMemo(() => {
+    switch (mode) {
+      case 'shipments':
+        return 'The shipment board now reads like a real movement business: what is moving, what still needs proof, and where customer expectations are most exposed.';
+      case 'vehicles':
+        return 'Vehicle management should make asset readiness obvious. This pass strengthens the relationship between status, health, utilisation, and intervention.';
+      case 'tracking':
+        return 'A live map earns trust when it changes behaviour. This page now pushes movement, alerts, and ETA-relevant signals into one operating readout.';
+      case 'maintenance':
+        return 'Maintenance is not just engineering admin. It is uptime, safety, and service reliability made visible for leadership and fleet operations together.';
+      case 'fuel':
+        return 'Fuel review should feel governed and commercially intelligent. The workspace now surfaces event-level scrutiny instead of passive reporting.';
+      case 'carriers':
+        return 'Carrier management should look disciplined, not improvised. This module now frames outsourced capacity as a governed commercial system.';
+      default:
+        return 'The command center should reassure leadership instantly and still help operators move freight. This version pushes readiness, risk, and service truth into one read.';
+    }
+  }, [mode]);
+
+  const liveRows = useMemo(() => {
+    if (mode === 'vehicles') {
+      return vehicles.slice(0, 5).map((vehicle) => ({
+        id: vehicle.id,
+        title: vehicle.vehicleNumber,
+        subtitle: `${vehicle.type} · ${vehicle.driverName || 'No driver'}`,
+        status: vehicle.status,
+        actionLabel: '',
+        onClick: undefined,
+      }));
+    }
+    if (mode === 'tracking') {
+      return tracking.slice(0, 5).map((point) => ({
+        id: point.id,
+        title: point.shipmentNumber,
+        subtitle: `${point.locationLabel} · ${point.geofenceName}`,
+        status: point.status,
+        actionLabel: 'Open shipment',
+        onClick: () => {
+          const matchingShipment = shipments.find((shipment) => shipment.shipmentNumber === point.shipmentNumber);
+          if (matchingShipment) setSelectedShipment(matchingShipment);
+        },
+      }));
+    }
+    if (mode === 'maintenance') {
+      return maintenance.slice(0, 5).map((ticket) => ({
+        id: ticket.id,
+        title: ticket.workOrderNumber,
+        subtitle: `${ticket.vehicleNumber} · ${ticket.vendorName}`,
+        status: ticket.status,
+        actionLabel: '',
+        onClick: undefined,
+      }));
+    }
+    if (mode === 'fuel') {
+      return fuel.slice(0, 5).map((event) => ({
+        id: event.id,
+        title: event.vehicleNumber,
+        subtitle: `${event.stationName} · ${event.city}`,
+        status: event.anomalyFlag ? 'Review' : event.eventType,
+        actionLabel: '',
+        onClick: undefined,
+      }));
+    }
+    if (mode === 'carriers') {
+      return carriers.slice(0, 5).map((carrier) => ({
+        id: carrier.id,
+        title: carrier.name,
+        subtitle: `${carrier.region} · ${carrier.serviceType}`,
+        status: carrier.status,
+        actionLabel: '',
+        onClick: undefined,
+      }));
+    }
+    return shipments.slice(0, 5).map((shipment) => ({
+      id: shipment.id,
+      title: shipment.shipmentNumber,
+      subtitle: `${shipment.customerName} · ${shipment.destination}`,
+      status: shipment.status,
+      actionLabel: 'Open lifecycle',
+      onClick: () => setSelectedShipment(shipment),
+    }));
+  }, [carriers, fuel, maintenance, mode, shipments, tracking, vehicles]);
+
+  const exceptionRows = useMemo(() => {
+    const rows = [] as Array<{ id: string; label: string; detail: string; tone: string }>;
+    if (overview?.summary.fuelAlerts) {
+      rows.push({ id: 'fuel-alerts', label: 'Fuel alerts', detail: `${overview.summary.fuelAlerts} vehicle fueling events need review.`, tone: 'amber' });
+    }
+    if (overview?.summary.openMaintenance) {
+      rows.push({ id: 'maintenance', label: 'Maintenance queue', detail: `${overview.summary.openMaintenance} work orders are open or in progress.`, tone: 'orange' });
+    }
+    if (overview?.summary.enRoute) {
+      rows.push({ id: 'movement', label: 'Freight in motion', detail: `${overview.summary.enRoute} shipments are currently on the road.`, tone: 'blue' });
+    }
+    if (mode === 'carriers' && bookings.length) {
+      rows.push({ id: 'bookings', label: 'Booking intake', detail: `${bookings.length} open booking requests need carrier allocation.`, tone: 'amber' });
+    }
+    if (mode === 'carriers' && quotes.length) {
+      rows.push({ id: 'quotes', label: 'Quote pipeline', detail: `${quotes.length} quote requests are waiting for commercial review.`, tone: 'orange' });
+    }
+    return rows.slice(0, 4);
+  }, [bookings.length, mode, overview, quotes.length]);
+
+  const deliveredRateText = overview ? `${overview.summary.deliveredRate.toFixed(1)}%` : '0%';
+  const avgFuelLevelText = overview ? `${overview.summary.avgFuelLevel.toFixed(1)}%` : '0%';
+
+  const handleDispatch = async (shipment: FleetShipment) => {
+    setSavingId(shipment.id);
+    try {
+      await fleetApi.dispatchShipment(shipment.id, {
+        vehicleNumber: shipment.vehicleNumber,
+        driverName: shipment.driverName,
+        routeCode: shipment.routeCode,
+        notes: shipment.notes,
+      });
+      await refreshAll();
+    } catch (err) {
+      notifyApiError(err, 'Unable to dispatch shipment.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleOpenLifecycle = (shipment: FleetShipment) => {
+    setSelectedShipment(shipment);
+  };
+
+  const handleService = async (vehicle: FleetVehicle) => {
+    setSavingId(vehicle.id);
+    try {
+      await fleetApi.serviceVehicle(vehicle.id, {
+        status: 'Maintenance',
+        healthStatus: 'Reviewing',
+        nextServiceAtUtc: vehicle.nextServiceAtUtc,
+        notes: 'Sent for planned service from fleet control.',
+      });
+      await refreshAll();
+    } catch (err) {
+      notifyApiError(err, 'Unable to update vehicle service state.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleCloseMaintenance = async (ticket: FleetMaintenanceTicket) => {
+    setSavingId(ticket.id);
+    try {
+      await fleetApi.closeMaintenance(ticket.id, {
+        status: 'Closed',
+        actualCost: ticket.estimatedCost,
+        notes: 'Closed after review from fleet operations.',
+      });
+      await refreshAll();
+    } catch (err) {
+      notifyApiError(err, 'Unable to close maintenance ticket.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleFlagFuel = async (eventRow: FleetFuelEvent) => {
+    setSavingId(eventRow.id);
+    try {
+      await fleetApi.flagFuelEvent(eventRow.id, {
+        anomalyFlag: true,
+        notes: eventRow.notes || 'Flagged for manual review by fleet operations.',
+      });
+      await refreshAll();
+    } catch (err) {
+      notifyApiError(err, 'Unable to flag fuel event.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="relative min-h-[100svh] overflow-hidden bg-[#eef6f1] text-slate-900 dark:bg-[#03070f] dark:text-white">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_26%),radial-gradient(circle_at_80%_16%,rgba(14,165,233,0.12),transparent_22%),linear-gradient(180deg,rgba(255,255,255,0.55),transparent_32%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.20),transparent_26%),radial-gradient(circle_at_80%_16%,rgba(14,165,233,0.10),transparent_22%),linear-gradient(180deg,rgba(6,11,20,0.95),rgba(3,7,15,0.98))]" />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.16] mix-blend-soft-light [background-image:linear-gradient(rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px)] [background-size:74px_74px] animate-grid-breathe" />
+        <div className="pointer-events-none absolute left-[9%] top-[16%] h-60 w-60 rounded-full bg-white/40 blur-3xl animate-ambient-drift" />
+        <div className="pointer-events-none absolute right-[10%] top-[20%] h-72 w-72 rounded-full bg-cyan-300/12 blur-3xl animate-ambient-drift" />
+        <div className="pointer-events-none absolute bottom-[-6rem] left-[18%] h-80 w-80 rounded-full bg-emerald-400/12 blur-3xl animate-ambient-drift" />
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-[linear-gradient(90deg,transparent,rgba(16,185,129,0.18),rgba(14,165,233,0.26),transparent)] opacity-45 animate-lane-drift" />
+        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-50" viewBox="0 0 1440 1024" fill="none" aria-hidden="true">
+          <path className="ops-route-line animate-route-flow" d="M126 262C256 196 362 184 504 237C646 292 731 394 871 426C1002 456 1142 420 1310 492" stroke="rgba(16,185,129,0.24)" strokeWidth="2.5" />
+          <path className="ops-route-line animate-route-flow" d="M182 728C320 658 455 704 572 648C711 582 774 476 903 451C1035 426 1149 490 1268 621" stroke="rgba(34,211,238,0.24)" strokeWidth="2" style={{ animationDelay: '-2.4s' }} />
+          <circle cx="504" cy="237" r="8" fill="rgba(255,255,255,0.9)" />
+          <circle cx="504" cy="237" r="18" className="animate-signal-pulse" fill="rgba(16,185,129,0.2)" />
+          <circle cx="903" cy="451" r="7" fill="rgba(34,211,238,0.88)" />
+          <circle cx="903" cy="451" r="16" className="animate-signal-pulse" fill="rgba(34,211,238,0.18)" style={{ animationDelay: '-1s' }} />
+        </svg>
+
+        <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1640px] flex-col px-4 py-3 sm:px-6 lg:px-8 lg:py-4">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 rounded-[22px] border border-white/80 bg-white/74 px-4 py-3 shadow-[0_18px_40px_rgba(16,185,129,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-white/[0.04]">
+              <div className="rounded-[18px] bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.45),transparent_45%),linear-gradient(160deg,rgba(4,120,87,0.98),rgba(8,47,73,0.98))] p-1.5 shadow-[0_12px_24px_rgba(16,185,129,0.22)]">
+                <Truck className="h-6 w-6 text-white" />
+              </div>
+              <div className="h-9 w-px bg-slate-300/60" />
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.28em] uppercase text-emerald-600/70">Fleet & TMS</p>
+                <p className="text-[11px] text-slate-500">{config.label}</p>
+              </div>
+            </div>
+
+            <div className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(16,185,129,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
+              {MODE_ORDER.map((item) => {
+                const active = item === mode;
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setMode(item)}
+                    className={`rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
+                      active
+                        ? 'bg-slate-950 text-white shadow-lg dark:bg-white dark:text-slate-950'
+                        : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/[0.05]'
+                    }`}
+                  >
+                    {MODULES[item].label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <section className="grid flex-1 gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.93),rgba(236,247,244,0.75))] p-5 shadow-[0_24px_80px_rgba(16,185,129,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(9,16,29,0.96),rgba(4,9,18,0.92))]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/35 bg-white/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-emerald-700 shadow-sm backdrop-blur">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Live DB-backed operations
+                </span>
+                <span className={`inline-flex items-center gap-2 rounded-full bg-gradient-to-r ${config.accent} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-white shadow-sm`}>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {config.label}
+                </span>
+              </div>
+
+              <div className="mt-5 max-w-3xl">
+                <h1 className="text-[40px] font-black leading-[1.02] tracking-tight text-slate-950 xl:text-[54px] dark:text-white">
+                  {config.title}
+                </h1>
+                <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-slate-600 dark:text-slate-400">
+                  {config.subtitle}
+                </p>
+                <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-slate-500 dark:text-slate-500">
+                  {config.summary}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {valuePillars.map((pillar) => (
+                    <span key={pillar} className="rounded-full border border-white/80 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
+                      {pillar}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {loading ? (
+                  Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(16,185,129,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                      <div className="space-y-3">
+                        <div className="h-3 w-20 animate-pulse rounded bg-slate-200/80 dark:bg-white/10" />
+                        <div className="h-9 w-16 animate-pulse rounded bg-slate-200/80 dark:bg-white/10" />
+                        <div className="h-3 w-28 animate-pulse rounded bg-slate-200/80 dark:bg-white/10" />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  stats.map((stat) => (
+                    <div key={stat.label} className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(16,185,129,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{stat.label}</p>
+                        <stat.icon className="h-4 w-4 text-emerald-500/70" />
+                      </div>
+                      <p className="mt-2 text-[28px] font-black tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
+                      <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-500">{stat.hint}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-[1.22fr_0.78fr]">
+                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(16,185,129,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                  <div className="mb-4 grid gap-3 lg:grid-cols-3">
+                    {commandSignals.map((signal) => (
+                      <div key={signal.label} className="rounded-[22px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(241,249,246,0.84))] p-3.5 dark:border-white/10 dark:bg-white/[0.03]">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{signal.label}</p>
+                        <p className="mt-2 text-[24px] font-black tracking-tight text-slate-950 dark:text-white">{signal.value}</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{signal.note}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Operational board</p>
+                      <p className="mt-1 text-[18px] font-black tracking-tight text-slate-950 dark:text-white">
+                        {mode === 'vehicles'
+                          ? 'Fleet health and readiness'
+                          : mode === 'tracking'
+                            ? 'Movement and live location'
+                            : mode === 'maintenance'
+                              ? 'Maintenance queue'
+                              : mode === 'fuel'
+                                ? 'Fuel spend and anomaly review'
+                                : mode === 'carriers'
+                                  ? 'Carrier performance and demand'
+                                : 'Shipments, loads, and proof'}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-emerald-200/70 bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-600">
+                      Backend live
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {mode === 'vehicles' ? vehicles.slice(0, 5).map((vehicle) => (
+                      <ActionVehicleCard key={vehicle.id} vehicle={vehicle} saving={savingId === vehicle.id} onService={() => handleService(vehicle)} />
+                    )) : mode === 'tracking' ? tracking.slice(0, 5).map((point) => (
+                      <ActionTrackingCard key={point.id} point={point} />
+                    )) : mode === 'maintenance' ? maintenance.slice(0, 5).map((ticket) => (
+                      <ActionMaintenanceCard key={ticket.id} ticket={ticket} saving={savingId === ticket.id} onClose={() => handleCloseMaintenance(ticket)} />
+                    )) : mode === 'fuel' ? fuel.slice(0, 5).map((eventRow) => (
+                      <ActionFuelCard key={eventRow.id} eventRow={eventRow} saving={savingId === eventRow.id} onFlag={() => handleFlagFuel(eventRow)} />
+                    )) : mode === 'carriers' ? carriers.slice(0, 5).map((carrier) => (
+                      <ActionCarrierCard key={carrier.id} carrier={carrier} />
+                    )) : shipments.slice(0, 5).map((shipment) => (
+                      <ActionShipmentCard key={shipment.id} shipment={shipment} saving={savingId === shipment.id} onDispatch={() => handleDispatch(shipment)} onOpenLifecycle={() => handleOpenLifecycle(shipment)} />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(16,185,129,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Operational cues</p>
+                  <div className="mt-3 rounded-[22px] border border-slate-200/70 bg-[linear-gradient(135deg,rgba(7,31,28,0.96),rgba(7,112,94,0.88))] p-4 text-white shadow-[0_18px_40px_rgba(16,185,129,0.18)]">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">Executive readout</p>
+                    <p className="mt-2 text-[16px] font-black leading-snug">{mode === 'tracking' ? 'Make visibility actionable.' : mode === 'maintenance' ? 'Protect uptime before it becomes a cost story.' : 'Run fleet operations with visible control.'}</p>
+                    <p className="mt-2 text-[12px] leading-relaxed text-white/78">{actionNarrative}</p>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {exceptionRows.length ? exceptionRows.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl border p-3 ${
+                          item.tone === 'amber'
+                            ? 'border-amber-200/60 bg-amber-50/70 dark:border-amber-400/10 dark:bg-amber-400/8'
+                            : item.tone === 'orange'
+                              ? 'border-orange-200/60 bg-orange-50/70 dark:border-orange-400/10 dark:bg-orange-400/8'
+                              : 'border-sky-200/60 bg-sky-50/70 dark:border-sky-400/10 dark:bg-sky-400/8'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-[12px] font-bold text-slate-800 dark:text-slate-100">{item.label}</p>
+                          <AlertTriangle className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{item.detail}</p>
+                      </div>
+                    )) : (
+                      <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-4 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
+                        No pressing exceptions. The fleet is running clean.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(245,249,255,0.78))] p-4 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))]">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Live DB records</p>
+                      <ArrowRight className="h-4 w-4 text-emerald-500/70" />
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {liveRows.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={item.onClick}
+                          disabled={!item.onClick}
+                          className={`ops-live-row ${item.onClick ? 'ops-live-row-action' : 'ops-live-row-static'}`}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-semibold text-slate-800 dark:text-slate-200">{item.title}</p>
+                            <p className="truncate text-[10px] text-slate-400 dark:text-slate-500">{item.subtitle}</p>
+                          </div>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:bg-white/[0.05] dark:text-slate-300">
+                            {item.status}
+                          </span>
+                          {item.onClick ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-600/80 dark:text-emerald-300/80">
+                              {item.actionLabel}
+                              <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">Synced</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(180deg,rgba(10,16,28,0.96),rgba(5,10,18,0.92))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.32)] backdrop-blur-3xl">
+              <div className="flex items-center justify-between gap-3">
+                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
+                  {config.label}
+                </div>
+                <div className="rounded-full border border-emerald-500/15 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-300">
+                  Connected backend
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <h2 className="text-[28px] font-black leading-tight text-white xl:text-[34px]">
+                  Built to win confidence in the first glance and still satisfy the operator on the second.
+                </h2>
+                <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-slate-300/80">
+                  This workspace is intentionally doing two jobs well: it sells the strength of the platform immediately, and it gives transport teams a live control surface they can trust for daily decisions.
+                </p>
+              </div>
+
+              <div className="mt-6 grid gap-3">
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Load planning</p>
+                    <MapPinned className="h-4 w-4 text-cyan-300/80" />
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {overview?.loadPlanCards?.slice(0, 4).map((plan) => (
+                      <div key={plan.routeCode} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[12px] font-bold text-white">{plan.routeCode || 'Unassigned route'}</p>
+                            <p className="text-[11px] text-slate-400">{plan.shipmentCount} shipments · {plan.highPriority} high priority</p>
+                          </div>
+                          <span className="text-[10px] font-bold text-cyan-300">{plan.totalWeightKg.toFixed(0)} kg</span>
+                        </div>
+                        <div className="mt-2 h-1.5 rounded-full bg-white/10">
+                          <div className="h-1.5 rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-sky-500" style={{ width: `${Math.min(100, plan.shipmentCount * 22)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Fleet health</p>
+                    <Truck className="h-4 w-4 text-emerald-300/80" />
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {vehicles.slice(0, 4).map((vehicle) => (
+                      <div key={vehicle.id} className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-bold text-white">{vehicle.vehicleNumber}</p>
+                            <p className="truncate text-[10px] text-slate-400">{vehicle.type} · {vehicle.lastKnownLocation}</p>
+                          </div>
+                          <span className="rounded-full border border-white/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/65">
+                            {vehicle.status}
+                          </span>
+                        </div>
+                      </div>
+                      ))}
+                  </div>
+                </div>
+
+                {mode === 'carriers' && (
+                  <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Carrier demand</p>
+                      <Package className="h-4 w-4 text-fuchsia-300/80" />
+                    </div>
+                    <div className="mt-3 space-y-2 text-[12px] text-slate-300/85">
+                      <p>Carriers on record: <span className="font-bold text-white">{carriers.length}</span></p>
+                      <p>Open booking requests: <span className="font-bold text-white">{bookings.length}</span></p>
+                      <p>Open quote requests: <span className="font-bold text-white">{quotes.length}</span></p>
+                      <p>Average carrier score: <span className="font-bold text-white">{carriers.length ? (carriers.reduce((sum, item) => sum + ((item.onTimeScore + item.damageScore + item.costScore) / 3), 0) / carriers.length).toFixed(0) : '0'}</span></p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-[26px] border border-white/10 bg-gradient-to-r from-emerald-500/12 via-cyan-400/10 to-transparent p-4">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">Operationally honest</p>
+                </div>
+                <p className="mt-2 text-[13px] leading-relaxed text-slate-300/80">
+                  Shipments, vehicles, tracking, maintenance, and fuel all round-trip to live tenant entities. The polish is there to elevate trust, not to hide a static demo.
+                </p>
+              </div>
+
+              <div className="mt-4 rounded-[26px] border border-white/10 bg-white/[0.04] p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Signal summary</p>
+                  <BadgeInfo className="h-4 w-4 text-white/50" />
+                </div>
+                <div className="mt-3 space-y-2 text-[12px] text-slate-300/80">
+                  <p>On-trip vehicles: <span className="font-bold text-white">{overview?.summary.onTripVehicles ?? 0}</span></p>
+                  <p>Delivered today: <span className="font-bold text-white">{overview?.summary.deliveredToday ?? 0}</span></p>
+                  <p>Delivery rate: <span className="font-bold text-white">{deliveredRateText}</span></p>
+                  <p>Average fuel level: <span className="font-bold text-white">{avgFuelLevelText}</span></p>
+                </div>
+              </div>
+            </div>
+
+            {selectedShipment && (
+              <ShipmentLifecycleDrawer shipment={selectedShipment} onClose={() => setSelectedShipment(null)} />
+            )}
+          </section>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ActionShipmentCard({ shipment, onDispatch, onOpenLifecycle, saving }: { shipment: FleetShipment; onDispatch: () => void; onOpenLifecycle: () => void; saving: boolean }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{shipment.shipmentNumber}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{shipment.customerName} · {shipment.destination}</p>
+        </div>
+        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
+          {shipment.status}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        <span>{shipment.vehicleNumber}</span>
+        <span>•</span>
+        <span>{shipment.priority}</span>
+        <span>•</span>
+        <span>{shipment.mode}</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        {shipment.status === 'Delivered'
+          ? 'Delivery is closed, but lifecycle history remains available for audit and proof.'
+          : 'Dispatch and lifecycle controls keep this load visible from assignment to POD.'}
+      </p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <button type="button" onClick={onDispatch} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-cyan-500 to-sky-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(16,185,129,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
+          {saving ? 'Dispatching...' : 'Dispatch'}
+          <ArrowRight className="h-4 w-4" />
+        </button>
+        <button type="button" onClick={onOpenLifecycle} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 text-[12px] font-bold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200">
+          Lifecycle
+          <ClipboardList className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActionCarrierCard({ carrier }: { carrier: Carrier }) {
+  const score = Math.round((carrier.onTimeScore + carrier.damageScore + carrier.costScore) / 3);
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{carrier.name}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{carrier.region} · {carrier.serviceType}</p>
+        </div>
+        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
+          {carrier.status}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
+        <span>On-time {carrier.onTimeScore.toFixed(0)}</span>
+        <span>Damage {carrier.damageScore.toFixed(0)}</span>
+        <span>Cost {carrier.costScore.toFixed(0)}</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        External capacity should read like governed supply, not a side spreadsheet.
+      </p>
+      <div className="mt-4 flex items-center gap-2">
+        <div className="h-2 flex-1 rounded-full bg-slate-200/80 dark:bg-white/10">
+          <div className="h-2 rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-cyan-400" style={{ width: `${score}%` }} />
+        </div>
+        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">{score}</span>
+      </div>
+    </div>
+  );
+}
+
+function ActionVehicleCard({ vehicle, onService, saving }: { vehicle: FleetVehicle; onService: () => void; saving: boolean }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{vehicle.vehicleNumber}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{vehicle.type} · {vehicle.driverName || 'Unassigned'}</p>
+        </div>
+        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
+          {vehicle.status}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
+        <span>{vehicle.currentLoadKg.toFixed(0)} kg</span>
+        <span>{vehicle.fuelLevelPercent.toFixed(0)}% fuel</span>
+        <span>{vehicle.healthStatus}</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        {vehicle.healthStatus === 'Healthy'
+          ? 'This asset reads as ready for continued utilisation.'
+          : 'Service action is recommended before readiness becomes an execution issue.'}
+      </p>
+      <button type="button" onClick={onService} disabled={saving} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 via-indigo-500 to-violet-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(16,185,129,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
+        {saving ? 'Updating...' : 'Send to service'}
+        <Wrench className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function ActionTrackingCard({ point }: { point: FleetTrackingPoint }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{point.shipmentNumber}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{point.locationLabel} · {point.geofenceName}</p>
+        </div>
+        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
+          {point.status}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        <span>{point.vehicleNumber}</span>
+        <span>•</span>
+        <span>{point.speedKph.toFixed(0)} km/h</span>
+        <span>•</span>
+        <span>{point.alertType || 'No alert'}</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        {point.alertType
+          ? `Attention required: ${point.alertType.toLowerCase()} is now part of the movement record.`
+          : 'Movement telemetry is clean and available for fleet intervention if needed.'}
+      </p>
+    </div>
+  );
+}
+
+function ActionMaintenanceCard({ ticket, onClose, saving }: { ticket: FleetMaintenanceTicket; onClose: () => void; saving: boolean }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{ticket.workOrderNumber}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{ticket.vehicleNumber} · {ticket.vendorName}</p>
+        </div>
+        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
+          {ticket.status}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
+        <span>{ticket.priority}</span>
+        <span>{ticket.downtimeHours.toFixed(1)} hrs</span>
+        <span>{ticket.estimatedCost.toFixed(0)} cost</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        Close the work order only when the asset is genuinely ready to return to service.
+      </p>
+      <button type="button" onClick={onClose} disabled={saving} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(16,185,129,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
+        {saving ? 'Closing...' : 'Close work order'}
+        <CheckCircle2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function ActionFuelCard({ eventRow, onFlag, saving }: { eventRow: FleetFuelEvent; onFlag: () => void; saving: boolean }) {
+  return (
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(16,185,129,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{eventRow.vehicleNumber}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{eventRow.stationName} · {eventRow.city}</p>
+        </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] ${
+          eventRow.anomalyFlag
+            ? 'border-amber-200/70 bg-amber-50 text-amber-700 dark:border-amber-400/10 dark:bg-amber-400/8 dark:text-amber-300'
+            : 'border-slate-200/70 bg-white text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300'
+        }`}>
+          {eventRow.anomalyFlag ? 'Review' : eventRow.eventType}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
+        <span>{eventRow.liters.toFixed(0)} L</span>
+        <span>{eventRow.cost.toFixed(0)} cost</span>
+        <span>{eventRow.fuelCardNumber}</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        Every fuel event should be explainable at a commercial review table, not just in transport ops.
+      </p>
+      <button type="button" onClick={onFlag} disabled={saving || eventRow.anomalyFlag} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-cyan-500 to-sky-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(16,185,129,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
+        {saving ? 'Flagging...' : eventRow.anomalyFlag ? 'Flagged for review' : 'Flag anomaly'}
+        <Fuel className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
