@@ -1,19 +1,9 @@
 import { apiClient, unwrap } from "./apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { getRoutesListData, getRoutesSummary } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
 
 export const routesApi = {
-  list: () =>
-    withFallback(
-      unwrap<AnyRecord[]>(apiClient.get("/api/routes")),
-      () => getRoutesListData() as AnyRecord[],
-    ),
-  summary: () =>
-    withFallback(
-      unwrap<AnyRecord>(apiClient.get("/api/routes/summary")),
-      () => getRoutesSummary() as AnyRecord,
-    ),
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/routes")),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/routes/summary")),
   detail: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/routes/${id}`)),
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/routes", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/routes/${id}`, payload)),

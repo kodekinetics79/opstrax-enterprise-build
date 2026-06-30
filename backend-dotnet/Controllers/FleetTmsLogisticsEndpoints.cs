@@ -39,6 +39,9 @@ public static class FleetTmsLogisticsEndpoints
     private static object I(int? v) => (object?)v ?? DBNull.Value;
     private static object Dt(DateTime? v) => (object?)v ?? DBNull.Value;
 
+    private static IResult? RequireView(HttpContext http) => EndpointMappings.RequirePermission(http, "dispatch:view");
+    private static IResult? RequireManage(HttpContext http) => EndpointMappings.RequirePermission(http, "dispatch:manage");
+
     private static async Task<Dictionary<string, object?>?> Row(Database db, string table, long companyId, long id, CancellationToken ct)
         => await db.QuerySingleAsync($"SELECT * FROM {table} WHERE id=@id AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
@@ -47,6 +50,7 @@ public static class FleetTmsLogisticsEndpoints
 
     private static async Task<IResult> Overview(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
         void B(NpgsqlCommand c) => c.Parameters.AddWithValue("@companyId", companyId);
         var summary = new
@@ -69,6 +73,7 @@ public static class FleetTmsLogisticsEndpoints
 
     private static async Task<IResult> Orders(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
         page = page < 1 ? 1 : page; pageSize = pageSize is < 1 or > 200 ? 20 : pageSize;
         var where = "WHERE company_id=@companyId" + (string.IsNullOrWhiteSpace(status) ? "" : " AND status=@status");
@@ -81,12 +86,14 @@ public static class FleetTmsLogisticsEndpoints
 
     private static async Task<IResult> Order(HttpContext http, long id, Database db, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var item = await Row(db, "fleet_tms_dispatch_orders", Cid(http), id, ct);
         return item is null ? NotFound() : Ok(item);
     }
 
     private static async Task<IResult> CreateOrder(HttpContext http, LogisticsOrderRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         if (string.IsNullOrWhiteSpace(req.OrderNumber)) return Bad("Order number is required.");
         if (string.IsNullOrWhiteSpace(req.CustomerName)) return Bad("Customer name is required.");
         var companyId = Cid(http);
@@ -117,6 +124,7 @@ VALUES (@companyId, @num, @customer, @segment, @channel, @city, @area, @status, 
 
     private static async Task<IResult> UpdateOrder(HttpContext http, long id, LogisticsOrderRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var rows = await db.ExecuteAsync(@"
 UPDATE fleet_tms_dispatch_orders SET
@@ -155,6 +163,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> Routes(HttpContext http, Database db, string? status, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
         var where = "WHERE company_id=@companyId" + (string.IsNullOrWhiteSpace(status) ? "" : " AND status=@status");
         var items = await db.QueryAsync($"SELECT * FROM fleet_tms_delivery_routes {where} ORDER BY planned_for_date DESC, route_code",
@@ -164,6 +173,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> CreateRoute(HttpContext http, LogisticsRouteRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         if (string.IsNullOrWhiteSpace(req.RouteCode)) return Bad("Route code is required.");
         var companyId = Cid(http);
         var id = await db.InsertAsync(@"
@@ -196,6 +206,7 @@ VALUES (@companyId, @code, @hub, @territory, @driver, @vehicle, @status, @planne
 
     private static async Task<IResult> UpdateRoute(HttpContext http, long id, LogisticsRouteRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var rows = await db.ExecuteAsync(@"
 UPDATE fleet_tms_delivery_routes SET
@@ -215,6 +226,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> RouteStops(HttpContext http, long id, Database db, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
         var route = await Row(db, "fleet_tms_delivery_routes", companyId, id, ct);
         if (route is null) return NotFound();
@@ -225,6 +237,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> LastMile(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
     {
+        if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
         page = page < 1 ? 1 : page; pageSize = pageSize is < 1 or > 200 ? 20 : pageSize;
         var where = "WHERE company_id=@companyId" + (string.IsNullOrWhiteSpace(status) ? "" : " AND status=@status");
@@ -239,6 +252,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> DispatchOrder(HttpContext http, long id, DispatchOrderRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var order = await Row(db, "fleet_tms_dispatch_orders", companyId, id, ct);
         if (order is null) return NotFound();
@@ -265,6 +279,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> ProgressRoute(HttpContext http, long id, RouteProgressRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var route = await Row(db, "fleet_tms_delivery_routes", companyId, id, ct);
         if (route is null) return NotFound();
@@ -282,6 +297,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> ConfirmDelivery(HttpContext http, long id, ConfirmDeliveryRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var stop = await Row(db, "fleet_tms_last_mile_stops", companyId, id, ct);
         if (stop is null) return NotFound();
@@ -308,6 +324,7 @@ WHERE company_id=@companyId AND route_code=@route",
 
     private static async Task<IResult> RecordAttempt(HttpContext http, long id, StopAttemptRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var stop = await Row(db, "fleet_tms_last_mile_stops", companyId, id, ct);
         if (stop is null) return NotFound();
@@ -330,6 +347,7 @@ WHERE id=@id AND company_id=@companyId",
 
     private static async Task<IResult> RescheduleStop(HttpContext http, long id, StopRescheduleRequest req, Database db, CancellationToken ct)
     {
+        if (RequireManage(http) is { } denied) return denied;
         var companyId = Cid(http);
         var stop = await Row(db, "fleet_tms_last_mile_stops", companyId, id, ct);
         if (stop is null) return NotFound();

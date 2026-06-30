@@ -39,6 +39,7 @@ import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
+import { useNavigate } from "react-router-dom";
 
 const {
   bookings,
@@ -1317,6 +1318,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const navigate = useNavigate();
 
   if (moduleKey === "live-dashboard") return <LiveDashboardPage />;
   if (moduleKey === "alerts") return <AlertsPage />;
@@ -1342,20 +1344,40 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
 
   if (!definition) {
     return (
-      <div className="space-y-6">
-        <PageHeader eyebrow="OpsTrax" title="Module Workspace" description="This module is available in navigation and ready for deeper workflow configuration." />
-        <EmptyState title="Integration required" subtitle="This module is available in navigation, but the specific workflow is not configured yet." />
+      <div className="control-tower space-y-6">
+        <PageHeader
+          eyebrow="OpsTrax"
+          title="Module Workspace"
+          description="This module is available in navigation and ready for deeper workflow configuration."
+          actions={<>
+            <button type="button" className="btn-ghost" onClick={() => navigate("/command-center")}>Open Dashboard</button>
+            <button type="button" className="btn-primary" onClick={() => navigate("/operations/proof-center")}>Open Proof Center</button>
+          </>}
+        />
+        <EmptyState
+          title="Integration required"
+          subtitle="This module is available in navigation, but the specific workflow is not configured yet. Use the connected operational hubs instead of a dead-end panel."
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="control-tower space-y-6">
       <PageHeader
         eyebrow={definition.eyebrow}
         title={definition.title}
         description={definition.description}
-        actions={<><button className="btn-ghost" disabled title="Export is not configured for this workspace yet."><Download className="h-4 w-4" /> Export</button><button className="btn-primary" disabled title="Create action is not configured for this workspace yet."><Send className="h-4 w-4" /> Create Action</button></>}
+        actions={<>
+          <button className="btn-ghost" type="button" onClick={() => exportCsv(definition.title, rows)}>
+            <Download className="h-4 w-4" />
+            Export
+          </button>
+          <button className="btn-primary" type="button" onClick={() => navigate("/control-tower")}>
+            <Send className="h-4 w-4" />
+            Open Control Tower
+          </button>
+        </>}
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={kpi.value} status={kpi.status} trend={kpi.trend} />)}

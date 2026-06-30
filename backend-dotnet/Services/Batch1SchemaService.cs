@@ -244,8 +244,8 @@ public sealed class Batch1SchemaService(Database db)
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
           SELECT 1, 'Asset', a.id, 'batch1.ready', a.asset_code || ' Batch 1 profile ready', 'Asset detail evidence backfilled by OpsTrax.', 'Info'
           FROM assets a WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Asset' AND x.entity_id=a.id)",
-        @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
-          SELECT 1, m.module_key, 'Batch 1 ' || m.title || ' recommended action', m.body, 94, 'Recommended'
+        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, score)
+          SELECT 1, 1, 'batch1_action', m.module_key, 'Batch 1 ' || m.title || ' recommended action', m.body, m.body, 94, 82, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'Medium', 'Recommended', 94
           FROM (
             SELECT 'vehicles' module_key, 'vehicle' title, 'Review risk heat, data completeness, device status and driver assignment before dispatch.' body
             UNION ALL SELECT 'drivers','driver','Review readiness, HOS, certification and coaching signals before assignment.'

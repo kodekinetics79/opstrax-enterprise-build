@@ -1,36 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { leads as seedLeads } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedLeads as AnyRecord[]).map((l, i) => ({
-    id: i + 1,
-    title: String(l.company ?? ""),
-    status: String(l.status ?? "New"),
-    leadId: String(l.leadId ?? `LD-${2400 + i}`),
-    company: String(l.company ?? ""),
-    contactPerson: String(l.contactPerson ?? ""),
-    industry: String(l.industry ?? ""),
-    source: String(l.source ?? "Referral"),
-    requiredService: String(l.requiredService ?? "FTL"),
-    estimatedMonthlyLoads: Number(l.estimatedMonthlyLoads ?? 50),
-    cityCountry: String(l.cityCountry ?? ""),
-    assignedRep: String(l.assignedRep ?? ""),
-    nextFollowUp: String(l.nextFollowUp ?? ""),
-    riskLevel: "Low",
-  }));
-}
-
-const SEED_SUMMARY: AnyRecord = { total: 4, active: 3, riskItems: 0 };
-
 const leadsApi = {
-  list: () => withFallback(
+  list: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/leads")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -46,12 +21,6 @@ const leadsApi = {
         nextFollowUp: r.nextFollowUp ?? r.due_at ?? "",
       }))
     ),
-    () => buildSeed()
-  ),
-  summary: () => withFallback(
-    unwrap<AnyRecord>(apiClient.get("/api/leads")).then((r) => (r as unknown as { summary: AnyRecord }).summary ?? SEED_SUMMARY),
-    () => SEED_SUMMARY
-  ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/leads", body)),
 };
 
@@ -171,7 +140,13 @@ export function LeadsPage() {
   }, {});
 
   if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
+  if (listQ.isError) {
+    return (
+      <ErrorState
+        message={(listQ.error as Error)?.message ?? "Unable to load live leads."}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 py-6">
@@ -185,6 +160,21 @@ export function LeadsPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("leads", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>Add Lead</button>
+        </div>
+      </div>
+
+      <div className="panel grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Pipeline integrity</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">This view uses live leads only and surfaces an honest empty state if the backend has no data yet.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Customer linkage</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Each record keeps customer, rep, service and next-step context together for sales follow-up.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote bridge</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Qualified leads can still feed the quotation flow without a fake sales pipeline.</p>
         </div>
       </div>
 

@@ -293,8 +293,8 @@ public sealed class Batch4SchemaService(Database db)
           SELECT 1, CURRENT_DATE - n * INTERVAL '1 day', CURRENT_DATE - (n-1) * INTERVAL '1 day',
                  CURRENT_DATE - n * INTERVAL '1 day', n%7, n%5, n%8, n%4, n%3, 88-(n%6)
           FROM seq WHERE (SELECT COUNT(*) FROM safety_trends) < 14",
-        @"INSERT INTO ai_recommendations (company_id,module_key,title,body,score,status)
-          SELECT 1, x.module_key, x.title, x.body, x.score, 'Recommended' FROM (
+        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, score, status)
+          SELECT 1, 1, x.module_key, x.module_key, x.title, x.body, x.body, x.score, 'Recommended' FROM (
             SELECT 'safety' module_key,'AI Safety Advisor' title,'High-risk drivers should receive coaching before next dense urban route.' body,95 score
             UNION ALL SELECT 'dashcam','Driver exoneration support','Video metadata suggests potential external cut-in risk; preserve evidence package.',93
             UNION ALL SELECT 'coaching','AI coaching script generator','Use following-distance script and compare before/after safety score.',91

@@ -30,7 +30,15 @@ function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
   return n >= 70 ? "High" : n >= 40 ? "Medium" : "Low";
 }
 
-const FIELDS = [
+type VehicleField = {
+  key: string;
+  label: string;
+  required?: boolean;
+  type?: "text" | "number" | "select" | "email";
+  options?: readonly string[];
+};
+
+const FIELDS: VehicleField[] = [
   { key: "vehicleCode", label: "Vehicle code", required: true },
   { key: "type", label: "Type", type: "select", options: ["Truck", "Van", "Box Truck", "Reefer"], required: true },
   { key: "make", label: "Make" },
@@ -471,7 +479,43 @@ function fmt(v: unknown) {
 
 function VehicleFormModal({ title, initial, saving, onClose, onSave }: { title: string; initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (p: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
-  const submit = (e: FormEvent) => { e.preventDefault(); onSave(form); };
+  const [errors, setErrors] = useState<string[]>([]);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const nextErrors: string[] = [];
+    const payload: AnyRecord = { ...form };
+
+    for (const field of FIELDS) {
+      const raw = payload[field.key];
+      const value = String(raw ?? "").trim();
+      if (field.required && value === "") {
+        nextErrors.push(`${field.label} is required.`);
+        continue;
+      }
+      if (field.type === "number") {
+        if (value === "") {
+          payload[field.key] = undefined;
+          continue;
+        }
+        const parsed = Number(value);
+        if (Number.isNaN(parsed)) {
+          nextErrors.push(`${field.label} must be a valid number.`);
+          continue;
+        }
+        payload[field.key] = parsed;
+      } else {
+        payload[field.key] = raw;
+      }
+    }
+
+    if (nextErrors.length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    setErrors([]);
+    onSave(payload);
+  };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
       <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl anim-fade-up">
@@ -485,21 +529,28 @@ function VehicleFormModal({ title, initial, saving, onClose, onSave }: { title: 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {FIELDS.map((f) => (
             <label key={f.key} className="block">
-              <span className="mb-1.5 block text-xs font-semibold text-slate-600">{f.label}{("required" in f && f.required) ? <span className="text-rose-500"> *</span> : null}</span>
-              {"options" in f && f.options ? (
+              <span className="mb-1.5 block text-xs font-semibold text-slate-600">{f.label}{f.required ? <span className="text-rose-500"> *</span> : null}</span>
+              {f.type === "select" && f.options ? (
                 <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
-                  required={"required" in f && f.required} value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))}>
+                  required={Boolean(f.required)} value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))}>
                   <option value="">Select</option>
                   {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
                 <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
-                  type={"type" in f && f.type === "number" ? "number" : "text"} required={"required" in f && f.required}
-                  value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: "type" in f && f.type === "number" ? Number(e.target.value) : e.target.value }))} />
+                  type={f.type === "number" ? "number" : "text"} required={Boolean(f.required)}
+                  value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))} />
               )}
             </label>
           ))}
         </div>
+        {errors.length > 0 && (
+          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <ul className="space-y-1">
+              {errors.map((error) => <li key={error}>{error}</li>)}
+            </ul>
+          </div>
+        )}
         <div className="mt-6 flex justify-end gap-3">
           <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Cancel</button>
           <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"><Save className="h-4 w-4" /> {saving ? "Saving…" : "Save vehicle"}</button>

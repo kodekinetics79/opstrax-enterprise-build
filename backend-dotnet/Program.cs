@@ -1,5 +1,6 @@
 using Opstrax.Api;
 using Opstrax.Api.Controllers;
+using Opstrax.Api.Foundation;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Middleware;
@@ -35,8 +36,42 @@ builder.Services.AddSingleton<ReportingSchemaService>();
 builder.Services.AddSingleton<ObservabilitySchemaService>();
 builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
+builder.Services.AddSingleton<TelemetryLiveStateService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<OpsMetricsService>();
+builder.Services.AddSingleton<FoundationSchemaService>();
+builder.Services.AddSingleton<SafetyMaintenanceFoundationSchemaService>();
+builder.Services.AddSingleton<SafetyMaintenanceFoundationService>();
+builder.Services.AddSingleton<BusinessSpineSchemaService>();
+builder.Services.AddSingleton<CommercialFoundationSchemaService>();
+builder.Services.AddSingleton<RevenueReadinessSchemaService>();
+builder.Services.AddSingleton<FinanceActivationSchemaService>();
+builder.Services.AddSingleton<Stage9SchemaService>();
+builder.Services.AddSingleton<BusinessSpineService>();
+builder.Services.AddSingleton<CommercialFoundationService>();
+builder.Services.AddSingleton<RevenueReadinessService>();
+builder.Services.AddSingleton<Stage9OperationalFoundationService>();
+builder.Services.AddSingleton<IFeatureAccessService, PostgresFeatureAccessService>();
+builder.Services.AddSingleton<IAuthorizationDecisionService, AuthorizationDecisionService>();
+builder.Services.AddSingleton<IApprovalWorkflowService, PostgresApprovalWorkflowService>();
+builder.Services.AddSingleton<IDomainEventPublisher, PostgresDomainEventPublisher>();
+builder.Services.AddSingleton<IOutboxWriter, PostgresDomainEventPublisher>();
+builder.Services.AddSingleton<IInboxProcessor, PostgresDomainEventPublisher>();
+builder.Services.AddSingleton<IEventIdempotencyService, PostgresIdempotencyService>();
+builder.Services.AddSingleton<IAuditLogService, PostgresAuditLogService>();
+builder.Services.AddSingleton<AmbientCorrelationContext>();
+builder.Services.AddSingleton<ICorrelationContext>(sp => sp.GetRequiredService<AmbientCorrelationContext>());
+builder.Services.AddSingleton<PostgresAiFoundationService>();
+var outboxDispatcherOptions = builder.Configuration.GetSection("OutboxDispatcher").Get<OutboxDispatcherOptions>() ?? new OutboxDispatcherOptions();
+builder.Services.AddSingleton(outboxDispatcherOptions);
+builder.Services.AddSingleton<IEventProcessingLogService, PostgresEventProcessingLogService>();
+builder.Services.AddSingleton<IOutboxMessageHandler, FoundationSmokeRequestedHandler>();
+builder.Services.AddSingleton<IOutboxMessageHandlerRegistry, OutboxMessageHandlerRegistry>();
+builder.Services.AddSingleton<IOutboxDispatcher, PostgresOutboxDispatcher>();
+if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || outboxDispatcherOptions.AllowProduction))
+{
+    builder.Services.AddHostedService<OutboxDispatcherBackgroundService>();
+}
 // P10 Security + Compliance
 builder.Services.AddSingleton<SecuritySchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
@@ -50,6 +85,8 @@ builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
 // Fleet TMS (PR1) — shipment lifecycle, POD workflow & public tracking (additive)
 builder.Services.AddSingleton<FleetTmsSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainSchemaService>();
+builder.Services.AddSingleton<FleetTmsColdChainFoundationSchemaService>();
+builder.Services.AddSingleton<FleetTmsColdChainFoundationService>();
 builder.Services.AddSingleton<FleetTmsLogisticsSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
@@ -103,12 +140,32 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Alerts",            () => scope.ServiceProvider.GetRequiredService<AlertWorkflowSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Reporting",         () => scope.ServiceProvider.GetRequiredService<ReportingSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Observability",     () => scope.ServiceProvider.GetRequiredService<ObservabilitySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Foundation",        () => scope.ServiceProvider.GetRequiredService<FoundationSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "SafetyMaintenanceFoundation", () => scope.ServiceProvider.GetRequiredService<SafetyMaintenanceFoundationSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "BusinessSpine",     () => scope.ServiceProvider.GetRequiredService<BusinessSpineSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "CommercialFoundation", () => scope.ServiceProvider.GetRequiredService<CommercialFoundationSchemaService>().EnsureAsync());
+    var revenueReadinessSchemaEnabled = builder.Configuration.GetValue("RevenueReadinessSchema:Enabled", !app.Environment.IsProduction());
+    if (revenueReadinessSchemaEnabled)
+    {
+        await RunSchemaStep(app, "RevenueReadiness", () => scope.ServiceProvider.GetRequiredService<RevenueReadinessSchemaService>().EnsureAsync());
+    }
+    var financeActivationSchemaEnabled = builder.Configuration.GetValue("FinanceActivationSchema:Enabled", !app.Environment.IsProduction());
+    if (financeActivationSchemaEnabled)
+    {
+        await RunSchemaStep(app, "FinanceActivation", () => scope.ServiceProvider.GetRequiredService<FinanceActivationSchemaService>().EnsureAsync());
+    }
+    var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
+    if (stage9SchemaEnabled)
+    {
+        await RunSchemaStep(app, "Stage9", () => scope.ServiceProvider.GetRequiredService<Stage9SchemaService>().EnsureAsync());
+    }
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChain",  () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "FleetTmsColdChainFoundation", () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainFoundationSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsLogistics",  () => scope.ServiceProvider.GetRequiredService<FleetTmsLogisticsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
     await RunSchemaStep(app, "MarketPackSeed",      () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.MarketPackSeeder>().EnsureAsync());
@@ -432,15 +489,19 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
     }, statusCode: statusCode);
 });
 app.MapOpsTraxEndpoints();
+app.MapBusinessSpineEndpoints();
 app.MapPlatformEndpoints();
 EndpointMappings.MapP9OpsEndpoints(app);
+EndpointMappings.MapStage9OperationsEndpoints(app);
 EndpointMappings.MapP10SecurityEndpoints(app);
 EndpointMappings.MapFleetHealthEndpoints(app);
 app.MapFleetTmsEndpoints();
 app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapRevenueEndpoints();
+app.MapRevenueReadinessEndpoints();
 app.MapMarketPackEndpoints();
+app.MapSafetyMaintenanceFoundationEndpoints();
 
 app.Run();
 
@@ -501,6 +562,7 @@ static string? ModuleKeyForPath(string path)
     [
         ("/api/safety",              "safety"),
         ("/api/dashcam",             "safety"),
+        ("/api/foundation/safety-maintenance", "dashboard"),
         ("/api/maintenance",         "maintenance"),
         ("/api/work-orders",         "maintenance"),
         ("/api/dispatch",            "dispatch"),

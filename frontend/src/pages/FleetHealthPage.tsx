@@ -62,6 +62,30 @@ function scoreColor(score: number): string {
   return "text-red-600";
 }
 
+function DrawerSkeleton() {
+  return (
+    <div className="space-y-4 p-6">
+      <div className="grid grid-cols-2 gap-3">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="h-2.5 w-16 rounded bg-slate-200/80" />
+            <div className="mt-2 h-4 w-28 rounded bg-slate-200/80" />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="h-3 w-24 rounded bg-slate-200/80" />
+            <div className="mt-3 h-4 w-full rounded bg-slate-100" />
+            <div className="mt-2 h-4 w-5/6 rounded bg-slate-100" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Readiness gauge strip ───────────────────────────────────────────────────
 
 function ReadinessStrip({ summary }: { summary: AnyRecord }) {
@@ -375,7 +399,13 @@ function VehicleDrawer({
 
   const createWO = useMutation({
     mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({ vehicleId, title: "Fleet health review", priority: "High" }),
+      maintenanceApi.createWorkOrder({
+        vehicleId,
+        serviceType: "fleet_health",
+        title: "Fleet health review",
+        description: "Created from Fleet Health to track critical readiness issues.",
+        priority: "High",
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["fleet-health"] });
       onWOCreated();
@@ -426,11 +456,7 @@ function VehicleDrawer({
           </button>
         </div>
 
-        {isLoading && (
-          <div className="flex-1 flex items-center justify-center">
-            <RefreshCw className="h-6 w-6 text-slate-400 animate-spin" />
-          </div>
-        )}
+        {isLoading && <DrawerSkeleton />}
         {isError && (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-sm text-red-600">Failed to load vehicle detail.</p>
@@ -676,11 +702,7 @@ function DriverDrawer({
           </button>
         </div>
 
-        {isLoading && (
-          <div className="flex-1 flex items-center justify-center">
-            <RefreshCw className="h-6 w-6 text-slate-400 animate-spin" />
-          </div>
-        )}
+        {isLoading && <DrawerSkeleton />}
         {isError && (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-sm text-red-600">Failed to load driver detail.</p>
@@ -921,7 +943,13 @@ export function FleetHealthPage() {
 
   const createWO = useMutation({
     mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({ vehicleId, title: "Fleet health review", priority: "High" }),
+      maintenanceApi.createWorkOrder({
+        vehicleId,
+        serviceType: "fleet_health",
+        title: "Fleet health review",
+        description: "Created from Fleet Health to track critical readiness issues.",
+        priority: "High",
+      }),
     onMutate:  (id) => setMutatingId(id),
     onSettled: () => { setMutatingId(null); qc.invalidateQueries({ queryKey: ["fleet-health"] }); },
   });
@@ -999,7 +1027,7 @@ export function FleetHealthPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="control-tower space-y-6">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}

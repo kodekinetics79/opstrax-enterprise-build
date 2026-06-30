@@ -1,14 +1,8 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { getMaintenanceDashboard } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
 
 export const maintenanceApi = {
-  dashboard: () =>
-    withFallback(
-      unwrap<AnyRecord>(apiClient.get("/api/maintenance/dashboard")),
-      () => getMaintenanceDashboard() as AnyRecord,
-    ),
+  dashboard: () => unwrap<AnyRecord>(apiClient.get("/api/maintenance/dashboard")),
 
   summary: () => maintenanceApi.dashboard(),
 

@@ -3,30 +3,18 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
-
-const SEED: AnyRecord[] = [
-  { id: 1, name: "Manassas Yard",        geofenceType: "Circle", centerLat: 38.7509, centerLng: -77.4753, radiusMeters: 800, status: "Active", eventCount: 34, eventsToday: 4 },
-  { id: 2, name: "Dulles Cargo Hub",     geofenceType: "Circle", centerLat: 38.9531, centerLng: -77.4565, radiusMeters: 1200, status: "Active", eventCount: 22, eventsToday: 3 },
-  { id: 3, name: "Alexandria DC",        geofenceType: "Circle", centerLat: 38.8048, centerLng: -77.0469, radiusMeters: 600, status: "Active", eventCount: 18, eventsToday: 2 },
-  { id: 4, name: "Fairfax Depot",        geofenceType: "Circle", centerLat: 38.8462, centerLng: -77.3064, radiusMeters: 500, status: "Active", eventCount: 11, eventsToday: 1 },
-  { id: 5, name: "Arlington Urban Zone", geofenceType: "Circle", centerLat: 38.8799, centerLng: -77.1068, radiusMeters: 400, status: "Inactive", eventCount: 5, eventsToday: 0 },
-  { id: 6, name: "Woodbridge I-95 Bay",  geofenceType: "Circle", centerLat: 38.6609, centerLng: -77.2511, radiusMeters: 700, status: "Active", eventCount: 29, eventsToday: 5 },
-];
-const SEED_SUMMARY: AnyRecord = { total: 6, activeCount: 5, inactiveCount: 1, entryEventsToday: 12, exitEventsToday: 9, vehiclesTriggered: 7 };
-
 const geoApi = {
-  list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/geofences")), () => SEED),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/geofences/summary")), () => SEED_SUMMARY),
-  events: (id: number) => withFallback(unwrap<AnyRecord[]>(apiClient.get(`/api/geofences/${id}/events`)), () => []),
-  create: (payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.post("/api/geofences", payload)), () => ({ id: Date.now(), ...payload })),
-  update: (id: number, payload: AnyRecord) => withFallback(unwrap<AnyRecord>(apiClient.put(`/api/geofences/${id}`, payload)), () => ({ id, ...payload })),
-  remove: (id: number) => withFallback(unwrap<AnyRecord>(apiClient.delete(`/api/geofences/${id}`)), () => ({ id, deleted: true })),
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/geofences")),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/geofences/summary")),
+  events: (id: number) => unwrap<AnyRecord[]>(apiClient.get(`/api/geofences/${id}/events`)),
+  create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/geofences", payload)),
+  update: (id: number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/geofences/${id}`, payload)),
+  remove: (id: number) => unwrap<AnyRecord>(apiClient.delete(`/api/geofences/${id}`)),
 };
 
 // ── Map component ─────────────────────────────────────────────────────────────
@@ -191,16 +179,6 @@ function EventsPanel({ zone, onClose }: { zone: AnyRecord; onClose: () => void }
   const eventsQ = useQuery({ queryKey: ["geofences", "events", zone.id], queryFn: () => geoApi.events(Number(zone.id)) });
   const events = (eventsQ.data ?? []) as AnyRecord[];
 
-  const SEED_EVT: AnyRecord[] = Array.from({ length: 8 }, (_, i) => ({
-    id: i + 1,
-    vehicleCode: `VH-00${i + 1}`,
-    driverName: ["Marcus Johnson","Sofia Reyes","Liam Patel","Aisha Williams"][i % 4],
-    eventType: i % 2 === 0 ? "Entry" : "Exit",
-    eventTime: new Date(Date.now() - i * 1800000).toISOString(),
-  }));
-
-  const displayEvents = events.length > 0 ? events : SEED_EVT;
-
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
       <div className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -223,7 +201,11 @@ function EventsPanel({ zone, onClose }: { zone: AnyRecord; onClose: () => void }
           </div>
         </div>
         <div className="flex flex-col divide-y divide-white/6 px-5">
-          {displayEvents.map((ev, i) => (
+          {events.length === 0 ? (
+            <div className="py-6">
+              <EmptyState title="No geofence events yet" subtitle="Geofence activity will appear here once the backend has events for this zone." />
+            </div>
+          ) : events.map((ev, i) => (
             <div key={String(ev.id ?? i)} className="py-3">
               <div className="flex items-center justify-between">
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${

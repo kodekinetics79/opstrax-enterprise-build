@@ -111,21 +111,39 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     });
   };
 
-  const refreshWorkspace = async (activeMode: DispatchMode = mode) => {
-    const [ov, orderRes, routeRes, stopRes] = await Promise.all([
+  const loadWorkspace = async (activeMode: DispatchMode = mode) => {
+    const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
       logisticsApi.overview(),
       activeMode === 'dispatch' || activeMode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
       activeMode === 'dispatch' || activeMode === 'routes' || activeMode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
       activeMode === 'dispatch' || activeMode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
     ]);
-    setOverview(ov);
-    const nextOrders = orderRes?.items ?? ov.orderCards;
-    const nextRoutes = routeRes?.items ?? ov.routeCards;
-    const nextStops = stopRes?.items ?? ov.liveStops;
-    setOrders(nextOrders);
-    setRoutes(nextRoutes);
-    setStops(nextStops);
-    syncSelectedRoute(nextRoutes, nextStops);
+
+    if (ovRes.status === 'fulfilled') {
+      const ov = ovRes.value;
+      setOverview(ov);
+      const nextOrders = orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : ov.orderCards;
+      const nextRoutes = routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : ov.routeCards;
+      const nextStops = stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : ov.liveStops;
+      setOrders(nextOrders);
+      setRoutes(nextRoutes);
+      setStops(nextStops);
+      syncSelectedRoute(nextRoutes, nextStops);
+      return;
+    }
+
+    setOverview(null);
+    setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
+    setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
+    setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
+    syncSelectedRoute(
+      routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
+      stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
+    );
+  };
+
+  const refreshWorkspace = async (activeMode: DispatchMode = mode) => {
+    await loadWorkspace(activeMode);
   };
 
   useEffect(() => {
@@ -133,21 +151,33 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     setLoading(true);
     (async () => {
       try {
-        const [ov, orderRes, routeRes, stopRes] = await Promise.all([
+        const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
           logisticsApi.overview(),
           mode === 'dispatch' || mode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
           mode === 'dispatch' || mode === 'routes' || mode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
           mode === 'dispatch' || mode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
         ]);
         if (cancelled) return;
-        setOverview(ov);
-        const nextOrders = orderRes?.items ?? ov.orderCards;
-        const nextRoutes = routeRes?.items ?? ov.routeCards;
-        const nextStops = stopRes?.items ?? ov.liveStops;
-        setOrders(nextOrders);
-        setRoutes(nextRoutes);
-        setStops(nextStops);
-        syncSelectedRoute(nextRoutes, nextStops);
+        if (ovRes.status === 'fulfilled') {
+          const ov = ovRes.value;
+          setOverview(ov);
+          const nextOrders = orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : ov.orderCards;
+          const nextRoutes = routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : ov.routeCards;
+          const nextStops = stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : ov.liveStops;
+          setOrders(nextOrders);
+          setRoutes(nextRoutes);
+          setStops(nextStops);
+          syncSelectedRoute(nextRoutes, nextStops);
+        } else {
+          setOverview(null);
+          setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
+          setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
+          setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
+          syncSelectedRoute(
+            routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
+            stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
+          );
+        }
       } catch (err) {
         if (!cancelled) notifyApiError(err, 'Unable to load logistics workspace.');
       } finally {
@@ -710,7 +740,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   Built to impress on first look and hold up under live operational pressure.
                 </h2>
                 <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-slate-300/80">
-                  Every panel on this workspace is telling the same business story: faster response, tighter SLA control, fewer customer surprises, and actions that update the real tenant dataset instead of a demo layer.
+                  Every panel on this workspace is telling the same business story: faster response, tighter SLA control, fewer customer surprises, and actions that update the real tenant dataset instead of a placeholder layer.
                 </p>
               </div>
 

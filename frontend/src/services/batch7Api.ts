@@ -1,29 +1,19 @@
 /**
  * batch7Api — all calls use the shared apiClient (Axios) which attaches
  * the session Bearer token and CSRF header via its request interceptors.
- * withFallback ensures graceful degradation in demo / no-backend mode;
- * seed data lives in the UI layer (SlaKpiPage, ExecutivePage, etc.).
  */
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
-import { getAuditLogs } from "@/data/developmentFleetSeedData";
 
 // ── Typed helpers ─────────────────────────────────────────────────────────────
 
 function getList(path: string, qs?: Record<string, string>): Promise<AnyRecord[]> {
   const search = qs ? "?" + new URLSearchParams(qs).toString() : "";
-  return withFallback(
-    unwrap<AnyRecord[]>(apiClient.get(`${path}${search}`)),
-    () => [],
-  );
+  return unwrap<AnyRecord[]>(apiClient.get(`${path}${search}`));
 }
 
 function getObj(path: string): Promise<AnyRecord> {
-  return withFallback(
-    unwrap<AnyRecord>(apiClient.get(path)),
-    () => ({}),
-  );
+  return unwrap<AnyRecord>(apiClient.get(path));
 }
 
 async function post(path: string, body?: unknown): Promise<AnyRecord> {
@@ -69,10 +59,7 @@ export const slaApi = {
 // ── Audit API ─────────────────────────────────────────────────────────────────
 
 export const auditApi = {
-  logs:              (params?: Record<string, string>) => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/audit/logs" + (params ? "?" + new URLSearchParams(params).toString() : ""))),
-    () => getAuditLogs() as AnyRecord[],
-  ),
+  logs:              (params?: Record<string, string>) => unwrap<AnyRecord[]>(apiClient.get("/api/audit/logs" + (params ? "?" + new URLSearchParams(params).toString() : ""))),
   log:               (id: number) => getObj(`/api/audit/logs/${id}`),
   exportRequests:    () => getList("/api/audit/export-requests"),
   createExport:      (body: Record<string, unknown>) => post("/api/audit/export-requests", body),

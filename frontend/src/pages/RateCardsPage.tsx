@@ -1,50 +1,23 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { rateCards as seedRateCards } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedRateCards as AnyRecord[]).map((r, i) => ({
-    id: i + 1,
-    title: String(r.customerContract ?? ""),
-    rateCardId: String(r.rateCardId ?? `RC-${7000 + i}`),
-    customerContract: String(r.customerContract ?? ""),
-    originZone: String(r.originZone ?? ""),
-    destinationZone: String(r.destinationZone ?? ""),
-    vehicleType: String(r.vehicleType ?? ""),
-    pricingMethod: String(r.pricingMethod ?? "Per KM"),
-    baseRate: Number(r.baseRate ?? 0),
-    perKmRate: Number(r.perKmRate ?? 0),
-    fuelSurcharge: String(r.fuelSurcharge ?? "0%"),
-    currency: String(r.currency ?? "SAR"),
-    effectiveFrom: String(r.effectiveFrom ?? ""),
-    effectiveTo: String(r.effectiveTo ?? ""),
-    status: String(r.status ?? "Active"),
-  }));
-}
-
 const rateCardsApi = {
-  list: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/rate-cards")).then((rows) =>
-      rows.map((r) => ({
-        ...r,
-        rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
-        customerContract: r.customerContract ?? r.title ?? "",
-        originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
-        destinationZone: r.destinationZone ?? r.destination ?? "",
-        baseRate: Number(r.baseRate ?? r.amount ?? 0),
-        perKmRate: Number(r.perKmRate ?? 0),
-        fuelSurcharge: r.fuelSurcharge ?? "0%",
-        effectiveFrom: r.effectiveFrom ?? "",
-        effectiveTo: r.effectiveTo ?? r.due_at ?? "",
-      }))
-    ),
-    () => buildSeed()
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/rate-cards")).then((rows) =>
+    rows.map((r) => ({
+      ...r,
+      rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
+      customerContract: r.customerContract ?? r.title ?? "",
+      originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
+      destinationZone: r.destinationZone ?? r.destination ?? "",
+      baseRate: Number(r.baseRate ?? r.amount ?? 0),
+      perKmRate: Number(r.perKmRate ?? 0),
+      fuelSurcharge: r.fuelSurcharge ?? "0%",
+      effectiveFrom: r.effectiveFrom ?? "",
+      effectiveTo: r.effectiveTo ?? r.due_at ?? "",
+    }))
   ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/rate-cards", body)),
 };

@@ -1,46 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
+import { contractsApi } from "@/services/contractsApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { contracts as seedContracts } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
-
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedContracts as AnyRecord[]).map((c, i) => ({
-    id: i + 1,
-    contractCode: String(c.contractId ?? `CON-${1001 + i}`),
-    title: `${String(c.serviceType ?? "Standard Service")} — ${String(c.customer ?? "Customer")}`,
-    customerName: String(c.customer ?? ""),
-    carrierName: "",
-    rateType: String(c.serviceType ?? "FTL"),
-    status: String(c.status ?? "Active"),
-    displayStatus: String(c.status ?? "Active"),
-    effectiveDate: String(c.startDate ?? ""),
-    expiryDate: String(c.endDate ?? ""),
-    marginRisk: String(c.renewalStatus ?? "Low") === "At Risk" ? "High" : "Low",
-    riskHeatScore: String(c.renewalStatus ?? "Low") === "At Risk" ? "High" : "Low",
-    recommendedAction: String(c.status ?? "") === "Expiring Soon" ? "Initiate renewal workflow"
-      : String(c.status ?? "") === "Under Renewal" ? "Monitor renewal progress"
-      : "Monitor contract health",
-    baseRate: 2.80 + i * 0.4,
-    fuelSurchargeEnabled: true,
-  }));
-}
-
-const SEED_SUMMARY: AnyRecord = {
-  activeContracts: 2, expiringSoon: 1, expiredContracts: 0, customersCovered: 3,
-  carrierAgreements: 0, renewalQueue: 1, marginRiskContracts: 1, total: 3,
-};
-
-const contractsApi = {
-  list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/contracts")), () => buildSeed()),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/contracts/summary")), () => SEED_SUMMARY),
-  activate: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/contracts/${String(id)}/activate`, {})),
-  create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/contracts", body)),
-};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +105,11 @@ export function ContractsPage() {
 
   const listQ = useQuery({ queryKey: ["contracts", "list"], queryFn: contractsApi.list, refetchInterval: 30_000 });
   const sumQ = useQuery({ queryKey: ["contracts", "summary"], queryFn: contractsApi.summary });
+  const detailQ = useQuery({
+    queryKey: ["contracts", "detail", selected?.id],
+    queryFn: () => contractsApi.detail(selected!.id as string | number),
+    enabled: selected != null,
+  });
 
   const activateMut = useMutation({
     mutationFn: (id: string | number) => contractsApi.activate(id),
@@ -151,6 +118,7 @@ export function ContractsPage() {
 
   const contracts = (listQ.data ?? []) as AnyRecord[];
   const s = (sumQ.data ?? {}) as AnyRecord;
+  const detail = (detailQ.data ?? {}) as AnyRecord;
 
   const filtered = contracts.filter((c) => {
     if (statusFilter !== "All" && c.displayStatus !== statusFilter && c.status !== statusFilter) return false;
@@ -334,6 +302,32 @@ export function ContractsPage() {
                 <p className="text-sm text-slate-300 leading-relaxed">{String(selected.recommendedAction)}</p>
               </div>
             )}
+            <div className="px-5 py-4 border-t border-white/6">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Contract Versions</p>
+              {(detail.versions as AnyRecord[] | undefined)?.length ? (
+                <div className="space-y-2">
+                  {(detail.versions as AnyRecord[]).slice(0, 4).map((version) => {
+                    const isCurrent = Boolean(version.isCurrent ?? version.is_current);
+                    return (
+                      <div key={String(version.id)} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-white">
+                            Version {String(version.versionNo ?? version.version_no ?? "—")}
+                          </p>
+                          <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] font-semibold text-slate-300">
+                            {isCurrent ? "Current" : String(version.status ?? "draft")}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 mt-1">{String(version.versionLabel ?? version.version_label ?? "Snapshot")}</p>
+                        <p className="text-xs text-slate-400 mt-1">{String(version.rateType ?? version.rate_type ?? "Per Mile")} · {String(version.marginRisk ?? version.margin_risk ?? "Low")} risk</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">No contract versions captured yet.</p>
+              )}
+            </div>
             {(String(selected.displayStatus ?? selected.status) === "Expired" || String(selected.status) === "Draft") && (
               <div className="px-5 py-4 border-t border-white/6 mt-auto">
                 <button

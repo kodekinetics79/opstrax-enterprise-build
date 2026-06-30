@@ -157,7 +157,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
 
     // ── List endpoints ──────────────────────────────────────────────────────────
 
-    private static async Task<IResult> Shipments(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Shipments(HttpContext http, Database db, string? status, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -192,7 +192,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { items });
     }
 
-    private static async Task<IResult> Tracking(HttpContext http, Database db, string? shipmentNumber, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Tracking(HttpContext http, Database db, string? shipmentNumber, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -209,7 +209,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { total, page, pageSize, items });
     }
 
-    private static async Task<IResult> Maintenance(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Maintenance(HttpContext http, Database db, string? status, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -226,7 +226,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { total, page, pageSize, items });
     }
 
-    private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         // Fuel Intelligence entitlement — fuel analytics requires the Fuel package.
         if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.Fuel, ct) is { } denied)

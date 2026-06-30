@@ -4,62 +4,20 @@ import { useLocation } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
-import { maintenance as seedMaintenance, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed builders ─────────────────────────────────────────────────────────────
+// ── Live data builders ────────────────────────────────────────────────────────
 
 function buildServiceHistorySeed(): AnyRecord[] {
-  return (seedMaintenance as AnyRecord[]).map((m, i) => ({
-    id: i + 1,
-    workOrderCode: String(m.workOrderId ?? `WO-${7100 + i}`),
-    title: String(m.issueType ?? "Service"),
-    vehicleCode: String(m.vehicle ?? ""),
-    vendorName: String(m.assignedWorkshop ?? "Internal"),
-    status: "Completed",
-    priority: String(m.priority ?? "Normal"),
-    cost: Number(m.estimatedCost ?? 0),
-    currency: String(m.currency ?? "USD"),
-    downtimeHours: [3.5, 6.0][i % 2],
-    completedAt: String(m.dueDate ?? "2026-05-28"),
-    issueType: String(m.issueType ?? ""),
-  }));
+  return [];
 }
 
 function buildDowntimeSeed(): AnyRecord[] {
-  const vehicles = seedVehicles as AnyRecord[];
-  return vehicles.map((v, i) => ({
-    id: i + 1,
-    workOrderCode: `WO-DT-${i + 1}`,
-    vehicleCode: String(v.vehicleId ?? ""),
-    title: (["Brake Repair", "Reefer Calibration", "Tire Replacement", "Engine Diagnostic"] as const)[i % 4],
-    downtimeHours: [3.5, 6.0, 1.5, 0][i % 4],
-    cost: [1800, 2400, 420, 0][i % 4],
-    priority: (["Critical", "High", "Normal", "Normal"] as const)[i % 4],
-    status: (["In Progress", "Completed", "Completed", "N/A"] as const)[i % 4],
-    completedAt: i < 2 ? "2026-05-28" : "—",
-    vendorName: (["DC Fleet Repair", "Jeddah Cold Service", "Internal", "—"] as const)[i % 4],
-  })).filter((r) => Number(r.downtimeHours) > 0);
+  return [];
 }
 
 function buildPMSeed(): AnyRecord[] {
-  const vehicles = seedVehicles as AnyRecord[];
-  return vehicles.flatMap((v, vi) =>
-    (["Oil Change", "Tire Rotation", "Brake Inspection", "AC Service"] as const).slice(0, vi < 2 ? 4 : 2).map((title, i) => ({
-      id: vi * 4 + i + 1,
-      title,
-      category: (["Preventive", "Safety", "Preventive", "Comfort"] as const)[i % 4],
-      vehicleCode: String(v.vehicleId ?? ""),
-      currentOdometer: Number(v.odometer ?? 85000) + vi * 30000,
-      dueDate: `2026-0${6 + i}-${String(15 + vi * 5).padStart(2, "0")}`,
-      dueOdometer: Number(v.odometer ?? 85000) + vi * 30000 + 5000,
-      serviceIntervalDays: [90, 180, 365, 180][i % 4],
-      estimatedCost: [350, 180, 280, 420][i % 4],
-      riskLevel: (["Medium", "Low", "High", "Low"] as const)[i % 4],
-      pmStatus: (["Due Soon", "Scheduled", "Scheduled", "Overdue"] as const)[i % 4],
-      daysUntilDue: [-2, 14, 28, 7][i % 4],
-    }))
-  );
+  return [];
 }
 
 const serviceHistoryApi = () => withFallback(

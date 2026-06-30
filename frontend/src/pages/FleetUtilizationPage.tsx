@@ -281,7 +281,7 @@ export function FleetUtilizationPage() {
     rows;
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="control-tower space-y-6 pb-10">
       <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.14),rgba(14,165,233,0.12),rgba(249,115,22,0.12))]" />
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-sky-200/35 blur-3xl" />

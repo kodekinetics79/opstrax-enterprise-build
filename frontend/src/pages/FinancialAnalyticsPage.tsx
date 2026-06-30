@@ -3,66 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
-import { invoices as seedInvoices, customers as seedCustomers } from "@/data/mockOperatingData";
+import { exportCsv, LoadingState, EmptyState, ErrorState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ─────────────────────────────────────────────────────────────────────
-
-function buildInvoiceSeed(): AnyRecord[] {
-  const extra: AnyRecord[] = [
-    { invoiceId: "INV-8803", customer: "Al Noor Pharma Distribution", shipmentBooking: "SHP-6205", invoiceDate: "2026-05-28", dueDate: "2026-06-15", amount: 14500, tax: 725, total: 15225, currency: "SAR", paymentStatus: "Sent", agingDays: 3 },
-    { invoiceId: "INV-8804", customer: "Qatar Cold Foods", shipmentBooking: "SHP-6206", invoiceDate: "2026-05-20", dueDate: "2026-06-05", amount: 9800, tax: 490, total: 10290, currency: "USD", paymentStatus: "Overdue", agingDays: 13 },
-    { invoiceId: "INV-8805", customer: "Riyadh Automotive Parts", shipmentBooking: "SHP-6207", invoiceDate: "2026-06-01", dueDate: "2026-07-01", amount: 3200, tax: 160, total: 3360, currency: "SAR", paymentStatus: "Paid", agingDays: 0 },
-    { invoiceId: "INV-8806", customer: "Abu Dhabi Retail Group", shipmentBooking: "SHP-6208", invoiceDate: "2026-06-05", dueDate: "2026-07-05", amount: 5600, tax: 280, total: 5880, currency: "AED", paymentStatus: "Draft", agingDays: 0 },
-  ];
-  return [
-    ...(seedInvoices as AnyRecord[]).map((inv) => ({
-      ...inv, invoiceId: inv.invoiceId, customer: inv.customer,
-      invoiceNumber: String(inv.invoiceId), customerName: String(inv.customer),
-      amount: Number(inv.amount), total: Number(inv.total ?? inv.amount),
-      paymentStatus: String(inv.paymentStatus ?? "Draft"),
-      dueDate: String(inv.dueDate ?? ""), agingDays: 0,
-    })),
-    ...extra.map((e) => ({ ...e, invoiceNumber: String(e.invoiceId), customerName: String(e.customer) })),
-  ];
-}
-
-function buildPaymentSeed(): AnyRecord[] {
-  const methods = ["Bank Transfer", "Card", "Cheque", "Cash"];
-  return buildInvoiceSeed()
-    .filter((_, i) => i % 2 === 0)
-    .map((inv, i) => ({
-      id: i + 1,
-      paymentNumber: `PAY-${9100 + i}`,
-      customerName: String(inv.customerName ?? ""),
-      invoiceRef: String(inv.invoiceNumber ?? ""),
-      amount: Number(inv.amount ?? 0) * 0.95,
-      currency: String(inv.currency ?? "USD"),
-      paymentMethod: methods[i % 4],
-      paymentDate: String(inv.invoiceDate ?? "2026-05-26"),
-      status: (["Received", "Received", "Pending", "Received"] as const)[i % 4],
-      notes: "",
-    }));
-}
-
-function buildProfitabilitySeed(): AnyRecord[] {
-  return (seedCustomers as AnyRecord[]).map((c, i) => ({
-    id: i + 1,
-    entityType: "Customer",
-    entityName: String(c.name ?? ""),
-    revenueEstimate: [120000, 280000, 95000, 340000, 175000][i % 5],
-    totalCost:       [84000,  196000, 72000, 238000, 122500][i % 5],
-    grossMargin:     [36000,  84000,  23000, 102000,  52500][i % 5],
-    grossMarginPercent: [30, 30, 24, 30, 30][i % 5],
-    riskScore: [22, 15, 38, 10, 28][i % 5],
-    status: "Active",
-  }));
-}
-
 const financialApi = {
-  invoices: () => withFallback(
+  invoices: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/invoices")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -75,9 +20,7 @@ const financialApi = {
         total: Number(r.totalAmount ?? r.total_amount ?? r.total ?? r.amount ?? 0),
       }))
     ),
-    () => buildInvoiceSeed()
-  ),
-  payments: () => withFallback(
+  payments: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/payments")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -89,9 +32,7 @@ const financialApi = {
         invoiceRef: r.invoiceRef ?? r.invoice_ref ?? "",
       }))
     ),
-    () => buildPaymentSeed()
-  ),
-  profitability: () => withFallback(
+  profitability: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/profitability")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -104,9 +45,19 @@ const financialApi = {
         riskScore: Number(r.riskScore ?? r.risk_score ?? 0),
       }))
     ),
-    () => buildProfitabilitySeed()
-  ),
 };
+
+async function loadInvoiceRows() {
+  return financialApi.invoices();
+}
+
+async function loadPaymentRows() {
+  return financialApi.payments();
+}
+
+async function loadProfitabilityRows() {
+  return financialApi.profitability();
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +92,9 @@ function InvoicesTab() {
   const outstanding = rows.filter((r) => !["Paid"].includes(String(r.paymentStatus))).length;
   const overdue = rows.filter((r) => String(r.paymentStatus) === "Overdue").length;
   const totalValue = rows.reduce((s, r) => s + Number(r.total ?? r.amount ?? 0), 0);
+  const readyToBill = rows.filter((r) => ["Sent", "Ready"].includes(String(r.paymentStatus))).length;
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load invoices."} />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -149,6 +102,7 @@ function InvoicesTab() {
           { label: "Total Invoices", val: rows.length },
           { label: "Outstanding", val: outstanding, accent: "text-amber-600" },
           { label: "Overdue", val: overdue, accent: "text-red-600" },
+          { label: "Ready to bill", val: readyToBill, accent: "text-teal-600" },
           { label: "Total Value", val: `$${totalValue.toLocaleString()}`, accent: "text-teal-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-28">
@@ -156,6 +110,24 @@ function InvoicesTab() {
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
         ))}
+      </div>
+      <div className="panel grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">AR posture</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">
+            {overdue > 0 ? "Collection attention required" : "Collections are within expected range"}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Billing confidence</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">
+            {readyToBill > 0 ? `${readyToBill} invoice${readyToBill === 1 ? "" : "s"} ready for review` : "No invoices are marked ready yet"}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live data policy</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">No seed fallback is used on this surface.</p>
+        </div>
       </div>
       {rows.length === 0 ? <EmptyState title="No invoices found" /> : (
         <div className="panel overflow-hidden p-0">
@@ -201,6 +173,7 @@ function PaymentsTab() {
   const received = rows.filter((r) => r.status === "Received").reduce((s, r) => s + Number(r.amount ?? 0), 0);
   const pending = rows.filter((r) => r.status !== "Received").reduce((s, r) => s + Number(r.amount ?? 0), 0);
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load payments."} />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -256,6 +229,7 @@ function ProfitabilityTab() {
   const totalMargin = totalRev - totalCost;
   const avgMarginPct = rows.length > 0 ? rows.reduce((s, r) => s + Number(r.grossMarginPercent ?? 0), 0) / rows.length : 0;
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load profitability data."} />;
   const chartData = rows.slice(0, 8).map((r) => ({
     name: String(r.entityName ?? "").split(" ")[0],
     margin: Number(r.grossMarginPercent ?? 0),
@@ -275,6 +249,20 @@ function ProfitabilityTab() {
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
         ))}
+      </div>
+      <div className="panel grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Finance story</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Billing confidence is tied to live invoice and payment signals.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Actionable view</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Margin and risk are shown per customer without auto-issuing invoices.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Data policy</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">No fabricated finance rows are used here.</p>
+        </div>
       </div>
       {chartData.length > 0 && (
         <div className="panel">
@@ -357,9 +345,9 @@ export function FinancialAnalyticsPage() {
   const [tab, setTab] = useState<Tab>(defaultTab);
 
   const exportFns: Record<Tab, () => void> = {
-    invoices: () => exportCsv("invoices", buildInvoiceSeed()),
-    payments: () => exportCsv("payments", buildPaymentSeed()),
-    profitability: () => exportCsv("profitability", buildProfitabilitySeed()),
+    invoices: async () => exportCsv("invoices", await loadInvoiceRows()),
+    payments: async () => exportCsv("payments", await loadPaymentRows()),
+    profitability: async () => exportCsv("profitability", await loadProfitabilityRows()),
   };
 
   return (
@@ -369,7 +357,7 @@ export function FinancialAnalyticsPage() {
           <h1 className="text-xl font-bold text-slate-900">{TITLES[tab]}</h1>
           <p className="text-sm text-slate-500 mt-0.5">{DESCRIPTIONS[tab]}</p>
         </div>
-        <button type="button" className="btn-secondary text-sm" onClick={exportFns[tab]}>Export CSV</button>
+        <button type="button" className="btn-secondary text-sm" onClick={() => void exportFns[tab]()}>Export CSV</button>
       </div>
 
       <div className="panel flex gap-1 p-1.5">

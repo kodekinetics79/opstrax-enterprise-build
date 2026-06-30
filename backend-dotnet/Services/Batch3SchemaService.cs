@@ -369,8 +369,8 @@ public sealed class Batch3SchemaService(Database db)
         @"INSERT INTO document_timeline_events (company_id, document_id, event_title, event_description)
           SELECT 1, d.id, 'Document vault seeded', 'Batch 3 document entered audit-ready vault.' FROM documents d
           WHERE NOT EXISTS (SELECT 1 FROM document_timeline_events e WHERE e.document_id=d.id) LIMIT 40",
-        @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
-          SELECT 1, x.module_key, x.title, x.body, x.score, 'Recommended'
+        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, score, status)
+          SELECT 1, 1, x.module_key, x.module_key, x.title, x.body, x.body, x.score, 'Recommended'
           FROM (
             SELECT 'maintenance' module_key, 'Predictive maintenance warning' title, 'TRK-117 pattern suggests repeat brake risk. Create a critical work order before next dispatch.' body, 95 score
             UNION ALL SELECT 'work-orders','Cost approval intelligence','Waiting approval repairs are creating downtime exposure. Approve or reject cost within the next service window.',92

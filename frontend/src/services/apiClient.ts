@@ -70,13 +70,14 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error?.response?.status === 401) {
       const url = (error.config?.url ?? "") as string;
-      // Telemetry endpoints use short-lived stream tickets and a separate auth path.
-      // A 401 there means the ticket expired or was never issued — not that the main
-      // session is invalid. Let the caller handle it gracefully instead of nuking the session.
-      // Telemetry and platform endpoints self-authenticate; a 401 from them never
-      // means the tenant session is invalid, so don't clear it.
-      const skipLogout = url.includes("/api/telemetry/") || url.includes("/api/platform/");
-      if (!skipLogout) {
+      // Only auth bootstrap / refresh failures should invalidate the local session.
+      // Page/data 401s are handled by the caller so we do not accidentally log the
+      // user out because of a transient or endpoint-specific failure.
+      const shouldClearSession =
+        url.includes("/api/auth/me") ||
+        url.includes("/api/auth/refresh");
+
+      if (shouldClearSession) {
         localStorage.removeItem("opstrax.session.v2");
         localStorage.removeItem("opstrax.session");
         if (window.location.pathname !== "/login") {

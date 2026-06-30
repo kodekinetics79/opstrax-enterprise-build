@@ -422,8 +422,8 @@ export function SettingsPage() {
               </div>
               <ToggleSwitch checked={securityForm.requireMfa} onChange={(v) => setSecurityForm((f) => ({ ...f, requireMfa: v }))} disabled={!canUpdateSettings} label="Require 2FA for all users" />
             </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-              Currently in demo mode — 2FA enforcement is a platform configuration applied at sign-in. Contact support to enable for your organization.
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+              2FA enforcement is controlled by tenant policy and sign-in configuration. If your organization has not enabled it yet, the login flow will continue to respect the current auth policy.
             </div>
           </div>
 

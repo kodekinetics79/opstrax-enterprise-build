@@ -303,6 +303,25 @@ const metrics = [
   { value: "3",   label: "open exceptions" },
 ];
 
+const ACCESS_GUIDANCE = [
+  {
+    title: "Dispatcher",
+    note: "Assignments, live exceptions, and control-room workflow.",
+  },
+  {
+    title: "Operations Lead",
+    note: "Fleet health, alerts, compliance, and command center views.",
+  },
+  {
+    title: "Driver",
+    note: "Mobile task flow, POD, proof package, and active trips.",
+  },
+  {
+    title: "Customer",
+    note: "Track visibility, milestones, and proof status.",
+  },
+] as const;
+
 /* ── Main component ─────────────────────────────────────────────────────── */
 export function LoginPage() {
   const { setSession } = useAuth();
@@ -325,7 +344,6 @@ export function LoginPage() {
   });
 
   const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
-
   return (
     <div className="flex min-h-screen">
 
@@ -405,7 +423,7 @@ export function LoginPage() {
       </div>
 
       {/* ── RIGHT — sign-in form ───────────────────────────── */}
-      <div className="flex flex-1 flex-col items-center justify-center bg-white px-8 py-12 lg:px-12">
+      <div className="flex flex-1 flex-col items-center justify-center bg-gradient-to-br from-white via-slate-50 to-teal-50/40 px-8 py-12 lg:px-12">
 
         {/* Mobile logo */}
         <div className="mb-10 flex items-center gap-2.5 lg:hidden">
@@ -416,8 +434,9 @@ export function LoginPage() {
         <div className="login-form-enter w-full max-w-sm">
 
           <div className="mb-8">
-            <h2 className="text-2xl font-bold text-slate-900">Sign in</h2>
-            <p className="mt-1.5 text-sm text-slate-500">Access your fleet operations dashboard</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600">Secure access</p>
+            <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
+            <p className="mt-1.5 text-sm leading-6 text-slate-500">Access your fleet operations dashboard with a real seeded account or your own credentials.</p>
           </div>
 
           {login.isError && (
@@ -456,15 +475,36 @@ export function LoginPage() {
             </button>
           </form>
 
+          <div className="mt-6 rounded-[20px] border border-slate-200 bg-white/85 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Quick access</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">Use your tenant-issued credentials</p>
+              </div>
+              <span className="badge badge-info">Wired to auth</span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {ACCESS_GUIDANCE.map((account) => (
+                <div key={account.title} className="role-card flex flex-col items-start gap-1.5 px-3 py-3 text-left">
+                  <span className="text-sm font-bold text-slate-900">{account.title}</span>
+                  <span className="text-[11px] text-slate-500">{account.note}</span>
+                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-700">
+                    Tenant RBAC
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Footer */}
           <div className="mt-8 space-y-1.5 text-center">
-            <p className="text-[11px] text-slate-300">Protected by CSRF · RBAC · Session isolation</p>
+            <p className="text-[11px] text-slate-500">Protected by CSRF · RBAC · Session isolation</p>
             <p className="text-[11px] text-slate-300">
               Built by{" "}
               <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"
-                className="font-medium text-slate-400 transition hover:text-teal-500">Kode Kinetics</a>
+                className="font-medium text-slate-500 transition hover:text-teal-500">Kode Kinetics</a>
               {" · "}
-              <a href="mailto:info@kodekinetics.com" className="text-slate-400 transition hover:text-teal-500">info@kodekinetics.com</a>
+              <a href="mailto:info@kodekinetics.com" className="text-slate-500 transition hover:text-teal-500">info@kodekinetics.com</a>
             </p>
           </div>
         </div>

@@ -1,44 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
+import { customersApi } from "@/services/customersApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { customers as seedCustomers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
-
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedCustomers as AnyRecord[]).map((c, i) => ({
-    id: i + 1,
-    customerCode: String(c.id ?? `CUS-${i + 1}`),
-    name: String(c.companyName ?? c.name ?? ""),
-    contactName: String(c.primaryContact ?? ""),
-    email: String(c.email ?? `ops@customer${i + 1}.com`),
-    phone: "",
-    status: String(c.status ?? "Active") === "Healthy" ? "Active" :
-            String(c.status ?? "Active") === "At Risk" ? "At Risk" :
-            String(c.status ?? "Active") === "High Risk" ? "At Risk" : String(c.status ?? "Active"),
-    slaTier: (["Platinum", "Gold", "Standard", "Standard", "Platinum", "Gold"] as const)[i % 6],
-    slaHealthScore: Number(c.healthScore ?? 88),
-    deliveryExperienceScore: Number(c.healthScore ?? 85) - 2,
-    riskScore: 100 - Number(c.healthScore ?? 80),
-    activeJobs: Number(c.monthlyShipments ?? 10),
-    customerDeliveryExperienceScore: Number(c.healthScore ?? 85),
-    riskHeatScore: Number(c.healthScore ?? 80) < 75 ? "High" : Number(c.healthScore ?? 80) < 88 ? "Medium" : "Low",
-    recommendedAction: Number(c.healthScore ?? 80) < 80 ? "Send proactive customer update" : "Maintain SLA cadence",
-  }));
-}
-
-const SEED_SUMMARY: AnyRecord = {
-  total: 6, active: 4, atRisk: 2, slaHealthScore: 85.3, deliveryExperienceScore: 83.8, platinumAccounts: 2,
-};
-
-const customersApi = {
-  list: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/customers")), () => buildSeed()),
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/customers/summary")), () => SEED_SUMMARY),
-  create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/customers", body)),
-};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -154,10 +118,16 @@ export function CustomersPage() {
 
   const listQ = useQuery({ queryKey: ["customers", "list"], queryFn: customersApi.list, refetchInterval: 30_000 });
   const sumQ = useQuery({ queryKey: ["customers", "summary"], queryFn: customersApi.summary });
+  const detailQ = useQuery({
+    queryKey: ["customers", "detail", selected?.id],
+    queryFn: () => customersApi.detail(selected!.id as string | number),
+    enabled: selected != null,
+  });
   const qc = useQueryClient();
 
   const customers = (listQ.data ?? []) as AnyRecord[];
   const s = (sumQ.data ?? {}) as AnyRecord;
+  const detail = (detailQ.data ?? {}) as AnyRecord;
 
   const filtered = customers.filter((c) => {
     if (statusFilter !== "All" && c.status !== statusFilter) return false;
@@ -354,6 +324,22 @@ export function CustomersPage() {
                 <p className="text-xs text-slate-300">{String(selected.billingAddress)}</p>
               </div>
             )}
+            <div className="px-5 py-4 border-t border-white/6">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Operational Sites</p>
+              {(detail.sites as AnyRecord[] | undefined)?.length ? (
+                <div className="space-y-2">
+                  {(detail.sites as AnyRecord[]).slice(0, 4).map((site) => (
+                    <div key={String(site.id)} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                      <p className="text-sm font-semibold text-white">{String(site.siteName ?? site.site_code ?? "Site")}</p>
+                      <p className="text-xs text-slate-300 mt-1">{String(site.siteType ?? site.site_type ?? "service")} · {String(site.status ?? "Active")}</p>
+                      <p className="text-xs text-slate-400 mt-1">{String(site.city ?? "")} {String(site.state ?? "")}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">No operational sites captured yet.</p>
+              )}
+            </div>
             <div className="px-5 py-4 border-t border-white/6 mt-auto">
               <button
                 type="button"

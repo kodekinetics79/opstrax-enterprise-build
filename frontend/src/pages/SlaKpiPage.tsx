@@ -13,60 +13,16 @@ import {
 import { exportCsv } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Seed fallback data ────────────────────────────────────────────────────────
-
-const SEED_KPI_METRICS: AnyRecord[] = [
-  { id: 1, kpi_name: "On-Time Delivery Rate",   category: "Operations",  actual_value: 93.1, target_value: 96,   unit: "%",    status: "At Risk",  trend: "Up",   recommendation: "3 SLA breaches this week. Rerouting E311 corridor adds avg 14 min delay." },
-  { id: 2, kpi_name: "Fleet Utilization",        category: "Fleet",       actual_value: 84,   target_value: 88,   unit: "%",    status: "At Risk",  trend: "Up",   recommendation: "4% below target. 5 vehicles offline reduces active capacity." },
-  { id: 3, kpi_name: "Driver Safety Score",      category: "Safety",      actual_value: 79,   target_value: 85,   unit: "/100", status: "At Risk",  trend: "Down", recommendation: "6 drivers below threshold — coaching queue has 9 open tasks." },
-  { id: 4, kpi_name: "Customer Satisfaction",    category: "CRM",         actual_value: 4.3,  target_value: 4.5,  unit: "/5",   status: "At Risk",  trend: "Flat", recommendation: "3 NPS detractor scores this month from late deliveries." },
-  { id: 5, kpi_name: "Fuel Cost per km",         category: "Finance",     actual_value: 4.23, target_value: 4.10, unit: "AED",  status: "Critical", trend: "Down", recommendation: "Idling events in reefer fleet adding AED 4,200/month over budget." },
-  { id: 6, kpi_name: "HOS Compliance Rate",      category: "Compliance",  actual_value: 97.4, target_value: 99,   unit: "%",    status: "At Risk",  trend: "Flat", recommendation: "2 drivers approaching 70-hour weekly limit. Schedule rest periods." },
-  { id: 7, kpi_name: "POD Capture Rate",         category: "Operations",  actual_value: 94.8, target_value: 98,   unit: "%",    status: "At Risk",  trend: "Up",   recommendation: "17 deliveries missing digital proof this week — driver app compliance needed." },
-  { id: 8, kpi_name: "Revenue Target Attainment",category: "Finance",     actual_value: 106,  target_value: 100,  unit: "%",    status: "On Target",trend: "Up",   recommendation: "6% above target. Q3 pipeline strong — maintain current dispatch velocity." },
-  { id: 9, kpi_name: "Preventive Maintenance",   category: "Fleet",       actual_value: 88,   target_value: 92,   unit: "%",    status: "At Risk",  trend: "Down", recommendation: "4 vehicles overdue for PM. Schedule before end of week to avoid breakdown risk." },
-  { id: 10,kpi_name: "Idle Time Rate",           category: "Fleet",       actual_value: 14.2, target_value: 10,   unit: "%",    status: "Critical", trend: "Down", recommendation: "Reefer fleet idling 4.2% above target. Route-based idle reduction can recover AED 3,800/month." },
-  { id: 11,kpi_name: "Avg Trip Cost",            category: "Finance",     actual_value: 218,  target_value: 200,  unit: "AED",  status: "At Risk",  trend: "Down", recommendation: "DXB→AUH lane seeing cost creep. Fuel surcharge review recommended." },
-  { id: 12,kpi_name: "Incident Rate",            category: "Safety",      actual_value: 0.4,  target_value: 0.3,  unit: "/100km",status: "At Risk", trend: "Down", recommendation: "Incident frequency slightly elevated. Recommend speed coaching for top 3 risk drivers." },
-];
-
-const SEED_KPI_SUMMARY: AnyRecord = {
-  total: 12, onTarget: 1, atRisk: 9, critical: 2,
-};
-
-const SEED_SLA_RECORDS: AnyRecord[] = [
-  { id: 1, sla_name: "On-Time Delivery SLA",      customer_name: "Al-Futtaim Logistics",   sla_type: "Delivery",   target_value: 96,  actual_value: 93.1, unit: "%",    status: "At Risk",  job_number: "" },
-  { id: 2, sla_name: "Response Time SLA",         customer_name: "Emirates Transport",      sla_type: "Response",   target_value: 2,   actual_value: 2.4,  unit: "hrs",  status: "Breached", job_number: "" },
-  { id: 3, sla_name: "POD Submission SLA",        customer_name: "Abu Dhabi Ports",         sla_type: "Document",   target_value: 4,   actual_value: 3.8,  unit: "hrs",  status: "Met",      job_number: "" },
-  { id: 4, sla_name: "ETA Accuracy SLA",          customer_name: "Agility MEA",             sla_type: "ETA",        target_value: 90,  actual_value: 87.3, unit: "%",    status: "At Risk",  job_number: "" },
-  { id: 5, sla_name: "Temperature Log SLA",       customer_name: "Emirates Cold Chain",     sla_type: "Compliance", target_value: 100, actual_value: 98.7, unit: "%",    status: "At Risk",  job_number: "" },
-  { id: 6, sla_name: "Load Confirmation SLA",     customer_name: "DSV UAE",                 sla_type: "Operations", target_value: 1,   actual_value: 0.8,  unit: "hrs",  status: "Met",      job_number: "" },
-  { id: 7, sla_name: "Customs Clearance SLA",     customer_name: "Aramex",                  sla_type: "Compliance", target_value: 24,  actual_value: 31.2, unit: "hrs",  status: "Breached", job_number: "" },
-  { id: 8, sla_name: "Fuel Reconciliation SLA",   customer_name: "DP World",                sla_type: "Finance",    target_value: 48,  actual_value: 46.1, unit: "hrs",  status: "Met",      job_number: "" },
-];
-
-const SEED_SLA_SUMMARY: AnyRecord = { met: 3, breached: 2 };
-
-const SEED_SLA_BREACHES: AnyRecord[] = [
-  { id: 1, sla_name: "Response Time SLA",   customer_name: "Emirates Transport",  status: "Open",         breach_reason: "Dispatch team did not acknowledge new booking within 2hr SLA window. 3 occurrences this week.", breach_detected_at: new Date(Date.now() - 2 * 3600_000).toISOString(), resolution_action: "Assign auto-acknowledgement rule to reduce response delay." },
-  { id: 2, sla_name: "Customs Clearance SLA",customer_name: "Aramex",             status: "Acknowledged", breach_reason: "Customs clearance for JOB-20317 took 31.2 hours vs 24hr SLA. Port congestion cited.", breach_detected_at: new Date(Date.now() - 18 * 3600_000).toISOString(), resolution_action: "Pre-clearance filing submitted for next 5 Aramex shipments." },
-  { id: 3, sla_name: "On-Time Delivery SLA", customer_name: "Al-Futtaim Logistics",status: "Open",        breach_reason: "Route E311 delays causing 3 late deliveries this week — fleet OTD at 93.1% vs 96% target.", breach_detected_at: new Date(Date.now() - 6 * 3600_000).toISOString(), resolution_action: "Reroute via E611. Proactive ETA update sent to customer." },
-];
-
-const SEED_AI_RECS: AnyRecord[] = [
-  { id: 1, title: "Restore On-Time Delivery rate to 96% target", body: "Rerouting E311 corridor deliveries via E611 reduces average delay by 14 minutes. Implement for all DXB→SHJ runs immediately.", priority: "High", score: 94, action_label: "Apply Reroute Rule" },
-  { id: 2, title: "Reduce idle time to recover AED 3,800/month", body: "Reefer fleet idling 4.2% above fleet target. Geo-triggered engine-off policy at staging zones will close the gap within 7 days.", priority: "High", score: 89, action_label: "Configure Idle Policy" },
-  { id: 3, title: "Close PM backlog — 4 vehicles overdue", body: "BOX-104, REF-209, TRK-316, VAN-512 are past PM interval. Risk of roadside breakdown increases exponentially beyond 15% overdue threshold.", priority: "High", score: 87, action_label: "Schedule Maintenance" },
-  { id: 4, title: "Driver coaching: 6 at-risk drivers below safety threshold", body: "Assign targeted coaching to bottom-quartile drivers. Scoring history shows a 12pt improvement after one structured session.", priority: "Medium", score: 78, action_label: "Open Coaching Queue" },
-];
+const SEED_KPI_METRICS: AnyRecord[] = [];
+const SEED_KPI_SUMMARY: AnyRecord = { total: 0, onTarget: 0, atRisk: 0, critical: 0 };
+const SEED_SLA_RECORDS: AnyRecord[] = [];
+const SEED_SLA_SUMMARY: AnyRecord = { met: 0, breached: 0 };
+const SEED_SLA_BREACHES: AnyRecord[] = [];
+const SEED_AI_RECS: AnyRecord[] = [];
 
 // ── Chart data ────────────────────────────────────────────────────────────────
 
-const KPI_ATTAINMENT_DATA = SEED_KPI_METRICS.slice(0, 8).map((k) => ({
-  name: String(k.kpi_name).split(" ").slice(0, 2).join(" "),
-  pct:  Math.min(110, Math.round((Number(k.actual_value) / Number(k.target_value)) * 100)),
-  status: String(k.status),
-}));
+const KPI_ATTAINMENT_DATA: Array<{ name: string; pct: number; status: string }> = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,13 +105,12 @@ export function SlaKpiPage() {
   const { data: slaRecordsRaw = [] } = useSlaRecords();
   const { data: slaBreachesRaw = [] }= useSlaBreaches();
 
-  // Use seed fallback when backend is unavailable (empty arrays / undefined)
-  const kpiMetrics  = ((kpiMetricsRaw  as AnyRecord[]).length > 0 ? kpiMetricsRaw  : SEED_KPI_METRICS) as AnyRecord[];
-  const kpiSummary  = (kpiSummaryRaw ?? SEED_KPI_SUMMARY) as AnyRecord;
-  const kpiAiRecs   = ((kpiAiRecsRaw  as AnyRecord[]).length > 0 ? kpiAiRecsRaw  : SEED_AI_RECS)      as AnyRecord[];
-  const slaSummary  = (slaSummaryRaw  ?? SEED_SLA_SUMMARY) as AnyRecord;
-  const slaRecords  = ((slaRecordsRaw  as AnyRecord[]).length > 0 ? slaRecordsRaw  : SEED_SLA_RECORDS) as AnyRecord[];
-  const slaBreaches = ((slaBreachesRaw as AnyRecord[]).length > 0 ? slaBreachesRaw : SEED_SLA_BREACHES) as AnyRecord[];
+  const kpiMetrics  = (kpiMetricsRaw  as AnyRecord[]) ?? [];
+  const kpiSummary  = (kpiSummaryRaw  ?? SEED_KPI_SUMMARY) as AnyRecord;
+  const kpiAiRecs   = (kpiAiRecsRaw    as AnyRecord[]) ?? [];
+  const slaSummary  = (slaSummaryRaw   ?? SEED_SLA_SUMMARY) as AnyRecord;
+  const slaRecords  = (slaRecordsRaw   as AnyRecord[]) ?? [];
+  const slaBreaches = (slaBreachesRaw  as AnyRecord[]) ?? [];
 
   void kpiTargetsRaw;
 

@@ -1,42 +1,10 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { LoadingState } from "@/components/ui";
+import { ErrorState, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ─────────────────────────────────────────────────────────────────────
-
-const SEED_FLAGS: AnyRecord[] = [
-  // Fleet
-  { id: 1,  flagKey: "fleet.ai_route_optimization",      category: "Fleet",       name: "AI Route Optimization",          description: "Enable machine-learning route suggestions in dispatch board",        enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-05-10" },
-  { id: 2,  flagKey: "fleet.predictive_maintenance",     category: "Fleet",       name: "Predictive Maintenance AI",       description: "Surface ML-predicted failure risk in PM schedule and vehicle detail", enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-04-22" },
-  { id: 3,  flagKey: "fleet.odometer_auto_sync",         category: "Fleet",       name: "Odometer Auto-Sync",              description: "Automatically sync OBD/J1939 odometer readings to fleet records",     enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-03-15" },
-  { id: 4,  flagKey: "fleet.ev_ready_dashboard",         category: "Fleet",       name: "EV Fleet Readiness Panel",        description: "Show electric vehicle charge state and range in fleet utilization",   enabled: false, rolloutPct: 0,   env: "Staging",    lastModified: "2026-06-01" },
-  // Safety
-  { id: 5,  flagKey: "safety.dashcam_ai_review",         category: "Safety",      name: "Dashcam AI Auto-Review",          description: "Auto-tag and score dashcam clips via on-device CV model",             enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-05-18" },
-  { id: 6,  flagKey: "safety.coaching_scripts",          category: "Safety",      name: "AI Coaching Scripts",             description: "Generate driver-specific coaching scripts from safety event history",   enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-05-02" },
-  { id: 7,  flagKey: "safety.voice_alerts",              category: "Safety",      name: "In-Cab Voice Alerts",             description: "Push audible safety alerts via paired ELD/dashcam speaker",            enabled: false, rolloutPct: 10,  env: "Staging",    lastModified: "2026-06-12" },
-  // CRM
-  { id: 8,  flagKey: "crm.ai_upsell_signals",            category: "CRM",         name: "AI Upsell Signals",               description: "Surface AI-detected expansion plays in account health and pipeline",   enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-04-30" },
-  { id: 9,  flagKey: "crm.whatsapp_pod_notifications",   category: "CRM",         name: "WhatsApp POD Notifications",      description: "Send POD confirmation to consignees via WhatsApp Business API",        enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-05-14" },
-  { id: 10, flagKey: "crm.contract_auto_renewal",        category: "CRM",         name: "Contract Auto-Renewal Prompts",   description: "Trigger renewal workflow 60 days before contract expiry",              enabled: false, rolloutPct: 0,   env: "Staging",    lastModified: "2026-06-08" },
-  // Finance
-  { id: 11, flagKey: "finance.dynamic_fuel_surcharge",   category: "Finance",     name: "Dynamic Fuel Surcharge",          description: "Auto-adjust fuel surcharge on rate cards based on live fuel index",    enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-05-05" },
-  { id: 12, flagKey: "finance.margin_alerts",            category: "Finance",     name: "Margin Breach Alerts",            description: "Alert finance manager when job margin falls below threshold",          enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-04-18" },
-  { id: 13, flagKey: "finance.auto_invoice_generation",  category: "Finance",     name: "Auto Invoice on POD",             description: "Automatically generate invoice when POD is confirmed",                enabled: false, rolloutPct: 25,  env: "Staging",    lastModified: "2026-06-10" },
-  // Telematics
-  { id: 14, flagKey: "telematics.real_time_tracking",    category: "Telematics",  name: "Real-Time GPS Streaming",         description: "Stream vehicle location at 5-second intervals (vs. 30s default)",      enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-03-28" },
-  { id: 15, flagKey: "telematics.can_bus_diagnostics",   category: "Telematics",  name: "CAN Bus Deep Diagnostics",        description: "Surface J1939 PGN-level fault data in OBD diagnostics drawer",          enabled: true,  rolloutPct: 100, env: "Production", lastModified: "2026-04-12" },
-  { id: 16, flagKey: "telematics.edge_ai_events",        category: "Telematics",  name: "Edge AI Safety Events",           description: "Process harsh-event detection on-device before cloud upload",           enabled: false, rolloutPct: 5,   env: "Beta",       lastModified: "2026-06-15" },
-  // Beta
-  { id: 17, flagKey: "beta.multimodal_ai_chat",          category: "Beta",        name: "Multimodal AI Copilot",           description: "Accept image + text inputs in OpsTrax AI Copilot for damage claims",    enabled: false, rolloutPct: 0,   env: "Beta",       lastModified: "2026-06-17" },
-  { id: 18, flagKey: "beta.carbon_tracking",             category: "Beta",        name: "Carbon Emissions Tracking",       description: "Track CO₂ per shipment and surface sustainability KPIs",                enabled: false, rolloutPct: 0,   env: "Beta",       lastModified: "2026-06-14" },
-  { id: 19, flagKey: "beta.driver_gamification",         category: "Beta",        name: "Driver Gamification",             description: "Points, badges and leaderboard to incentivize safe driving",            enabled: false, rolloutPct: 0,   env: "Beta",       lastModified: "2026-06-16" },
-  { id: 20, flagKey: "beta.autonomous_dispatch",         category: "Beta",        name: "Autonomous Dispatch",             description: "AI auto-assigns jobs to optimal drivers with no human confirmation",    enabled: false, rolloutPct: 0,   env: "Beta",       lastModified: "2026-06-18" },
-];
-
-const flagsApi = () => withFallback(
+const flagsApi = () =>
   unwrap<AnyRecord[]>(apiClient.get("/api/feature-flags")).then((rows) =>
     rows.map((r) => ({
       ...r,
@@ -49,9 +17,7 @@ const flagsApi = () => withFallback(
       lastModified: r.lastModified ?? r.last_modified ?? r.updatedAt ?? "",
       description: r.description ?? r.notes ?? "",
     }))
-  ),
-  () => SEED_FLAGS
-);
+  );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -119,6 +85,13 @@ export function FeatureFlagsPage() {
     mutationFn: ({ key, enabled }: { key: string; enabled: boolean }) =>
       apiClient.put(`/api/feature-flags/${encodeURIComponent(key)}/toggle`, { enabled }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["feature-flags"] }); },
+    onError: (_error, variables) => {
+      setLocalStates((prev) => {
+        const next = { ...prev };
+        delete next[variables.key];
+        return next;
+      });
+    },
   });
 
   const flags = (q.data ?? []) as AnyRecord[];
@@ -150,6 +123,7 @@ export function FeatureFlagsPage() {
   }).length;
 
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load feature flags."} />;
 
   return (
     <div className="flex flex-col gap-6 py-6">

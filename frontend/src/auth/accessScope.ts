@@ -4,7 +4,7 @@ type SessionLike = Pick<UserSession, "role" | "user" | "company" | "permissions"
 
 const DRIVER_IDENTITY_BY_EMAIL: Record<string, string> = {
   "driver@northshore-fleet.com": "Salman Qureshi",
-  "driver@demo-fleet.com": "Salman Qureshi",
+  "driver@local-fleet.test": "Salman Qureshi",
 };
 
 const CUSTOMER_IDENTITY_BY_EMAIL: Record<string, string> = {

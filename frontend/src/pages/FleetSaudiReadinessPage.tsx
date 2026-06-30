@@ -82,16 +82,16 @@ export function FleetSaudiReadinessPage() {
   const [error, setError] = useState('');
 
   const load = async () => {
-    const [regionsRes, docsRes, expiryRes, invoiceRes] = await Promise.all([
+    const [regionsRes, docsRes, expiryRes, invoiceRes] = await Promise.allSettled([
       fleetReadinessApi.regions(),
       fleetReadinessApi.documents(),
       fleetReadinessApi.expiries(),
       fleetReadinessApi.invoiceReady(),
     ]);
-    setRegions(regionsRes.items);
-    setDocuments(docsRes.items);
-    setExpiries(expiryRes);
-    setInvoiceReady(invoiceRes);
+    setRegions(regionsRes.status === 'fulfilled' ? regionsRes.value.items : []);
+    setDocuments(docsRes.status === 'fulfilled' ? docsRes.value.items : []);
+    setExpiries(expiryRes.status === 'fulfilled' ? expiryRes.value : null);
+    setInvoiceReady(invoiceRes.status === 'fulfilled' ? invoiceRes.value : null);
   };
 
   useEffect(() => {
@@ -157,7 +157,7 @@ export function FleetSaudiReadinessPage() {
   }
 
   return (
-    <div className="relative space-y-6 overflow-hidden">
+    <div className="control-tower relative space-y-6 overflow-hidden">
       <style>{`
         @keyframes kx-glow { 0%,100% { transform: scale(1); opacity: .35; } 50% { transform: scale(1.08); opacity: .65; } }
         @keyframes kx-rise { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }

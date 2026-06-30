@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Text.Json;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
 
@@ -18,6 +20,9 @@ public static class FleetTmsColdChainEndpoints
         app.MapGet("/api/fleet-tms/cold-chain/summary", ColdChainSummary);
         app.MapGet("/api/fleet-tms/cold-chain/devices", ColdChainDevices);
         app.MapPost("/api/fleet-tms/cold-chain/devices", CreateDevice);
+        app.MapGet("/api/fleet-tms/cold-chain/policies", ColdChainPolicies);
+        app.MapPost("/api/fleet-tms/cold-chain/policies", UpsertColdChainPolicy);
+        app.MapGet("/api/fleet-tms/cold-chain/events", ColdChainEvents);
         app.MapGet("/api/fleet-tms/cold-chain/shipments/{shipmentId:long}/readings", ShipmentReadings);
         app.MapPost("/api/fleet-tms/cold-chain/readings", CreateReading);
         app.MapGet("/api/fleet-tms/cold-chain/alerts", ColdChainAlerts);
@@ -58,6 +63,58 @@ public static class FleetTmsColdChainEndpoints
     private static object Nl(long? v) => (object?)v ?? DBNull.Value;
     private static object Dt(DateTime? v) => (object?)v ?? DBNull.Value;
     private static object Dte(DateOnly? v) => v.HasValue ? v.Value.ToDateTime(TimeOnly.MinValue) : DBNull.Value;
+    private static string? GetText(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var value) || value is null) return null;
+        if (value is System.Text.Json.JsonElement je)
+        {
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => je.GetString(),
+                System.Text.Json.JsonValueKind.Number => je.ToString(),
+                System.Text.Json.JsonValueKind.True => "true",
+                System.Text.Json.JsonValueKind.False => "false",
+                System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined => null,
+                _ => je.ToString(),
+            };
+        }
+
+        var text = value.ToString();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    private static decimal? GetDecimal(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var value) || value is null) return null;
+        if (value is System.Text.Json.JsonElement je)
+        {
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number when je.TryGetDecimal(out var number) => number,
+                System.Text.Json.JsonValueKind.String when decimal.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) => parsed,
+                _ => null,
+            };
+        }
+
+        return decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var fallback) ? fallback : null;
+    }
+
+    private static bool GetBool(Dictionary<string, object?> body, string key, bool fallback = false)
+    {
+        if (!body.TryGetValue(key, out var value) || value is null) return fallback;
+        if (value is System.Text.Json.JsonElement je)
+        {
+            return je.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.String when bool.TryParse(je.GetString(), out var parsed) => parsed,
+                _ => fallback,
+            };
+        }
+
+        return bool.TryParse(value.ToString(), out var parsedFallback) ? parsedFallback : fallback;
+    }
 
     private static async Task<Dictionary<string, object?>?> Row(Database db, string table, long companyId, long id, CancellationToken ct)
         => await db.QuerySingleAsync($"SELECT * FROM {table} WHERE id=@id AND company_id=@companyId",
@@ -65,17 +122,23 @@ public static class FleetTmsColdChainEndpoints
 
     // ── Cold chain ──────────────────────────────────────────────────────────────
 
-    private static async Task<IResult> ColdChainSummary(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> ColdChainSummary(HttpContext http, Database db, FleetTmsColdChainFoundationService foundation, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
         var companyId = Cid(http);
         void B(NpgsqlCommand c) => c.Parameters.AddWithValue("@companyId", companyId);
         var totalReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId", B, ct);
         var breachReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND status='Breach'", B, ct);
+        var policyCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_cold_chain_policies WHERE company_id=@companyId", B, ct);
+        var eventLogCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_cold_chain_event_log WHERE company_id=@companyId", B, ct);
         var summary = new
         {
             activeDevices = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_devices WHERE company_id=@companyId AND status='Active'", B, ct),
             readingsToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND recorded_at_utc >= date_trunc('day', NOW())", B, ct),
             openAlerts = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status IN ('Open','InReview')", B, ct),
+            policyCount,
+            eventLogCount,
             totalReadings,
             breachReadings,
             avgTemperatureCelsius = Math.Round(await db.ScalarDecimalAsync("SELECT COALESCE(AVG(temperature_celsius),0) FROM fleet_tms_temperature_readings WHERE company_id=@companyId", B, ct) ?? 0m, 1),
@@ -85,11 +148,68 @@ public static class FleetTmsColdChainEndpoints
         var devices = await db.QueryAsync("SELECT id, device_code, name, vehicle_number, status, last_reported_temperature_celsius, battery_percent, last_ping_at_utc, notes FROM fleet_tms_temperature_devices WHERE company_id=@companyId ORDER BY last_ping_at_utc DESC NULLS LAST LIMIT 6", B, ct);
         var alerts = await db.QueryAsync("SELECT id, alert_type, severity, status, measured_temperature, threshold_min, threshold_max, triggered_at_utc, resolution_notes FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status <> 'Resolved' ORDER BY triggered_at_utc DESC LIMIT 6", B, ct);
         var reports = await db.QueryAsync("SELECT id, shipment_id, shipment_number, generated_at_utc, compliance_percent, min_temperature_celsius, max_temperature_celsius, total_readings, breach_count, summary_json, notes FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId ORDER BY generated_at_utc DESC LIMIT 6", B, ct);
-        return Ok(new { generatedAtUtc = DateTime.UtcNow, summary, zones, devices, alerts, reports });
+        var policies = await foundation.ListPoliciesAsync(companyId, ct);
+        return Ok(new { generatedAtUtc = DateTime.UtcNow, summary, zones, devices, alerts, reports, policies });
+    }
+
+    private static async Task<IResult> ColdChainPolicies(HttpContext http, FleetTmsColdChainFoundationService foundation, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
+        var policies = await foundation.ListPoliciesAsync(Cid(http), ct);
+        return Ok(new { items = policies });
+    }
+
+    private static async Task<IResult> UpsertColdChainPolicy(HttpContext http, Dictionary<string, object?> body, FleetTmsColdChainFoundationService foundation, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
+
+        var policyCode = GetText(body, "policyCode") ?? $"CCP-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        var policy = await foundation.UpsertPolicyAsync(
+            Cid(http),
+            policyCode,
+            GetText(body, "scopeType") ?? "default",
+            GetText(body, "scopeKey") ?? "",
+            GetDecimal(body, "minCelsius"),
+            GetDecimal(body, "maxCelsius"),
+            GetDecimal(body, "humidityMinPercent"),
+            GetDecimal(body, "humidityMaxPercent"),
+            GetText(body, "severity"),
+            GetBool(body, "requiresAcknowledgement", true),
+            GetText(body, "status"),
+            GetText(body, "sourceChannel"),
+            GetText(body, "clientGeneratedId"),
+            GetText(body, "idempotencyKey"),
+            GetText(body, "correlationId"),
+            GetText(body, "causationId"),
+            GetText(body, "metadataJson") ?? "{}",
+            GetText(body, "notes"),
+            ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(policy, "Cold-chain policy saved"));
+    }
+
+    private static async Task<IResult> ColdChainEvents(HttpContext http, Database db, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
+        var companyId = Cid(http);
+        var items = await db.QueryAsync(@"
+SELECT id, company_id, event_type, aggregate_type, aggregate_id, payload_json, correlation_id, causation_id, idempotency_key,
+       status, retry_count, error_message, occurred_at_utc, processed_at_utc, created_at_utc
+FROM fleet_tms_cold_chain_event_log
+WHERE company_id=@companyId
+ORDER BY occurred_at_utc DESC, id DESC
+LIMIT 100",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+        return Ok(new { items });
     }
 
     private static async Task<IResult> ColdChainDevices(HttpContext http, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
         var items = await db.QueryAsync(@"
 SELECT d.id, d.device_code, d.name, d.zone_id, z.code zone_code, z.name zone_name,
        d.shipment_id, s.shipment_number, d.vehicle_number, d.status,
@@ -104,12 +224,16 @@ WHERE d.company_id=@companyId ORDER BY d.last_ping_at_utc DESC NULLS LAST, d.dev
 
     private static async Task<IResult> CreateDevice(HttpContext http, TemperatureDeviceRequest req, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
         if (string.IsNullOrWhiteSpace(req.DeviceCode)) return Bad("Device code is required.");
         if (string.IsNullOrWhiteSpace(req.Name)) return Bad("Device name is required.");
         var companyId = Cid(http);
         var id = await db.InsertAsync(@"
-INSERT INTO fleet_tms_temperature_devices (company_id, device_code, name, zone_id, shipment_id, vehicle_number, status, last_reported_temperature_celsius, battery_percent, last_ping_at_utc, notes, created_at_utc, updated_at_utc)
-VALUES (@companyId, @code, @name, @zone, @shipment, @vehicle, @status, @temp, @battery, @ping, @notes, NOW(), NOW())",
+INSERT INTO fleet_tms_temperature_devices (company_id, device_code, name, zone_id, shipment_id, vehicle_number, status, last_reported_temperature_celsius, battery_percent, last_ping_at_utc, notes,
+    source_channel, client_generated_id, idempotency_key, correlation_id, causation_id, metadata_json, created_at_utc, updated_at_utc)
+VALUES (@companyId, @code, @name, @zone, @shipment, @vehicle, @status, @temp, @battery, @ping, @notes,
+    @sourceChannel, @clientGeneratedId, @idempotencyKey, @correlationId, @causationId, @metadata::jsonb, NOW(), NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -123,12 +247,20 @@ VALUES (@companyId, @code, @name, @zone, @shipment, @vehicle, @status, @temp, @b
                 c.Parameters.AddWithValue("@battery", req.BatteryPercent ?? 0m);
                 c.Parameters.AddWithValue("@ping", req.LastPingAtUtc ?? DateTime.UtcNow);
                 c.Parameters.AddWithValue("@notes", req.Notes?.Trim() ?? "");
+                c.Parameters.AddWithValue("@sourceChannel", (object?)req.SourceChannel ?? DBNull.Value);
+                c.Parameters.AddWithValue("@clientGeneratedId", (object?)req.ClientGeneratedId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@idempotencyKey", (object?)req.IdempotencyKey ?? DBNull.Value);
+                c.Parameters.AddWithValue("@correlationId", (object?)req.CorrelationId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@causationId", (object?)req.CausationId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@metadata", string.IsNullOrWhiteSpace(req.MetadataJson) ? "{}" : req.MetadataJson);
             }, ct);
         return Ok(await Row(db, "fleet_tms_temperature_devices", companyId, id, ct)!);
     }
 
     private static async Task<IResult> ShipmentReadings(HttpContext http, long shipmentId, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
         var items = await db.QueryAsync(@"
 SELECT r.id, r.device_id, d.device_code, r.zone_id, z.code zone_code, r.temperature_celsius, r.humidity_percent,
        r.latitude, r.longitude, r.source, r.status, r.notes, r.recorded_at_utc, r.created_at_utc
@@ -140,70 +272,25 @@ WHERE r.company_id=@companyId AND r.shipment_id=@sid ORDER BY r.recorded_at_utc 
         return Ok(new { items });
     }
 
-    private static async Task<IResult> CreateReading(HttpContext http, TemperatureReadingRequest req, Database db, CancellationToken ct)
+    private static async Task<IResult> CreateReading(HttpContext http, TemperatureReadingRequest req, FleetTmsColdChainFoundationService foundation, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
         var companyId = Cid(http);
-        var device = await Row(db, "fleet_tms_temperature_devices", companyId, req.DeviceId, ct);
-        if (device is null) return NotFound("Temperature device not found for this tenant.");
-
-        long? zoneId = req.ZoneId ?? (device["zoneId"] is null ? null : Convert.ToInt64(device["zoneId"]));
-        Dictionary<string, object?>? zone = zoneId.HasValue ? await Row(db, "fleet_tms_temperature_zones", companyId, zoneId.Value, ct) : null;
-        long? shipmentId = req.ShipmentId ?? (device["shipmentId"] is null ? null : Convert.ToInt64(device["shipmentId"]));
-
-        var status = string.IsNullOrWhiteSpace(req.Status) ? "Normal" : req.Status.Trim();
-        var isBreach = zone is not null && (req.TemperatureCelsius < Convert.ToDecimal(zone["minCelsius"]) || req.TemperatureCelsius > Convert.ToDecimal(zone["maxCelsius"]));
-        if (isBreach) status = "Breach";
-
-        var readingId = await db.InsertAsync(@"
-INSERT INTO fleet_tms_temperature_readings (company_id, device_id, shipment_id, zone_id, temperature_celsius, humidity_percent, latitude, longitude, source, status, notes, recorded_at_utc, created_at_utc)
-VALUES (@companyId, @device, @shipment, @zone, @temp, @humidity, @lat, @lng, @source, @status, @notes, NOW(), NOW())",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@device", req.DeviceId);
-                c.Parameters.AddWithValue("@shipment", Nl(shipmentId));
-                c.Parameters.AddWithValue("@zone", Nl(zoneId));
-                c.Parameters.AddWithValue("@temp", req.TemperatureCelsius);
-                c.Parameters.AddWithValue("@humidity", N(req.HumidityPercent));
-                c.Parameters.AddWithValue("@lat", N(req.Latitude));
-                c.Parameters.AddWithValue("@lng", N(req.Longitude));
-                c.Parameters.AddWithValue("@source", string.IsNullOrWhiteSpace(req.Source) ? "Sensor" : req.Source.Trim());
-                c.Parameters.AddWithValue("@status", status);
-                c.Parameters.AddWithValue("@notes", req.Notes?.Trim() ?? "");
-            }, ct);
-
-        await db.ExecuteAsync(@"
-UPDATE fleet_tms_temperature_devices SET last_reported_temperature_celsius=@temp,
-    battery_percent=CASE WHEN battery_percent <= 1 THEN 98 ELSE battery_percent END,
-    last_ping_at_utc=NOW(), shipment_id=COALESCE(@shipment, shipment_id), zone_id=COALESCE(@zone, zone_id), updated_at_utc=NOW()
-WHERE id=@device AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@temp", req.TemperatureCelsius); c.Parameters.AddWithValue("@shipment", Nl(shipmentId)); c.Parameters.AddWithValue("@zone", Nl(zoneId)); c.Parameters.AddWithValue("@device", req.DeviceId); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-
-        if (isBreach && zone is not null)
+        try
         {
-            var min = Convert.ToDecimal(zone["minCelsius"]);
-            var max = Convert.ToDecimal(zone["maxCelsius"]);
-            await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_temperature_alerts (company_id, device_id, shipment_id, reading_id, alert_type, severity, status, threshold_min, threshold_max, measured_temperature, triggered_at_utc, notes)
-VALUES (@companyId, @device, @shipment, @reading, 'TemperatureBreach', @severity, 'Open', @min, @max, @temp, NOW(), 'Breach auto-generated from live temperature reading.')",
-                c =>
-                {
-                    c.Parameters.AddWithValue("@companyId", companyId);
-                    c.Parameters.AddWithValue("@device", req.DeviceId);
-                    c.Parameters.AddWithValue("@shipment", Nl(shipmentId));
-                    c.Parameters.AddWithValue("@reading", readingId);
-                    c.Parameters.AddWithValue("@severity", req.TemperatureCelsius > max + 2 ? "Critical" : "High");
-                    c.Parameters.AddWithValue("@min", min);
-                    c.Parameters.AddWithValue("@max", max);
-                    c.Parameters.AddWithValue("@temp", req.TemperatureCelsius);
-                }, ct);
+            return Ok(await foundation.RecordTemperatureReadingAsync(companyId, req, ct));
         }
-
-        return Ok(await Row(db, "fleet_tms_temperature_readings", companyId, readingId, ct)!);
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
 
     private static async Task<IResult> ColdChainAlerts(HttpContext http, Database db, string? status, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
         var companyId = Cid(http);
         var where = "WHERE a.company_id=@companyId" + (string.IsNullOrWhiteSpace(status) ? "" : " AND a.status=@status");
         var items = await db.QueryAsync($@"
@@ -217,18 +304,25 @@ LEFT JOIN fleet_tms_shipments s ON s.id=a.shipment_id
         return Ok(new { items });
     }
 
-    private static async Task<IResult> ResolveAlert(HttpContext http, long id, TemperatureAlertResolveRequest req, Database db, CancellationToken ct)
+    private static async Task<IResult> ResolveAlert(HttpContext http, long id, TemperatureAlertResolveRequest req, FleetTmsColdChainFoundationService foundation, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
         var companyId = Cid(http);
-        var rows = await db.ExecuteAsync(@"
-UPDATE fleet_tms_temperature_alerts SET status='Resolved', resolved_at_utc=NOW(), resolved_by=@actor, resolution_notes=@notes WHERE id=@id AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@actor", Actor(http)); c.Parameters.AddWithValue("@notes", req?.ResolutionNotes?.Trim() ?? "Resolved by operations."); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        if (rows == 0) return NotFound("Temperature alert not found for this tenant.");
-        return Ok(await Row(db, "fleet_tms_temperature_alerts", companyId, id, ct)!);
+        try
+        {
+            return Ok(await foundation.ResolveAlertAsync(companyId, id, req, Actor(http), ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
 
     private static async Task<IResult> ColdChainReport(HttpContext http, long shipmentId, Database db, CancellationToken ct)
     {
+        var denied = EndpointMappings.RequirePermission(http, "fleet:view");
+        if (denied is not null) return denied;
         var companyId = Cid(http);
         var existing = await db.QuerySingleAsync("SELECT * FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId AND shipment_id=@sid ORDER BY generated_at_utc DESC LIMIT 1",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); }, ct);
@@ -703,8 +797,8 @@ ORDER BY created_at_utc DESC LIMIT 10", B, ct);
 }
 
 // ── Request DTOs (camelCase JSON binds via default web serializer) ──
-public record TemperatureDeviceRequest(string? DeviceCode, string? Name, long? ZoneId, long? ShipmentId, string? VehicleNumber, string? Status, decimal? LastReportedTemperatureCelsius, decimal? BatteryPercent, DateTime? LastPingAtUtc, string? Notes);
-public record TemperatureReadingRequest(long DeviceId, long? ShipmentId, long? ZoneId, decimal TemperatureCelsius, decimal? HumidityPercent, decimal? Latitude, decimal? Longitude, string? Source, string? Status, string? Notes);
+public record TemperatureDeviceRequest(string? DeviceCode, string? Name, long? ZoneId, long? ShipmentId, string? VehicleNumber, string? Status, decimal? LastReportedTemperatureCelsius, decimal? BatteryPercent, DateTime? LastPingAtUtc, string? Notes, string? SourceChannel = null, string? ClientGeneratedId = null, string? IdempotencyKey = null, string? CorrelationId = null, string? CausationId = null, string? MetadataJson = null);
+public record TemperatureReadingRequest(long DeviceId, long? ShipmentId, long? ZoneId, decimal TemperatureCelsius, decimal? HumidityPercent, decimal? Latitude, decimal? Longitude, string? Source, string? Status, string? Notes, string? SourceChannel = null, string? ClientGeneratedId = null, string? IdempotencyKey = null, string? CorrelationId = null, string? CausationId = null, string? MetadataJson = null);
 public record TemperatureAlertResolveRequest(string? ResolutionNotes);
 public record AssetRequest(long AssetTypeId, string? AssetTag, string? Name, string? Status, string? CurrentLocation, string? Condition, bool? IsReturnable, decimal? Quantity, string? UnitOfMeasure, string? Notes, DateTime? LastSeenAtUtc);
 public record AssetTypeRequest(string? Code, string? Name, string? Description, bool? IsReturnable);

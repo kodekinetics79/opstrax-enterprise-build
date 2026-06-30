@@ -6,8 +6,8 @@ public sealed class TelemetrySchemaService(Database db)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
-        foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
+        foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
     }
@@ -37,6 +37,27 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "received_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("location_events", "source",      "VARCHAR(40) NOT NULL DEFAULT 'device'"),
         new("location_events", "nonce",       "VARCHAR(128) NULL"),
+        new("location_events", "source_channel", "VARCHAR(40) NULL"),
+        new("location_events", "correlation_id", "VARCHAR(120) NULL"),
+        new("location_events", "causation_id", "VARCHAR(120) NULL"),
+        new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
+        new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
+        new("telemetry_alerts", "correlation_id", "VARCHAR(120) NULL"),
+        new("telemetry_alerts", "causation_id", "VARCHAR(120) NULL"),
+        new("telemetry_alerts", "source_channel", "VARCHAR(40) NULL"),
+        new("telemetry_alerts", "client_generated_id", "VARCHAR(120) NULL"),
+        new("telemetry_alerts", "ai_recommendation_id", "BIGINT NULL"),
+        new("latest_vehicle_positions", "source_event_id", "BIGINT NULL"),
+        new("latest_vehicle_positions", "correlation_id", "VARCHAR(120) NULL"),
+        new("latest_vehicle_positions", "causation_id", "VARCHAR(120) NULL"),
+        new("latest_vehicle_positions", "source_channel", "VARCHAR(40) NULL"),
+        new("latest_vehicle_positions", "telemetry_status", "VARCHAR(40) NULL"),
+        new("latest_vehicle_positions", "risk_level", "VARCHAR(40) NULL"),
+        new("latest_vehicle_positions", "alert_count", "INT NOT NULL DEFAULT 0"),
+        new("latest_vehicle_positions", "open_alert_count", "INT NOT NULL DEFAULT 0"),
+        new("latest_vehicle_positions", "next_action", "VARCHAR(160) NULL"),
+        new("latest_vehicle_positions", "summary_json", "JSONB NULL"),
+        new("latest_vehicle_positions", "updated_at", "TIMESTAMPTZ NULL"),
     ];
 
     private static readonly string[] Tables =
@@ -106,6 +127,37 @@ public sealed class TelemetrySchemaService(Database db)
             updated_at TIMESTAMPTZ NULL,
             UNIQUE (company_id, rule_type)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS telemetry_live_asset_states (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            vehicle_id BIGINT NOT NULL,
+            device_id BIGINT NULL,
+            driver_id BIGINT NULL,
+            vehicle_code VARCHAR(60) NULL,
+            device_serial VARCHAR(120) NULL,
+            driver_name VARCHAR(160) NULL,
+            lat DECIMAL(10,7) NOT NULL,
+            lng DECIMAL(10,7) NOT NULL,
+            speed_mph DECIMAL(6,2) NOT NULL DEFAULT 0,
+            heading SMALLINT NOT NULL DEFAULT 0,
+            engine_status VARCHAR(40) NULL,
+            telemetry_status VARCHAR(40) NOT NULL DEFAULT 'healthy',
+            risk_level VARCHAR(40) NOT NULL DEFAULT 'low',
+            alert_count INT NOT NULL DEFAULT 0,
+            open_alert_count INT NOT NULL DEFAULT 0,
+            stale_seconds BIGINT NOT NULL DEFAULT 0,
+            last_event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            source_event_id BIGINT NULL,
+            correlation_id VARCHAR(120) NULL,
+            causation_id VARCHAR(120) NULL,
+            source_channel VARCHAR(40) NULL,
+            next_action VARCHAR(160) NULL,
+            summary_json JSONB NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (company_id, vehicle_id)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -118,8 +170,11 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_eld_apikey ON eld_devices(api_key_hash)",
         "CREATE INDEX IF NOT EXISTS idx_eld_company ON eld_devices(company_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
+        "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",
         "CREATE INDEX IF NOT EXISTS idx_tr_company ON telemetry_rules(company_id, rule_type, enabled)",
+        "CREATE INDEX IF NOT EXISTS idx_tlsa_company_updated ON telemetry_live_asset_states(company_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tlsa_company_risk ON telemetry_live_asset_states(company_id, risk_level, open_alert_count)",
     ];
 
     private static readonly string[] Seeds =

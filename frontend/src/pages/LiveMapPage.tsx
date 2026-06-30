@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { controlTowerApi } from "@/services/controlTowerApi";
+import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
@@ -79,8 +80,8 @@ export function LiveMapPage() {
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
 
   const { data, isLoading } = useQuery({
-    queryKey: ["live-map", "summary"],
-    queryFn: controlTowerApi.summary,
+    queryKey: ["telemetry", "live-map-summary"],
+    queryFn: telemetryApi.liveMapSummary,
     refetchInterval: 15_000,
   });
   const telemetry = useLiveTelemetry();
@@ -157,10 +158,13 @@ export function LiveMapPage() {
   const geofences = layers.geofences ? ((data.geofences as AnyRecord[]) ?? []) : [];
   const mapEntities = layers.vehicles ? visibleEntities : [];
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
+  const deviceRegistry = (data.deviceRegistry as AnyRecord[]) ?? [];
+  const riskRules = (data.riskRules as AnyRecord[]) ?? [];
+  const mobileReadiness = (data.mobileReadiness as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="control-tower space-y-6">
       <PageHeader
         eyebrow="Operations"
         title="Live Fleet Map"
@@ -185,6 +189,88 @@ export function LiveMapPage() {
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_.85fr_.9fr]">
+        <section className="panel p-5">
+          <h3 className="section-title">Telemetry Backbone</h3>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <TelemetryMiniStat label="Live units" value={String(kpis.liveUnits ?? 0)} tone="teal" />
+            <TelemetryMiniStat label="Devices" value={String(kpis.registeredDevices ?? 0)} tone="blue" />
+            <TelemetryMiniStat label="Open alerts" value={String(kpis.openAlerts ?? 0)} tone="rose" />
+            <TelemetryMiniStat label="Coverage" value={`${String(kpis.liveCoverage ?? 0)}%`} tone="indigo" />
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Live State</h4>
+                <span className="text-xs font-semibold text-slate-400">{String(kpis.healthyUnits ?? 0)} healthy</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {deviceRegistry.slice(0, 4).map((device) => (
+                  <div key={String(device.id)} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{String(device.device_serial ?? device.deviceSerial ?? "Unknown device")}</p>
+                      <p className="text-[11px] text-slate-500">{String(device.vehicle_code ?? device.vehicleCode ?? "Unassigned")} · {String(device.telemetry_status ?? device.telemetryStatus ?? "healthy")}</p>
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500">{String(device.risk_level ?? device.riskLevel ?? "low")}</span>
+                  </div>
+                ))}
+                {deviceRegistry.length === 0 ? <p className="text-sm text-slate-500">No device registry rows yet.</p> : null}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Risk Rules</h4>
+                <span className="text-xs font-semibold text-slate-400">{String(riskRules.length)} rules</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {riskRules.slice(0, 4).map((rule) => (
+                  <div key={String(rule.id)} className="rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-800">{String(rule.rule_type ?? rule.ruleType ?? "Rule")}</p>
+                      <StatusBadge status={String(rule.severity ?? "Watch")} />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Threshold {String(rule.threshold_value ?? rule.thresholdValue ?? "—")} · {Boolean(rule.enabled ?? true) ? "Enabled" : "Disabled"}
+                    </p>
+                  </div>
+                ))}
+                {riskRules.length === 0 ? <p className="text-sm text-slate-500">No risk rules configured.</p> : null}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel p-5">
+          <h3 className="section-title">Billing / Risk Signal</h3>
+          <div className="mt-4 space-y-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Open telemetry alerts</p>
+              <p className="mt-2 text-3xl font-black text-slate-900">{String(kpis.openAlerts ?? 0)}</p>
+              <p className="mt-2 text-sm text-slate-500">Telemetry is real-time and does not fabricate empty confidence.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Next action</p>
+              <p className="mt-2 text-sm font-semibold text-slate-800">{String((deviceRegistry.find((row) => String(row.next_action ?? "") !== "")?.next_action ?? deviceRegistry[0]?.next_action) ?? "Not configured yet")}</p>
+              <p className="mt-2 text-xs text-slate-500">Alerts, live state and device registry are all tenant scoped.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel p-5">
+          <h3 className="section-title">Mobile Readiness</h3>
+          <div className="mt-4 space-y-2">
+            {mobileReadiness.slice(0, 4).map((row) => (
+              <div key={String(row.role)} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                <p className="text-sm font-semibold text-slate-800">{String(row.role ?? "Role")}</p>
+                <p className="mt-1 text-xs text-slate-500">{Array.isArray(row.routeFamilies) ? row.routeFamilies.join(" · ") : "No route families"}</p>
+                <p className="mt-2 text-[11px] text-slate-500">{String(row.offlineIdempotency ?? "Not configured")}</p>
+              </div>
+            ))}
+            {mobileReadiness.length === 0 ? <p className="text-sm text-slate-500">Mobile readiness preview is not configured yet.</p> : null}
+          </div>
+        </section>
       </div>
 
       <div className="grid items-stretch gap-5 xl:grid-cols-[1.55fr_.45fr]">
@@ -315,6 +401,22 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       </div>
       <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
+  );
+}
+
+function TelemetryMiniStat({ label, value, tone }: { label: string; value: string; tone: "teal" | "blue" | "rose" | "indigo" }) {
+  const styles = {
+    teal: "border-teal-200 bg-teal-50 text-teal-700",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+    indigo: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  }[tone];
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${styles}`}>
+      <p className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-80">{label}</p>
+      <p className="mt-2 text-2xl font-black tracking-tight">{value}</p>
+    </div>
   );
 }
 

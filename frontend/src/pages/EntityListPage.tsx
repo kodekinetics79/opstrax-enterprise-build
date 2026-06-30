@@ -1103,9 +1103,42 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
   onSave: (payload: AnyRecord) => void;
 }) {
   const [form, setForm] = useState<AnyRecord>(initial);
+  const [errors, setErrors] = useState<string[]>([]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    onSave(form);
+    const nextErrors: string[] = [];
+    const payload: AnyRecord = { ...form };
+
+    for (const field of fields) {
+      const raw = payload[field.key];
+      const value = String(raw ?? "").trim();
+      if (field.required && value === "") {
+        nextErrors.push(`${field.label} is required.`);
+        continue;
+      }
+      if (field.type === "number") {
+        if (value === "") {
+          payload[field.key] = undefined;
+          continue;
+        }
+        const parsed = Number(value);
+        if (Number.isNaN(parsed)) {
+          nextErrors.push(`${field.label} must be a valid number.`);
+          continue;
+        }
+        payload[field.key] = parsed;
+      } else {
+        payload[field.key] = raw;
+      }
+    }
+
+    if (nextErrors.length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    setErrors([]);
+    onSave(payload);
   };
 
   return (
@@ -1128,11 +1161,18 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
                   {field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
               ) : (
-                <input className="field" type={field.type || "text"} value={String(form[field.key] ?? "")} required={field.required} onChange={(event) => setForm((current) => ({ ...current, [field.key]: field.type === "number" ? Number(event.target.value) : event.target.value }))} />
+                <input className="field" type={field.type || "text"} value={String(form[field.key] ?? "")} required={field.required} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} />
               )}
             </label>
           ))}
         </div>
+        {errors.length > 0 && (
+          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <ul className="space-y-1">
+              {errors.map((error) => <li key={error}>{error}</li>)}
+            </ul>
+          </div>
+        )}
         <div className="mt-6 flex justify-end gap-3">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn-primary" disabled={saving}><Save className="h-4 w-4" /> {saving ? "Saving..." : "Save"}</button>

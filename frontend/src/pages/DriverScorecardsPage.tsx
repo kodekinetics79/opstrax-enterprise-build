@@ -2,68 +2,19 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
-// ── Seed fallback data ────────────────────────────────────────────────────────
-
-const SEED_DRIVERS: AnyRecord[] = Array.from({ length: 12 }, (_, i) => ({
-  id: i + 1,
-  driverId: i + 1,
-  driverName: ["Marcus Johnson","Sofia Reyes","Liam Patel","Aisha Williams","Ethan Kim","Priya Sharma","Jordan Mitchell","Elena Vasquez","Noah Anderson","Fatima Hassan","Tyler Brooks","Carmen Lopez"][i],
-  driverCode: `DRV-${String(i + 1).padStart(3, "0")}`,
-  safetyScore: [94, 91, 88, 85, 82, 79, 76, 73, 70, 67, 64, 58][i],
-  riskScore: [8, 12, 18, 22, 28, 34, 40, 45, 52, 58, 64, 72][i],
-  harshBrakingCount: [1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 13][i],
-  harshAccelerationCount: [0, 1, 2, 2, 3, 4, 5, 6, 6, 8, 9, 11][i],
-  speedingCount: [0, 1, 1, 2, 3, 4, 4, 6, 7, 8, 10, 14][i],
-  dashcamEventCount: [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7][i],
-  coachingOpenCount: [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6][i],
-  coachingCompletedCount: [3, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, 0][i],
-  incidentCount: [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3][i],
-}));
-
-const SEED_TRENDS: AnyRecord[] = Array.from({ length: 8 }, (_, i) => {
-  const d = new Date();
-  d.setDate(d.getDate() - (7 - i) * 7);
-  return {
-    trendDate: d.toISOString().split("T")[0],
-    harshBrakingCount: 22 + Math.round(Math.sin(i) * 5),
-    harshAccelerationCount: 15 + Math.round(Math.cos(i) * 4),
-    speedingCount: 18 + Math.round(Math.sin(i + 1) * 6),
-    dashcamEventCount: 10 + Math.round(Math.cos(i + 2) * 3),
-    incidentCount: i < 5 ? 2 : 1,
-    fleetSafetyScore: 82 + i * 0.8,
-  };
-});
-
-const SEED_SUMMARY: AnyRecord = {
-  fleetSafetyScore: 84,
-  safetyEventsToday: 7,
-  criticalEvents: 2,
-  harshBraking: 18,
-  harshAcceleration: 12,
-  speedingEvents: 14,
-  coachingNeeded: 9,
-  openIncidents: 3,
-  reviewedEvents: 34,
-  preventableRiskScore: 41,
-};
-
 // ── API ───────────────────────────────────────────────────────────────────────
 
 const safetyApi = {
-  summary: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/safety/summary")), () => SEED_SUMMARY),
-  driverScorecards: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/safety/drivers/scorecards")), () => SEED_DRIVERS),
-  vehicleScorecards: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/safety/vehicles/scorecards")), () => []),
-  trends: () => withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/safety/trends")), () => SEED_TRENDS),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/safety/summary")),
+  driverScorecards: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/drivers/scorecards")),
+  vehicleScorecards: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/vehicles/scorecards")),
+  trends: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/trends")),
   createCoachingTask: (driverId: string | number, payload: AnyRecord) =>
-    withFallback(
-      unwrap<AnyRecord>(apiClient.post(`/api/safety/events/${driverId}/create-coaching-task`, payload)),
-      () => ({ taskId: `TASK-${Date.now()}`, driverId, success: true })
-    ),
+    unwrap<AnyRecord>(apiClient.post(`/api/safety/events/${driverId}/create-coaching-task`, payload)),
 };
 
 // ── Score ring ────────────────────────────────────────────────────────────────

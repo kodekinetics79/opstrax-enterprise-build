@@ -1,33 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { quotations as seedQuotations } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedQuotations as AnyRecord[]).map((q, i) => ({
-    id: i + 1,
-    title: String(q.customer ?? ""),
-    quoteId: String(q.quoteId ?? `QT-${5000 + i}`),
-    customer: String(q.customer ?? ""),
-    origin: String(q.origin ?? ""),
-    destination: String(q.destination ?? ""),
-    cargo: String(q.cargo ?? ""),
-    quoteAmount: Number(q.quoteAmount ?? 0),
-    currency: String(q.currency ?? "SAR"),
-    margin: String(q.margin ?? "20%"),
-    marginPct: parseFloat(String(q.margin ?? "20").replace("%", "")),
-    validUntil: String(q.validUntil ?? ""),
-    status: String(q.status ?? "Draft"),
-  }));
-}
-
 const quotationsApi = {
-  list: () => withFallback(
+  list: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/quotations")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -42,8 +20,6 @@ const quotationsApi = {
         validUntil: r.validUntil ?? r.due_at ?? "",
       }))
     ),
-    () => buildSeed()
-  ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/quotations", body)),
 };
 
@@ -152,7 +128,13 @@ export function QuotationsPage() {
   });
 
   if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
+  if (listQ.isError) {
+    return (
+      <ErrorState
+        message={(listQ.error as Error)?.message ?? "Unable to load live quotations."}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 py-6">
@@ -165,6 +147,21 @@ export function QuotationsPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("quotations", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Quote</button>
+        </div>
+      </div>
+
+      <div className="panel grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote integrity</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">This view now reflects only live quote rows, not placeholder pipeline data.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract bridge</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Accepted quotes can bridge cleanly to contract creation without a fake success path.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Margin discipline</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Every quote keeps route, cargo and margin context visible for review.</p>
         </div>
       </div>
 

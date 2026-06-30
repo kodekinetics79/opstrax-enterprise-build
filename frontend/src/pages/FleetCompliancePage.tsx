@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, RefreshCw, Sparkles } from "lucide-react";
 import { marketPackApi } from "@/services/marketPackApi";
+import { fleetReadinessApi } from "@/services/fleetTmsApi";
 import { PageHeader, KpiCard, DataTable, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
 
 type AnyRecord = Record<string, any>;
 type Tab = "canada" | "saudi";
 
 // Fleet Compliance — regional market-pack readiness (Canada/NA + Saudi/GCC).
-// Backend enforces market-pack entitlement (deny-by-default): a disabled pack
-// returns 403, which is surfaced here as a "pack not enabled" notice rather than
-// an error. No regional logic is hardcoded — the page is driven by API data.
+// Canada remains market-pack entitlement-based. Saudi/GCC now uses the live
+// Saudi readiness foundation so the tab shows real tenant data instead of a
+// dead not-enabled state.
 export function FleetCompliancePage() {
   const [tab, setTab] = useState<Tab>("canada");
   return (
@@ -135,49 +137,147 @@ function CanadaReadiness() {
 
 // ───────────────────────────── Saudi ─────────────────────────────
 function SaudiReadiness() {
+  const [regions, setRegions] = useState<AnyRecord[]>([]);
   const [docs, setDocs] = useState<AnyRecord[]>([]);
   const [expiries, setExpiries] = useState<AnyRecord[]>([]);
-  const [vat, setVat] = useState<AnyRecord | null>(null);
+  const [invoice, setInvoice] = useState<AnyRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ subjectName: "", documentType: "transport_permit", gregorianExpiryDate: "", hijriExpiryDate: "" });
 
   const load = useCallback(async () => {
-    const [d, e, v] = await Promise.all([marketPackApi.saudiDocuments(), marketPackApi.saudiExpiries(), marketPackApi.saudiVatReadiness()]);
+    const [r, d, e, v] = await Promise.all([
+      fleetReadinessApi.regions(),
+      fleetReadinessApi.documents(),
+      fleetReadinessApi.expiries(),
+      fleetReadinessApi.invoiceReady(),
+    ]);
+    setRegions((r?.items as AnyRecord[]) ?? []);
     setDocs((d?.items as AnyRecord[]) ?? []);
     setExpiries((e?.items as AnyRecord[]) ?? []);
-    setVat(v);
+    setInvoice(v as AnyRecord);
   }, []);
-  const { state, message, reload } = useEntitledLoader(load);
 
-  if (state === "loading") return <LoadingState />;
-  if (state === "denied") return <NotEntitled pack="Saudi / GCC" />;
-  if (state === "error") return <ErrorState message={message} />;
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    load()
+      .catch((e: any) => { if (!cancelled) setError(e?.message ?? "Failed to load Saudi readiness data."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [load]);
+
+  const reload = async () => {
+    setRefreshing(true);
+    try {
+      setError(null);
+      await load();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to refresh Saudi readiness data.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const addDoc = async () => {
     if (!form.subjectName) return;
-    await marketPackApi.createSaudiDocument(form);
-    setForm({ subjectName: "", documentType: "transport_permit", gregorianExpiryDate: "", hijriExpiryDate: "" });
-    reload();
+    setSaving(true);
+    try {
+      await marketPackApi.createSaudiDocument(form);
+      setForm({ subjectName: "", documentType: "transport_permit", gregorianExpiryDate: "", hijriExpiryDate: "" });
+      await reload();
+    } finally {
+      setSaving(false);
+    }
   };
-  const setReadiness = async (status: string) => { await marketPackApi.setSaudiVatReadiness({ eInvoiceReadinessStatus: status }); reload(); };
 
-  const r = vat?.readiness ?? {};
+  const setReadiness = async (status: string) => {
+    setSaving(true);
+    try {
+      await marketPackApi.setSaudiVatReadiness({ eInvoiceReadinessStatus: status });
+      await reload();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} />;
+
+  const readiness = invoice?.readiness ?? {};
+  const kpis = [
+    { label: "Regions", value: regions.length },
+    { label: "Documents", value: docs.length },
+    { label: "Expiry alerts", value: expiries.length },
+    { label: "Ready shipments", value: invoice?.summary?.readyCount ?? 0 },
+  ];
+
   return (
     <div className="space-y-5">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/40 p-5 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="max-w-3xl">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] text-amber-700">
+              <Sparkles className="h-3.5 w-3.5" />
+              Saudi/GCC readiness foundation
+            </div>
+            <h2 className="text-2xl font-black text-slate-950 dark:text-white">Live compliance and invoice-readiness data with no stubbed fallback.</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              This view is backed by real tenant rows for regions, compliance documents, expiry alerts, and invoice readiness so the module feels operational on `localhost:10000`.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <StatusBadge status={readiness.eInvoiceReadinessStatus ?? "not_ready"} />
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:bg-white/5 dark:text-slate-300">VAT {readiness.vatNumber ?? "not captured"}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:bg-white/5 dark:text-slate-300">CR {readiness.commercialRegistrationNo ?? "not captured"}</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 md:items-end">
+            <button onClick={reload} className="btn-secondary inline-flex items-center gap-2">
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh live data
+            </button>
+            <a href="/fleet-saudi-readiness" className="btn-primary inline-flex items-center gap-2">
+              Open full Saudi workspace
+              <ArrowRight className="h-4 w-4" />
+            </a>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-4">
+          {kpis.map((item) => (
+            <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">{item.label}</p>
+              <p className="mt-1 text-2xl font-black text-slate-950 dark:text-white">{item.value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {regions.slice(0, 3).map((region) => (
+            <div key={String(region.id)} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Region</p>
+              <p className="mt-1 font-bold text-slate-900 dark:text-white">{region.nameEn}</p>
+              <p className="text-xs text-slate-500">{Array.isArray(region.cities) ? region.cities.join(" · ") : ""}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-3">
         <KpiCard label="Transport documents" value={docs.length} />
         <KpiCard label="Expiry alerts" value={expiries.length} />
-        <KpiCard label="e-Invoice readiness" value={(r?.eInvoiceReadinessStatus ?? "not_ready").replace("_", " ")} />
+        <KpiCard label="e-Invoice readiness" value={(readiness.eInvoiceReadinessStatus ?? "not_ready").replace("_", " ")} />
       </div>
 
       <Section title="VAT / e-Invoice Readiness">
-        <p className="mb-2 text-xs text-slate-500">{vat?.note}</p>
+        <p className="mb-2 text-xs text-slate-500">{invoice?.note}</p>
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span>VAT: <b>{r?.vatNumber ?? "—"}</b></span>
-          <span>CR: <b>{r?.commercialRegistrationNo ?? "—"}</b></span>
-          <StatusBadge status={r?.eInvoiceReadinessStatus ?? "not_ready"} />
+          <span>VAT: <b>{readiness.vatNumber ?? "—"}</b></span>
+          <span>CR: <b>{readiness.commercialRegistrationNo ?? "—"}</b></span>
+          <StatusBadge status={readiness.eInvoiceReadinessStatus ?? "not_ready"} />
           <div className="flex gap-2">
             {["not_ready", "in_progress", "ready"].map((s) => (
-              <button key={s} onClick={() => setReadiness(s)} className="rounded-lg border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs">{s.replace("_", " ")}</button>
+              <button key={s} onClick={() => setReadiness(s)} disabled={saving} className="rounded-lg border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs disabled:opacity-60">{s.replace("_", " ")}</button>
             ))}
           </div>
         </div>
@@ -193,13 +293,13 @@ function SaudiReadiness() {
           </select>
           <input type="date" title="Gregorian expiry" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.gregorianExpiryDate} onChange={(e) => setForm({ ...form, gregorianExpiryDate: e.target.value })} />
           <input placeholder="Hijri expiry (1447-..)" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.hijriExpiryDate} onChange={(e) => setForm({ ...form, hijriExpiryDate: e.target.value })} />
-          <button onClick={addDoc} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white">Add document</button>
+          <button onClick={addDoc} disabled={saving} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60">Add document</button>
         </div>
-        {docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "documentStatus", "hijriExpiryDate", "expiryDate"]} />}
+        {docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "subjectType", "kind", "documentType", "documentNumber", "documentStatus", "expiryStatus", "gregorianExpiryDate"]} />}
       </Section>
 
       <Section title="Expiry Dashboard">
-        {expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "docKey", "severity", "message", "expiryDate"]} />}
+        {expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "documentType", "documentStatus", "expiryStatus", "daysRemaining", "gregorianExpiryDate"]} />}
       </Section>
     </div>
   );

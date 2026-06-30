@@ -776,7 +776,7 @@ export function AlertsCenterPage() {
 
       <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
         <Clock3 className="h-3.5 w-3.5" />
-        Refreshed every 15 seconds from the live backend. No demo fallback is used here.
+        Refreshed every 15 seconds from the live backend. No fallback data layer is used here.
       </div>
 
       <ActionModal

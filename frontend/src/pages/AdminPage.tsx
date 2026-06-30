@@ -15,7 +15,6 @@ import {
 import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/hooks/useBatch7";
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
 import { adminApi } from "@/services/adminApi";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -47,8 +46,6 @@ const TAB_OPTIONS: Array<{ key: AdminTab; label: string }> = [
   { key: "settings", label: "Settings" },
   { key: "audit", label: "Audit Logs" },
 ];
-
-const ROLE_OPTIONS = developmentFleetSeedData.roles;
 
 function csvValue(value: unknown) {
   const text = String(value ?? "");
@@ -138,7 +135,7 @@ export function AdminPage() {
     roleId: "",
     roleName: "Tenant Admin",
     status: "Active",
-    password: "demo123",
+    password: "",
   });
   const [roleForm, setRoleForm] = useState<RoleFormState>({
     name: "",
@@ -163,7 +160,8 @@ export function AdminPage() {
 
   const users = usersQ.data ?? [];
   const roles = rolesQ.data ?? [];
-  const permissions = permissionsQ.data ?? developmentFleetSeedData.permissions;
+  const permissions = permissionsQ.data ?? [];
+  const roleOptions = roles;
 
   const filteredUsers = useMemo(() => users, [users]);
 
@@ -179,7 +177,7 @@ export function AdminPage() {
       roleId: "",
       roleName: "Tenant Admin",
       status: "Active",
-      password: "demo123",
+      password: "",
     });
     setUserModal("create");
   };
@@ -206,13 +204,14 @@ export function AdminPage() {
       roleId: userForm.roleId ? Number(userForm.roleId) : undefined,
       roleName: userForm.roleName,
       status: userForm.status,
-      password: userForm.password,
       permissionsJson: JSON.stringify(permissionList(roleModal?.permissionsJson ?? [])),
     };
     if (userModal === "create") {
+      body.password = userForm.password;
       await createUser.mutateAsync(body);
       await adminApi.auditLog({ actionName: "user.created", entityName: "User", detailsJson: JSON.stringify({ email: userForm.email }) });
     } else if (userModal === "edit" && userForm.id) {
+      if (userForm.password.trim()) body.password = userForm.password;
       await updateUser.mutateAsync({ id: Number(userForm.id), body });
       await adminApi.auditLog({ actionName: "user.updated", entityName: "User", entityId: Number(userForm.id), detailsJson: JSON.stringify({ email: userForm.email }) });
     }
@@ -385,7 +384,7 @@ export function AdminPage() {
             </div>
             <select className="field" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
               <option value="">All roles</option>
-              {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+              {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
             </select>
             <select className="field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
@@ -496,6 +495,15 @@ export function AdminPage() {
 
       {tab === "permissions" && (
         <div className="space-y-4">
+          {permissionsQ.isError ? (
+            <ErrorState message="The live permissions endpoint failed, so the admin view is not showing a seed-backed replacement." />
+          ) : permissionsQ.isLoading && permissions.length === 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-400">Fetching the live RBAC catalog.</p>
+              <LoadingState />
+            </div>
+          ) : (
+            <>
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm text-slate-400">Canonical permission catalog used by the RBAC layer.</p>
             <button className="btn-ghost" onClick={async () => {
@@ -519,6 +527,8 @@ export function AdminPage() {
               </div>
             ))}
           </div>
+            </>
+          )}
         </div>
       )}
 
@@ -626,7 +636,7 @@ export function AdminPage() {
               <div>
                 <label className="label">Role</label>
                 <select className="field w-full" value={String(userForm.roleName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, roleName: e.target.value, roleId: "" }))}>
-                  {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+                  {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
                 </select>
               </div>
               <div>
@@ -637,7 +647,7 @@ export function AdminPage() {
               </div>
               <div>
                 <label className="label">Password</label>
-                <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} />
+                <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder={userModal === "create" ? "Set initial password" : "Leave blank to keep current password"} />
               </div>
               <div>
                 <label className="label">Company ID</label>
@@ -646,7 +656,7 @@ export function AdminPage() {
             </div>
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers : !canUpdateUsers}>
+              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers || !String(userForm.password ?? "").trim() : !canUpdateUsers}>
                 Save User
               </button>
             </div>

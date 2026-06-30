@@ -88,6 +88,7 @@ export function getCustomerById(id: string | number) {
     record: (detail.record as AnyRecord) ?? detail,
     contacts: asRows(detail.contacts),
     addresses: asRows(detail.addresses),
+    sites: asRows(detail.sites),
     activeJobs: asRows(detail.activeJobs),
     communications: asRows(detail.communications),
     contracts: asRows(detail.contracts),

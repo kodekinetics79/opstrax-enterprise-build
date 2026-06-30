@@ -1,6 +1,6 @@
+using Microsoft.AspNetCore.Http;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
-using Microsoft.AspNetCore.Http;
 
 namespace Opstrax.Api.Services;
 
@@ -8,7 +8,10 @@ public sealed class AuditService(Database db)
 {
     public Task LogAsync(string actionName, string entityName, long? entityId = null, string actor = "system", CancellationToken ct = default)
     {
-        return db.ExecuteAsync(
+        return AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db,
+            "audit_logs",
+            "id",
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
               VALUES (1, NULL, @actor, @actionName, @entityName, @entityId, jsonb_build_object('source', 'api'))",
             cmd =>
@@ -30,7 +33,10 @@ public sealed class AuditService(Database db)
             ? $"{roleValue}:{actorId}"
             : actorId > 0 ? $"user:{actorId}" : "system";
 
-        return db.ExecuteAsync(
+        return AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db,
+            "audit_logs",
+            "id",
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
               VALUES (@companyId, @actorId, @actor, @actionName, @entityName, @entityId, COALESCE(@details, jsonb_build_object('source', 'api')))",
             cmd =>

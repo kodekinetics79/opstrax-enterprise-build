@@ -31,6 +31,7 @@ public static class PlatformEndpoints
 
         // ── Command Center ──────────────────────────────────────────────────────
         app.MapGet("/api/platform/command-center/summary", CommandCenter);
+        app.MapGet("/api/platform/commercial-ops/summary", CommercialOpsSummary);
 
         // ── Tenant Management ───────────────────────────────────────────────────
         app.MapGet("/api/platform/tenants", TenantsList);
@@ -116,7 +117,7 @@ public static class PlatformEndpoints
         return (principal, null);
     }
 
-    private static bool HasPlatformPermission(IReadOnlyCollection<string> permissions, string required)
+    internal static bool HasPlatformPermission(IReadOnlyCollection<string> permissions, string required)
     {
         if (permissions.Count == 0) return false;
         foreach (var p in permissions)
@@ -133,11 +134,14 @@ public static class PlatformEndpoints
         return false;
     }
 
-    private static async Task AuditAsync(Database db, PlatformPrincipal actor, HttpContext http, string action,
+    private static Task AuditAsync(Database db, PlatformPrincipal actor, HttpContext http, string action,
         string entityType, long? entityId, long? targetCompanyId, object? details, CancellationToken ct)
     {
         var detailsJson = details is null ? null : JsonSerializer.Serialize(details);
-        await db.ExecuteAsync(
+        return AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db,
+            "platform_audit_log",
+            "id",
             @"INSERT INTO platform_audit_log (actor_admin_id, actor_email, actor_role, action, entity_type, entity_id, target_company_id, details_json, ip_address)
               VALUES (@aid, @email, @role, @action, @etype, @eid, @cid, CAST(@details AS JSONB), @ip)",
             c =>
@@ -302,6 +306,171 @@ public static class PlatformEndpoints
             topRisks = risks,
             recommendedActions = recommended,
         }));
+    }
+
+    private static async Task<IResult> CommercialOpsSummary(HttpContext http, Database db, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:dashboard:view", ct);
+        if (error is not null) return error;
+
+        var summary = await BuildCommercialOpsSummaryAsync(db, ct);
+        return Results.Ok(ApiResponse<object>.Ok(summary, "Platform commercial operations summary"));
+    }
+
+    internal static async Task<Dictionary<string, object?>> BuildCommercialOpsSummaryAsync(Database db, CancellationToken ct)
+    {
+        var subscriptionCounts = await db.QueryAsync(
+            @"SELECT status, COUNT(*) n, COALESCE(SUM(mrr_cents),0) mrr
+              FROM tenant_subscriptions
+              GROUP BY status", ct: ct);
+
+        long active = 0, trial = 0, pastDue = 0, suspended = 0, cancelled = 0, manual = 0, mrrCents = 0;
+        foreach (var r in subscriptionCounts)
+        {
+            var status = r["status"]?.ToString() ?? "";
+            var n = Convert.ToInt64(r["n"]);
+            var mrr = Convert.ToInt64(r["mrr"]);
+            switch (status)
+            {
+                case "active": active = n; mrrCents += mrr; break;
+                case "trial": trial = n; break;
+                case "past_due": pastDue = n; mrrCents += mrr; break;
+                case "suspended": suspended = n; break;
+                case "cancelled": cancelled = n; break;
+                case "manual_contract": manual = n; mrrCents += mrr; break;
+            }
+        }
+
+        var tenantTotal = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies", ct: ct);
+        var trialEndingSoon = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM tenant_subscriptions WHERE status='trial' AND trial_ends_at IS NOT NULL AND trial_ends_at < NOW() + INTERVAL '7 day'",
+            ct: ct);
+        var renewalsDue = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM tenant_subscriptions WHERE contract_end IS NOT NULL AND contract_end < (NOW() + INTERVAL '30 day')::date AND status IN ('active','past_due')",
+            ct: ct);
+        var openInvoiceCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_invoices WHERE status IN ('sent','overdue')", ct: ct);
+        var outstandingRevenue = await db.ScalarLongAsync("SELECT COALESCE(SUM(amount_cents),0) FROM platform_invoices WHERE status IN ('sent','overdue')", ct: ct);
+        var collectedRevenue = await db.ScalarLongAsync("SELECT COALESCE(SUM(amount_cents),0) FROM platform_invoices WHERE status='paid'", ct: ct);
+
+        var packageRows = await db.QueryAsync(
+            @"SELECT p.package_code, p.name, p.active, p.is_custom, COALESCE(COUNT(ts.id),0) tenant_count, COALESCE(SUM(ts.mrr_cents),0) mrr_cents
+              FROM packages p
+              LEFT JOIN tenant_subscriptions ts ON ts.package_id = p.id
+              GROUP BY p.id, p.package_code, p.name, p.active, p.is_custom
+              ORDER BY tenant_count DESC, p.name
+              LIMIT 5", ct: ct);
+
+        var riskRows = await db.QueryAsync(
+            @"SELECT c.id, c.name tenant, ts.status, ts.contract_end,
+                     COALESCE(COUNT(u.id),0) user_count,
+                     (SELECT COUNT(*) FROM platform_invoices i WHERE i.company_id=c.id AND i.status IN ('overdue','sent')) open_invoices
+              FROM companies c
+              JOIN tenant_subscriptions ts ON ts.company_id = c.id
+              LEFT JOIN users u ON u.company_id = c.id
+              GROUP BY c.id, c.name, ts.status, ts.contract_end
+              ORDER BY open_invoices DESC, ts.contract_end NULLS LAST, c.name
+              LIMIT 8", ct: ct);
+
+        var auditRows = await db.QueryAsync(
+            @"SELECT id, actor_email, actor_role, action, entity_type, entity_id, target_company_id, created_at
+              FROM platform_audit_log
+              ORDER BY created_at DESC
+              LIMIT 8", ct: ct);
+
+        var roleRows = await db.QueryAsync(
+            @"SELECT r.role_key, r.name,
+                     (SELECT COUNT(*) FROM platform_role_permissions rp WHERE rp.role_id=r.id) permission_count,
+                     (SELECT COUNT(*) FROM platform_admins a WHERE a.role_id=r.id) admin_count
+              FROM platform_roles r
+              ORDER BY r.id", ct: ct);
+
+        var recommendedActions = new List<object>();
+        if (pastDue > 0) recommendedActions.Add(new { priority = "Critical", title = $"{pastDue} tenant(s) past due", action = "payment_follow_up" });
+        if (trialEndingSoon > 0) recommendedActions.Add(new { priority = "High", title = $"{trialEndingSoon} trial tenant(s) ending soon", action = "trial_conversion" });
+        if (renewalsDue > 0) recommendedActions.Add(new { priority = "High", title = $"{renewalsDue} renewal(s) due in 30 days", action = "renewal_follow_up" });
+        if (suspended > 0) recommendedActions.Add(new { priority = "High", title = $"{suspended} suspended tenant(s) to review", action = "reactivation" });
+
+        return new Dictionary<string, object?>
+        {
+            ["generatedAtUtc"] = DateTime.UtcNow,
+            ["currency"] = "USD",
+            ["mrrCents"] = mrrCents,
+            ["arrCents"] = mrrCents * 12,
+            ["tenantLifecycle"] = new
+            {
+                total = tenantTotal,
+                active,
+                trial,
+                pastDue,
+                suspended,
+                cancelled,
+                manual,
+                trialEndingSoon,
+                renewalsDue,
+            },
+            ["billing"] = new
+            {
+                openInvoiceCount,
+                outstandingRevenueCents = outstandingRevenue,
+                collectedRevenueCents = collectedRevenue,
+            },
+            ["packages"] = new
+            {
+                total = packageRows.Count,
+                active = packageRows.Count(r => string.Equals(r["active"]?.ToString(), "true", StringComparison.OrdinalIgnoreCase)),
+                custom = packageRows.Count(r => string.Equals(r["isCustom"]?.ToString(), "true", StringComparison.OrdinalIgnoreCase)),
+                items = packageRows.Select(r => new
+                {
+                    packageCode = r["packageCode"],
+                    name = r["name"],
+                    tenantCount = r["tenantCount"],
+                    mrrCents = r["mrrCents"],
+                    active = r["active"],
+                    isCustom = r["isCustom"],
+                }).ToArray(),
+            },
+            ["health"] = new
+            {
+                total = riskRows.Count,
+                critical = riskRows.Count(r => string.Equals(r["status"]?.ToString(), "suspended", StringComparison.OrdinalIgnoreCase) || string.Equals(r["status"]?.ToString(), "past_due", StringComparison.OrdinalIgnoreCase)),
+                risky = riskRows.Count(r => string.Equals(r["status"]?.ToString(), "trial", StringComparison.OrdinalIgnoreCase)),
+                items = riskRows.Select(r => new
+                {
+                    id = r["id"],
+                    tenant = r["tenant"],
+                    status = r["status"],
+                    contractEnd = r["contractEnd"],
+                    userCount = r["userCount"],
+                    openInvoices = r["openInvoices"],
+                }).ToArray(),
+            },
+            ["audit"] = new
+            {
+                recent = auditRows.Select(r => new
+                {
+                    id = r["id"],
+                    actorEmail = r["actorEmail"],
+                    actorRole = r["actorRole"],
+                    action = r["action"],
+                    entityType = r["entityType"],
+                    entityId = r["entityId"],
+                    targetCompanyId = r["targetCompanyId"],
+                    createdAt = r["createdAt"],
+                }).ToArray(),
+            },
+            ["roles"] = new
+            {
+                total = roleRows.Count,
+                items = roleRows.Select(r => new
+                {
+                    roleKey = r["roleKey"],
+                    name = r["name"],
+                    permissionCount = r["permissionCount"],
+                    adminCount = r["adminCount"],
+                }).ToArray(),
+            },
+            ["recommendedActions"] = recommendedActions,
+        };
     }
 
     // ════════════════════════════════════════════════════════════════════════════

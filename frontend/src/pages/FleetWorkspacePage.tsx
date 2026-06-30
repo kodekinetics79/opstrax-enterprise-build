@@ -13,6 +13,7 @@ import {
   Truck,
   Wrench,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import {
   fleetApi,
@@ -27,6 +28,7 @@ import {
   type FleetVehicle,
   type QuoteRequest,
 } from '@/services/fleetTmsApi';
+import { useAuth } from '@/hooks/useAuth';
 import { ShipmentLifecycleDrawer } from '../components/fleet/ShipmentLifecycleDrawer';
 
 type FleetMode = 'command' | 'shipments' | 'vehicles' | 'tracking' | 'maintenance' | 'fuel' | 'carriers';
@@ -100,6 +102,8 @@ const MODULES: Record<FleetMode, {
 const MODE_ORDER: FleetMode[] = ['command', 'shipments', 'vehicles', 'tracking', 'maintenance', 'fuel', 'carriers'];
 
 export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: FleetMode }) {
+  const navigate = useNavigate();
+  const { session } = useAuth();
   const [mode, setMode] = useState<FleetMode>(initialMode);
   const config = MODULES[mode];
   const [overview, setOverview] = useState<FleetOverview | null>(null);
@@ -113,10 +117,20 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
   const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
   const [selectedShipment, setSelectedShipment] = useState<FleetShipment | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
+  const [authIssue, setAuthIssue] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const refreshAll = async () => {
-    const [ov, shipmentRes, vehicleRes, trackingRes, maintenanceRes, fuelRes, carrierRes, bookingRes, quoteRes] = await Promise.all([
+  const loadWorkspaceData = async () => {
+    const warnings: string[] = [];
+    const isUnauthorized = (reason: unknown) => {
+      const status = typeof reason === 'object' && reason && 'response' in reason
+        ? Number((reason as { response?: { status?: number } }).response?.status ?? 0)
+        : 0;
+      const message = String((reason as { message?: string } | null | undefined)?.message ?? reason ?? '');
+      return status === 401 || /unauthorized|missing bearer token/i.test(message);
+    };
+    const [ov, shipmentRes, vehicleRes, trackingRes, maintenanceRes, fuelRes, carrierRes, bookingRes, quoteRes] = await Promise.allSettled([
       fleetApi.overview(),
       fleetApi.shipments({ pageSize: 12 }),
       fleetApi.vehicles(),
@@ -127,44 +141,54 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       fleetCommercialApi.bookingRequests().catch(() => ({ items: [] as BookingRequest[] })),
       fleetCommercialApi.quoteRequests().catch(() => ({ items: [] as QuoteRequest[] })),
     ]);
-    setOverview(ov);
-    setShipments(shipmentRes.items);
-    setVehicles(vehicleRes.items);
-    setTracking(trackingRes.items);
-    setMaintenance(maintenanceRes.items);
-    setFuel(fuelRes.items);
-    setCarriers(carrierRes.items);
-    setBookings(bookingRes.items);
-    setQuotes(quoteRes.items);
+
+    const apply = <T,>(result: PromiseSettledResult<T>, label: string, setter: (value: T) => void) => {
+      if (result.status === 'fulfilled') {
+        setter(result.value);
+        return;
+      }
+      if (isUnauthorized(result.reason)) {
+        setAuthIssue('Your session is missing or expired. Sign in again to load Fleet TMS Workspace.');
+        return;
+      }
+      warnings.push(`${label} could not load (${result.reason instanceof Error ? result.reason.message : 'request failed'}).`);
+    };
+
+    apply(ov, 'Fleet overview', setOverview);
+    apply(shipmentRes, 'Shipments', (value) => setShipments(value.items));
+    apply(vehicleRes, 'Vehicles', (value) => setVehicles(value.items));
+    apply(trackingRes, 'Tracking', (value) => setTracking(value.items));
+    apply(maintenanceRes, 'Maintenance', (value) => setMaintenance(value.items));
+    apply(fuelRes, 'Fuel', (value) => setFuel(value.items));
+    apply(carrierRes, 'Carriers', (value) => setCarriers(value.items));
+    apply(bookingRes, 'Booking requests', (value) => setBookings(value.items));
+    apply(quoteRes, 'Quote requests', (value) => setQuotes(value.items));
+
+    setLoadWarnings(warnings);
   };
 
   useEffect(() => {
+    if (!session?.token) {
+      setAuthIssue('Sign in is required to load Fleet TMS Workspace.');
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
+    setAuthIssue(null);
     (async () => {
       try {
-        const [ov, shipmentRes, vehicleRes, trackingRes, maintenanceRes, fuelRes, carrierRes, bookingRes, quoteRes] = await Promise.all([
-          fleetApi.overview(),
-          fleetApi.shipments({ pageSize: 12 }),
-          fleetApi.vehicles(),
-          fleetApi.tracking({ pageSize: 12 }),
-          fleetApi.maintenance({ pageSize: 12 }),
-          fleetApi.fuel({ pageSize: 12 }),
-          fleetCommercialApi.carriers().catch(() => ({ items: [] as Carrier[] })),
-          fleetCommercialApi.bookingRequests().catch(() => ({ items: [] as BookingRequest[] })),
-          fleetCommercialApi.quoteRequests().catch(() => ({ items: [] as QuoteRequest[] })),
-        ]);
+        await loadWorkspaceData();
         if (cancelled) return;
-        setOverview(ov);
-        setShipments(shipmentRes.items);
-        setVehicles(vehicleRes.items);
-        setTracking(trackingRes.items);
-        setMaintenance(maintenanceRes.items);
-        setFuel(fuelRes.items);
-        setCarriers(carrierRes.items);
-        setBookings(bookingRes.items);
-        setQuotes(quoteRes.items);
       } catch (err) {
+        const status = typeof err === 'object' && err && 'response' in err
+          ? Number((err as { response?: { status?: number } }).response?.status ?? 0)
+          : 0;
+        const message = String((err as { message?: string } | null | undefined)?.message ?? err ?? '');
+        if (!cancelled && (status === 401 || /unauthorized|missing bearer token/i.test(message))) {
+          setAuthIssue('Your session has expired or is not attached. Sign in again to load Fleet TMS Workspace.');
+          return;
+        }
         if (!cancelled) notifyApiError(err, 'Unable to load fleet workspace.');
       } finally {
         if (!cancelled) setLoading(false);
@@ -173,7 +197,11 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session?.token]);
+
+  const refreshAll = async () => {
+    await loadWorkspaceData();
+  };
 
   const stats = useMemo(() => {
     if (!overview) return [];
@@ -296,7 +324,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
             note: 'Events already marked for manual or commercial review.',
           },
           {
-            label: 'Spend in sample',
+            label: 'Spend tracked',
             value: `${fuel.reduce((sum, event) => sum + event.cost, 0).toFixed(0)}`,
             note: 'Visible spend tied directly to the event rows on this page.',
           },
@@ -517,6 +545,33 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
 
   return (
     <>
+      {authIssue ? (
+        <div className="relative min-h-[100svh] overflow-hidden bg-[#eef6f1] px-4 py-8 text-slate-900">
+          <div className="mx-auto flex min-h-[70vh] max-w-4xl items-center justify-center">
+            <section className="panel w-full max-w-2xl p-6 sm:p-8">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 ring-1 ring-amber-200">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-600">Authentication required</p>
+                  <h1 className="mt-1 text-2xl font-black text-slate-950">Fleet TMS Workspace is waiting for a signed-in session</h1>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-6 text-slate-600">{authIssue}</p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button type="button" className="btn-primary" onClick={() => navigate('/login')}>
+                  Go to login
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => window.location.reload()}>
+                  Retry
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : (
       <div className="relative min-h-[100svh] overflow-hidden bg-[#eef6f1] text-slate-900 dark:bg-[#03070f] dark:text-white">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_26%),radial-gradient(circle_at_80%_16%,rgba(14,165,233,0.12),transparent_22%),linear-gradient(180deg,rgba(255,255,255,0.55),transparent_32%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.20),transparent_26%),radial-gradient(circle_at_80%_16%,rgba(14,165,233,0.10),transparent_22%),linear-gradient(180deg,rgba(6,11,20,0.95),rgba(3,7,15,0.98))]" />
         <div className="pointer-events-none absolute inset-0 opacity-[0.16] mix-blend-soft-light [background-image:linear-gradient(rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px)] [background-size:74px_74px] animate-grid-breathe" />
@@ -600,6 +655,14 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
               </div>
 
               <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {loadWarnings.length ? (
+                  <div className="sm:col-span-2 xl:col-span-4 rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                    <p className="font-semibold">Some workspace data could not be loaded.</p>
+                    <ul className="mt-2 space-y-1 text-xs text-amber-800">
+                      {loadWarnings.slice(0, 3).map((warning) => <li key={warning}>• {warning}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
                 {loading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <div key={index} className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(16,185,129,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
@@ -831,7 +894,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">Operationally honest</p>
                 </div>
                 <p className="mt-2 text-[13px] leading-relaxed text-slate-300/80">
-                  Shipments, vehicles, tracking, maintenance, and fuel all round-trip to live tenant entities. The polish is there to elevate trust, not to hide a static demo.
+                  Shipments, vehicles, tracking, maintenance, and fuel all round-trip to live tenant entities. The polish is there to elevate trust and make the live data easier to act on.
                 </p>
               </div>
 
@@ -855,6 +918,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </section>
         </div>
       </div>
+      )}
     </>
   );
 }

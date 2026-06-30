@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 
 namespace Opstrax.Api.Services;
 
@@ -47,6 +48,8 @@ public sealed class TelemetryBackgroundService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
+        var telemetry = scope.ServiceProvider.GetRequiredService<TelemetryLiveStateService>();
+        var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
 
         // Join telemetry_rules to get per-tenant stale threshold (default 900s = 15 min)
         var stale = await db.QueryAsync(
@@ -59,11 +62,13 @@ public sealed class TelemetryBackgroundService(
               WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)",
             ct: ct);
 
+        var companiesToRefresh = new HashSet<long>();
         foreach (var pos in stale)
         {
             var companyId = Convert.ToInt64(pos["companyId"]);
             var vehicleId = Convert.ToInt64(pos["vehicleId"]);
             var seconds   = Convert.ToInt64(pos["secondsStale"]);
+            companiesToRefresh.Add(companyId);
 
             // Idempotent: skip if an open stale_device alert already exists
             var open = await db.ScalarLongAsync(
@@ -72,9 +77,10 @@ public sealed class TelemetryBackgroundService(
 
             if (open == 0)
             {
-                await db.ExecuteAsync(
+                var alertId = await db.InsertAsync(
                     @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, alert_type, severity, message, status)
-                      VALUES (@cid, @vid, @did, 'stale_device', 'Warning', @msg, 'Open')",
+                      VALUES (@cid, @vid, @did, 'stale_device', 'Warning', @msg, 'Open')
+                      RETURNING id",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
@@ -84,7 +90,38 @@ public sealed class TelemetryBackgroundService(
                     }, ct);
 
                 logger.LogInformation("Stale-device alert created: company={CompanyId} vehicle={VehicleId}", companyId, vehicleId);
+
+                var recommendation = ai.CreateRecommendation(
+                    companyId.ToString(),
+                    "telemetry.stale_device",
+                    $"Stale telemetry for vehicle {vehicleId}",
+                    "No telemetry has been received within the configured stale window.",
+                    0.76m,
+                    0.94m,
+                    System.Text.Json.JsonSerializer.Serialize(new { companyId, vehicleId, secondsStale = seconds, threshold = 900 }),
+                    System.Text.Json.JsonSerializer.Serialize(new { reason = "stale telemetry alert", secondsStale = seconds }),
+                    System.Text.Json.JsonSerializer.Serialize(new { action = "check_device_connectivity", vehicleId, companyId }),
+                    "high",
+                    alertId.ToString(),
+                    ActorTypes.System,
+                    "telemetry-background");
+
+                await db.ExecuteAsync(
+                    "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@rid", recommendation.Id);
+                        c.Parameters.AddWithValue("@id", alertId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+
+                await telemetry.RefreshVehicleAsync(companyId, vehicleId, ct);
             }
+        }
+
+        foreach (var companyId in companiesToRefresh)
+        {
+            await telemetry.RefreshCompanyAsync(companyId, ct);
         }
     }
 

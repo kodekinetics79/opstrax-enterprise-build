@@ -1,76 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
+import { type LogisticsOverview, type LogisticsRoute, type LogisticsStop } from "@/services/logisticsApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
-
-// ── Seed fallback ─────────────────────────────────────────────────────────────
-
-const STOP_ADDRESSES = [
-  "142 Elm St, Alexandria VA", "890 Commerce Blvd, Arlington VA", "315 River Rd, Manassas VA",
-  "450 Park Ave, Woodbridge VA", "600 Oak Dr, Fairfax VA", "78 Main St, Reston VA",
-  "229 Industrial Way, Herndon VA", "500 Delivery Ln, Chantilly VA",
-];
-const STOP_STATUSES = ["Pending", "En Route", "Arrived", "Completed", "Failed"];
-const PROOF_STATUSES = ["Not Required", "Pending", "Captured"];
-
-function buildSeedRoutes(): AnyRecord[] {
-  const shipments = developmentFleetSeedData.shipments as AnyRecord[];
-  return Array.from({ length: 6 }, (_, ri) => {
-    const stopCount = 4 + (ri % 4);
-    const stops = Array.from({ length: stopCount }, (_, si) => ({
-      id: ri * 10 + si + 1,
-      routeId: ri + 1,
-      stopSequence: si + 1,
-      stopType: si === 0 ? "Pickup" : "Delivery",
-      address: STOP_ADDRESSES[(ri + si) % STOP_ADDRESSES.length],
-      customerName: (shipments[(ri + si) % shipments.length]?.customerName ?? `Customer ${si + 1}`) as string,
-      eta: `${8 + si}:${String(30 + ((ri + si) % 30)).padStart(2, "0")} AM`,
-      timeWindowStart: `0${8 + si}:00`,
-      timeWindowEnd: `${8 + si + 1}:00`,
-      status: STOP_STATUSES[Math.min(si, STOP_STATUSES.length - 1)],
-      proofStatus: si < 2 ? "Captured" : si === 2 ? "Pending" : "Not Required",
-      notes: "",
-    }));
-    const completedStops = stops.filter((s) => s.status === "Completed").length;
-    return {
-      id: ri + 1,
-      routeName: `Route ${String(ri + 1).padStart(3, "0")}`,
-      status: ["Active", "Active", "Planned", "Active", "Delayed", "Completed"][ri],
-      slaRisk: ["Low", "High", "Low", "Medium", "High", "Low"][ri],
-      totalStops: stopCount,
-      vehicleCode: (shipments[ri % shipments.length]?.vehicleCode ?? `VH-00${ri + 1}`) as string,
-      driverName: (shipments[ri % shipments.length]?.driverName ?? `Driver ${ri + 1}`) as string,
-      plannedStartTime: `2026-06-19T0${6 + ri}:00:00`,
-      plannedEndTime: `2026-06-19T${12 + ri}:00:00`,
-      efficiencyScore: 72 + ri * 3,
-      completedStops,
-      stops,
-    };
-  });
-}
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
 const lastMileApi = {
-  routes: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/last-mile/deliveries")),
-    () => buildSeedRoutes()
-  ),
-  summary: () => withFallback(
-    unwrap<AnyRecord>(apiClient.get("/api/routes/summary")),
-    () => ({
-      totalRoutesToday: 6, activeRoutes: 3, plannedRoutes: 1, completedRoutes: 1,
-      delayedRoutes: 1, averageStopsPerRoute: 5.3, averageRouteEta: "4h 12m",
-      routeEfficiencyScore: 83, highRiskRoutes: 2,
-    })
-  ),
-  sendEta: (jobId: string | number) => withFallback(
-    unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/${jobId}/send`, {})),
-    () => ({ sent: true, jobId })
-  ),
+  overview: () => unwrap<LogisticsOverview>(apiClient.get("/api/fleet-tms/logistics/overview")),
+  routes: () => unwrap<{ items: LogisticsRoute[] }>(apiClient.get("/api/fleet-tms/logistics/routes", { params: { status: "Active" } })),
+  routeStops: (id: string | number) => unwrap<{ items: LogisticsStop[] }>(apiClient.get(`/api/fleet-tms/logistics/routes/${id}/stops`)),
+  sendEta: (jobId: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/${jobId}/send`, {})),
 };
 
 // ── Stop row ──────────────────────────────────────────────────────────────────
@@ -97,9 +38,9 @@ function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
       <div className={`pb-4 flex-1 min-w-0 ${isDone ? "opacity-60" : ""}`}>
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
-            <span className="text-xs font-semibold text-slate-500">#{String(stop.stopSequence)} · {String(stop.stopType ?? "Delivery")}</span>
-            <p className="text-sm font-medium text-slate-900 mt-0.5">{String(stop.customerName ?? "Customer")}</p>
-            <p className="text-xs text-slate-500 mt-0.5">{String(stop.address ?? "Address")}</p>
+            <span className="text-xs font-semibold text-slate-500">#{String(stop.stopSequence ?? stop.sequenceNo ?? "--")} · {String(stop.stopType ?? "Delivery")}</span>
+            <p className="text-sm font-medium text-slate-900 mt-0.5">{String(stop.customerName ?? stop.customer ?? "Customer")}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{String(stop.address ?? stop.addressLine ?? "Address")}</p>
           </div>
           <div className="flex flex-col items-end gap-1">
             <StatusBadge status={stop.status} />
@@ -113,7 +54,9 @@ function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
         </div>
         <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
           {stop.eta ? <span>ETA {String(stop.eta)}</span> : null}
+          {stop.etaUtc ? <span>ETA {new Date(String(stop.etaUtc)).toLocaleString()}</span> : null}
           {stop.timeWindowStart ? <span>Window {String(stop.timeWindowStart)}–{String(stop.timeWindowEnd ?? "")}</span> : null}
+          {stop.timeWindow ? <span>Window {String(stop.timeWindow)}</span> : null}
         </div>
         {stop.notes ? <p className="text-xs text-slate-500 mt-1 italic">{String(stop.notes)}</p> : null}
       </div>
@@ -124,11 +67,11 @@ function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
 // ── Route card ────────────────────────────────────────────────────────────────
 
 function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: boolean; onSelect: () => void }) {
-  const stops = (route.stops as AnyRecord[]) ?? [];
-  const completed = stops.filter((s) => String(s.status) === "Completed").length;
-  const pct = stops.length > 0 ? Math.round((completed / stops.length) * 100) : 0;
   const status = String(route.status ?? "");
-  const risk = String(route.slaRisk ?? "Low");
+  const risk = String(route.slaRisk ?? route.sla_risk ?? "Low");
+  const planned = Number(route.plannedStops ?? route.planned_stops ?? 0);
+  const completed = Number(route.completedStops ?? route.completed_stops ?? 0);
+  const pct = Number(route.completionPercent ?? route.completion_percent ?? (planned > 0 ? Math.round((completed / planned) * 100) : 0));
 
   const riskColor =
     risk === "High" ? "text-red-600" :
@@ -151,8 +94,8 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
     >
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="font-semibold text-slate-900 text-sm">{String(route.routeName ?? `Route ${route.id}`)}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{String(route.driverName ?? "--")} · {String(route.vehicleCode ?? "--")}</p>
+          <p className="font-semibold text-slate-900 text-sm">{String(route.routeCode ?? route.routeName ?? `Route ${route.id}`)}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{String(route.driverName ?? "--")} · {String(route.vehicleNumber ?? route.vehicleCode ?? "--")}</p>
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full border font-medium shrink-0 ${statusColor}`}>{status}</span>
       </div>
@@ -160,7 +103,7 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
       {/* Progress bar */}
       <div className="mt-3">
         <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-          <span>{completed}/{stops.length} stops</span>
+          <span>{completed}/{planned || completed} stops</span>
           <span>{pct}%</span>
         </div>
         <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
@@ -175,7 +118,7 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
 
       <div className="flex items-center justify-between mt-2.5 text-xs">
         <span className="text-slate-400">
-          {route.plannedStartTime ? new Date(String(route.plannedStartTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"} → {route.plannedEndTime ? new Date(String(route.plannedEndTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"}
+          {route.plannedStartTime ? new Date(String(route.plannedStartTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : route.departureTimeUtc ? new Date(String(route.departureTimeUtc)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"} → {route.plannedEndTime ? new Date(String(route.plannedEndTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : route.etaCompleteUtc ? new Date(String(route.etaCompleteUtc)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"}
         </span>
         <span className={`font-semibold ${riskColor}`}>{risk} risk</span>
       </div>
@@ -192,8 +135,8 @@ export function LastMileDeliveryPage() {
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
+  const overviewQ = useQuery({ queryKey: ["last-mile", "overview"], queryFn: lastMileApi.overview });
   const routesQ = useQuery({ queryKey: ["last-mile", "routes"], queryFn: lastMileApi.routes, refetchInterval: 20_000 });
-  const summaryQ = useQuery({ queryKey: ["last-mile", "summary"], queryFn: lastMileApi.summary });
 
   const etaMutation = useMutation({
     mutationFn: (jobId: string | number) => lastMileApi.sendEta(jobId),
@@ -208,45 +151,54 @@ export function LastMileDeliveryPage() {
     setTimeout(() => setToast(null), 3500);
   }
 
-  const routes = (routesQ.data ?? []) as AnyRecord[];
-  const s = (summaryQ.data ?? {}) as AnyRecord;
+  const routes = (routesQ.data?.items ?? []) as unknown as AnyRecord[];
+  const s = (overviewQ.data?.summary ?? {}) as AnyRecord;
 
   const filtered = routes.filter((r) => {
     if (statusFilter !== "All" && r.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
-        String(r.routeName ?? "").toLowerCase().includes(q) ||
+        String(r.routeCode ?? r.routeName ?? "").toLowerCase().includes(q) ||
         String(r.driverName ?? "").toLowerCase().includes(q) ||
-        String(r.vehicleCode ?? "").toLowerCase().includes(q)
+        String(r.vehicleNumber ?? r.vehicleCode ?? "").toLowerCase().includes(q)
       );
     }
     return true;
   });
 
   const selectedRoute = routes.find((r) => Number(r.id) === selectedId) ?? null;
-  const stops = selectedRoute ? (selectedRoute.stops as AnyRecord[]) ?? [] : [];
+  const routeStopsQ = useQuery({
+    queryKey: ["last-mile", "route-stops", selectedId],
+    queryFn: () => (selectedId ? lastMileApi.routeStops(selectedId) : Promise.resolve({ items: [] as LogisticsStop[] })),
+    enabled: selectedId !== null,
+  });
+  const stops = (routeStopsQ.data?.items ?? []) as unknown as AnyRecord[];
 
-  const flatStops = routes.flatMap((r) =>
-    ((r.stops as AnyRecord[]) ?? []).map((s) => ({
-      route: r.routeName,
-      driver: r.driverName,
-      vehicle: r.vehicleCode,
-      stop: s.stopSequence,
-      type: s.stopType,
-      customer: s.customerName,
-      address: s.address,
-      eta: s.eta,
-      status: s.status,
-      pod: s.proofStatus,
-    }))
-  );
+  useEffect(() => {
+    if (selectedId !== null || routes.length === 0) return;
+    setSelectedId(Number(routes[0].id));
+  }, [routes, selectedId]);
 
-  if (routesQ.isLoading) return <LoadingState />;
+  const flatStops = stops.map((s) => ({
+    route: String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.id ?? "--"),
+    driver: String(selectedRoute?.driverName ?? ""),
+    vehicle: String(selectedRoute?.vehicleNumber ?? selectedRoute?.vehicleCode ?? ""),
+    stop: s.sequenceNo ?? s.stopSequence,
+    type: s.stopType,
+    customer: s.customerName,
+    address: s.addressLine ?? s.address,
+    eta: s.etaUtc ?? s.eta,
+    status: s.status,
+    pod: s.proofStatus,
+  }));
+
+  if (routesQ.isLoading || overviewQ.isLoading) return <LoadingState />;
   if (routesQ.isError) return <ErrorState message={(routesQ.error as Error)?.message} />;
+  if (overviewQ.isError) return <ErrorState message={(overviewQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="control-tower flex flex-col gap-6 py-6">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
           {toast}
@@ -317,7 +269,7 @@ export function LastMileDeliveryPage() {
         {/* Route list */}
         <div className="flex flex-col gap-2">
           {filtered.length === 0 ? (
-            <EmptyState title="No routes match your filters" />
+            <EmptyState title="No routes match your filters" subtitle="There are no live routes for this company yet, or the current filter is too narrow." />
           ) : (
             filtered.map((route) => (
               <RouteCard
@@ -335,9 +287,9 @@ export function LastMileDeliveryPage() {
           <div className="panel p-5 flex flex-col gap-4">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">{String(selectedRoute.routeName)}</h2>
+                <h2 className="text-base font-semibold text-slate-900">{String(selectedRoute.routeCode ?? selectedRoute.routeName)}</h2>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  {String(selectedRoute.driverName ?? "--")} · {String(selectedRoute.vehicleCode ?? "--")} · {stops.length} stops
+                  {String(selectedRoute.driverName ?? "--")} · {String(selectedRoute.vehicleNumber ?? selectedRoute.vehicleCode ?? "--")} · {stops.length} stops
                 </p>
               </div>
               <div className="flex gap-2">
@@ -353,7 +305,7 @@ export function LastMileDeliveryPage() {
             </div>
 
             {stops.length === 0 ? (
-              <EmptyState title="No stops loaded for this route" />
+              <EmptyState title="No stops loaded for this route" subtitle="This route has no live stop records yet." />
             ) : (
               <div className="flex flex-col">
                 {stops.map((stop, i) => (

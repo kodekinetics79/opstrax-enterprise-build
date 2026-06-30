@@ -40,20 +40,25 @@ export function PageHeader({
   title: string; eyebrow?: string; description: string; actions?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
-      <div className="max-w-3xl">
+    <div className="panel relative overflow-hidden px-5 py-6 lg:px-6">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
+      <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="max-w-3xl">
         {eyebrow && (
-          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/25 bg-teal-400/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-teal-300">
+          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-white/90 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-700 shadow-sm backdrop-blur">
             <span className="live-dot h-1.5 w-1.5" />
             {eyebrow}
           </span>
         )}
-        <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">{title}</h1>
-        <p className="mt-2.5 text-sm leading-6 text-slate-400">{description}</p>
+          <h1 className="mt-3 text-[31px] font-black tracking-tight text-slate-950 md:text-[40px]">{title}</h1>
+          <p className="mt-2.5 max-w-3xl text-[14px] leading-7 text-slate-500">{description}</p>
+        </div>
+        {actions && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2.5 rounded-[22px] border border-slate-200/80 bg-white/85 p-2.5 shadow-sm backdrop-blur">
+            {actions}
+          </div>
+        )}
       </div>
-      {actions && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2.5">{actions}</div>
-      )}
     </div>
   );
 }
@@ -62,7 +67,7 @@ export function PageHeader({
    KPI CARD
    ============================================================ */
 export function KpiCard({
-  label, value, trend, status, delta,
+  label, value, trend, status, delta, icon,
 }: {
   label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string;
 }) {
@@ -74,18 +79,29 @@ export function KpiCard({
     ? "text-red-600"
     : isWarning && Number(value) > 0
     ? "text-amber-700"
-    : "text-slate-900";
+    : "text-slate-950";
 
   return (
-    <div className="panel p-6">
-      <p className="text-sm font-medium text-slate-500">{label}</p>
-      <p className={`mt-3 text-3xl font-bold tracking-tight ${valueColor}`}>{value}</p>
+    <div className="panel card-hover relative overflow-hidden p-5">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">{label}</p>
+          <p className={`mt-3 text-[30px] font-black tracking-tight ${valueColor}`}>{value}</p>
+        </div>
+        {status || trend ? (
+          <span className={`badge shrink-0 ${isCritical ? "badge-danger" : isWarning ? "badge-warning" : "badge-info"}`}>
+            {status ?? trend}
+          </span>
+        ) : null}
+      </div>
       {(delta || trend) && (
-        <p className="mt-3 flex items-center gap-1 text-xs text-slate-400">
-          {isDown ? <ArrowDownRight className="h-3 w-3 text-red-400" /> : isUp ? <ArrowUpRight className="h-3 w-3 text-emerald-500" /> : null}
+        <p className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+          {isDown ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> : isUp ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-500" /> : null}
           {delta ?? trend}
         </p>
       )}
+      {icon ? <div className="absolute right-4 top-4 text-slate-300">{icon}</div> : null}
     </div>
   );
 }
@@ -96,11 +112,14 @@ export function KpiCard({
 export function SkeletonCard() {
   return (
     <div className="panel flex flex-col justify-between p-5">
-      <div className="skeleton h-3 w-20 rounded" />
-      <div className="mt-4 skeleton h-8 w-28 rounded-lg" />
-      <div className="mt-3 flex items-center justify-between">
-        <div className="skeleton h-3 w-16 rounded" />
-        <div className="skeleton h-5 w-12 rounded-full" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="skeleton h-3 w-24 rounded-full" />
+        <div className="skeleton h-5 w-14 rounded-full" />
+      </div>
+      <div className="mt-4 skeleton h-10 w-32 rounded-2xl" />
+      <div className="mt-4 flex items-center justify-between">
+        <div className="skeleton h-3 w-20 rounded-full" />
+        <div className="skeleton h-3 w-16 rounded-full" />
       </div>
     </div>
   );
@@ -134,7 +153,7 @@ export function StatusBadge({ status }: { status?: unknown }) {
   }
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-bold ${cls}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] shadow-sm ${cls}`}>
       {pulse && <span className="live-dot h-1.5 w-1.5" />}
       {label}
     </span>
@@ -154,7 +173,7 @@ export function RiskBadge({ risk }: { risk?: unknown }) {
     ? "border-amber-400/30 bg-amber-500/10 text-amber-300"
     : "border-emerald-400/25 bg-emerald-500/8 text-emerald-300";
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-bold ${cls}`}>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] shadow-sm ${cls}`}>
       {text}
     </span>
   );
@@ -185,8 +204,8 @@ export function ScoreRing({
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-xs font-bold text-slate-800">{score}</span>
-        {label && <span className="text-[9px] text-slate-500 mt-0.5">{label}</span>}
+        <span className="text-xs font-extrabold text-slate-900 tabular-nums">{score}</span>
+        {label && <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</span>}
       </div>
     </div>
   );
@@ -205,7 +224,7 @@ export function ProgressBar({
     <div className="w-full">
       {label && (
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs text-slate-400">{label}</span>
+          <span className="text-xs font-medium text-slate-500">{label}</span>
           <span className="text-xs font-bold text-slate-800">{Math.round(pct)}%</span>
         </div>
       )}
@@ -266,13 +285,13 @@ export function DataTable({
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
             {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
           </span>
-          <button className="btn-ghost h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
+          <button type="button" className="btn-secondary h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
         </div>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="border-b border-slate-100 bg-slate-50">
+          <thead className="border-b border-slate-100 bg-slate-50/80">
             <tr>
               {columns.map((col) => {
                 const isActive = sortKey === col;
@@ -303,7 +322,7 @@ export function DataTable({
             {sorted.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-slate-500">
-                  No records found
+                  No records found. Try a different search or filter.
                 </td>
               </tr>
             ) : (
@@ -343,7 +362,7 @@ export function FilterBar({ children }: { children?: ReactNode }) {
     <div className="panel flex flex-wrap items-center gap-2.5 p-3.5">
       {children ||
         ["All", "Active", "At Risk", "Completed", "Pending"].map((x) => (
-          <button key={x} className="btn-ghost py-1.5 text-xs">{x}</button>
+          <button key={x} type="button" className="btn-ghost py-1.5 text-xs">{x}</button>
         ))}
     </div>
   );
@@ -356,10 +375,10 @@ export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; on
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm anim-fade-in">
-      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl">
+      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl">
         <button className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         <p className="section-title text-teal-700">OpsTrax Detail</p>
-        <h2 className="mt-3 text-2xl font-bold text-slate-900">
+        <h2 className="mt-3 text-[28px] font-black tracking-tight text-slate-950">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}
         </h2>
         <div className="mt-6 space-y-2">
@@ -409,11 +428,11 @@ export function LoadingState() {
    ============================================================ */
 export function ErrorState({ message }: { message?: string }) {
   return (
-    <div className="panel flex items-center gap-3 border-red-400/25 bg-red-500/5 p-6 text-red-300">
+    <div className="panel flex items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-6 text-red-300">
       <AlertTriangle className="h-5 w-5 shrink-0" />
       <div>
-        <p className="font-semibold">Unable to load data</p>
-        <p className="text-sm text-red-400/80">{message || "Check your connection and try again."}</p>
+        <p className="font-semibold text-red-700">Unable to load data</p>
+        <p className="text-sm text-red-500/90">{message || "Check your connection and try again."}</p>
       </div>
     </div>
   );
@@ -422,11 +441,11 @@ export function ErrorState({ message }: { message?: string }) {
 export function EmptyState({ title = "No records found", subtitle }: { title?: string; subtitle?: string }) {
   return (
     <div className="panel flex flex-col items-center justify-center p-14 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
         <Search className="h-6 w-6" />
       </div>
-      <p className="font-semibold text-slate-600">{title}</p>
-      {subtitle && <p className="mt-1.5 max-w-xs text-sm text-slate-500">{subtitle}</p>}
+      <p className="font-semibold text-slate-800">{title}</p>
+      {subtitle && <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{subtitle}</p>}
     </div>
   );
 }
@@ -437,7 +456,7 @@ export function EmptyState({ title = "No records found", subtitle }: { title?: s
 export function AiInsightCard({ insight }: { insight: AnyRecord }) {
   const score = Number(insight.score || insight.confidence || 0);
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+    <div className="relative overflow-hidden rounded-[20px] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm">
       {/* Glow blob */}
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-500/12 blur-2xl" />
       <div className="relative">
@@ -446,7 +465,7 @@ export function AiInsightCard({ insight }: { insight: AnyRecord }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
               <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600">System Fleet Insight</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">System Fleet Insight</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
@@ -492,7 +511,7 @@ export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
           const priority = String(action.priority || action.riskLevel || "Medium");
           const dot = priorityDot[priority] || "bg-slate-500";
           return (
-            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
+            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-[16px] border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
               <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{String(action.title)}</p>

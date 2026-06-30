@@ -5,9 +5,7 @@ import {
   Plus, Sun, Users, X,
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState } from "@/components/ui";
-import { drivers as seedDrivers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -24,22 +22,24 @@ const SHIFT_META: Record<ShiftType, { label: string; bg: string; text: string; h
   "Rest (HOS)": { label: "HOS Rest",   bg: "bg-red-50",     text: "text-red-600",    hours: "Mandatory rest" },
 };
 
-// ── Seed data ─────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 function buildDriverPool(): AnyRecord[] {
-  const raw = seedDrivers as AnyRecord[];
-  const vehicles = ["BOX-104","REF-209","TRK-316","VAN-512","BOX-218","REF-401","TRK-107","VAN-303","BOX-501","REF-110"];
-  return raw.slice(0, 10).map((d, i) => ({
-    id: i + 1,
-    driverId: d.id ?? i + 1,
-    name: String(d.name ?? `Driver ${i + 1}`),
-    code: `DRV-${String(i + 1).padStart(3, "0")}`,
-    licenceClass: (["B", "C", "C+E", "C+E", "C", "B", "C+E", "C", "B", "C+E"] as const)[i],
-    vehicleCode: vehicles[i],
-    hoursThisWeek: [38, 42, 35, 55, 48, 41, 62, 37, 44, 29][i],
-    hosLimit: 70,
-    status: (["Available", "On Shift", "Off", "On Shift", "Rest (HOS)", "Available", "On Shift", "Off", "Available", "Available"] as const)[i],
-    safetyScore: [94, 88, 91, 79, 85, 72, 84, 96, 77, 90][i],
+  return [];
+}
+
+function normalizeDrivers(rows: AnyRecord[]): AnyRecord[] {
+  return rows.map((d, i) => ({
+    id: d.id ?? i + 1,
+    driverId: d.id ?? d.driverId ?? i + 1,
+    name: String(d.fullName ?? d.name ?? d.driverName ?? `Driver ${i + 1}`),
+    code: String(d.driverCode ?? d.code ?? `DRV-${String(i + 1).padStart(3, "0")}`),
+    licenceClass: String(d.licenceClass ?? d.licenseClass ?? "C"),
+    vehicleCode: String(d.assignedVehicleCode ?? d.vehicleCode ?? d.assignedVehicle ?? ""),
+    hoursThisWeek: Number(d.hoursThisWeek ?? d.hours ?? 0),
+    hosLimit: Number(d.hosLimit ?? 70),
+    status: String(d.status ?? "Available"),
+    safetyScore: Number(d.safetyScore ?? d.score ?? 0),
   }));
 }
 
@@ -76,14 +76,8 @@ function buildSchedule(drivers: AnyRecord[]): AnyRecord[] {
 }
 
 const workforceApi = {
-  drivers: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/workforce/drivers")),
-    () => buildDriverPool()
-  ),
-  schedule: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/workforce/schedule")),
-    () => buildSchedule(buildDriverPool())
-  ),
+  drivers: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/drivers")).then(normalizeDrivers),
+  schedule: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/schedule")),
   assign: (driverId: number, day: string, shift: ShiftType) =>
     apiClient.post("/api/workforce/schedule/assign", { driverId, day, shift }),
 };

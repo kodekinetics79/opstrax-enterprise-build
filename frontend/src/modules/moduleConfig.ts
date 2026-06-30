@@ -50,10 +50,10 @@ import {
 import type { ModuleConfig } from "@/types";
 
 export const modules: ModuleConfig[] = [
-  { key: "command-center",    title: "Command Center",       route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one cockpit.", accent: "teal",   requiredPermission: "dashboard.view" },
+  { key: "command-center",    title: "Dashboard",            route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one dashboard.", accent: "teal",   requiredPermission: "dashboard.view" },
   { key: "fleet-health",     title: "Fleet Health",         route: "/fleet-health",      group: "Operations", description: "Priority-ranked vehicles and drivers by risk — OOS status, critical defects, safety score and action queue.", accent: "red",    requiredPermission: "dashboard:view" },
   { key: "live-dashboard",   title: "Fleet Overview",       route: "/live-dashboard",    group: "Operations", description: "Live vehicle positions, operational status, HOS posture and fleet health at a glance.", accent: "blue",   requiredPermission: "dashboard.view" },
-  { key: "map-view",         title: "Live Map",             route: "/map-view",          group: "Operations", description: "Real-time fleet positions, shipment routes, geofences and driver locations.", accent: "blue",   requiredPermission: "map.view" },
+  { key: "map-view",         title: "Live Map",             route: "/map-view",          group: "Operations", description: "Real-time fleet positions, shipment routes, geofences and driver locations.", accent: "blue",   requiredPermission: "telemetry.live_state.read" },
   { key: "alerts",           title: "Alerts",               route: "/alerts",            group: "Operations", description: "Critical operating alerts across telematics, maintenance, customer SLA and safety.", accent: "red",    requiredPermission: "fleet.view" },
   { key: "active-shipments", title: "Active Shipments",     route: "/active-shipments",  group: "Operations", description: "Live shipment board with SLA, ETA, POD and invoice readiness.", accent: "teal",   requiredPermission: "dispatch.view" },
   { key: "geofences",         title: "Geofence Management",     route: "/geofences",         group: "Operations",        description: "Create, edit and monitor geofence zones — entry/exit events, vehicle alerts and boundary enforcement.", accent: "purple", requiredPermission: "map:view" },
@@ -78,9 +78,11 @@ export const modules: ModuleConfig[] = [
   { key: "shipments",          title: "Shipments",          route: "/shipments",          group: "Transport Operations", description: "Execution register for active freight, status, ETA, POD and invoice.", accent: "teal",   requiredPermission: "shipments.view" },
   { key: "dispatch-board",     title: "Dispatch Board",     route: "/dispatch",           group: "Transport Operations", description: "Driver and vehicle assignment cockpit with match scores and exception radar.", accent: "green",  requiredPermission: "dispatch.view" },
   { key: "jobs",               title: "Jobs",               route: "/jobs",               group: "Transport Operations", description: "Job register — delivery, collection, transfer, and job status with driver and vehicle linkage.", accent: "teal",   requiredPermission: "dispatch.view" },
+  { key: "trips",              title: "Trips",              route: "/trips",              group: "Transport Operations", description: "Trip register with route compliance, breadcrumbs, driver/vehicle linkage and dispatch actions.", accent: "blue",   requiredPermission: "dispatch.view" },
   { key: "route-plans",        title: "Route Plans",        route: "/route-plans",        group: "Transport Operations", description: "Route library, lane risk, distance, duration, toll and vehicle fit.", accent: "purple", requiredPermission: "dispatch.view" },
   { key: "proof-of-delivery",  title: "Proof of Delivery",  route: "/proof-of-delivery",  group: "Transport Operations", description: "POD capture, GPS verification, photos, signature and invoice readiness.", accent: "green",  requiredPermission: "shipments:view" },
   { key: "last-mile-delivery", title: "Last Mile Delivery", route: "/last-mile-delivery", group: "Transport Operations", description: "Final-mile runs with ETA, proof, stop status and customer experience.", accent: "blue",   requiredPermission: "dispatch.view" },
+  { key: "operations-proof-center", title: "Operational Proof Center", route: "/operations/proof-center", group: "Transport Operations", description: "Execution summary, proof workflow, access controls, handover, billing confidence and mobile-readiness preview.", accent: "teal", requiredPermission: "operations.execution_summary.read" },
   { key: "logistics-workspace", title: "Logistics Workspace", route: "/logistics-workspace", group: "Transport Operations", description: "Last-mile command: dispatch orders, delivery routes and live stop progression with deliver/attempt/reschedule actions.", accent: "blue", requiredPermission: "dispatch:view" },
 
   { key: "fleet-utilization", title: "Fleet Utilization", route: "/fleet-utilization", group: "Fleet", description: "Vehicle utilization %, idle time, fuel efficiency, active hours and per-vehicle productivity analytics.", accent: "teal", requiredPermission: "fleet:view" },
@@ -95,7 +97,7 @@ export const modules: ModuleConfig[] = [
   { key: "assignments", title: "Assignments", route: "/assignments", group: "Fleet", description: "Driver, vehicle, device and asset assignment history.", accent: "purple", requiredPermission: "fleet.view" },
   { key: "documents",   title: "Documents",   route: "/documents",   group: "Fleet", description: "Vehicle, driver, contract, POD, invoice and compliance document vault.", accent: "blue",   requiredPermission: "fleet.view" },
 
-  { key: "iot-devices",    title: "Device Health", route: "/iot-devices", group: "Telematics & IoT", description: "Fleet device control for GPS, ELD, OBD, dashcam, sensor, firmware, diagnostics, and install posture.", accent: "blue", requiredPermission: "telematics:devices:view" },
+  { key: "iot-devices",    title: "Device Health", route: "/iot-devices", group: "Telematics & IoT", description: "Fleet device control for GPS, ELD, OBD, dashcam, sensor, firmware, diagnostics, and install posture.", accent: "blue", requiredPermission: "telemetry.devices.read" },
   { key: "gps-tracking",   title: "GPS Tracking",   route: "/gps-tracking",   group: "Telematics & IoT", description: "GPS position, history, geofence and location quality signals.", accent: "teal",   requiredPermission: "telematics:gps:view" },
   { key: "obd-j1939",      title: "OBD / J1939",    route: "/obd-j1939",      group: "Telematics & IoT", description: "Engine diagnostics, fault codes, odometer, fuel and vehicle health telemetry.", accent: "amber",  requiredPermission: "telematics:diagnostics:view" },
   { key: "cold-chain",     title: "Cold Chain",     route: "/cold-chain",     group: "Telematics & IoT", description: "Temperature, set point, humidity, door status and breach compliance.", accent: "blue",   requiredPermission: "telematics:sensors:view" },
@@ -164,8 +166,10 @@ export const moduleIcons: Record<string, typeof Activity> = {
   shipments: PackageCheck,
   "dispatch-board": RadioTower,
   "route-plans": Route,
+  trips: Route,
   "proof-of-delivery": FileCheck2,
   "last-mile-delivery": MapPinned,
+  "operations-proof-center": ClipboardCheck,
   "logistics-workspace": Map,
   vehicles: Truck,
   drivers: Users,

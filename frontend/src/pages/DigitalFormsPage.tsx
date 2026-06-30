@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
-import { drivers as seedDrivers, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ─────────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 const FORM_TEMPLATES: AnyRecord[] = [
   { id: 1, formKey: "pre-trip",     title: "Pre-Trip Inspection",         category: "Inspection",  fields: 22, requiredRole: "Driver",    frequency: "Daily",    compliance: "FMCSA / UAE MOI", active: true  },
@@ -21,34 +19,11 @@ const FORM_TEMPLATES: AnyRecord[] = [
   { id: 10,formKey: "customer-onboarding", title: "Customer Onboarding Form", category: "CRM",    fields: 24, requiredRole: "Sales",     frequency: "Once",     compliance: "Internal",        active: false },
 ];
 
-function buildSubmissionSeed(): AnyRecord[] {
-  const drivers = seedDrivers as AnyRecord[];
-  const vehicles = seedVehicles as AnyRecord[];
-  const templates = FORM_TEMPLATES.filter((t) => t.active);
-  return templates.flatMap((tmpl, ti) =>
-    drivers.slice(0, 2).map((d, di) => ({
-      id: ti * 2 + di + 1,
-      formTitle: String(tmpl.title),
-      formKey: String(tmpl.formKey),
-      submittedBy: String(d.name ?? ""),
-      vehicleCode: String(vehicles[di % vehicles.length]?.vehicleId ?? ""),
-      submittedAt: `2026-06-${String(15 + ti).padStart(2, "0")} ${["08:12", "17:45", "09:30", "12:00"][di % 4]}`,
-      status: (["Passed", "Passed", "Defect Found", "Passed", "Passed", "Passed"] as const)[ti % 6],
-      defects: ti % 4 === 2 ? 1 : 0,
-      attachments: ti % 3 > 0 ? 1 : 0,
-    }))
-  ).slice(0, 12);
-}
-
 const formsApi = {
-  templates: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/templates")).then((rows) =>
+  templates: () => unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/templates")).then((rows) =>
       rows.map((r) => ({ ...r, formKey: r.formKey ?? r.form_key ?? "", fields: Number(r.fields ?? r.field_count ?? 0) }))
     ),
-    () => FORM_TEMPLATES
-  ),
-  submissions: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/submissions")).then((rows) =>
+  submissions: () => unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/submissions")).then((rows) =>
       rows.map((r) => ({
         ...r,
         formTitle: r.formTitle ?? r.form_title ?? r.title ?? "",
@@ -58,8 +33,6 @@ const formsApi = {
         defects: Number(r.defects ?? 0),
       }))
     ),
-    () => buildSubmissionSeed()
-  ),
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

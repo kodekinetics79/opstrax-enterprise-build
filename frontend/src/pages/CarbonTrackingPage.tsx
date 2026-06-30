@@ -6,7 +6,6 @@ import {
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState } from "@/components/ui";
-import { vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -16,7 +15,7 @@ const CO2_PER_KM_REEFER = 0.82; // higher due to refrigeration unit
 const CO2_PER_KM_TRUCK = 0.62;
 const CO2_PER_KM_VAN = 0.34;
 
-// ── Seed ─────────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 const MONTHLY_TREND: AnyRecord[] = [
   { month: "Jan", emissions: 142, target: 155, intensity: 1.8 },
@@ -26,28 +25,6 @@ const MONTHLY_TREND: AnyRecord[] = [
   { month: "May", emissions: 127, target: 145, intensity: 1.61 },
   { month: "Jun", emissions: 119, target: 143, intensity: 1.51 },
 ];
-
-function buildVehicleSeed(): AnyRecord[] {
-  const vTypes = ["Reefer", "Box Truck", "Van", "Flatbed", "Refrigerated Van"];
-  return (seedVehicles as AnyRecord[]).map((v, i) => {
-    const vType = vTypes[i % 5];
-    const co2pkm = vType === "Reefer" ? CO2_PER_KM_REEFER : vType.includes("Van") ? CO2_PER_KM_VAN : CO2_PER_KM_TRUCK;
-    const kmMonth = 4000 + i * 1800;
-    const co2Month = Math.round(co2pkm * kmMonth);
-    const gallonsMonth = Math.round(co2Month / CO2_PER_GALLON);
-    return {
-      id: i + 1,
-      vehicleCode: String(v.vehicleId ?? ""),
-      vehicleType: vType,
-      kmThisMonth: kmMonth,
-      co2ThisMonth: co2Month,
-      co2PerKm: co2pkm,
-      gallonsUsed: gallonsMonth,
-      idlingCo2: Math.round(co2Month * 0.12),
-      trend: (["Improving", "Stable", "Improving", "Deteriorating", "Stable"] as const)[i % 5],
-    };
-  });
-}
 
 const SCOPE_DATA = [
   { scope: "Scope 1 (Direct)", co2: 119, pct: 71 },
@@ -72,7 +49,7 @@ const carbonApi = () => withFallback(
       trend: r.trend ?? "Stable",
     }))
   ),
-  () => buildVehicleSeed()
+  () => []
 );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

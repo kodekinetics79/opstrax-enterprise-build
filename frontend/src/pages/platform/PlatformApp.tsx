@@ -9,6 +9,7 @@ import { PlatformRevenuePage } from "./PlatformRevenuePage";
 import { PlatformBillingPage } from "./PlatformBillingPage";
 import { PlatformHealthPage } from "./PlatformHealthPage";
 import { PlatformAuditPage } from "./PlatformAuditPage";
+import { PlatformCommercialOpsPage } from "./PlatformCommercialOpsPage";
 
 // Permission-gated wrapper: redirects to the platform login if not authenticated,
 // and to the command center if the role lacks the required permission.
@@ -33,6 +34,7 @@ export default function PlatformApp() {
         <Route path="login" element={<PlatformLoginPage />} />
         <Route element={<ProtectedShell />}>
           <Route index element={<Guard permission="platform:dashboard:view"><PlatformCommandCenterPage /></Guard>} />
+          <Route path="commercial-ops" element={<Guard permission="platform:dashboard:view"><PlatformCommercialOpsPage /></Guard>} />
           <Route path="tenants" element={<Guard permission="platform:tenants:view"><PlatformTenantsPage /></Guard>} />
           <Route path="packages" element={<Guard permission="platform:packages:view"><PlatformPackagesPage /></Guard>} />
           <Route path="revenue" element={<Guard permission="platform:packages:view"><PlatformRevenuePage /></Guard>} />

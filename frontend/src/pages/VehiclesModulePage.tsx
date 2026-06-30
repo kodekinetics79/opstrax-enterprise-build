@@ -103,7 +103,7 @@ export function VehiclesModulePage() {
   );
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="control-tower space-y-6 pb-10">
       {shellBanner}
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
@@ -275,12 +275,13 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
     if (rows.length && selectedId == null) setSelectedId(rowId(rows[0]));
   }, [rows, selectedId]);
 
-  const record = (detail.data?.record as AnyRecord) || null;
+  const selectedRow = rows.find((row) => rowId(row) === selectedId) || null;
+  const record = (detail.data?.record as AnyRecord) || selectedRow;
   const sections = [
-    { title: "Maintenance", rows: detail.data?.maintenance as AnyRecord[] | undefined, fields: ["title", "category", "status", "dueDate"] },
-    { title: "Compliance", rows: detail.data?.compliance as AnyRecord[] | undefined, fields: ["documentName", "documentType", "status", "expiryDate"] },
-    { title: "Documents", rows: detail.data?.documents as AnyRecord[] | undefined, fields: ["documentName", "documentType", "status", "expiryDate"] },
-    { title: "Audit trail", rows: detail.data?.auditTrail as AnyRecord[] | undefined, fields: ["actionName", "actorName", "createdAt"] },
+    { title: "Maintenance", rows: detail.data?.maintenance as AnyRecord[] | undefined ?? [], fields: ["title", "category", "status", "dueDate"] },
+    { title: "Compliance", rows: detail.data?.compliance as AnyRecord[] | undefined ?? [], fields: ["documentName", "documentType", "status", "expiryDate"] },
+    { title: "Documents", rows: detail.data?.documents as AnyRecord[] | undefined ?? [], fields: ["documentName", "documentType", "status", "expiryDate"] },
+    { title: "Audit trail", rows: detail.data?.auditTrail as AnyRecord[] | undefined ?? [], fields: ["actionName", "actorName", "createdAt"] },
   ];
 
   return (
@@ -340,7 +341,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
           ))}
         </div>
       </div>
-      {detail.isLoading ? <LoadingState /> : null}
+      {detail.isLoading && !record ? <LoadingState /> : null}
     </div>
   );
 }

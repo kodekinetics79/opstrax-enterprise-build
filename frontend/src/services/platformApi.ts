@@ -99,6 +99,7 @@ export const platformApi = {
 
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
+  commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),
 
   // Tenants
   tenants: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/tenants")),

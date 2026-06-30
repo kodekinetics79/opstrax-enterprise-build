@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { incidents as seedIncidents, drivers as seedDrivers, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ────────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 const VIOLATION_TYPES = [
   "Speeding (>20 km/h over limit)",
@@ -19,50 +17,8 @@ const VIOLATION_TYPES = [
   "Red Light / Stop Sign",
 ];
 
-function buildSeed(): AnyRecord[] {
-  const drivers = seedDrivers as AnyRecord[];
-  const vehicles = seedVehicles as AnyRecord[];
-  const incidents = seedIncidents as AnyRecord[];
-
-  // Expand incidents into more detailed violation records
-  const base = incidents.map((inc, i) => ({
-    id: i + 1,
-    violationType: VIOLATION_TYPES[i % VIOLATION_TYPES.length],
-    severity: String(inc.severity ?? "Medium"),
-    driverName: String(inc.driver ?? drivers[i % drivers.length]?.name ?? ""),
-    driverCode: String(drivers[i % drivers.length]?.driverId ?? ""),
-    vehicleCode: String(inc.vehicle ?? vehicles[i % vehicles.length]?.vehicleId ?? ""),
-    occurredAt: String(inc.dateTime ?? "2026-06-15 09:00"),
-    status: String(inc.status ?? "Open"),
-    riskLevel: String(inc.severity ?? "Medium") === "Critical" ? "High" : String(inc.severity) === "High" ? "High" : "Medium",
-    description: `${String(inc.incidentType ?? "Traffic event")} detected on route — requires review.`,
-    reviewStatus: String(inc.status ?? "Under Review"),
-  }));
-
-  // Add more synthetic violations for coverage
-  return [
-    ...base,
-    ...Array.from({ length: 6 }, (_, i) => ({
-      id: base.length + i + 1,
-      violationType: VIOLATION_TYPES[(i + 2) % VIOLATION_TYPES.length],
-      severity: (["Low", "Medium", "Low", "High", "Medium", "Low"] as const)[i % 6],
-      driverName: String(drivers[i % drivers.length]?.name ?? "Unknown"),
-      driverCode: String(drivers[i % drivers.length]?.driverId ?? ""),
-      vehicleCode: String(vehicles[i % vehicles.length]?.vehicleId ?? ""),
-      occurredAt: `2026-06-${String(10 + i).padStart(2, "0")} ${["07:42", "11:15", "14:30", "08:05", "16:48", "09:22"][i % 6]}`,
-      status: (["Open", "Reviewed", "Open", "Coaching Assigned", "Closed", "Open"] as const)[i % 6],
-      riskLevel: (["Low", "Medium", "Low", "High", "Low", "Medium"] as const)[i % 6],
-      description: `${VIOLATION_TYPES[(i + 2) % VIOLATION_TYPES.length]} detected via telematics.`,
-      reviewStatus: (["New", "Reviewed", "New", "Reviewed", "Closed", "New"] as const)[i % 6],
-    })),
-  ];
-}
-
-const SEED_SUMMARY: AnyRecord = { total: 8, highSeverity: 2, speedingCount: 2, phoneUseCount: 1, seatbeltCount: 1, pendingReview: 4 };
-
 const violationsApi = {
-  list: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/traffic-violations")).then((rows) =>
+  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/traffic-violations")).then((rows) =>
       rows.map((r) => ({
         ...r,
         violationType: r.violationType ?? r.violation_type ?? r.eventType ?? r.event_type ?? "",
@@ -74,12 +30,7 @@ const violationsApi = {
         reviewStatus: r.reviewStatus ?? r.review_status ?? r.status ?? "New",
       }))
     ),
-    () => buildSeed()
-  ),
-  summary: () => withFallback(
-    unwrap<AnyRecord>(apiClient.get("/api/traffic-violations/summary")),
-    () => SEED_SUMMARY
-  ),
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/traffic-violations/summary")),
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ export function FleetAssetManagementPage() {
   const [selectedShipmentId, setSelectedShipmentId] = useState('');
   const [selectedCarrierId, setSelectedCarrierId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [forms, setForms] = useState({
     typeCode: '',
@@ -38,52 +39,63 @@ export function FleetAssetManagementPage() {
     movementNotes: '',
   });
 
-  const refresh = async () => {
-    const [typesRes, assetsRes, shipmentsRes, carriersRes] = await Promise.all([
+  const loadWorkspaceData = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) setLoading(true);
+
+    const warnings: string[] = [];
+    const [typesRes, assetsRes, shipmentsRes, carriersRes] = await Promise.allSettled([
       fleetAssetApi.assetTypes(),
       fleetAssetApi.assets(),
       fleetApi.shipments({ pageSize: 8 }),
       fleetCommercialApi.carriers().catch(() => ({ items: [] as Array<{ id: string; name: string }> })),
     ]);
-    setAssetTypes(typesRes.items);
-    setAssets(assetsRes.items);
-    setShipments(shipmentsRes.items as Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>);
-    setCarriers(carriersRes.items);
-    setSelectedTypeId(typesRes.items[0]?.id ?? '');
-    setSelectedShipmentId(shipmentsRes.items[0]?.id ?? '');
-    setSelectedCarrierId(carriersRes.items[0]?.id ?? '');
-    const currentSelectedAssetId = selectedAssetId || assetsRes.items[0]?.id || '';
-    if (currentSelectedAssetId) {
-      setSelectedAssetId(currentSelectedAssetId);
-      const selected = await fleetAssetApi.asset(currentSelectedAssetId);
-      setDetail(selected);
+
+    const apply = <T,>(result: PromiseSettledResult<T>, label: string, setter: (value: T) => void) => {
+      if (result.status === 'fulfilled') {
+        setter(result.value);
+        return;
+      }
+      warnings.push(`${label} could not load (${result.reason instanceof Error ? result.reason.message : 'request failed'}).`);
+    };
+
+    apply(typesRes, 'Asset types', (value) => setAssetTypes(value.items));
+    apply(assetsRes, 'Assets', (value) => setAssets(value.items));
+    apply(shipmentsRes, 'Shipments', (value) => setShipments(value.items as Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>));
+    apply(carriersRes, 'Carriers', (value) => setCarriers(value.items));
+
+    if (typesRes.status === 'fulfilled' && typesRes.value.items.length && !selectedTypeId) {
+      setSelectedTypeId(typesRes.value.items[0].id ?? '');
     }
+    if (shipmentsRes.status === 'fulfilled' && shipmentsRes.value.items.length && !selectedShipmentId) {
+      setSelectedShipmentId(shipmentsRes.value.items[0].id ?? '');
+    }
+    if (carriersRes.status === 'fulfilled' && carriersRes.value.items.length && !selectedCarrierId) {
+      setSelectedCarrierId(carriersRes.value.items[0].id ?? '');
+    }
+
+    const currentSelectedAssetId = selectedAssetId || (assetsRes.status === 'fulfilled' ? assetsRes.value.items[0]?.id : '') || '';
+    if (currentSelectedAssetId) {
+      try {
+        setSelectedAssetId(currentSelectedAssetId);
+        const selected = await fleetAssetApi.asset(currentSelectedAssetId);
+        setDetail(selected);
+      } catch (err) {
+        warnings.push(`Selected asset details could not load (${err instanceof Error ? err.message : 'request failed'}).`);
+      }
+    } else {
+      setDetail(null);
+    }
+
+    setLoadWarnings(warnings);
+    if (showLoading) setLoading(false);
   };
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
-        const [typesRes, assetsRes, shipmentsRes, carriersRes] = await Promise.all([
-          fleetAssetApi.assetTypes(),
-          fleetAssetApi.assets(),
-          fleetApi.shipments({ pageSize: 8 }),
-          fleetCommercialApi.carriers().catch(() => ({ items: [] as Array<{ id: string; name: string }> })),
-        ]);
+        await loadWorkspaceData({ showLoading: true });
         if (cancelled) return;
-        setAssetTypes(typesRes.items);
-        setAssets(assetsRes.items);
-        setShipments(shipmentsRes.items as Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>);
-        setCarriers(carriersRes.items);
-        setSelectedTypeId(typesRes.items[0]?.id ?? '');
-        setSelectedShipmentId(shipmentsRes.items[0]?.id ?? '');
-        setSelectedCarrierId(carriersRes.items[0]?.id ?? '');
-        if (assetsRes.items[0]) {
-          setSelectedAssetId(assetsRes.items[0].id);
-          const selected = await fleetAssetApi.asset(assetsRes.items[0].id);
-          if (!cancelled) setDetail(selected);
-        }
       } catch (err) {
         if (!cancelled) notifyApiError(err, 'Unable to load asset management.');
       } finally {
@@ -94,6 +106,10 @@ export function FleetAssetManagementPage() {
       cancelled = true;
     };
   }, []);
+
+  const refresh = async () => {
+    await loadWorkspaceData();
+  };
 
   useEffect(() => {
     if (!selectedAssetId) return;
@@ -226,12 +242,20 @@ export function FleetAssetManagementPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <span className="text-sm font-black tracking-tight text-white">OpsTrax</span>
           <Link to="/fleet-workspace" className="rounded-full border border-slate-200/80 bg-white/70 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm backdrop-blur">
-            Back to Fleet Command
+            Open Fleet Workspace
           </Link>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-6">
+            {loadWarnings.length ? (
+              <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                <p className="font-semibold">Some asset workspace sections were not available.</p>
+                <ul className="mt-2 space-y-1 text-xs text-amber-800">
+                  {loadWarnings.slice(0, 3).map((warning) => <li key={warning}>• {warning}</li>)}
+                </ul>
+              </div>
+            ) : null}
             <div className="rounded-[30px] border border-white/70 bg-white/60 p-7 shadow-[0_30px_80px_rgba(37,99,235,0.12)] backdrop-blur-xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.26em] text-sky-700">
                 <Boxes className="h-3.5 w-3.5" />

@@ -2,35 +2,11 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import { opportunities as seedOpp } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ────────────────────────────────────────────────────────────────────
-
-function buildSeed(): AnyRecord[] {
-  return (seedOpp as AnyRecord[]).map((o, i) => ({
-    id: i + 1,
-    title: String(o.customerLead ?? o.opportunityId ?? ""),
-    status: String(o.stage ?? "Discovery"),
-    opportunityId: String(o.opportunityId ?? `OPP-${9000 + i}`),
-    customerLead: String(o.customerLead ?? ""),
-    estimatedContractValue: Number(o.estimatedContractValue ?? 0),
-    currency: String(o.currency ?? "SAR"),
-    expectedLoadsMonth: Number(o.expectedLoadsMonth ?? 0),
-    probability: Number(o.probability ?? 50),
-    expectedCloseDate: String(o.expectedCloseDate ?? ""),
-    competitor: String(o.competitor ?? "Unknown"),
-    stage: String(o.stage ?? "Discovery"),
-    owner: String(o.owner ?? ""),
-    weightedValue: Math.round(Number(o.estimatedContractValue ?? 0) * Number(o.probability ?? 50) / 100),
-    riskLevel: Number(o.probability ?? 50) < 40 ? "High" : Number(o.probability ?? 50) < 60 ? "Medium" : "Low",
-  }));
-}
-
 const oppApi = {
-  list: () => withFallback(
+  list: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/opportunities")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -47,8 +23,6 @@ const oppApi = {
         riskLevel: Number(r.probability ?? 50) < 40 ? "High" : Number(r.probability ?? 50) < 60 ? "Medium" : "Low",
       }))
     ),
-    () => buildSeed()
-  ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/opportunities", body)),
 };
 
@@ -160,7 +134,13 @@ export function OpportunitiesPage() {
   }));
 
   if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
+  if (listQ.isError) {
+    return (
+      <ErrorState
+        message={(listQ.error as Error)?.message ?? "Unable to load live opportunities."}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 py-6">
@@ -174,6 +154,21 @@ export function OpportunitiesPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("opportunities", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Opportunity</button>
+        </div>
+      </div>
+
+      <div className="panel grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Deal bridge</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Qualified opportunities stay connected to live contract and pricing work.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Pipeline truth</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">No seed fallback is used here, so the board reflects actual backend state.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Risk visibility</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Probability and competitor pressure remain visible for each live deal.</p>
         </div>
       </div>
 

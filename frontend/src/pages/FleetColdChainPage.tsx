@@ -10,6 +10,8 @@ type SummaryState = {
     activeDevices: number;
     readingsToday: number;
     openAlerts: number;
+    policyCount?: number;
+    eventLogCount?: number;
     totalReadings: number;
     breachReadings: number;
     avgTemperatureCelsius: number;
@@ -22,14 +24,43 @@ type SummaryState = {
   }>;
   alerts: Array<Pick<TemperatureAlert, 'id' | 'alertType' | 'severity' | 'status' | 'measuredTemperature' | 'thresholdMin' | 'thresholdMax' | 'triggeredAtUtc' | 'resolutionNotes'>>;
   reports: ColdChainReport[];
+  policies: Array<{
+    id: string;
+    policyCode: string;
+    scopeType: string;
+    scopeKey: string;
+    minCelsius?: number | null;
+    maxCelsius?: number | null;
+    humidityMinPercent?: number | null;
+    humidityMaxPercent?: number | null;
+    requiresAcknowledgement: boolean;
+    severity: string;
+    status: string;
+    notes?: string | null;
+  }>;
 };
+
+type EventLogState = Array<{
+  id: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  status: string;
+  errorMessage?: string | null;
+  occurredAtUtc: string;
+  processedAtUtc?: string | null;
+  correlationId?: string | null;
+  causationId?: string | null;
+}>;
 
 export function FleetColdChainPage() {
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [devices, setDevices] = useState<TemperatureDevice[]>([]);
   const [alerts, setAlerts] = useState<TemperatureAlert[]>([]);
   const [shipments, setShipments] = useState<Array<{ id: string; shipmentNumber: string; status: string; customerName: string; mode: string }>>([]);
+  const [events, setEvents] = useState<EventLogState>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedShipmentId, setSelectedShipmentId] = useState('');
   const [selectedZoneId, setSelectedZoneId] = useState('');
@@ -55,6 +86,8 @@ export function FleetColdChainPage() {
     setDevices(devicesRes.items);
     setAlerts(alertsRes.items);
     setShipments(shipmentsRes.items as Array<{ id: string; shipmentNumber: string; status: string; customerName: string; mode: string }>);
+    const eventsRes = await fleetColdChainApi.events();
+    setEvents(eventsRes.items.slice(0, 6));
     setSelectedZoneId(summaryRes.zones[0]?.id ?? '');
     if (!selectedShipmentId && shipmentsRes.items[0]) {
       setSelectedShipmentId(shipmentsRes.items[0].id);
@@ -64,6 +97,7 @@ export function FleetColdChainPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     (async () => {
       try {
         const [summaryRes, devicesRes, alertsRes, shipmentsRes] = await Promise.all([
@@ -77,10 +111,16 @@ export function FleetColdChainPage() {
         setDevices(devicesRes.items);
         setAlerts(alertsRes.items);
         setShipments(shipmentsRes.items as Array<{ id: string; shipmentNumber: string; status: string; customerName: string; mode: string }>);
+        const eventsRes = await fleetColdChainApi.events();
+        if (cancelled) return;
+        setEvents(eventsRes.items.slice(0, 6));
         setSelectedZoneId(summaryRes.zones[0]?.id ?? '');
         setSelectedShipmentId(shipmentsRes.items[0]?.id ?? '');
       } catch (err) {
-        if (!cancelled) notifyApiError(err, 'Unable to load cold-chain workspace.');
+        if (!cancelled) {
+          setError('Unable to load the cold-chain workspace. Make sure the local API is running and the tenant database is available.');
+          notifyApiError(err, 'Unable to load cold-chain workspace.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -107,8 +147,8 @@ export function FleetColdChainPage() {
       await fleetColdChainApi.createDevice({
         deviceCode: form.deviceCode,
         name: form.name,
-        zoneId: selectedZoneId,
-        shipmentId: selectedShipmentId || undefined,
+        zoneId: selectedZoneId ? Number(selectedZoneId) : undefined,
+        shipmentId: selectedShipmentId ? Number(selectedShipmentId) : undefined,
         vehicleNumber: form.vehicleNumber,
         status: 'Active',
         lastReportedTemperatureCelsius: Number(form.temperature),
@@ -129,9 +169,9 @@ export function FleetColdChainPage() {
     if (!device) return;
     try {
       await fleetColdChainApi.createReading({
-        deviceId,
-        shipmentId: selectedShipmentId || device.shipmentId || undefined,
-        zoneId: selectedZoneId || device.zoneId || undefined,
+        deviceId: Number(deviceId),
+        shipmentId: selectedShipmentId ? Number(selectedShipmentId) : device.shipmentId ? Number(device.shipmentId) : undefined,
+        zoneId: selectedZoneId ? Number(selectedZoneId) : device.zoneId ? Number(device.zoneId) : undefined,
         temperatureCelsius: Number(form.temperature),
         humidityPercent: 51,
         source: 'Sensor',
@@ -163,7 +203,45 @@ export function FleetColdChainPage() {
   };
 
   if (loading || !summary) {
-    return <div className="min-h-screen bg-slate-950 text-white" />;
+    if (error) {
+      return (
+        <main className="min-h-screen bg-[linear-gradient(135deg,_#f8fbff_0%,_#e8f2ff_50%,_#eff6ff_100%)] px-6 py-8 text-slate-900">
+          <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-[30px] border border-rose-200 bg-white/85 p-8 shadow-xl backdrop-blur">
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-rose-500">Cold chain workspace</p>
+            <h1 className="text-3xl font-black tracking-tight text-slate-950">The local API is not reachable yet.</h1>
+            <p className="max-w-2xl text-slate-600">{error}</p>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={() => window.location.reload()} className="rounded-full bg-slate-950 px-4 py-2.5 text-sm font-bold text-white">
+                Retry
+              </button>
+              <Link to="/fleet-workspace" className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
+                Open Fleet Workspace
+              </Link>
+            </div>
+          </section>
+        </main>
+      );
+    }
+    return (
+      <main className="min-h-screen bg-[linear-gradient(135deg,_#f8fbff_0%,_#e8f2ff_50%,_#eff6ff_100%)] px-6 py-8 text-slate-900">
+        <div className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <section className="space-y-4 rounded-[30px] border border-white/80 bg-white/70 p-6 shadow-xl backdrop-blur">
+            <div className="h-3 w-40 animate-pulse rounded-full bg-slate-200" />
+            <div className="h-14 w-3/4 animate-pulse rounded-3xl bg-slate-200/80" />
+            <div className="h-6 w-full animate-pulse rounded-full bg-slate-200/70" />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="h-28 animate-pulse rounded-3xl bg-slate-200/70" />
+              ))}
+            </div>
+          </section>
+          <aside className="space-y-4">
+            <div className="h-72 animate-pulse rounded-[28px] bg-slate-200/70" />
+            <div className="h-72 animate-pulse rounded-[28px] bg-slate-200/70" />
+          </aside>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -178,7 +256,7 @@ export function FleetColdChainPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <span className="text-sm font-black tracking-tight text-white">OpsTrax</span>
           <Link to="/fleet-workspace" className="rounded-full border border-slate-200/80 bg-white/70 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm backdrop-blur">
-            Back to Fleet Command
+            Open Fleet Workspace
           </Link>
         </div>
 
@@ -203,6 +281,49 @@ export function FleetColdChainPage() {
                 ))}
               </div>
             </div>
+
+            <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Foundation spine</p>
+                  <h2 className="mt-2 text-2xl font-black text-slate-950">Policy, event, and telemetry guardrails</h2>
+                </div>
+                <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">
+                  {summary.summary.policyCount ?? summary.policies.length} policies
+                </span>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Policies</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.policyCount ?? summary.policies.length}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Event log</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.eventLogCount ?? events.length}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Breach rate</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? '0%' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                </div>
+              </div>
+              <div className="mt-4 space-y-3">
+                {summary.policies.slice(0, 3).map((policy) => (
+                  <div key={policy.id} className="rounded-2xl border border-slate-200/80 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-slate-950">{policy.policyCode}</p>
+                        <p className="text-sm text-slate-500">{policy.scopeType} · {policy.scopeKey || 'default scope'}</p>
+                      </div>
+                      <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">{policy.severity}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {policy.minCelsius ?? '—'}°C to {policy.maxCelsius ?? '—'}°C · {policy.requiresAcknowledgement ? 'Acknowledgement required' : 'Auto-apply allowed'} · {policy.status}
+                    </p>
+                    {policy.notes ? <p className="mt-2 text-sm text-slate-500">{policy.notes}</p> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {metrics.map((metric) => {
@@ -305,7 +426,7 @@ export function FleetColdChainPage() {
               </div>
             </section>
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Alerts</p>
@@ -333,13 +454,45 @@ export function FleetColdChainPage() {
                   </div>
                 ))}
               </div>
-            </section>
+              </section>
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Reports</p>
-                  <h2 className="mt-2 text-2xl font-black text-slate-950">Shipment compliance</h2>
+              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Event log</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-950">Recent policy and telemetry events</h2>
+                  </div>
+                  <Layers3 className="h-5 w-5 text-cyan-600" />
+                </div>
+                <div className="mt-5 space-y-3">
+                  {events.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+                      No cold-chain event log entries yet.
+                    </div>
+                  ) : (
+                    events.map((event) => (
+                      <div key={event.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="font-bold text-slate-950">{event.eventType}</p>
+                            <p className="text-sm text-slate-500">{event.aggregateType} · {event.aggregateId}</p>
+                          </div>
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{event.status}</span>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-600">
+                          {new Date(event.occurredAtUtc).toLocaleString()} {event.correlationId ? `· correlation ${event.correlationId}` : ''}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Reports</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-950">Shipment compliance</h2>
                 </div>
                 <Layers3 className="h-5 w-5 text-cyan-600" />
               </div>

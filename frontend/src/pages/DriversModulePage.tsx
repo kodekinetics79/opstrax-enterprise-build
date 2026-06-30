@@ -133,7 +133,7 @@ export function DriversModulePage() {
   const assigned = rows.filter((row) => g(row, "assignedVehicle", "assigned_vehicle")).length;
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="control-tower space-y-6 pb-10">
       <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/80 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(16,185,129,0.14),rgba(14,165,233,0.12),rgba(251,191,36,0.12))]" />
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-200/35 blur-3xl" />
@@ -341,7 +341,8 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
   }, [rows, selectedId]);
 
   const detailPayload = (detail.data as AnyRecord) || {};
-  const record = (detailPayload.record as AnyRecord) || null;
+  const selectedRow = rows.find((row) => rowId(row) === selectedId) || null;
+  const record = (detailPayload.record as AnyRecord) || selectedRow;
   const documents = (detailPayload.documents as AnyRecord[]) || [];
   const certifications = (detailPayload.certifications as AnyRecord[]) || [];
   const complianceStatus = (detailPayload.complianceStatus as AnyRecord) || null;
@@ -517,7 +518,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
           ))}
         </div>
       </div>
-      {detail.isLoading ? <LoadingState /> : null}
+          {detail.isLoading && !record ? <LoadingState /> : null}
     </div>
   );
 }

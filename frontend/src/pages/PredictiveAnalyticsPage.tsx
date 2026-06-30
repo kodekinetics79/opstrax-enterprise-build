@@ -9,12 +9,10 @@ import {
   Wrench, Zap, Clock, DollarSign, Activity,
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState } from "@/components/ui";
-import { vehicles as seedVehicles, drivers as seedDrivers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed data ─────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 const VEHICLE_NAMES = ["BOX-104", "REF-209", "TRK-316", "VAN-512", "BOX-218", "REF-401", "TRK-107", "VAN-303"];
 const DRIVER_NAMES  = ["Marcus J.", "Sofia R.", "Liam P.", "Aisha W.", "Ethan K.", "Priya S.", "Jordan M.", "Elena V."];
@@ -107,27 +105,16 @@ const RISK_TREND = [
 // ── API ────────────────────────────────────────────────────────────────────────
 
 const predictiveApi = {
-  maintenance: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/predictions/maintenance")).then((rows) =>
+  maintenance: () => unwrap<AnyRecord[]>(apiClient.get("/api/predictions/maintenance")).then((rows) =>
       rows.map((r) => ({ ...r, vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "", confidencePct: Number(r.confidencePct ?? r.confidence_pct ?? 0) }))
     ),
-    () => buildMaintenanceSeed()
-  ),
-  driverRisk: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/predictions/driver-risk")).then((rows) =>
+  driverRisk: () => unwrap<AnyRecord[]>(apiClient.get("/api/predictions/driver-risk")).then((rows) =>
       rows.map((r) => ({ ...r, driverName: r.driverName ?? r.driver_name ?? "", currentScore: Number(r.currentScore ?? r.current_score ?? 0) }))
     ),
-    () => buildDriverRiskSeed()
-  ),
-  slaRisk: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/predictions/sla-risk")).then((rows) =>
+  slaRisk: () => unwrap<AnyRecord[]>(apiClient.get("/api/predictions/sla-risk")).then((rows) =>
       rows.map((r) => ({ ...r, jobNumber: r.jobNumber ?? r.job_number ?? "", delayProbability: Number(r.delayProbability ?? r.delay_probability ?? 0) }))
     ),
-    () => buildSlaRiskSeed()
-  ),
 };
-
-void seedVehicles; void seedDrivers;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

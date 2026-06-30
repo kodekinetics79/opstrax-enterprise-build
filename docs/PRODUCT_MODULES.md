@@ -2,7 +2,7 @@
 
 ## Core
 
-- Command Center
+- Dashboard
 - Live Map
 - Tenant Management
 - Role-Based Access Control

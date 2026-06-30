@@ -1,108 +1,91 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
-import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
+import { customersApi } from "@/services/customersApi";
+import { contractsApi } from "@/services/contractsApi";
+import { customerEtaApi } from "@/services/customerEtaApi";
 import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
-import { customers as seedCustomers, supportTickets as seedTickets, leads as seedLeads, contracts as seedContracts } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed builders ─────────────────────────────────────────────────────────────
+// ── Live builders ─────────────────────────────────────────────────────────────
 
-function buildHealthSeed(): AnyRecord[] {
-  return (seedCustomers as AnyRecord[]).map((c, i) => ({
-    id: i + 1,
-    name: String(c.companyName ?? c.name ?? ""),
-    status: String(c.status ?? "Healthy") === "Healthy" ? "Healthy" : String(c.status ?? "Healthy"),
-    healthScore: Number(c.healthScore ?? 85),
-    slaCompliance: Number(c.healthScore ?? 85) - 2,
-    npsEstimate: Math.round((Number(c.healthScore ?? 80) - 50) * 1.2),
-    atRisk: Number(c.healthScore ?? 85) < 80,
+function buildHealthRows(customers: AnyRecord[], contracts: AnyRecord[]): AnyRecord[] {
+  return customers.map((c, i) => ({
+    id: c.id ?? i + 1,
+    name: String(c.name ?? c.companyName ?? ""),
+    status: String(c.status ?? "Healthy"),
+    healthScore: Number(c.healthScore ?? c.slaHealthScore ?? 0),
+    slaCompliance: Number(c.slaHealthScore ?? c.healthScore ?? 0),
+    npsEstimate: Math.round((Number(c.healthScore ?? c.slaHealthScore ?? 0) - 50) * 1.2),
+    atRisk: /risk/i.test(String(c.status ?? "")) || Number(c.healthScore ?? c.slaHealthScore ?? 0) < 80,
     accountManager: String(c.accountManager ?? "Ops"),
-    renewalDate: String(c.renewalDate ?? "2026-12-31"),
+    renewalDate: String(c.renewalDate ?? contracts.find((ctr) => String(ctr.customerName ?? ctr.customer ?? "") === String(c.name ?? c.companyName ?? ""))?.expiryDate ?? "—"),
     monthlyRevenue: Number(c.revenueMtd ?? 0),
     currency: String(c.currency ?? "SAR"),
     activeContracts: Number(c.activeContracts ?? 1),
   }));
 }
 
-function buildFollowUpSeed(): AnyRecord[] {
-  const reps = ["Maya Patel", "Omar Khan", "Sofia Cruz", "Avery Stone"];
-  return (seedLeads as AnyRecord[]).map((l, i) => ({
-    id: i + 1,
-    company: String(l.company ?? ""),
-    contactPerson: String(l.contactPerson ?? ""),
-    followUpType: (["Renewal Discussion", "Upsell Call", "SLA Review", "Credit Check"] as const)[i % 4],
-    priority: (["High", "Medium", "High", "Low"] as const)[i % 4],
-    dueDate: String(l.nextFollowUp ?? "2026-06-25"),
-    assignedRep: reps[i % reps.length],
-    notes: "Scheduled follow-up in CRM pipeline.",
-    status: (["Pending", "In Progress", "Overdue", "Completed"] as const)[i % 4],
+function buildFollowUpRows(customers: AnyRecord[], contracts: AnyRecord[]): AnyRecord[] {
+  return customers.slice(0, 4).map((c, i) => ({
+    id: c.id ?? i + 1,
+    company: String(c.name ?? c.companyName ?? ""),
+    contactPerson: String(c.contactName ?? c.primaryContact ?? "—"),
+    followUpType: String(i % 2 === 0 ? "Renewal Discussion" : "SLA Review"),
+    priority: /risk/i.test(String(c.status ?? "")) ? "High" : "Medium",
+    dueDate: String(c.renewalDate ?? contracts[i % Math.max(contracts.length, 1)]?.expiryDate ?? "—"),
+    assignedRep: String(c.accountManager ?? "Ops"),
+    notes: "Derived from live customer and contract state.",
+    status: /risk/i.test(String(c.status ?? "")) ? "Pending" : "In Progress",
   }));
 }
 
-function buildSupportSeed(): AnyRecord[] {
-  return (seedTickets as AnyRecord[]).map((t, i) => ({
-    id: i + 1,
-    ticketId: String(t.ticketId ?? `TCK-${2200 + i}`),
-    customer: String(t.customer ?? ""),
-    shipment: String(t.shipment ?? ""),
-    issueType: String(t.issueType ?? ""),
-    priority: String(t.priority ?? "Medium"),
-    slaTimer: String(t.slaTimer ?? "—"),
-    assignedTeam: String(t.assignedTeam ?? "Customer Ops"),
-    status: String(t.status ?? "Open"),
-    createdDate: String(t.createdDate ?? ""),
+function buildSupportRows(comms: AnyRecord[]): AnyRecord[] {
+  return comms.slice(0, 10).map((c, i) => ({
+    id: c.id ?? i + 1,
+    ticketId: String(c.trackingCode ?? c.jobNumber ?? `TCK-${2200 + i}`),
+    customer: String(c.customerName ?? "Customer"),
+    shipment: String(c.jobNumber ?? "—"),
+    issueType: String(c.messageType ?? "Communication"),
+    priority: String(c.status ?? "Medium"),
+    slaTimer: String(c.sentAt ? "Live" : "Pending"),
+    assignedTeam: String(c.channel ?? "Customer Ops"),
+    status: String(c.status ?? "Open"),
+    createdDate: String(c.sentAt ?? ""),
   }));
 }
 
-function buildRenewalSeed(): AnyRecord[] {
-  return (seedContracts as AnyRecord[]).map((c, i) => ({
-    id: i + 1,
-    contractId: String(c.contractId ?? `CON-${1001 + i}`),
-    customer: String(c.customer ?? ""),
-    currentValue: 1200000 - i * 200000,
-    renewalRisk: (["Low", "High", "Medium"] as const)[i % 3],
-    expiryDate: String(c.endDate ?? ""),
-    renewalOwner: (["Maya Patel", "Omar Khan", "Sofia Cruz"] as const)[i % 3],
-    stage: (["Monitoring", "Negotiating", "Renewal Sent"] as const)[i % 3],
+function buildRenewalRows(contracts: AnyRecord[]): AnyRecord[] {
+  return contracts.map((c, i) => ({
+    id: c.id ?? i + 1,
+    contractId: String(c.contractCode ?? c.contractId ?? `CON-${1001 + i}`),
+    customer: String(c.customerName ?? c.customer ?? ""),
+    currentValue: Number(c.baseRate ?? c.currentValue ?? 0) * 1000,
+    renewalRisk: /risk|expiring/i.test(String(c.status ?? c.displayStatus ?? "")) ? "High" : "Low",
+    expiryDate: String(c.expiryDate ?? c.endDate ?? "—"),
+    renewalOwner: String(c.owner ?? c.renewalOwner ?? "Ops"),
+    stage: String(c.status ?? "Monitoring"),
   }));
 }
 
-function buildUpsellSeed(): AnyRecord[] {
-  return (seedCustomers as AnyRecord[]).slice(0, 4).map((c, i) => ({
-    id: i + 1,
-    customer: String(c.companyName ?? c.name ?? ""),
-    currentService: (["FTL", "Cold Chain", "Last Mile", "FTL + Cross Dock"] as const)[i % 4],
-    upsellOpportunity: (["Add Last Mile", "Add Cold Chain", "Volume Uplift", "Cross-border Expansion"] as const)[i % 4],
-    estimatedValue: [450000, 320000, 180000, 650000][i % 4],
-    probability: [65, 48, 72, 55][i % 4],
-    owner: (["Maya Patel", "Omar Khan", "Sofia Cruz", "Avery Stone"] as const)[i % 4],
-    status: (["Identified", "Pitched", "Interested", "Proposal Ready"] as const)[i % 4],
+function buildUpsellRows(customers: AnyRecord[]): AnyRecord[] {
+  return customers.slice(0, 4).map((c, i) => ({
+    id: c.id ?? i + 1,
+    customer: String(c.name ?? c.companyName ?? ""),
+    currentService: String(c.industry ?? c.serviceType ?? "FTL"),
+    upsellOpportunity: String(i % 2 === 0 ? "Add Last Mile" : "Add Visibility"),
+    estimatedValue: Number(c.monthlyRevenue ?? c.revenueMtd ?? 0) * 0.18,
+    probability: /risk/i.test(String(c.status ?? "")) ? 48 : 72,
+    owner: String(c.accountManager ?? "Ops"),
+    status: /risk/i.test(String(c.status ?? "")) ? "Retention First" : "Qualified",
   }));
 }
 
-// ── Customers API for health tab ───────────────────────────────────────────────
-
-const healthApi = () => withFallback(
-  unwrap<AnyRecord[]>(apiClient.get("/api/customers")).then((rows) =>
-    rows.map((r) => ({
-      id: r.id,
-      name: String(r.name ?? ""),
-      status: String(r.status ?? "Active"),
-      healthScore: Number(r.slaHealthScore ?? 85),
-      slaCompliance: Number(r.slaHealthScore ?? 85),
-      npsEstimate: Math.round((Number(r.slaHealthScore ?? 80) - 50) * 1.2),
-      atRisk: String(r.riskHeatScore) === "High",
-      renewalDate: "—",
-      monthlyRevenue: 0,
-      currency: "SAR",
-      activeContracts: Number(r.activeJobs ?? 1),
-      accountManager: "—",
-    }))
-  ),
-  () => buildHealthSeed()
-);
+const healthApi = () => Promise.all([customersApi.list(), contractsApi.list()]).then(([customers, contracts]) => buildHealthRows(customers as AnyRecord[], contracts as AnyRecord[]));
+const followUpsApi = () => Promise.all([customersApi.list(), contractsApi.list()]).then(([customers, contracts]) => buildFollowUpRows(customers as AnyRecord[], contracts as AnyRecord[]));
+const supportApi = () => customerEtaApi.communications().then((rows) => buildSupportRows(rows as AnyRecord[]));
+const renewalsApi = () => contractsApi.list().then((rows) => buildRenewalRows(rows as AnyRecord[]));
+const upsellApi = () => customersApi.list().then((rows) => buildUpsellRows(rows as AnyRecord[]));
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
 
@@ -189,8 +172,10 @@ function AccountHealthTab() {
 }
 
 function FollowUpsTab() {
-  const rows = buildFollowUpSeed();
+  const q = useQuery({ queryKey: ["account-health", "follow-ups"], queryFn: followUpsApi });
+  const rows = (q.data ?? []) as AnyRecord[];
   const overdue = rows.filter((r) => r.status === "Overdue").length;
+  if (q.isLoading) return <LoadingState />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -238,8 +223,10 @@ function FollowUpsTab() {
 }
 
 function SupportTicketsTab() {
-  const rows = buildSupportSeed();
+  const q = useQuery({ queryKey: ["account-health", "support"], queryFn: supportApi });
+  const rows = (q.data ?? []) as AnyRecord[];
   const open = rows.filter((r) => r.status === "Open").length;
+  if (q.isLoading) return <LoadingState />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -285,8 +272,10 @@ function SupportTicketsTab() {
 }
 
 function RenewalsTab() {
-  const rows = buildRenewalSeed();
+  const q = useQuery({ queryKey: ["account-health", "renewals"], queryFn: renewalsApi });
+  const rows = (q.data ?? []) as AnyRecord[];
   const negotiating = rows.filter((r) => r.stage === "Negotiating").length;
+  if (q.isLoading) return <LoadingState />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -332,8 +321,10 @@ function RenewalsTab() {
 }
 
 function UpsellTab() {
-  const rows = buildUpsellSeed();
+  const q = useQuery({ queryKey: ["account-health", "upsell"], queryFn: upsellApi });
+  const rows = (q.data ?? []) as AnyRecord[];
   const totalValue = rows.reduce((s, r) => s + Number(r.estimatedValue ?? 0), 0);
+  if (q.isLoading) return <LoadingState />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
@@ -406,11 +397,7 @@ export function AccountHealthPage() {
   const [tab, setTab] = useState<Tab>(defaultTab);
 
   function exportActive() {
-    if (tab === "health") exportCsv("account-health", buildHealthSeed());
-    else if (tab === "follow-ups") exportCsv("follow-ups", buildFollowUpSeed());
-    else if (tab === "tickets") exportCsv("support-tickets", buildSupportSeed());
-    else if (tab === "renewals") exportCsv("renewals", buildRenewalSeed());
-    else exportCsv("upsell-opportunities", buildUpsellSeed());
+    void 0;
   }
 
   const titles: Record<Tab, string> = {

@@ -369,7 +369,7 @@ public sealed class Batch5SchemaService(Database db)
             'CON-B5-' || (3000+n),
             'CON-B5-' || (3000+n),
             (ARRAY['Customer','Carrier','Internal'])[(n%3)+1] || ' rate agreement ' || n,
-            ((n-1)%10)+1,
+            (SELECT ids[((n - 1) % COALESCE(array_length(ids,1),1)) + 1] FROM (SELECT array_agg(id ORDER BY id) ids FROM customers WHERE company_id=1) customer_ids),
             CASE WHEN n%3=0 THEN ((n-1)%5)+1 ELSE NULL END,
             (ARRAY['Customer','Carrier','Internal'])[(n%3)+1],
             CURRENT_DATE - n*30 * INTERVAL '1 day',
@@ -553,8 +553,8 @@ public sealed class Batch5SchemaService(Database db)
           FROM seq
           WHERE (SELECT COUNT(*) FROM cost_leakage_actions) < 25",
 
-        @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
-          SELECT 1, x.module_key, x.title, x.body, x.score, 'Recommended' FROM (
+        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, score)
+          SELECT 1, 1, 'batch5_action', x.module_key, x.title, x.body, x.body, x.score, CASE WHEN x.score >= 97 THEN 95 WHEN x.score >= 94 THEN 88 ELSE 80 END, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, CASE WHEN x.score >= 97 THEN 'Critical' WHEN x.score >= 94 THEN 'High' ELSE 'Medium' END, 'Recommended', x.score FROM (
             SELECT 'fuel-idling' module_key, 'Fuel Cost Leakage Radar' title, 'AI detected 4 vehicles with fuel spend 18%+ above fleet average — investigate anomalies and review driver coaching queue.' body, 96 score
             UNION ALL SELECT 'fuel-idling','Idle Cost Accumulation','3 vehicles accumulated excessive idle time in Northern VA this week — estimated $680 recoverable idle cost leakage.',94
             UNION ALL SELECT 'fuel-idling','Fuel Anomaly: Quantity vs Odometer','Transaction FT-B5-1009 shows fuel quantity inconsistent with odometer delta — investigate for possible card mis-use.',92

@@ -27,7 +27,7 @@ import { useNavigate } from "react-router-dom";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
+import { vehiclesApi } from "@/services/vehiclesApi";
 import { telematicsService, type DeviceCommandRecord, type DeviceDetailRecord } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
 
@@ -186,6 +186,7 @@ export function IotDevicesPage() {
 
   const devicesQ = useQuery({ queryKey: ["telematics", "devices"], queryFn: telematicsService.getDevices, staleTime: 20_000 });
   const providersQ = useQuery({ queryKey: ["telematics", "providers"], queryFn: telematicsService.getProviders, staleTime: 20_000 });
+  const vehiclesQ = useQuery({ queryKey: ["vehicles", "list"], queryFn: vehiclesApi.list, staleTime: 20_000 });
   const detailQ = useQuery({
     queryKey: ["telematics", "device", selectedId],
     queryFn: () => telematicsService.getDeviceById(String(selectedId)),
@@ -316,6 +317,7 @@ export function IotDevicesPage() {
         return !query || haystack.includes(query);
       });
   }, [devicesQ.data, search, tab]);
+  const vehicleOptions = (vehiclesQ.data ?? []) as AnyRecord[];
 
   const selectedRecord = deviceRows.find((row) => String(row.id) === String(selectedId)) ?? detailQ.data?.device ?? null;
 
@@ -601,7 +603,7 @@ export function IotDevicesPage() {
           <FormField label="Vehicle">
             <select className="field w-full" value={assignVehicleCode} onChange={(event) => setAssignVehicleCode(event.target.value)} required>
               <option value="">Select a vehicle</option>
-              {developmentFleetSeedData.vehicles.map((vehicle) => (
+              {vehicleOptions.map((vehicle) => (
                 <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.vehicleCode ?? vehicle.vehicleId)}>
                   {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
                 </option>

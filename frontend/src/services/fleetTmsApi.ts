@@ -283,15 +283,23 @@ export interface PublicTrackingSummary {
 export const fleetApi = {
   overview: () => unwrap<FleetOverview>(apiClient.get("/api/fleet-tms/overview")),
   shipments: (params: { status?: string; page?: number; pageSize?: number } = {}) =>
-    unwrap<{ total: number; page: number; pageSize: number; items: FleetShipment[] }>(apiClient.get("/api/fleet-tms/shipments", { params })),
+    unwrap<{ total: number; page: number; pageSize: number; items: FleetShipment[] }>(
+      apiClient.get("/api/fleet-tms/shipments", { params: { page: 1, pageSize: 20, ...params } }),
+    ),
   vehicles: (params: { status?: string } = {}) =>
     unwrap<{ items: FleetVehicle[] }>(apiClient.get("/api/fleet-tms/vehicles", { params })),
   tracking: (params: { shipmentNumber?: string; page?: number; pageSize?: number } = {}) =>
-    unwrap<{ total: number; page: number; pageSize: number; items: FleetTrackingPoint[] }>(apiClient.get("/api/fleet-tms/tracking", { params })),
+    unwrap<{ total: number; page: number; pageSize: number; items: FleetTrackingPoint[] }>(
+      apiClient.get("/api/fleet-tms/tracking", { params: { page: 1, pageSize: 20, ...params } }),
+    ),
   maintenance: (params: { status?: string; page?: number; pageSize?: number } = {}) =>
-    unwrap<{ total: number; page: number; pageSize: number; items: FleetMaintenanceTicket[] }>(apiClient.get("/api/fleet-tms/maintenance", { params })),
+    unwrap<{ total: number; page: number; pageSize: number; items: FleetMaintenanceTicket[] }>(
+      apiClient.get("/api/fleet-tms/maintenance", { params: { page: 1, pageSize: 20, ...params } }),
+    ),
   fuel: (params: { anomaliesOnly?: boolean; page?: number; pageSize?: number } = {}) =>
-    unwrap<{ total: number; page: number; pageSize: number; items: FleetFuelEvent[] }>(apiClient.get("/api/fleet-tms/fuel", { params })),
+    unwrap<{ total: number; page: number; pageSize: number; items: FleetFuelEvent[] }>(
+      apiClient.get("/api/fleet-tms/fuel", { params: { page: 1, pageSize: 20, ...params } }),
+    ),
   dispatchShipment: (id: string, body: { vehicleNumber?: string; driverName?: string; routeCode?: string; notes?: string }) =>
     unwrap<FleetShipment>(apiClient.post(`/api/fleet-tms/shipments/${id}/dispatch`, body)),
   serviceVehicle: (id: string, body: { status?: string; healthStatus?: string; nextServiceAtUtc?: string; notes?: string }) =>
@@ -464,6 +472,12 @@ export interface TemperatureDevice {
   notes: string;
   createdAtUtc?: string;
   updatedAtUtc?: string | null;
+  sourceChannel?: string | null;
+  clientGeneratedId?: string | null;
+  idempotencyKey?: string | null;
+  correlationId?: string | null;
+  causationId?: string | null;
+  metadataJson?: string | null;
 }
 
 export interface TemperatureReading {
@@ -514,6 +528,47 @@ export interface ColdChainReport {
   breachCount: number;
   summaryJson: string;
   notes: string;
+}
+
+export interface ColdChainPolicy {
+  id: string;
+  policyCode: string;
+  scopeType: string;
+  scopeKey: string;
+  minCelsius?: number | null;
+  maxCelsius?: number | null;
+  humidityMinPercent?: number | null;
+  humidityMaxPercent?: number | null;
+  severity: string;
+  requiresAcknowledgement: boolean;
+  status: string;
+  sourceChannel?: string | null;
+  clientGeneratedId?: string | null;
+  idempotencyKey?: string | null;
+  correlationId?: string | null;
+  causationId?: string | null;
+  metadataJson?: string | null;
+  notes?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface ColdChainEvent {
+  id: string;
+  companyId: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  payloadJson: string;
+  correlationId?: string | null;
+  causationId?: string | null;
+  idempotencyKey?: string | null;
+  status: string;
+  retryCount?: number | null;
+  errorMessage?: string | null;
+  occurredAtUtc: string;
+  processedAtUtc?: string | null;
+  createdAtUtc: string;
 }
 
 export interface RefrigerationUnitHealth {
@@ -611,6 +666,8 @@ interface ColdChainSummaryResponse {
     activeDevices: number;
     readingsToday: number;
     openAlerts: number;
+    policyCount?: number;
+    eventLogCount?: number;
     totalReadings: number;
     breachReadings: number;
     avgTemperatureCelsius: number;
@@ -623,18 +680,26 @@ interface ColdChainSummaryResponse {
   }>;
   alerts: Array<Pick<TemperatureAlert, "id" | "alertType" | "severity" | "status" | "measuredTemperature" | "thresholdMin" | "thresholdMax" | "triggeredAtUtc" | "resolutionNotes">>;
   reports: ColdChainReport[];
+  policies: ColdChainPolicy[];
 }
 
 export const fleetColdChainApi = {
   summary: () => unwrap<ColdChainSummaryResponse>(apiClient.get("/api/fleet-tms/cold-chain/summary")),
   devices: () => unwrap<{ items: TemperatureDevice[] }>(apiClient.get("/api/fleet-tms/cold-chain/devices")),
-  createDevice: (body: Partial<TemperatureDevice> & { deviceCode: string; name: string }) =>
+  policies: () => unwrap<{ items: ColdChainPolicy[] }>(apiClient.get("/api/fleet-tms/cold-chain/policies")),
+  events: () => unwrap<{ items: ColdChainEvent[] }>(apiClient.get("/api/fleet-tms/cold-chain/events")),
+  createDevice: (body: Omit<Partial<TemperatureDevice>, "zoneId" | "shipmentId"> & {
+    deviceCode: string;
+    name: string;
+    zoneId?: number | null;
+    shipmentId?: number | null;
+  }) =>
     unwrap<TemperatureDevice>(apiClient.post("/api/fleet-tms/cold-chain/devices", body)),
   shipmentReadings: (shipmentId: string) => unwrap<{ items: TemperatureReading[] }>(apiClient.get(`/api/fleet-tms/cold-chain/shipments/${shipmentId}/readings`)),
   createReading: (body: {
-    deviceId: string;
-    shipmentId?: string | null;
-    zoneId?: string | null;
+    deviceId: number;
+    shipmentId?: number | null;
+    zoneId?: number | null;
     temperatureCelsius: number;
     humidityPercent?: number | null;
     latitude?: number | null;
@@ -642,6 +707,12 @@ export const fleetColdChainApi = {
     source?: string;
     status?: string;
     notes?: string;
+    sourceChannel?: string;
+    clientGeneratedId?: string;
+    idempotencyKey?: string;
+    correlationId?: string;
+    causationId?: string;
+    metadataJson?: string;
   }) => unwrap<TemperatureReading>(apiClient.post("/api/fleet-tms/cold-chain/readings", body)),
   alerts: (status?: string) => unwrap<{ items: TemperatureAlert[] }>(apiClient.get("/api/fleet-tms/cold-chain/alerts", { params: status ? { status } : undefined })),
   resolveAlert: (id: string, body: { resolutionNotes?: string } = {}) =>

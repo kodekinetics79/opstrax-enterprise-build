@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge,
+  LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge, BriefcaseBusiness,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -8,7 +8,8 @@ import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; permission: string };
 
 const NAV: NavItem[] = [
-  { to: "/platform", label: "Command Center", icon: LayoutDashboard, permission: "platform:dashboard:view" },
+  { to: "/platform", label: "Dashboard", icon: LayoutDashboard, permission: "platform:dashboard:view" },
+  { to: "/platform/commercial-ops", label: "Commercial Ops", icon: BriefcaseBusiness, permission: "platform:dashboard:view" },
   { to: "/platform/tenants", label: "Tenants", icon: Building2, permission: "platform:tenants:view" },
   { to: "/platform/packages", label: "Packages & Pricing", icon: Package, permission: "platform:packages:view" },
   { to: "/platform/revenue", label: "Revenue & Usage", icon: Gauge, permission: "platform:packages:view" },
@@ -27,10 +28,10 @@ export function PlatformShell() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100" style={{ backgroundColor: "#020617" }}>
+    <div className="platform-shell flex min-h-screen text-slate-100">
       {/* Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-800 px-4 py-6 lg:flex" style={{ backgroundColor: "#0b1220" }}>
-        <div className="flex items-center gap-2.5 px-2">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-800/80 px-4 py-6 shadow-[0_24px_80px_rgba(2,6,23,.35)] lg:flex" style={{ background: "linear-gradient(180deg, rgba(15,23,42,.98) 0%, rgba(3,7,18,.98) 100%)" }}>
+        <div className="flex items-center gap-2.5 rounded-[18px] border border-slate-800/80 bg-white/5 px-3 py-2">
           <OpsTraxLogo size={34} />
           <div>
             <p className="text-sm font-bold tracking-tight">OpsTrax</p>
@@ -45,7 +46,7 @@ export function PlatformShell() {
               to={item.to}
               end={item.to === "/platform"}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+                `flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-sm font-medium transition ${
                   isActive
                     ? "bg-teal-400/10 text-teal-300 ring-1 ring-inset ring-teal-400/20"
                     : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
@@ -58,12 +59,12 @@ export function PlatformShell() {
           ))}
         </nav>
 
-        <div className="mt-auto rounded-xl border border-slate-800 bg-slate-900/80 p-3">
+        <div className="mt-auto rounded-[18px] border border-slate-800/80 bg-slate-900/70 p-3">
           <p className="truncate text-sm font-semibold text-slate-100">{session?.admin.name}</p>
           <p className="truncate text-xs text-slate-500">{session?.role.name}</p>
           <button
             onClick={handleLogout}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-red-500/40 hover:text-red-300"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-red-500/40 hover:text-red-300"
           >
             <LogOut className="h-3.5 w-3.5" /> Sign out
           </button>
@@ -73,7 +74,7 @@ export function PlatformShell() {
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-5 py-3 lg:hidden">
+        <header className="flex items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-5 py-3 backdrop-blur lg:hidden">
           <div className="flex items-center gap-2">
             <OpsTraxLogo size={22} />
             <span className="text-sm font-bold">Platform Admin</span>
