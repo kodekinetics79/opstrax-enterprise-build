@@ -166,6 +166,67 @@ public sealed record CustomerSummaryRecord(
     IReadOnlyList<Dictionary<string, object?>> RecentCharges,
     IReadOnlyList<Dictionary<string, object?>> RecentInvoiceDrafts);
 
+// ── AR aging (Finance completion) ──────────────────────────────────────────────
+public sealed record ArAgingCustomerRecord(
+    long CustomerId,
+    string CustomerName,
+    decimal Current,
+    decimal Days1To30,
+    decimal Days31To60,
+    decimal Days61To90,
+    decimal Days90Plus,
+    decimal TotalOutstanding);
+
+public sealed record ArAgingRecord(
+    long CompanyId,
+    string Currency,
+    decimal Current,
+    decimal Days1To30,
+    decimal Days31To60,
+    decimal Days61To90,
+    decimal Days90Plus,
+    decimal TotalOutstanding,
+    IReadOnlyList<ArAgingCustomerRecord> Customers);
+
+// ── Payment summary (Finance completion) ───────────────────────────────────────
+public sealed record PaymentSummaryCustomerRecord(
+    long CustomerId,
+    string CustomerName,
+    decimal TotalCollected,
+    decimal TotalOutstanding,
+    decimal? AverageDaysToPay,
+    long PaidInvoiceCount);
+
+public sealed record PaymentSummaryRecord(
+    long CompanyId,
+    string Currency,
+    DateTimeOffset FromDate,
+    DateTimeOffset ToDate,
+    decimal TotalCollected,
+    decimal TotalOutstanding,
+    decimal? AverageDaysToPay,
+    long PaymentCount,
+    long PaidInvoiceCount,
+    IReadOnlyList<PaymentSummaryCustomerRecord> Customers);
+
+// ── Revenue leakage signals (Finance completion; persisted to cost_leakage_items) ─
+public sealed record RevenueLeakageSignalRecord(
+    long Id,
+    string LeakageNumber,
+    string SignalType,
+    string EntityType,
+    long EntityId,
+    decimal DetectedAmount,
+    string Severity,
+    string Status,
+    string Title);
+
+public sealed record RevenueLeakageDetectionOutcome(
+    long CompanyId,
+    int SignalsCreated,
+    int SignalsAlreadyOpen,
+    IReadOnlyList<RevenueLeakageSignalRecord> Signals);
+
 public sealed class RevenueReadinessService(
     Database db,
     PostgresAiFoundationService ai,
@@ -1578,6 +1639,218 @@ public sealed class RevenueReadinessService(
     private sealed record JobChargeSnapshot(long Id, long CompanyId, long JobId, long? TripId, long? RateCardId, string ChargeCode, string ChargeName, string? Description, decimal Quantity, decimal UnitRate, decimal Amount, string Currency, string Status, string ChargeType);
 
     private static Guid G(Dictionary<string, object?> row, string key) => Guid.Parse(S(row, key) ?? throw new InvalidOperationException($"Missing GUID column {key}."));
+    // ── AR aging: bucket outstanding issued_invoices by days past due_at ───────────
+    // Buckets on remaining balance_due (never on total), so a partially-paid invoice
+    // ages only its unpaid portion. Company totals + per-customer breakdown.
+    public async Task<ArAgingRecord> GetAccountsReceivableAgingAsync(long companyId, CancellationToken ct = default)
+    {
+        const string bucketSelect = @"
+              COALESCE(SUM(CASE WHEN {a}.due_at >  NOW()                       THEN {a}.balance_due ELSE 0 END), 0) AS cur,
+              COALESCE(SUM(CASE WHEN {a}.due_at <= NOW()                       AND {a}.due_at > NOW() - INTERVAL '30 days' THEN {a}.balance_due ELSE 0 END), 0) AS b1,
+              COALESCE(SUM(CASE WHEN {a}.due_at <= NOW() - INTERVAL '30 days'  AND {a}.due_at > NOW() - INTERVAL '60 days' THEN {a}.balance_due ELSE 0 END), 0) AS b2,
+              COALESCE(SUM(CASE WHEN {a}.due_at <= NOW() - INTERVAL '60 days'  AND {a}.due_at > NOW() - INTERVAL '90 days' THEN {a}.balance_due ELSE 0 END), 0) AS b3,
+              COALESCE(SUM(CASE WHEN {a}.due_at <= NOW() - INTERVAL '90 days'  THEN {a}.balance_due ELSE 0 END), 0) AS b4,
+              COALESCE(SUM({a}.balance_due), 0) AS tot";
+
+        var totals = await db.QuerySingleAsync(
+            $@"SELECT {bucketSelect.Replace("{a}", "i")},
+                 COALESCE((SELECT currency FROM issued_invoices WHERE company_id=@companyId ORDER BY issued_at DESC LIMIT 1), 'USD') AS currency
+               FROM issued_invoices i
+               WHERE i.company_id=@companyId AND i.balance_due > 0",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        var customerRows = await db.QueryAsync(
+            $@"SELECT i.customer_id, COALESCE(c.name, '(unknown)') AS customer_name,
+                 {bucketSelect.Replace("{a}", "i")}
+               FROM issued_invoices i
+               LEFT JOIN customers c ON c.id = i.customer_id AND c.company_id = i.company_id
+               WHERE i.company_id=@companyId AND i.balance_due > 0
+               GROUP BY i.customer_id, c.name
+               ORDER BY tot DESC, i.customer_id",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        var customers = customerRows.Select(r => new ArAgingCustomerRecord(
+            L(r, "customerId"), S(r, "customerName") ?? "(unknown)",
+            Dec(r, "cur"), Dec(r, "b1"), Dec(r, "b2"), Dec(r, "b3"), Dec(r, "b4"),
+            Dec(r, "cur") + Dec(r, "b1") + Dec(r, "b2") + Dec(r, "b3") + Dec(r, "b4"))).ToList();
+
+        return new ArAgingRecord(
+            companyId, S(totals, "currency") ?? "USD",
+            Dec(totals, "cur"), Dec(totals, "b1"), Dec(totals, "b2"), Dec(totals, "b3"), Dec(totals, "b4"),
+            Dec(totals, "tot"), customers);
+    }
+
+    // ── Payment summary over a date range: collected, outstanding, days-to-pay ─────
+    public async Task<PaymentSummaryRecord> GetPaymentSummaryAsync(long companyId, DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default)
+    {
+        var totals = await db.QuerySingleAsync(
+            @"SELECT
+                COALESCE((SELECT SUM(amount) FROM invoice_payments WHERE company_id=@companyId AND received_at >= @from AND received_at < @to), 0) AS total_collected,
+                COALESCE((SELECT SUM(balance_due) FROM issued_invoices WHERE company_id=@companyId AND balance_due > 0), 0) AS total_outstanding,
+                (SELECT COUNT(*) FROM invoice_payments WHERE company_id=@companyId AND received_at >= @from AND received_at < @to) AS payment_count,
+                (SELECT COUNT(*) FROM issued_invoices WHERE company_id=@companyId AND payment_status='paid' AND paid_at >= @from AND paid_at < @to) AS paid_invoice_count,
+                (SELECT AVG(EXTRACT(EPOCH FROM (paid_at - issued_at)) / 86400.0) FROM issued_invoices WHERE company_id=@companyId AND payment_status='paid' AND paid_at IS NOT NULL AND paid_at >= @from AND paid_at < @to) AS avg_days_to_pay,
+                COALESCE((SELECT currency FROM issued_invoices WHERE company_id=@companyId ORDER BY issued_at DESC LIMIT 1), 'USD') AS currency",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@from", from);
+                c.Parameters.AddWithValue("@to", to);
+            },
+            ct);
+
+        var customerRows = await db.QueryAsync(
+            @"SELECT c.id AS customer_id, c.name AS customer_name,
+                COALESCE((SELECT SUM(p.amount) FROM invoice_payments p JOIN issued_invoices ii ON ii.id = p.issued_invoice_id
+                          WHERE ii.company_id=@companyId AND ii.customer_id=c.id AND p.received_at >= @from AND p.received_at < @to), 0) AS total_collected,
+                COALESCE((SELECT SUM(ii.balance_due) FROM issued_invoices ii WHERE ii.company_id=@companyId AND ii.customer_id=c.id AND ii.balance_due > 0), 0) AS total_outstanding,
+                (SELECT AVG(EXTRACT(EPOCH FROM (ii.paid_at - ii.issued_at)) / 86400.0) FROM issued_invoices ii WHERE ii.company_id=@companyId AND ii.customer_id=c.id AND ii.payment_status='paid' AND ii.paid_at >= @from AND ii.paid_at < @to) AS avg_days_to_pay,
+                (SELECT COUNT(*) FROM issued_invoices ii WHERE ii.company_id=@companyId AND ii.customer_id=c.id AND ii.payment_status='paid' AND ii.paid_at >= @from AND ii.paid_at < @to) AS paid_invoice_count
+              FROM customers c
+              WHERE c.company_id=@companyId
+                AND EXISTS (SELECT 1 FROM issued_invoices ii WHERE ii.company_id=@companyId AND ii.customer_id=c.id)
+              ORDER BY total_collected DESC, c.id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@from", from);
+                c.Parameters.AddWithValue("@to", to);
+            },
+            ct);
+
+        var customers = customerRows.Select(r => new PaymentSummaryCustomerRecord(
+            L(r, "customerId"), S(r, "customerName") ?? "(unknown)",
+            Dec(r, "totalCollected"), Dec(r, "totalOutstanding"), DecN(r, "avgDaysToPay"), L(r, "paidInvoiceCount"))).ToList();
+
+        return new PaymentSummaryRecord(
+            companyId, S(totals, "currency") ?? "USD", from, to,
+            Dec(totals, "totalCollected"), Dec(totals, "totalOutstanding"), DecN(totals, "avgDaysToPay"),
+            L(totals, "paymentCount"), L(totals, "paidInvoiceCount"), customers);
+    }
+
+    // ── Revenue leakage detection: persist findings into cost_leakage_items ────────
+    // Reuses the existing cost_leakage_items table + /api/cost-leakage/* family
+    // (entity_type/entity_id = source ref, category = signal_type, estimated_loss =
+    // detected amount, status = open/reviewed/resolved). Idempotent: one open signal
+    // per (entity, signal_type).
+    public async Task<RevenueLeakageDetectionOutcome> DetectRevenueLeakageAsync(long companyId, int stalenessDays = 7, CancellationToken ct = default)
+    {
+        var candidates = new List<(string SignalType, string EntityType, long EntityId, decimal Amount, string Severity, string Title, string Description)>();
+
+        // Signal 1 — completed/delivered job with NO charge (uncaptured revenue).
+        var noCharge = await db.QueryAsync(
+            @"SELECT j.id, j.job_code, COALESCE(rc.minimum_charge, 0) AS expected
+              FROM jobs j
+              LEFT JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
+              WHERE j.company_id=@companyId
+                AND LOWER(j.status) IN ('completed','delivered','ready_to_bill')
+                AND NOT EXISTS (SELECT 1 FROM job_charges jc WHERE jc.company_id=j.company_id AND jc.job_id=j.id)",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+        foreach (var r in noCharge)
+        {
+            var amt = Dec(r, "expected");
+            candidates.Add(("completed_job_no_charge", "job", L(r, "id"), amt,
+                amt >= 500m ? "High" : "Medium",
+                $"Completed job {S(r, "jobCode")} has no billable charge",
+                "Job is completed/delivered but no job_charge exists — revenue is uncaptured."));
+        }
+
+        // Signal 2 — charge stuck in 'draft' past the staleness threshold.
+        var stale = await db.QueryAsync(
+            @"SELECT jc.id, jc.charge_code, jc.job_id, jc.amount
+              FROM job_charges jc
+              WHERE jc.company_id=@companyId
+                AND LOWER(jc.status) = 'draft'
+                AND jc.created_at < NOW() - make_interval(days => @days)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@days", stalenessDays);
+            }, ct);
+        foreach (var r in stale)
+        {
+            var amt = Dec(r, "amount");
+            candidates.Add(("stale_draft_charge", "charge", L(r, "id"), amt,
+                amt >= 500m ? "High" : "Medium",
+                $"Draft charge {S(r, "chargeCode")} uninvoiced for over {stalenessDays} days",
+                "Charge has been in draft beyond the staleness threshold — revenue at risk of never being billed."));
+        }
+
+        // Signal 3 — completed job billed BELOW the contract minimum charge (has charges but short).
+        var below = await db.QueryAsync(
+            @"SELECT j.id, j.job_code, rc.minimum_charge, COALESCE(SUM(jc.amount), 0) AS charged
+              FROM jobs j
+              JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
+              JOIN job_charges jc ON jc.company_id = j.company_id AND jc.job_id = j.id
+              WHERE j.company_id=@companyId
+                AND LOWER(j.status) IN ('completed','delivered','ready_to_bill')
+                AND rc.minimum_charge > 0
+              GROUP BY j.id, j.job_code, rc.minimum_charge
+              HAVING COALESCE(SUM(jc.amount), 0) < rc.minimum_charge",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+        foreach (var r in below)
+        {
+            var shortfall = Dec(r, "minimumCharge") - Dec(r, "charged");
+            candidates.Add(("below_contract_rate", "job", L(r, "id"), shortfall,
+                shortfall >= 200m ? "High" : "Medium",
+                $"Job {S(r, "jobCode")} billed below contract minimum",
+                "Sum of job charges is below the rate card minimum_charge for this job."));
+        }
+
+        var signals = new List<RevenueLeakageSignalRecord>();
+        var created = 0;
+        var alreadyOpen = 0;
+        foreach (var cand in candidates)
+        {
+            var existingId = await db.ScalarLongAsync(
+                @"SELECT COALESCE(MAX(id), 0) FROM cost_leakage_items
+                  WHERE company_id=@companyId AND entity_type=@et AND entity_id=@eid AND category=@cat
+                    AND status IN ('open','reviewed') AND deleted_at IS NULL",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@et", cand.EntityType);
+                    c.Parameters.AddWithValue("@eid", cand.EntityId);
+                    c.Parameters.AddWithValue("@cat", cand.SignalType);
+                }, ct);
+
+            var leakageNumber = $"RLK-{cand.SignalType}-{cand.EntityId}";
+            if (existingId > 0)
+            {
+                alreadyOpen++;
+                signals.Add(new RevenueLeakageSignalRecord(existingId, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+                continue;
+            }
+
+            var id = await db.InsertAsync(
+                @"INSERT INTO cost_leakage_items
+                    (company_id, leakage_number, category, entity_type, entity_id, title, description, estimated_loss, severity, status, risk_score, recommended_action, owner_role)
+                  VALUES (@companyId, @num, @cat, @et, @eid, @title, @desc, @amount, @sev, 'open', @risk, @action, 'Finance')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@num", leakageNumber);
+                    c.Parameters.AddWithValue("@cat", cand.SignalType);
+                    c.Parameters.AddWithValue("@et", cand.EntityType);
+                    c.Parameters.AddWithValue("@eid", cand.EntityId);
+                    c.Parameters.AddWithValue("@title", cand.Title);
+                    c.Parameters.AddWithValue("@desc", cand.Description);
+                    c.Parameters.AddWithValue("@amount", cand.Amount);
+                    c.Parameters.AddWithValue("@sev", cand.Severity);
+                    c.Parameters.AddWithValue("@risk", cand.Severity == "High" ? 80m : 50m);
+                    c.Parameters.AddWithValue("@action", "Review and bill the uncaptured or underbilled revenue.");
+                }, ct);
+            created++;
+            signals.Add(new RevenueLeakageSignalRecord(id, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+        }
+
+        return new RevenueLeakageDetectionOutcome(companyId, created, alreadyOpen, signals);
+    }
+
+    private static decimal? DecN(Dictionary<string, object?> row, string key) => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToDecimal(value, CultureInfo.InvariantCulture) : null;
+
     private static string? S(Dictionary<string, object?> row, string key) => row.TryGetValue(key, out var value) && value is not null and not DBNull ? value.ToString() : null;
     private static long L(Dictionary<string, object?> row, string key) => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToInt64(value, CultureInfo.InvariantCulture) : 0;
     private static long? LN(Dictionary<string, object?> row, string key) => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToInt64(value, CultureInfo.InvariantCulture) : null;

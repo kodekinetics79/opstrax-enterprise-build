@@ -471,6 +471,249 @@ public class RevenueReadinessPostgresTests
         await CleanupTenantAsync(db, companyId);
     }
 
+    [Fact]
+    public async Task ArAging_BucketsOutstandingInvoicesByAge_AndIsTenantScoped()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-aging");
+
+        // 5 outstanding invoices, one per aging bucket, with real amounts + due dates.
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-CUR", 1200.00m, 0m, 1200.00m, "unpaid", issuedDaysAgo: 5, dueInDays: 15);
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-B1", 800.50m, 0m, 800.50m, "unpaid", issuedDaysAgo: 40, dueInDays: -10);
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-B2", 2500.00m, 0m, 2500.00m, "unpaid", issuedDaysAgo: 75, dueInDays: -45);
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-B3", 1500.75m, 0m, 1500.75m, "unpaid", issuedDaysAgo: 105, dueInDays: -75);
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-B4", 3000.00m, 0m, 3000.00m, "unpaid", issuedDaysAgo: 150, dueInDays: -120);
+        // Fully paid (0 balance) — must NOT appear in aging.
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-AGING-PAID", 999.99m, 999.99m, 0m, "paid", issuedDaysAgo: 60, dueInDays: -30, paidDaysAgo: 25);
+
+        // Second tenant with a 90+ overdue invoice — must never leak into companyId's aging.
+        var otherCompanyId = await SeedCompanyAsync(db);
+        var otherCustomerId = await SeedCustomerAsync(db, otherCompanyId, "customer-aging-other");
+        await SeedIssuedInvoiceAsync(db, otherCompanyId, otherCustomerId, "INV-AGING-OTHER", 7777.00m, 0m, 7777.00m, "unpaid", issuedDaysAgo: 150, dueInDays: -120);
+
+        var service = CreateRevenueService(db);
+        var aging = await service.GetAccountsReceivableAgingAsync(companyId);
+
+        Assert.Equal(1200.00m, aging.Current);
+        Assert.Equal(800.50m, aging.Days1To30);
+        Assert.Equal(2500.00m, aging.Days31To60);
+        Assert.Equal(1500.75m, aging.Days61To90);
+        Assert.Equal(3000.00m, aging.Days90Plus);
+        Assert.Equal(9001.25m, aging.TotalOutstanding); // paid invoice (0 balance) excluded
+
+        // Tenant isolation: the other tenant's 7777 never appears.
+        Assert.DoesNotContain(aging.Customers, c => c.CustomerId == otherCustomerId);
+        Assert.All(aging.Customers, c => Assert.NotEqual(7777.00m, c.Days90Plus));
+        var cust = Assert.Single(aging.Customers);
+        Assert.Equal(customerId, cust.CustomerId);
+        Assert.Equal(3000.00m, cust.Days90Plus);
+        Assert.Equal(9001.25m, cust.TotalOutstanding);
+
+        await CleanupTenantAsync(db, companyId);
+        await CleanupTenantAsync(db, otherCompanyId);
+    }
+
+    [Fact]
+    public async Task RevenueLeakage_DetectsNoChargeAndStaleDraft_NotCorrectlyBilled_AndIsIdempotent()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        await new Batch5SchemaService(db).EnsureAsync(); // ensures cost_leakage_items exists
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-leak");
+        var contractId = await SeedContractAsync(db, companyId, customerId, "contract-leak");
+        var spine = new BusinessSpineService(db);
+        var rateCard = await spine.CreateRateCardAsync(
+            companyId, "RC-LEAK-1", "Leak rate card", customerId, contractId,
+            "Per Mile", "Metro", "North", "South", "Truck", "USD",
+            4.10m, 250.00m, 5m, "Base",
+            DateOnly.FromDateTime(DateTime.UtcNow.Date), null, "Active"); // minimum_charge 250.00
+
+        // Job 1: completed, NO charge -> completed_job_no_charge (expected = min_charge 250.00).
+        var job1 = await SeedJobAsync(db, companyId, customerId, contractId, rateCard.Id, "Completed", "JOB-LEAK-NOCHG");
+        // Job 2: in progress, ONE draft charge 475.25 aged 10 days -> stale_draft_charge.
+        var job2 = await SeedJobAsync(db, companyId, customerId, contractId, rateCard.Id, "In Progress", "JOB-LEAK-STALE");
+        var draftCharge = await spine.CreateJobChargeAsync(companyId, job2, null, rateCard.Id, "BASE", "Base charge", "base", "Stale draft", 1m, 475.25m, 475.25m, "USD", "draft");
+        await db.ExecuteAsync("UPDATE job_charges SET created_at = NOW() - INTERVAL '10 days' WHERE company_id=@c AND id=@id", c =>
+        {
+            c.Parameters.AddWithValue("@c", companyId);
+            c.Parameters.AddWithValue("@id", draftCharge.Id);
+        });
+        // Job 3: completed, approved charge 620.00 (>= min) -> NO signal.
+        var job3 = await SeedJobAsync(db, companyId, customerId, contractId, rateCard.Id, "Completed", "JOB-LEAK-OK");
+        await spine.CreateJobChargeAsync(companyId, job3, null, rateCard.Id, "BASE", "Base charge", "base", "Correctly billed", 1m, 620.00m, 620.00m, "USD", "approved");
+
+        var service = CreateRevenueService(db);
+        var outcome = await service.DetectRevenueLeakageAsync(companyId, 7);
+
+        Assert.Equal(2, outcome.SignalsCreated);
+        Assert.Equal(0, outcome.SignalsAlreadyOpen);
+        var byType = outcome.Signals.ToDictionary(s => s.SignalType);
+        Assert.True(byType.ContainsKey("completed_job_no_charge"));
+        Assert.True(byType.ContainsKey("stale_draft_charge"));
+        Assert.False(byType.ContainsKey("below_contract_rate")); // job3 above min; job1 has no charge to compare
+        Assert.Equal(250.00m, byType["completed_job_no_charge"].DetectedAmount); // rate card minimum_charge
+        Assert.Equal(job1, byType["completed_job_no_charge"].EntityId);
+        Assert.Equal(475.25m, byType["stale_draft_charge"].DetectedAmount); // draft charge amount
+        Assert.Equal(draftCharge.Id, byType["stale_draft_charge"].EntityId);
+
+        // Correctly-billed job produced nothing.
+        Assert.DoesNotContain(outcome.Signals, s => s.EntityType == "job" && s.EntityId == job3);
+        // Persisted to cost_leakage_items — exactly 2 open signals for this tenant.
+        Assert.Equal(2, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open' AND category IN ('completed_job_no_charge','stale_draft_charge')",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+
+        // Idempotent: re-running creates no duplicates.
+        var rerun = await service.DetectRevenueLeakageAsync(companyId, 7);
+        Assert.Equal(0, rerun.SignalsCreated);
+        Assert.Equal(2, rerun.SignalsAlreadyOpen);
+        Assert.Equal(2, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open'",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+
+        await db.ExecuteAsync("DELETE FROM cost_leakage_items WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        await CleanupTenantAsync(db, companyId);
+    }
+
+    [Fact]
+    public async Task PaymentSummary_ComputesExactTotals_CollectedOutstandingAndDaysToPay()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var cust1 = await SeedCustomerAsync(db, companyId, "customer-pay-1");
+        var cust2 = await SeedCustomerAsync(db, companyId, "customer-pay-2");
+
+        // Customer 1: two fully-paid invoices — paid_at/issued_at set in the SAME row so
+        // the day difference is exact (10 and 14 days).
+        var invA = await SeedIssuedInvoiceAsync(db, companyId, cust1, "INV-PAY-A", 1000.00m, 1000.00m, 0m, "paid", issuedDaysAgo: 40, dueInDays: -10, paidDaysAgo: 30); // 10 days to pay
+        await SeedInvoicePaymentAsync(db, companyId, invA, 1000.00m, "PAY-A", receivedDaysAgo: 30);
+        var invB = await SeedIssuedInvoiceAsync(db, companyId, cust1, "INV-PAY-B", 2000.00m, 2000.00m, 0m, "paid", issuedDaysAgo: 20, dueInDays: 10, paidDaysAgo: 6); // 14 days to pay
+        await SeedInvoicePaymentAsync(db, companyId, invB, 2000.00m, "PAY-B", receivedDaysAgo: 6);
+
+        // Customer 2: a partial payment + an unpaid invoice.
+        var invC = await SeedIssuedInvoiceAsync(db, companyId, cust2, "INV-PAY-C", 1500.00m, 500.00m, 1000.00m, "partial", issuedDaysAgo: 15, dueInDays: 15);
+        await SeedInvoicePaymentAsync(db, companyId, invC, 500.00m, "PAY-C", receivedDaysAgo: 5);
+        await SeedIssuedInvoiceAsync(db, companyId, cust2, "INV-PAY-D", 800.00m, 0m, 800.00m, "unpaid", issuedDaysAgo: 10, dueInDays: 20);
+
+        var service = CreateRevenueService(db);
+        var from = DateTimeOffset.UtcNow.AddDays(-60);
+        var to = DateTimeOffset.UtcNow.AddDays(1);
+        var summary = await service.GetPaymentSummaryAsync(companyId, from, to);
+
+        Assert.Equal(3500.00m, summary.TotalCollected);  // 1000 + 2000 + 500
+        Assert.Equal(1800.00m, summary.TotalOutstanding); // 1000 (C) + 800 (D)
+        Assert.Equal(3, summary.PaymentCount);
+        Assert.Equal(2, summary.PaidInvoiceCount);        // A + B paid; C partial, D unpaid
+        Assert.NotNull(summary.AverageDaysToPay);
+        Assert.Equal(12.0m, Math.Round(summary.AverageDaysToPay!.Value, 2)); // avg(10, 14)
+
+        var c1 = summary.Customers.Single(c => c.CustomerId == cust1);
+        Assert.Equal(3000.00m, c1.TotalCollected);
+        Assert.Equal(0m, c1.TotalOutstanding);
+        Assert.Equal(2, c1.PaidInvoiceCount);
+        var c2 = summary.Customers.Single(c => c.CustomerId == cust2);
+        Assert.Equal(500.00m, c2.TotalCollected);
+        Assert.Equal(1800.00m, c2.TotalOutstanding);
+        Assert.Equal(0, c2.PaidInvoiceCount);
+
+        await CleanupTenantAsync(db, companyId);
+    }
+
+    [Fact]
+    public async Task FinanceExport_ArAgingCsv_ContainsOnlyLiveRows_NoPlaceholders()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-export");
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-EXP-1", 1200.00m, 0m, 1200.00m, "unpaid", issuedDaysAgo: 40, dueInDays: -10);
+        await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-EXP-2", 3000.00m, 0m, 3000.00m, "unpaid", issuedDaysAgo: 150, dueInDays: -120);
+
+        var service = CreateRevenueService(db);
+        var aging = await service.GetAccountsReceivableAgingAsync(companyId);
+        Assert.Equal(4200.00m, aging.TotalOutstanding); // 1200 + 3000 from live rows
+
+        var csv = RevenueReadinessEndpoints.BuildArAgingCsv(aging);
+        var lines = csv.TrimEnd('\n', '\r').Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+
+        // Header + exactly ONE live customer row + ONE company-total row — no placeholder/sample rows.
+        Assert.Equal(3, lines.Length);
+        Assert.StartsWith("customer_id,customer_name", lines[0]);
+        Assert.Contains(customerId.ToString(), lines[1]);
+        Assert.Contains(aging.TotalOutstanding.ToString(System.Globalization.CultureInfo.InvariantCulture), lines[1]);
+        Assert.StartsWith("ALL,", lines[2]);
+        Assert.Contains(aging.TotalOutstanding.ToString(System.Globalization.CultureInfo.InvariantCulture), lines[2]);
+
+        await CleanupTenantAsync(db, companyId);
+    }
+
+    private static async Task<Guid> SeedIssuedInvoiceAsync(
+        Database db, long companyId, long customerId, string invoiceNumber,
+        decimal total, decimal amountPaid, decimal balanceDue, string paymentStatus,
+        int issuedDaysAgo, int dueInDays, int? paidDaysAgo = null)
+    {
+        // issued_invoices.source_invoice_draft_id has a FK to invoice_drafts — seed a
+        // minimal draft first so the invoice references a real row.
+        var draftNo = $"DR-{invoiceNumber}";
+        var draftRows = await db.QueryAsync(
+            @"INSERT INTO invoice_drafts (company_id, customer_id, invoice_draft_no)
+              VALUES (@companyId, @customerId, @draftNo) RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", customerId);
+                c.Parameters.AddWithValue("@draftNo", draftNo);
+            });
+        var draftId = (Guid)draftRows[0]["id"]!;
+
+        var rows = await db.QueryAsync(
+            @"INSERT INTO issued_invoices
+                (company_id, customer_id, source_invoice_draft_id, source_invoice_draft_no, invoice_number, status, currency,
+                 subtotal, tax_total, total, amount_paid, balance_due, payment_status, issued_at, due_at, paid_at)
+              VALUES (@companyId, @customerId, @draftId, @draftNo, @invoiceNumber, @status, 'USD',
+                 @total, 0, @total, @amountPaid, @balanceDue, @paymentStatus,
+                 NOW() - make_interval(days => @issuedDaysAgo),
+                 NOW() + make_interval(days => @dueInDays),
+                 CASE WHEN @paidDaysAgo < 0 THEN NULL ELSE NOW() - make_interval(days => @paidDaysAgo) END)
+              RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", customerId);
+                c.Parameters.AddWithValue("@draftId", draftId);
+                c.Parameters.AddWithValue("@draftNo", draftNo);
+                c.Parameters.AddWithValue("@invoiceNumber", invoiceNumber);
+                c.Parameters.AddWithValue("@status", paymentStatus == "paid" ? "paid" : "issued");
+                c.Parameters.AddWithValue("@total", total);
+                c.Parameters.AddWithValue("@amountPaid", amountPaid);
+                c.Parameters.AddWithValue("@balanceDue", balanceDue);
+                c.Parameters.AddWithValue("@paymentStatus", paymentStatus);
+                c.Parameters.AddWithValue("@issuedDaysAgo", issuedDaysAgo);
+                c.Parameters.AddWithValue("@dueInDays", dueInDays);
+                c.Parameters.AddWithValue("@paidDaysAgo", paidDaysAgo ?? -1);
+            });
+        return (Guid)rows[0]["id"]!;
+    }
+
+    private static async Task SeedInvoicePaymentAsync(Database db, long companyId, Guid invoiceId, decimal amount, string reference, int receivedDaysAgo)
+    {
+        await db.ExecuteAsync(
+            @"INSERT INTO invoice_payments (company_id, issued_invoice_id, payment_reference, payment_method, currency, amount, received_at, status)
+              VALUES (@companyId, @invoiceId, @ref, 'manual', 'USD', @amount, NOW() - make_interval(days => @days), 'posted')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@invoiceId", invoiceId);
+                c.Parameters.AddWithValue("@ref", reference);
+                c.Parameters.AddWithValue("@amount", amount);
+                c.Parameters.AddWithValue("@days", receivedDaysAgo);
+            });
+    }
+
     private static RevenueReadinessService CreateRevenueService(Database db)
     {
         var correlation = new InMemoryCorrelationContext("corr-stage7", "cause-stage7", "req-stage7", null, ActorTypes.TenantUser, "42");

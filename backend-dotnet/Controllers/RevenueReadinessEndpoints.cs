@@ -20,9 +20,121 @@ public static class RevenueReadinessEndpoints
         app.MapGet("/api/issued-invoices/{id:guid}", GetIssuedInvoice);
         app.MapPost("/api/issued-invoices/{id:guid}/payments", RecordIssuedInvoicePayment);
         app.MapGet("/api/finance/ar-summary", AccountsReceivableSummary);
+        app.MapGet("/api/finance/ar-aging", AccountsReceivableAging);
+        app.MapGet("/api/finance/payment-summary", PaymentSummary);
+        app.MapGet("/api/finance/export", FinanceExport);
+        app.MapPost("/api/cost-leakage/detect", DetectRevenueLeakage);
         app.MapPost("/api/approval-requests/{id:long}/decide", DecideApprovalRequest);
         app.MapGet("/api/revenue/summary", RevenueSummary);
         app.MapGet("/api/customers/{customerId:long}/summary", CustomerSummary);
+    }
+
+    private static async Task<IResult> AccountsReceivableAging(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.ar.summary.read");
+        if (denied is not null) return denied;
+
+        var aging = await svc.GetAccountsReceivableAgingAsync(EndpointMappings.GetCompanyId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(aging));
+    }
+
+    private static async Task<IResult> PaymentSummary(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.revenue.summary.read");
+        if (denied is not null) return denied;
+
+        var (from, to) = ParseDateRange(http);
+        var summary = await svc.GetPaymentSummaryAsync(EndpointMappings.GetCompanyId(http), from, to, ct);
+        return Results.Ok(ApiResponse<object>.Ok(summary));
+    }
+
+    private static async Task<IResult> DetectRevenueLeakage(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.revenue.summary.read");
+        if (denied is not null) return denied;
+
+        var stalenessDays = int.TryParse(http.Request.Query["stalenessDays"].FirstOrDefault(), out var d) && d > 0 ? d : 7;
+        var outcome = await svc.DetectRevenueLeakageAsync(EndpointMappings.GetCompanyId(http), stalenessDays, ct);
+        return Results.Ok(ApiResponse<object>.Ok(outcome, $"{outcome.SignalsCreated} new leakage signal(s) detected"));
+    }
+
+    // CSV export built ONLY from live query results — there is no placeholder/fallback
+    // path. If the underlying query throws, this endpoint throws (never emits sample rows).
+    private static async Task<IResult> FinanceExport(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.ar.summary.read");
+        if (denied is not null) return denied;
+
+        var type = (http.Request.Query["type"].FirstOrDefault() ?? "ar-aging").ToLowerInvariant();
+        var companyId = EndpointMappings.GetCompanyId(http);
+        string csv;
+
+        if (type == "ar-aging")
+        {
+            csv = BuildArAgingCsv(await svc.GetAccountsReceivableAgingAsync(companyId, ct));
+        }
+        else if (type == "payment-summary")
+        {
+            var (from, to) = ParseDateRange(http);
+            csv = BuildPaymentSummaryCsv(await svc.GetPaymentSummaryAsync(companyId, from, to, ct));
+        }
+        else
+        {
+            return Results.BadRequest(ApiResponse<object>.Fail("Unknown export type", "type must be 'ar-aging' or 'payment-summary'"));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+        return Results.File(bytes, "text/csv", $"finance-{type}-{DateTime.UtcNow:yyyy-MM-dd}.csv");
+    }
+
+    // CSV builders emit ONLY the rows present in the live record. There is no
+    // placeholder/sample path — an empty record yields a header + a totals row
+    // computed from zeros, never fabricated data.
+    public static string BuildArAgingCsv(ArAgingRecord aging)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("customer_id,customer_name,current,days_1_30,days_31_60,days_61_90,days_90_plus,total_outstanding,currency");
+        foreach (var cst in aging.Customers)
+        {
+            sb.AppendLine(string.Join(",",
+                cst.CustomerId, Csv(cst.CustomerName), cst.Current, cst.Days1To30, cst.Days31To60, cst.Days61To90, cst.Days90Plus, cst.TotalOutstanding, aging.Currency));
+        }
+        sb.AppendLine(string.Join(",",
+            "ALL", "\"Company total\"", aging.Current, aging.Days1To30, aging.Days31To60, aging.Days61To90, aging.Days90Plus, aging.TotalOutstanding, aging.Currency));
+        return sb.ToString();
+    }
+
+    public static string BuildPaymentSummaryCsv(PaymentSummaryRecord summary)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("customer_id,customer_name,total_collected,total_outstanding,average_days_to_pay,paid_invoice_count,currency");
+        foreach (var cst in summary.Customers)
+        {
+            sb.AppendLine(string.Join(",",
+                cst.CustomerId, Csv(cst.CustomerName), cst.TotalCollected, cst.TotalOutstanding,
+                cst.AverageDaysToPay?.ToString(CultureInfo.InvariantCulture) ?? "", cst.PaidInvoiceCount, summary.Currency));
+        }
+        sb.AppendLine(string.Join(",",
+            "ALL", "\"Company total\"", summary.TotalCollected, summary.TotalOutstanding,
+            summary.AverageDaysToPay?.ToString(CultureInfo.InvariantCulture) ?? "", summary.PaidInvoiceCount, summary.Currency));
+        return sb.ToString();
+    }
+
+    private static (DateTimeOffset From, DateTimeOffset To) ParseDateRange(HttpContext http)
+    {
+        var from = DateTimeOffset.TryParse(http.Request.Query["from"].FirstOrDefault(), CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var f)
+            ? f : DateTimeOffset.UtcNow.AddYears(-1);
+        var to = DateTimeOffset.TryParse(http.Request.Query["to"].FirstOrDefault(), CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var t)
+            ? t : DateTimeOffset.UtcNow.AddDays(1);
+        return (from, to);
+    }
+
+    private static string Csv(string? value)
+    {
+        var v = value ?? string.Empty;
+        return v.Contains(',') || v.Contains('"') || v.Contains('\n')
+            ? "\"" + v.Replace("\"", "\"\"") + "\""
+            : v;
     }
 
     private static async Task<IResult> MarkReadyToBill(HttpContext http, long jobId, RevenueReadinessService svc, CancellationToken ct)
