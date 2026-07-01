@@ -583,9 +583,9 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
         var createdAt = DateTimeOffset.UtcNow;
         var row = db.QuerySingleAsync(
             @"INSERT INTO ai_recommendations
-                (tenant_id, recommendation_type, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
+                (company_id, tenant_id, recommendation_type, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
               VALUES
-                (@tenantId, @recommendationType, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
+                (@tenantId::bigint, @tenantId, @recommendationType, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
               RETURNING id",
             c =>
             {

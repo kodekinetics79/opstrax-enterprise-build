@@ -1618,7 +1618,8 @@ public static partial class EndpointMappings
         MapDedicatedModule(app, "sla-kpi");
         MapDedicatedModule(app, "predictive-margin");
         MapDedicatedModule(app, "audit-logs");
-        MapDedicatedModule(app, "integrations");
+        // integrations has its own dedicated, tenant-scoped handler (GET /api/integrations
+        // above) — skip MapDedicatedModule to avoid an ambiguous duplicate route.
         MapDedicatedModule(app, "user-management");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
@@ -2413,7 +2414,8 @@ public static partial class EndpointMappings
               ) le ON v.id=le.vehicle_id
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
               WHERE v.deleted_at IS NULL AND v.company_id=@companyId
-              ORDER BY le.event_time DESC", ct: ct);
+              ORDER BY le.event_time DESC",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -9642,8 +9644,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN drivers d ON d.id=dr.driver_id
               LEFT JOIN users u ON u.id=dr.reviewed_by
               WHERE dr.company_id=@cid
-                AND (@status IS NULL OR dr.inspection_status=@status)
-                AND (@vid IS NULL OR dr.vehicle_id=@vid)
+                AND (@status::text IS NULL OR dr.inspection_status=@status::text)
+                AND (@vid::bigint IS NULL OR dr.vehicle_id=@vid::bigint)
               ORDER BY dr.submitted_at DESC
               LIMIT @limit OFFSET @offset",
             c =>
@@ -13420,10 +13422,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var pmOverdue      = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
         var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND submitted_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var recurringFaults = await db.QueryAsync(
-            "SELECT code, component, COUNT(*) total, MAX(recurrence_count) max_recurrences FROM fault_codes WHERE company_id=@c AND recurrence_count > 1 GROUP BY code, component ORDER BY total DESC LIMIT 5",
+            "SELECT code, description AS component, COUNT(*) total, MAX(occurrence_count) max_recurrences FROM fault_codes WHERE company_id=@c AND occurrence_count > 1 GROUP BY code, description ORDER BY total DESC LIMIT 5",
             p => p.Parameters.AddWithValue("@c", c), ct);
         var defectsByCategory = await db.QueryAsync(
-            "SELECT category, severity, COUNT(*) cnt FROM dvir_defects WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY category, severity ORDER BY cnt DESC LIMIT 8",
+            "SELECT defect_category AS category, severity, COUNT(*) cnt FROM dvir_defects WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY defect_category, severity ORDER BY cnt DESC LIMIT 8",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -13490,11 +13492,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // 30-day vs 7-day OTD comparison
         var otd30 = await db.ScalarDecimalAsync(
-            @"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+            @"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
               FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
         var otd7 = await db.ScalarDecimalAsync(
-            @"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+            @"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
               FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
