@@ -6,16 +6,25 @@ namespace Opstrax.Api.Services;
 
 public sealed class AuditService(Database db)
 {
-    public Task LogAsync(string actionName, string entityName, long? entityId = null, string actor = "system", CancellationToken ct = default)
+    // Platform/system sentinel for audit rows that have NO tenant context (true
+    // background/system operations). company_id is NOT NULL, and no real company
+    // owns id 0, so 0 is a safe "platform" marker — NEVER a real tenant's id.
+    private const long PlatformCompanyId = 0;
+
+    // System-level audit path for contexts with no resolvable tenant (background
+    // workers, scheduler). Use LogAsync(HttpContext, ...) for any request-scoped
+    // action so the real company_id is recorded.
+    public Task LogSystemAsync(string actionName, string entityName, long? entityId = null, string actor = "system", CancellationToken ct = default)
     {
         return AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
             db,
             "audit_logs",
             "id",
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
-              VALUES (1, NULL, @actor, @actionName, @entityName, @entityId, jsonb_build_object('source', 'api'))",
+              VALUES (@companyId, NULL, @actor, @actionName, @entityName, @entityId, jsonb_build_object('source', 'system'))",
             cmd =>
             {
+                cmd.Parameters.AddWithValue("@companyId", PlatformCompanyId);
                 cmd.Parameters.AddWithValue("@actor", actor);
                 cmd.Parameters.AddWithValue("@actionName", actionName);
                 cmd.Parameters.AddWithValue("@entityName", entityName);
@@ -38,7 +47,7 @@ public sealed class AuditService(Database db)
             "audit_logs",
             "id",
             @"INSERT INTO audit_logs (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
-              VALUES (@companyId, @actorId, @actor, @actionName, @entityName, @entityId, COALESCE(@details, jsonb_build_object('source', 'api')))",
+              VALUES (@companyId, @actorId, @actor, @actionName, @entityName, @entityId, COALESCE(@details::jsonb, jsonb_build_object('source', 'api')))",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@companyId", companyId);
