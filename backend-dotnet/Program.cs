@@ -84,6 +84,11 @@ builder.Services.AddSingleton<CountryProfileSchemaService>();
 builder.Services.AddScoped<CountryProfileService>();
 // Tenant offboarding — schema-driven cascade delete (pilot "delete on request")
 builder.Services.AddScoped<TenantOffboardingService>();
+// ZATCA Phase-2 e-invoicing foundation (Saudi). Crypto-stamp/clearance behind the
+// gateway interface — PendingOnboardingZatcaGateway until ZATCA CSID onboarding.
+builder.Services.AddSingleton<ZatcaSchemaService>();
+builder.Services.AddSingleton<IZatcaComplianceGateway, PendingOnboardingZatcaGateway>();
+builder.Services.AddScoped<ZatcaService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
@@ -181,6 +186,7 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "CountryProfiles",    () => scope.ServiceProvider.GetRequiredService<CountryProfileSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());

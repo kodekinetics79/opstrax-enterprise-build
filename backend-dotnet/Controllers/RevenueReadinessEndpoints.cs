@@ -27,6 +27,33 @@ public static class RevenueReadinessEndpoints
         app.MapPost("/api/approval-requests/{id:long}/decide", DecideApprovalRequest);
         app.MapGet("/api/revenue/summary", RevenueSummary);
         app.MapGet("/api/customers/{customerId:long}/summary", CustomerSummary);
+
+        // ── ZATCA Phase-2 e-invoicing (Saudi) — foundation ──
+        app.MapGet("/api/finance/zatca/invoices", ZatcaList);
+        app.MapPost("/api/finance/zatca/invoices/{issuedInvoiceId:guid}/generate", ZatcaGenerate);
+    }
+
+    private static async Task<IResult> ZatcaList(HttpContext http, ZatcaService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.invoice.read");
+        if (denied is not null) return denied;
+        var rows = await svc.ListAsync(EndpointMappings.GetCompanyId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
+    }
+
+    private static async Task<IResult> ZatcaGenerate(HttpContext http, Guid issuedInvoiceId, Dictionary<string, object?>? body, ZatcaService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.invoice.issue");
+        if (denied is not null) return denied;
+        var invoiceType = (body is not null && body.TryGetValue("invoiceType", out var t) ? t?.ToString() : null) ?? "standard";
+        var result = await svc.GenerateForIssuedInvoiceAsync(EndpointMappings.GetCompanyId(http), issuedInvoiceId, invoiceType, ct);
+        if (result is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Issued invoice not found"));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            result.ZatcaInvoiceId, result.InvoiceNumber, result.Uuid, result.Icv,
+            result.InvoiceHash, result.Pih, result.QrBase64, result.ClearanceStatus,
+        }, "ZATCA e-invoice generated (clearance pending onboarding)"));
     }
 
     private static async Task<IResult> AccountsReceivableAging(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
