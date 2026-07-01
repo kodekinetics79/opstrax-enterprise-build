@@ -629,7 +629,7 @@ public static partial class EndpointMappings
               ORDER BY wo.downtime_hours DESC LIMIT 50", ct: ct));
         app.MapGet("/api/preventive-maintenance", (Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mi.id, mi.title, mi.category, mi.status, mi.risk_level,
-                     mi.due_date, mi.due_odometer, mi.service_interval_days,
+                     mi.due_date, mi.due_odometer, mi.due_engine_hours,
                      COALESCE(mi.estimated_cost, 0) estimated_cost,
                      v.vehicle_code, v.odometer_miles current_odometer,
                      (mi.due_date::date - CURRENT_DATE) days_until_due,
@@ -1176,7 +1176,7 @@ public static partial class EndpointMappings
               WHERE mr.module_key = 'predictions-maintenance'
               ORDER BY CAST(mr.data->>'confidencePct' AS FLOAT) DESC NULLS LAST LIMIT 20", ct: ct));
         app.MapGet("/api/predictions/driver-risk", (Database db, CancellationToken ct) => OkRows(db,
-            @"SELECT mr.*, d.name driver_name
+            @"SELECT mr.*, d.full_name driver_name
               FROM module_records mr
               LEFT JOIN drivers d ON d.id = CAST(mr.entity_id AS BIGINT)
               WHERE mr.module_key = 'predictions-driver-risk'
@@ -1188,21 +1188,22 @@ public static partial class EndpointMappings
 
         // ===== WORKFORCE MANAGEMENT ====================================================
         app.MapGet("/api/workforce/drivers", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
-            @"SELECT d.id, d.name, d.code, d.licence_class licenceClass, d.vehicle_code vehicleCode,
-                     COALESCE(CAST(d.data->>'hoursThisWeek' AS FLOAT), 0) hoursThisWeek,
+            @"SELECT d.id, d.full_name AS name, d.driver_code AS code, d.license_number licenceClass,
+                     0 hoursThisWeek,
                      70 hosLimit,
-                     COALESCE(d.data->>'status', 'Available') status,
-                     COALESCE(CAST(d.data->>'safetyScore' AS INT), 80) safetyScore
-              FROM drivers d WHERE d.company_id=@cid ORDER BY d.name LIMIT 50",
+                     COALESCE(d.status, 'Available') status,
+                     COALESCE(d.safety_score, 80) safetyScore
+              FROM drivers d WHERE d.company_id=@cid AND d.deleted_at IS NULL ORDER BY d.full_name LIMIT 50",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/workforce/schedule", (Database db, CancellationToken ct) => OkRows(db,
-            @"SELECT ws.driver_id driverId, d.name driverName, d.code,
+        app.MapGet("/api/workforce/schedule", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+            @"SELECT ws.driver_id driverId, d.full_name AS driverName, d.driver_code AS code,
                      ws.monday ""Mon"", ws.tuesday ""Tue"", ws.wednesday ""Wed"",
                      ws.thursday ""Thu"", ws.friday ""Fri"", ws.saturday ""Sat"", ws.sunday ""Sun""
               FROM workforce_schedules ws
-              JOIN drivers d ON d.id = ws.driver_id
+              JOIN drivers d ON d.id = ws.driver_id AND d.company_id=@cid
               WHERE ws.week_start = DATE_TRUNC('week', CURRENT_DATE)
-              ORDER BY d.name", ct: ct));
+              ORDER BY d.full_name",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/workforce/schedule/assign", async (WorkforceAssignRequest req, Database db, AuditService audit, HttpContext http, CancellationToken ct) =>
         {
             var userId    = http.Items[AuthUserIdItemKey]?.ToString() ?? "system";
