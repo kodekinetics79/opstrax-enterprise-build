@@ -14,10 +14,12 @@ async function fetchMessages(): Promise<AnyRecord[]> {
   return (res.data as AnyRecord[]) ?? [];
 }
 
-const SEED_MESSAGES: AnyRecord[] = [];
-const SEED_TEMPLATES: AnyRecord[] = [];
-const SEED_BROADCASTS: AnyRecord[] = [];
-const MOCK_DRIVERS: string[] = [];
+// Empty-state defaults — fallbacks for when the live backend returns no rows.
+// No synthetic/demo content ships here; the UI shows honest empty states.
+const EMPTY_MESSAGES: AnyRecord[] = [];
+const EMPTY_TEMPLATES: AnyRecord[] = [];
+const EMPTY_BROADCASTS: AnyRecord[] = [];
+const EMPTY_DRIVERS: string[] = [];
 
 async function sendMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages", payload); }
 async function broadcastMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages/broadcast", payload); }
@@ -126,7 +128,7 @@ export function DriverMessagingPage() {
               <span className="field-label">Recipient Driver</span>
               <select className="field mt-1" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required>
                 <option value="">Select driver…</option>
-                {MOCK_DRIVERS.map((d) => <option key={d}>{d}</option>)}
+                {EMPTY_DRIVERS.map((d) => <option key={d}>{d}</option>)}
               </select>
             </label>
             <label>
@@ -153,7 +155,7 @@ export function DriverMessagingPage() {
 
           <div className="panel p-5 space-y-4">
             <h3 className="section-title">Quick Templates</h3>
-            {SEED_TEMPLATES.slice(0, 6).map((t) => (
+            {EMPTY_TEMPLATES.slice(0, 6).map((t) => (
               <button key={String(t.id)} type="button" className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-teal-300 hover:bg-teal-50"
                 onClick={() => setComposeForm((f) => ({ ...f, subject: String(t.title), body: String(t.body) }))}>
                 <p className="text-xs font-semibold text-slate-900">{String(t.title)}</p>
@@ -209,7 +211,7 @@ export function DriverMessagingPage() {
       {/* Templates */}
       {tab === "Templates" && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {SEED_TEMPLATES.map((t) => {
+          {EMPTY_TEMPLATES.map((t) => {
             const catColor = TEMPLATE_CAT_COLOR[String(t.category)] ?? "border-slate-200 bg-slate-50 text-slate-600";
             return (
               <div key={String(t.id)} className="panel flex flex-col gap-3 p-4">
@@ -248,7 +250,7 @@ export function DriverMessagingPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {SEED_BROADCASTS.map((b) => (
+                  {EMPTY_BROADCASTS.map((b) => (
                     <tr key={String(b.id)} className="transition hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">{String(b.subject)}</td>
                       <td className="px-4 py-3 text-slate-500">{String(b.recipients)}</td>

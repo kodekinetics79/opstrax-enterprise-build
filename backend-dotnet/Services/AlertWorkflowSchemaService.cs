@@ -7,6 +7,16 @@ public sealed class AlertWorkflowSchemaService(Database db)
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
+        // Reconcile module_records first: the app queries a richer schema than the base
+        // 001_schema.sql shape (record_code, priority, tags, secondary_value, numeric_value,
+        // notes, currency, company_id, …). No other schema step adds these, so any DB whose
+        // module_records came from the base init 500s on /api/invoices, /api/payments, etc.
+        // These ADDs are idempotent (IF NOT EXISTS) and must run before this service's own
+        // INSERT (which reads mr.record_code / mr.secondary_value / mr.numeric_value).
+        foreach (var sql in ModuleRecordColumns)
+        {
+            try { await db.ExecuteAsync(sql, ct: ct); } catch { }
+        }
         foreach (var sql in Migrations)
         {
             try { await db.ExecuteAsync(sql, ct: ct); } catch { }
@@ -23,6 +33,20 @@ public sealed class AlertWorkflowSchemaService(Database db)
 
     private static readonly string[] Tables =
     [
+        // Base alert_rules table. The Migrations block below only ADD COLUMNs onto an
+        // existing table, so the table itself must exist first. Columns here are the base
+        // shape the Migrations/DataFixes/AlertRulesList query assume (rule_name, module_name,
+        // condition_json, tenant_id, status); the operational columns (rule_key, category,
+        // …) are added idempotently by Migrations.
+        @"CREATE TABLE IF NOT EXISTS alert_rules (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            tenant_id BIGINT NULL,
+            rule_name VARCHAR(220) NULL,
+            module_name VARCHAR(120) NULL,
+            condition_json JSONB NULL,
+            status VARCHAR(40) NOT NULL DEFAULT 'Active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
         @"CREATE TABLE IF NOT EXISTS alert_follow_up_tasks (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
@@ -40,6 +64,28 @@ public sealed class AlertWorkflowSchemaService(Database db)
             updated_at TIMESTAMPTZ NULL,
             deleted_at TIMESTAMPTZ NULL
         )"
+    ];
+
+    // Idempotent reconciliation of module_records to the shape the app actually queries.
+    // The base 001_schema.sql table only has: id, module_key, title, status, owner_name,
+    // location_name, due_at, risk_level, amount, metadata_json, created_at.
+    private static readonly string[] ModuleRecordColumns =
+    [
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS record_code VARCHAR(120)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS priority VARCHAR(40)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS tags VARCHAR(220)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS secondary_value NUMERIC(14,2)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS numeric_value NUMERIC(14,2)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS currency VARCHAR(10)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS data JSONB",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS assigned_to_name VARCHAR(160)",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS entity_id BIGINT",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS due_date TIMESTAMPTZ",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+        "ALTER TABLE module_records ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT",
     ];
 
     private static readonly string[] Migrations =

@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCircle2, Download, Edit3, Pause, Play, Plus, ShieldAlert, Trash2, X, Zap } from "lucide-react";
-import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
+import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, RiskBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
@@ -35,13 +35,6 @@ const FIELDS: [string, string, string?][] = [
   ["priority",   "Priority"],
   ["recipients", "Additional Recipients (email/phone, comma-separated)", "optional"],
 ];
-
-const PRIORITY_COLOR: Record<string, string> = {
-  Critical: "bg-red-50 text-red-700 border-red-200",
-  High:     "bg-orange-50 text-orange-700 border-orange-200",
-  Medium:   "bg-amber-50 text-amber-700 border-amber-200",
-  Low:      "bg-slate-50 text-slate-600 border-slate-200",
-};
 
 export function AlertRulesPage() {
   const hasPermission = useHasPermission();
@@ -142,7 +135,6 @@ export function AlertRulesPage() {
               )}
               {filtered.map((r) => {
                 const isActive = String(r.status) === "Active";
-                const priColor = PRIORITY_COLOR[String(r.priority)] ?? PRIORITY_COLOR.Low;
                 return (
                   <tr key={String(r.id)} className="transition hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">{String(r.name)}</td>
@@ -157,7 +149,7 @@ export function AlertRulesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${priColor}`}>{String(r.priority)}</span>
+                      <RiskBadge risk={r.priority} />
                     </td>
                     <td className="px-4 py-3 text-center">
                       {Number(r.triggeredToday) > 0

@@ -22,15 +22,19 @@ const emptySummary = {
   snapshot_date: "",
 };
 
-const SEED_KPIS = [
-  { label: "Active Vehicles", value: "Live", sub: "Backend data only", accent: "text-sky-700", icon: "truck", route: "/vehicles" },
-  { label: "Jobs Today", value: "Live", sub: "Backend data only", accent: "text-teal-700", icon: "activity", route: "/jobs" },
-  { label: "Revenue (MTD)", value: "Live", sub: "Backend data only", accent: "text-emerald-700", icon: "dollar", route: "/profitability" },
-  { label: "Open Alerts", value: "Live", sub: "Backend data only", accent: "text-red-700", icon: "alert", route: "/alerts" },
-  { label: "Fleet Utilization", value: "Live", sub: "Backend data only", accent: "text-amber-700", icon: "clock", route: "/fleet-utilization" },
-  { label: "Driver Score", value: "Live", sub: "Backend data only", accent: "text-violet-700", icon: "users", route: "/driver-scorecards" },
-  { label: "SLA Compliance", value: "Live", sub: "Backend data only", accent: "text-teal-700", icon: "shield", route: "/sla-kpi" },
-  { label: "Cost / km", value: "Live", sub: "Backend data only", accent: "text-amber-700", icon: "dollar", route: "/fuel-idling" },
+// Navigation shortcuts to the live, backend-driven detail pages. These are UI
+// structure only (label/icon/route) — they intentionally carry no metric value,
+// because the executive summary endpoint does not expose these per-domain KPIs.
+// Each card links to the page that owns the real, tenant-scoped data.
+const KPI_NAV_TILES = [
+  { label: "Active Vehicles", accent: "text-sky-700", icon: "truck", route: "/vehicles" },
+  { label: "Jobs Today", accent: "text-teal-700", icon: "activity", route: "/jobs" },
+  { label: "Revenue (MTD)", accent: "text-emerald-700", icon: "dollar", route: "/profitability" },
+  { label: "Open Alerts", accent: "text-red-700", icon: "alert", route: "/alerts" },
+  { label: "Fleet Utilization", accent: "text-amber-700", icon: "clock", route: "/fleet-utilization" },
+  { label: "Driver Score", accent: "text-violet-700", icon: "users", route: "/driver-scorecards" },
+  { label: "SLA Compliance", accent: "text-teal-700", icon: "shield", route: "/sla-kpi" },
+  { label: "Cost / km", accent: "text-amber-700", icon: "dollar", route: "/fuel-idling" },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -110,17 +114,17 @@ export function ExecutivePage() {
       };
     });
 
-  const kpiCritical  = Number(summary?.kpiCritical ?? 3);
-  const slaBreaches  = Number(summary?.openSlaBreaches ?? 3);
-  const auditActions = Number(summary?.auditActionsToday ?? 7);
+  const kpiCritical  = Number(summary?.kpiCritical ?? 0);
+  const slaBreaches  = Number(summary?.openSlaBreaches ?? 0);
+  const auditActions = Number(summary?.auditActionsToday ?? 0);
 
   function handleExport() {
     exportCsv("executive-dashboard", [
-      { metric: "Overall Score",     value: Number(displaySnap.overall_score ?? 84) },
-      { metric: "Fleet Health",      value: Number(displaySnap.fleet_health_score ?? 88) },
-      { metric: "Safety Score",      value: Number(displaySnap.safety_score ?? 79) },
-      { metric: "Compliance Score",  value: Number(displaySnap.compliance_score ?? 91) },
-      { metric: "Financial Score",   value: Number(displaySnap.financial_score ?? 82) },
+      { metric: "Overall Score",     value: Number(displaySnap.overall_score ?? 0) },
+      { metric: "Fleet Health",      value: Number(displaySnap.fleet_health_score ?? 0) },
+      { metric: "Safety Score",      value: Number(displaySnap.safety_score ?? 0) },
+      { metric: "Compliance Score",  value: Number(displaySnap.compliance_score ?? 0) },
+      { metric: "Financial Score",   value: Number(displaySnap.financial_score ?? 0) },
       { metric: "Critical KPIs",     value: kpiCritical },
       { metric: "Open SLA Breaches", value: slaBreaches },
       { metric: "Audit Actions Today", value: auditActions },
@@ -159,17 +163,16 @@ export function ExecutivePage() {
         <p className="text-sm text-slate-700 leading-relaxed">{String(displaySnap.ai_brief ?? "")}</p>
       </div>
 
-      {/* KPI Grid */}
+      {/* KPI navigation grid — links to the live detail pages (no fabricated values) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-        {SEED_KPIS.map((kpi) => (
+        {KPI_NAV_TILES.map((kpi) => (
           <button key={kpi.label} type="button" onClick={() => navigate(kpi.route)}
             className="panel flex flex-col gap-1 p-3 text-left transition hover:border-slate-300 hover:shadow-sm">
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50 ${kpi.accent}`}>
               {ICON_MAP[kpi.icon]}
             </div>
-            <span className={`mt-1 text-lg font-bold ${kpi.accent}`}>{kpi.value}</span>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-tight">{kpi.label}</span>
-            <span className="text-[10px] text-slate-400">{kpi.sub}</span>
+            <span className="mt-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-tight">{kpi.label}</span>
+            <span className="text-[10px] font-medium text-teal-600">View details →</span>
           </button>
         ))}
       </div>

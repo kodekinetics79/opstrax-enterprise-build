@@ -41,6 +41,20 @@ import type { AnyRecord } from "@/types";
 import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
 import { useNavigate } from "react-router-dom";
 
+// developmentFleetSeedData is LOCAL-DEV-ONLY scaffolding. The `import.meta.env.DEV`
+// flag is statically inlined by Vite (true in `vite dev`, false in `vite build`),
+// so this conditional is dead-code-eliminated in production and the seed module is
+// tree-shaken out of the bundle entirely. In a production build the page renders
+// honest empty states instead of synthetic data.
+const seed = (import.meta.env.DEV
+  ? developmentFleetSeedData
+  : ({
+      bookings: [], campaigns: [], contracts: [], customers: [], devices: [],
+      drivers: [], expenses: [], incidents: [], invoices: [], leads: [],
+      maintenance: [], opportunities: [], quotations: [], rateCards: [],
+      shipments: [], supportTickets: [], vehicles: [], alerts: [],
+    } as unknown as typeof developmentFleetSeedData));
+
 const {
   bookings,
   campaigns,
@@ -59,7 +73,7 @@ const {
   shipments,
   supportTickets,
   vehicles,
-} = developmentFleetSeedData;
+} = seed;
 
 type ModuleDefinition = {
   title: string;
@@ -137,7 +151,7 @@ const upsell = customers.map((customer) => ({
   status: customer.status === "High Risk" ? "Retention First" : "Qualified",
 }));
 
-const alerts = developmentFleetSeedData.alerts;
+const alerts = seed.alerts;
 
 const accountHealth = customers.map((customer) => ({
   customer: customer.companyName,

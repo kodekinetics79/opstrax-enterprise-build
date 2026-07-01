@@ -464,19 +464,8 @@ function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; colu
       {!rows.length ? (
         <p className="mt-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">No records yet.</p>
       ) : (
-        <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full min-w-[620px] text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>{columns.map((c) => <th key={c} className="px-4 py-2.5">{labelize(c)}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.slice(0, 8).map((row, i) => (
-                <tr key={String(row.id || i)} className="hover:bg-slate-50">
-                  {columns.map((c) => <td key={c} className="px-4 py-2.5 text-slate-600">{String(row[c] ?? "--")}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-2">
+          <DataTable rows={rows.slice(0, 8)} columns={columns} />
         </div>
       )}
     </section>

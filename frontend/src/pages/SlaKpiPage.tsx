@@ -13,12 +13,15 @@ import {
 import { exportCsv } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-const SEED_KPI_METRICS: AnyRecord[] = [];
-const SEED_KPI_SUMMARY: AnyRecord = { total: 0, onTarget: 0, atRisk: 0, critical: 0 };
-const SEED_SLA_RECORDS: AnyRecord[] = [];
-const SEED_SLA_SUMMARY: AnyRecord = { met: 0, breached: 0 };
-const SEED_SLA_BREACHES: AnyRecord[] = [];
-const SEED_AI_RECS: AnyRecord[] = [];
+// Empty-state defaults — used only as fallbacks when the live backend returns no
+// rows. No synthetic/demo values: the page renders honest empty states, never
+// fabricated numbers.
+const EMPTY_KPI_METRICS: AnyRecord[] = [];
+const EMPTY_KPI_SUMMARY: AnyRecord = { total: 0, onTarget: 0, atRisk: 0, critical: 0 };
+const EMPTY_SLA_RECORDS: AnyRecord[] = [];
+const EMPTY_SLA_SUMMARY: AnyRecord = { met: 0, breached: 0 };
+const EMPTY_SLA_BREACHES: AnyRecord[] = [];
+const EMPTY_AI_RECS: AnyRecord[] = [];
 
 // ── Chart data ────────────────────────────────────────────────────────────────
 
@@ -106,9 +109,9 @@ export function SlaKpiPage() {
   const { data: slaBreachesRaw = [] }= useSlaBreaches();
 
   const kpiMetrics  = (kpiMetricsRaw  as AnyRecord[]) ?? [];
-  const kpiSummary  = (kpiSummaryRaw  ?? SEED_KPI_SUMMARY) as AnyRecord;
+  const kpiSummary  = (kpiSummaryRaw  ?? EMPTY_KPI_SUMMARY) as AnyRecord;
   const kpiAiRecs   = (kpiAiRecsRaw    as AnyRecord[]) ?? [];
-  const slaSummary  = (slaSummaryRaw   ?? SEED_SLA_SUMMARY) as AnyRecord;
+  const slaSummary  = (slaSummaryRaw   ?? EMPTY_SLA_SUMMARY) as AnyRecord;
   const slaRecords  = (slaRecordsRaw   as AnyRecord[]) ?? [];
   const slaBreaches = (slaBreachesRaw  as AnyRecord[]) ?? [];
 

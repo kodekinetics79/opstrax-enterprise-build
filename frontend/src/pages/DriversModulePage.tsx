@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, ShieldAlert, Sparkles, UserCheck, Users } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, DataTable, StatusBadge } from "@/components/ui";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
@@ -231,7 +231,7 @@ export function DriversModulePage() {
                   <p className="mt-1 text-base font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</p>
                   <p className="mt-1 text-sm text-slate-500">{String(g(row, "driverCode", "driver_code") ?? "")}</p>
                   <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                    <span>{String(g(row, "status") ?? "--")}</span>
+                    <StatusBadge status={String(g(row, "status") ?? "--")} />
                     <span>{String(g(row, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")}</span>
                   </div>
                 </div>
@@ -412,7 +412,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</span>
-                  <span className="text-xs text-slate-500">{String(g(row, "status") ?? "--")}</span>
+                  <StatusBadge status={String(g(row, "status") ?? "--")} />
                 </div>
                 <div className="mt-1 text-xs text-slate-500">{String(g(row, "driverCode", "driver_code") ?? "")} · {String(g(row, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")}</div>
               </button>
@@ -580,19 +580,8 @@ function SimpleListCard({ title, rows, fields }: { title: string; rows: AnyRecor
       {!rows.length ? (
         <p className="mt-3 rounded-xl border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-400">No linked records.</p>
       ) : (
-        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
-              <tr>{fields.map((field) => <th key={field} className="px-3 py-2 font-semibold">{labelize(field)}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.slice(0, 6).map((row, index) => (
-                <tr key={String(row.id ?? index)} className="text-slate-600">
-                  {fields.map((field) => <td key={field} className="px-3 py-2">{fmt(row[field])}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-3">
+          <DataTable rows={rows.slice(0, 6)} columns={fields} />
         </div>
       )}
     </section>

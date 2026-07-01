@@ -33,6 +33,10 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "deleted_at",   "TIMESTAMPTZ NULL"),
         // location_events telemetry enrichment
+        // accuracy_meters is in the Batch1 CREATE, but a location_events table created by an
+        // older path (pre-column) won't get it via CREATE IF NOT EXISTS — backfill idempotently
+        // so the trip-breadcrumbs replay query doesn't 42703 on such DBs.
+        new("location_events", "accuracy_meters", "DECIMAL(8,2) NULL"),
         new("location_events", "device_id",   "BIGINT NULL"),
         new("location_events", "received_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("location_events", "source",      "VARCHAR(40) NOT NULL DEFAULT 'device'"),
