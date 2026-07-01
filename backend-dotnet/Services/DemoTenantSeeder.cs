@@ -194,6 +194,35 @@ public sealed class DemoTenantSeeder(Database db)
               VALUES (@companyId, 'MER-WO-1', 'Brake inspection', 'Open', 'High', @vehicleId)",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@vehicleId", vehicles[3]); }, ct);
 
+        // ── P1 module demo data so Maintenance / Safety-coaching / Compliance-DVIR /
+        //    Customer-portal-visibility pages render real rows, not empty states. ──
+        // Preventive maintenance items (due + overdue) for the Maintenance module.
+        await db.ExecuteAsync(
+            @"INSERT INTO maintenance_items (company_id, vehicle_id, title, category, service_type, status, priority, due_date, due_odometer, estimated_cost)
+              VALUES (@companyId, @v1, 'Oil change (5k)', 'Preventive', 'Oil Change', 'Open', 'Medium', CURRENT_DATE + 5, 5000, 180),
+                     (@companyId, @v2, 'Tire rotation',   'Preventive', 'Tire Service', 'Open', 'High', CURRENT_DATE - 3, 8000, 120)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@v1", vehicles[0]); c.Parameters.AddWithValue("@v2", vehicles[1]); }, ct);
+        // Coaching task tied to the seeded safety event driver (Safety module).
+        await db.ExecuteAsync(
+            @"INSERT INTO coaching_tasks (company_id, task_number, driver_id, coaching_type, title, status, priority, due_at)
+              VALUES (@companyId, 'MER-COACH-1', @driverId, 'Speed Management', 'Speed management coaching', 'Assigned', 'Medium', NOW() + INTERVAL '3 day')",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", drivers[0]); }, ct);
+        // A DVIR report + one open defect (Compliance / DVIR module).
+        var dvirId = await db.ScalarLongAsync(
+            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, safe_to_operate, submitted_at)
+              VALUES (@companyId, 'MER-DVIR-1', @driverId, @vehicleId, 'Pre-Trip', 'Submitted', false, NOW() - INTERVAL '2 hour') RETURNING id",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", drivers[0]); c.Parameters.AddWithValue("@vehicleId", vehicles[2]); }, ct);
+        await db.ExecuteAsync(
+            @"INSERT INTO dvir_defects (company_id, dvir_report_id, defect_category, defect_description, severity, status, vehicle_id)
+              VALUES (@companyId, @dvirId, 'Brakes', 'Brake pad wear beyond limit', 'Major', 'Open', @vehicleId)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@dvirId", dvirId); c.Parameters.AddWithValue("@vehicleId", vehicles[2]); }, ct);
+        // A couple of notifications so the Notification Center isn't empty.
+        await db.ExecuteAsync(
+            @"INSERT INTO notifications (company_id, event_type, source_type, severity, title, body, message, status)
+              VALUES (@companyId, 'maintenance_due', 'maintenance', 'Medium', 'PM due soon', 'Tire rotation is overdue for a vehicle.', 'Tire rotation is overdue for a vehicle.', 'unread'),
+                     (@companyId, 'sla_risk', 'dispatch', 'High', 'SLA at risk', 'A shipment is approaching its SLA window.', 'A shipment is approaching its SLA window.', 'unread')",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+
         // ── Demo login users (so the tenant is usable in a live demo) ──
         // Note: the granular finance.* perms gate the API; the frontend Finance/AR *routes*
         // (/invoices, /cost-leakage, …) gate on the coarse legacy "finance:view". Grant both so
