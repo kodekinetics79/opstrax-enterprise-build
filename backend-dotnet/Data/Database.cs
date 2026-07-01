@@ -27,6 +27,12 @@ public sealed class TenantScope : IAsyncDisposable
     internal NpgsqlTransaction Transaction { get; }
     private bool _completed;
 
+    // Serializes command execution on this scope's single shared connection. Under RLS
+    // enforcement every query in a request runs on ONE connection/transaction; code that
+    // fans out queries concurrently (e.g. Task.WhenAll) would otherwise throw
+    // "a command is already in progress". This gate makes such calls queue safely.
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
+
     internal TenantScope(NpgsqlConnection connection, NpgsqlTransaction transaction)
     {
         Connection = connection;
@@ -54,6 +60,7 @@ public sealed class TenantScope : IAsyncDisposable
         {
             await Transaction.DisposeAsync();
             await Connection.DisposeAsync();
+            Gate.Dispose();
         }
     }
 }
@@ -178,18 +185,32 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
 
     // Returns the connection+transaction to use for a query: the ambient request
     // scope if one is active (shared, not disposed here), otherwise a fresh
-    // connection owned by the caller.
-    private async Task<(NpgsqlConnection connection, NpgsqlTransaction? tx, bool owns)> AcquireAsync(CancellationToken ct)
+    // connection owned by the caller. When an ambient scope is active, its Gate is
+    // acquired here and MUST be released via ReleaseAsync in the caller's finally —
+    // this serializes concurrent commands on the single shared connection.
+    private async Task<(NpgsqlConnection connection, NpgsqlTransaction? tx, bool owns, TenantScope? scope)> AcquireAsync(CancellationToken ct)
     {
         var scope = _scopes.Current;
-        if (scope is not null) return (scope.Connection, scope.Transaction, false);
+        if (scope is not null)
+        {
+            await scope.Gate.WaitAsync(ct);
+            return (scope.Connection, scope.Transaction, false, scope);
+        }
         var connection = await OpenAsync(ct);
-        return (connection, null, true);
+        return (connection, null, true, null);
+    }
+
+    // Release the shared-scope gate (no-op when not in a scope). Guarded against
+    // over-release in case the gate was already disposed on scope teardown.
+    private static void ReleaseScope(TenantScope? scope)
+    {
+        if (scope is null) return;
+        try { scope.Gate.Release(); } catch { /* disposed on scope end — ignore */ }
     }
 
     public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
-        var (connection, tx, owns) = await AcquireAsync(ct);
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
             await using var command = new NpgsqlCommand(sql, connection, tx);
@@ -209,6 +230,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
         finally
         {
+            ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
     }
@@ -218,7 +240,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
 
     public async Task<long> ScalarLongAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
-        var (connection, tx, owns) = await AcquireAsync(ct);
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
             await using var command = new NpgsqlCommand(sql, connection, tx);
@@ -228,13 +250,14 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
         finally
         {
+            ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
     }
 
     public async Task<decimal?> ScalarDecimalAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
-        var (connection, tx, owns) = await AcquireAsync(ct);
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
             await using var command = new NpgsqlCommand(sql, connection, tx);
@@ -244,13 +267,14 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
         finally
         {
+            ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
     }
 
     public async Task<int> ExecuteAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
-        var (connection, tx, owns) = await AcquireAsync(ct);
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
             await using var command = new NpgsqlCommand(sql, connection, tx);
@@ -259,6 +283,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
         finally
         {
+            ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
     }
@@ -299,7 +324,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         if (!pgSql.Contains("RETURNING", StringComparison.OrdinalIgnoreCase))
             pgSql += " RETURNING id";
 
-        var (connection, tx, owns) = await AcquireAsync(ct);
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
             await using var command = new NpgsqlCommand(pgSql, connection, tx);
@@ -309,6 +334,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
         finally
         {
+            ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
     }

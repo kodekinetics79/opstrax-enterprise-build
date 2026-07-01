@@ -5717,7 +5717,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var row = await db.QuerySingleAsync(
             @"SELECT
                 CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN fuel_date::date=CURRENT_DATE THEN total_cost ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_spend_today,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN fuel_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01') THEN total_cost ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_spend_this_month,
+                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month', CURRENT_DATE) THEN total_cost ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_spend_this_month,
                 CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_cost) FROM idling_events WHERE started_at::date=CURRENT_DATE),0))::numeric, 'FM9,999,999,990.00')) idle_cost_today,
                 COALESCE((SELECT ROUND(SUM(duration_minutes),0) FROM idling_events WHERE started_at::date=CURRENT_DATE),0) idle_hours_today,
                 ROUND(AVG(quantity / NULLIF(total_cost,0) * unit_price),2) average_mpg_placeholder,
@@ -5950,7 +5950,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN expense_date >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01') THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) total_expenses_this_month,
+                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN expense_date >= DATE_TRUNC('month', CURRENT_DATE) THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) total_expenses_this_month,
                 SUM(CASE WHEN approval_status='Pending' THEN 1 ELSE 0 END) pending_approval,
                 SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) approved_expenses,
                 SUM(CASE WHEN approval_status='Rejected' THEN 1 ELSE 0 END) rejected_expenses,
@@ -6506,7 +6506,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 SUM(CASE WHEN insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day' THEN 1 ELSE 0 END) insurance_expiring,
                 ROUND(AVG(performance_score),1) average_carrier_score,
                 ROUND(AVG(on_time_percent),1) on_time_performance,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(expense_total) FROM carrier_performance WHERE period_start >= TO_CHAR(CURRENT_DATE,'YYYY-MM-01')),0))::numeric, 'FM9,999,999,990.00')) carrier_cost_this_month,
+                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(expense_total) FROM carrier_performance WHERE period_start >= DATE_TRUNC('month', CURRENT_DATE)),0))::numeric, 'FM9,999,999,990.00')) carrier_cost_this_month,
                 (SELECT COUNT(*) FROM carrier_documents WHERE status IN ('Expired','Expiring')) documents_missing,
                 SUM(CASE WHEN contract_status='Active' THEN 1 ELSE 0 END) contracts_active,
                 SUM(CASE WHEN performance_score >= 90 THEN 1 ELSE 0 END) preferred_carriers,
@@ -13327,8 +13327,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
 
         var activeTrips    = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND status IN ('Active','In Progress','In Transit')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND start_time::date=CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var avgCompliance  = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND started_at::date=CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
+        var avgCompliance  = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var openExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
         var activeAssignments = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status NOT IN ('delivered','cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
         var exceptionTypes = await db.QueryAsync(
@@ -13356,7 +13356,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var inTransit = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status IN ('en_route_pickup','in_transit','arrived_pickup','loaded','arrived_delivery')", p => p.Parameters.AddWithValue("@c", c), ct);
         var delivered = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='delivered' AND updated_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var exceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='exception'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var proofs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignment_proofs WHERE company_id=@c AND captured_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var proofs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var statusDist = await db.QueryAsync(
             "SELECT assignment_status AS status, COUNT(*) cnt FROM dispatch_assignments WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY assignment_status ORDER BY cnt DESC",
             p => p.Parameters.AddWithValue("@c", c), ct);
@@ -13381,7 +13381,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var totalEvents   = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var criticalEvents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var openCoaching  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var overdueCoach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
+        var overdueCoach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_at < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         var avgSafety     = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         var eventTypes    = await db.QueryAsync("SELECT event_type, severity, COUNT(*) cnt FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day' GROUP BY event_type, severity ORDER BY cnt DESC LIMIT 8", p => p.Parameters.AddWithValue("@c", c), ct);
         var topRiskDrivers = await db.QueryAsync(
@@ -13417,7 +13417,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var criticalDefects = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_defects WHERE company_id=@c AND severity='Critical' AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
         var openWorkOrders = await db.ScalarLongAsync("SELECT COUNT(*) FROM work_orders WHERE company_id=@c AND status NOT IN ('Completed','Closed','Cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
         var pmOverdue      = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND inspection_date >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND submitted_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var recurringFaults = await db.QueryAsync(
             "SELECT code, component, COUNT(*) total, MAX(recurrence_count) max_recurrences FROM fault_codes WHERE company_id=@c AND recurrence_count > 1 GROUP BY code, component ORDER BY total DESC LIMIT 5",
             p => p.Parameters.AddWithValue("@c", c), ct);

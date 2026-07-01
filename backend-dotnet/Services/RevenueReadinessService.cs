@@ -873,11 +873,16 @@ public sealed class RevenueReadinessService(
             @"SELECT * FROM issued_invoices WHERE company_id=@companyId ORDER BY issued_at DESC, invoice_number DESC LIMIT 100",
             c => c.Parameters.AddWithValue("@companyId", companyId),
             ct);
-        return (await Task.WhenAll(rows.Select(async row =>
+        // Load line items SEQUENTIALLY, not via Task.WhenAll: under RLS enforcement all
+        // queries share one request-scoped connection/transaction, so concurrent commands
+        // throw "a command is already in progress". Sequential await is correct + safe.
+        var result = new List<IssuedInvoiceRecord>(rows.Count);
+        foreach (var row in rows)
         {
             var lines = await LoadIssuedInvoiceLinesAsync(companyId, G(row, "id"), ct);
-            return MapIssuedInvoice(row, lines);
-        }))).ToList();
+            result.Add(MapIssuedInvoice(row, lines));
+        }
+        return result;
     }
 
     public async Task<IssuedInvoiceRecord?> GetIssuedInvoiceAsync(long companyId, Guid invoiceId, CancellationToken ct = default)

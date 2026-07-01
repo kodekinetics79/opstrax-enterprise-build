@@ -132,11 +132,15 @@ using (var scope = app.Services.CreateScope())
 {
     // Schema init does DDL + seeding and MUST run as the DB owner, never the
     // restricted runtime role (opstrax_app is NOSUPERUSER/NOBYPASSRLS with no DDL
-    // grants). If PG_CONNECTION was misconfigured to point schema-init at the app
-    // role, fail LOUDLY here rather than emitting dozens of confusing permission
-    // errors mid-bootstrap. See 2026_06_30_stage20_rls_force_and_app_role.sql.
-    await AssertSchemaInitRoleAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
-
+    // grants). Decide up front whether to run it:
+    //   • owner-capable role (super/bypassrls)  -> run schema init (normal path).
+    //   • restricted role + RLS enforced        -> SKIP with a clear log; the owner
+    //     applies migrations/seeders out-of-band (documented production flow), so the
+    //     single runtime process can boot as opstrax_app without failing on DDL.
+    //   • restricted role + RLS off (misconfig) -> warn but still attempt (legacy behaviour).
+    var runSchemaInit = await ShouldRunSchemaInitAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
+    if (runSchemaInit)
+    {
     await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch3", () => scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync());
@@ -185,6 +189,12 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "FleetTmsLogistics",  () => scope.ServiceProvider.GetRequiredService<FleetTmsLogisticsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
     await RunSchemaStep(app, "MarketPackSeed",      () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.MarketPackSeeder>().EnsureAsync());
+    }
+    else
+    {
+        app.Logger.LogWarning("Schema init SKIPPED — runtime is connected as the restricted role under RLS enforcement. " +
+            "Ensure migrations/seeders have been applied out-of-band by the DB owner.");
+    }
 }
 
 app.Use(async (context, next) =>
@@ -680,7 +690,13 @@ static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step
 // CREATE/ALTER — so we detect it up front and throw, halting startup with a clear
 // message instead of a cascade of permission errors. Only enforced when RLS is on
 // (the only scenario in which a restricted role is even in play); otherwise a warning.
-static async Task AssertSchemaInitRoleAsync(WebApplication app, Database db)
+// Decide whether startup should run schema DDL/seeding, based on the connected role.
+//   owner-capable (super/bypassrls)        -> true  (normal single-process path)
+//   restricted role + RLS enforced         -> false (owner applies schema out-of-band;
+//                                                     runtime boots as opstrax_app safely)
+//   restricted role + RLS off (misconfig)  -> true + warn (legacy behaviour; DDL will
+//                                                     likely fail, surfaced loudly)
+static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db)
 {
     try
     {
@@ -696,26 +712,29 @@ static async Task AssertSchemaInitRoleAsync(WebApplication app, Database db)
         var looksLikeOwner = isSuper || bypassRls;
         var rlsEnforced = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
 
-        if (!looksLikeOwner)
+        if (looksLikeOwner)
         {
-            var msg = $"Schema init is connected as role '{roleName}' which is NOSUPERUSER/NOBYPASSRLS " +
-                      "— this is the restricted runtime role, not the DB owner. Schema DDL/seeding will fail. " +
-                      "Point PG_CONNECTION (for migrations/init) at the owner role; use opstrax_app only for the runtime.";
-            if (rlsEnforced)
-                throw new InvalidOperationException(msg);
-            app.Logger.LogWarning("{Msg}", msg);
-        }
-        else
-        {
-            app.Logger.LogInformation("Schema init role check OK — running as owner-capable role '{Role}' (super={Super}, bypassrls={Bypass}).",
+            app.Logger.LogInformation("Schema init will run — owner-capable role '{Role}' (super={Super}, bypassrls={Bypass}).",
                 roleName, isSuper, bypassRls);
+            return true;
         }
+
+        if (rlsEnforced)
+        {
+            app.Logger.LogWarning("Skipping schema init — connected as restricted role '{Role}' under RLS enforcement. " +
+                "Migrations/seeders must be applied out-of-band by the DB owner.", roleName);
+            return false;
+        }
+
+        app.Logger.LogWarning("Connected as restricted role '{Role}' but RLS is OFF — attempting schema init anyway; " +
+            "DDL may fail. Point PG_CONNECTION at the owner for migrations/init.", roleName);
+        return true;
     }
-    catch (InvalidOperationException) { throw; }
     catch (Exception ex)
     {
         // Never block startup on the check itself failing (e.g. restricted pg_roles view).
-        app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding.");
+        app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding with schema init.");
+        return true;
     }
 }
 
