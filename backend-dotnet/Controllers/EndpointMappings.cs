@@ -9084,7 +9084,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var affected = await db.ExecuteAsync(
             @"UPDATE safety_events
-              SET status='resolved', resolved_by=@uid, resolved_at=NOW(),
+              SET status='resolved', review_status='resolved', reviewed_by=@uid, reviewed_at=NOW(), resolved_at=NOW(),
                   notes=COALESCE(@notes, notes), updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND status IN ('open','in_review','coaching_assigned','coached')",
             c =>
@@ -9906,9 +9906,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var rows = await db.ExecuteAsync(
             @"UPDATE dvir_defects dd
-              JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-              SET dd.status='acknowledged', dd.updated_at=NOW()
-              WHERE dd.id=@id AND dr.company_id=@cid AND dd.status='Open'",
+              SET status='acknowledged', updated_at=NOW()
+              FROM dvir_reports dr
+              WHERE dr.id=dd.dvir_report_id
+                AND dd.id=@id AND dd.company_id=@cid AND dr.company_id=@cid AND dd.status='Open'",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  id);
@@ -9928,12 +9929,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
 
+        // Postgres UPDATE...FROM (not MySQL UPDATE...JOIN); scope by the defect's own
+        // company_id and confirm the parent report belongs to the same tenant.
         var rows = await db.ExecuteAsync(
             @"UPDATE dvir_defects dd
-              JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-              SET dd.status='resolved', dd.resolved_at=NOW(), dd.resolved_by=@uid,
-                  dd.updated_at=NOW()
-              WHERE dd.id=@id AND dr.company_id=@cid
+              SET status='resolved', resolved_at=NOW(), resolved_by=@uid, updated_at=NOW()
+              FROM dvir_reports dr
+              WHERE dr.id=dd.dvir_report_id
+                AND dd.id=@id AND dd.company_id=@cid AND dr.company_id=@cid
                 AND dd.status NOT IN ('resolved','rejected')",
             c =>
             {
@@ -11908,9 +11911,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var rows = await db.ExecuteAsync(
             @"UPDATE notification_recipients nr
-              JOIN notifications n ON n.id = nr.notification_id
-              SET nr.status='acknowledged', nr.acknowledged_at=NOW()
-              WHERE nr.user_id=@uid AND nr.company_id=@cid AND nr.status NOT IN ('acknowledged')",
+              SET status='acknowledged', acknowledged_at=NOW()
+              FROM notifications n
+              WHERE n.id = nr.notification_id
+                AND nr.user_id=@uid AND nr.company_id=@cid AND nr.status NOT IN ('acknowledged')",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         await audit.LogAsync(http, "notification.bulk_acknowledged", "Notification", null, ct: ct);
@@ -12448,9 +12452,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             await db.ExecuteAsync(
                 @"UPDATE trips t
-                  JOIN dispatch_assignments da ON da.trip_id = t.id AND da.id = @id
-                  SET t.status='active', t.actual_start_time=COALESCE(t.actual_start_time, NOW())
-                  WHERE t.company_id=@cid",
+                  SET status='active', actual_start_time=COALESCE(t.actual_start_time, NOW())
+                  FROM dispatch_assignments da
+                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
         // Trip completion on delivered
@@ -12458,9 +12462,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             await db.ExecuteAsync(
                 @"UPDATE trips t
-                  JOIN dispatch_assignments da ON da.trip_id = t.id AND da.id = @id
-                  SET t.status='completed', t.actual_end_time=COALESCE(t.actual_end_time, NOW())
-                  WHERE t.company_id=@cid",
+                  SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
+                  FROM dispatch_assignments da
+                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
             // Also set actual delivery time
             await db.ExecuteAsync(
@@ -12560,9 +12564,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
             await db.ExecuteAsync(
                 @"UPDATE trips t
-                  JOIN dispatch_assignments da ON da.trip_id = t.id AND da.id = @id
-                  SET t.status='completed', t.actual_end_time=COALESCE(t.actual_end_time, NOW())
-                  WHERE t.company_id=@cid",
+                  SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
+                  FROM dispatch_assignments da
+                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
         else if (string.Equals(body.ProofType, "pickup", StringComparison.OrdinalIgnoreCase))
