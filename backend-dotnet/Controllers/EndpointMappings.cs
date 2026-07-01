@@ -9065,9 +9065,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var affected = await db.ExecuteAsync(
             @"UPDATE safety_events
-              SET status='dismissed', reviewed_by=@uid, reviewed_at=NOW(),
+              SET status='dismissed', review_status='dismissed', reviewed_by=@uid, reviewed_at=NOW(),
                   notes=COALESCE(@notes, notes), updated_at=NOW()
-              WHERE id=@id AND company_id=@cid AND status IN ('open','in_review')",
+              WHERE id=@id AND company_id=@cid
+                AND LOWER(REPLACE(status,' ','_')) IN ('open','new','in_review','under_review','coaching_assigned','coached','escalated')",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
@@ -9093,7 +9094,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             @"UPDATE safety_events
               SET status='resolved', review_status='resolved', reviewed_by=@uid, reviewed_at=NOW(), resolved_at=NOW(),
                   notes=COALESCE(@notes, notes), updated_at=NOW()
-              WHERE id=@id AND company_id=@cid AND status IN ('open','in_review','coaching_assigned','coached')",
+              WHERE id=@id AND company_id=@cid
+                AND LOWER(REPLACE(status,' ','_')) IN ('open','new','in_review','under_review','coaching_assigned','coached','escalated')",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
