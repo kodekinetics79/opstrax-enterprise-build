@@ -7659,7 +7659,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      d.full_name driver_name,
                      lp.id proof_id,
                      COALESCE(lp.status, CASE WHEN j.proof_status='Pending' THEN 'Pending' ELSE 'Awaiting Capture' END) status,
-                     COALESCE(lp.proof_type, CASE WHEN j.proof_status='Pending' THEN 'Placeholder' ELSE 'Awaiting Capture' END) proof_type,
+                     -- 'Placeholder' is an internal not-yet-captured marker; never surface it in the UI.
+                     CASE WHEN COALESCE(lp.proof_type, 'Placeholder') = 'Placeholder' THEN 'Awaiting Capture' ELSE lp.proof_type END proof_type,
                      lp.receiver_name,
                      lp.received_by,
                      lp.photo_url,
@@ -7698,7 +7699,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               proof_surface AS (
                   SELECT j.id job_id,
                          COALESCE(lp.status, CASE WHEN j.proof_status='Pending' THEN 'Pending' ELSE 'Awaiting Capture' END) surface_status,
-                         COALESCE(lp.proof_type, CASE WHEN j.proof_status='Pending' THEN 'Placeholder' ELSE 'Awaiting Capture' END) surface_proof_type,
+                         CASE WHEN COALESCE(lp.proof_type, 'Placeholder') = 'Placeholder' THEN 'Awaiting Capture' ELSE lp.proof_type END surface_proof_type,
                          j.proof_status
                   FROM jobs j
                   LEFT JOIN latest_pod lp ON lp.job_id=j.id
@@ -14741,6 +14742,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     ? "Investigate telematics device connectivity"
                 : "Monitor vehicle condition";
 
+            // Only surface vehicles that actually carry a risk signal — otherwise the
+            // board fills with empty "LOW / no reason" cards (one per healthy vehicle).
+            if (reasons.Count == 0 && score < 40) continue;
+
             risks.Add(new
             {
                 entityType       = "vehicle",
@@ -14793,6 +14798,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 : openEvents > 0
                     ? "Review and resolve open safety events"
                 : "Monitor driver safety metrics";
+
+            // Only surface drivers with a real risk signal — a healthy driver (good safety
+            // score, no open events/coaching) should not appear as a "risk" card.
+            if (reasons.Count == 0 && score < 40) continue;
 
             risks.Add(new
             {

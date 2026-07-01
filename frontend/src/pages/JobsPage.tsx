@@ -517,8 +517,15 @@ function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, sess
   const completed = rows.filter((row) => /completed|delivered/i.test(String(row.status ?? ""))).length;
   const proofPending = rows.filter((row) => /pending/i.test(String(row.proofStatus ?? ""))).length;
   const updatesSent = rows.filter((row) => /sent|delivered/i.test(String(row.customerUpdateStatus ?? row.status ?? ""))).length;
-  const withEta = rows.filter((row) => row.eta && row.slaDueAt);
-  const onTime = withEta.filter((row) => new Date(String(row.eta)) <= new Date(String(row.slaDueAt))).length;
+  // ETA accuracy: a row counts only when it has BOTH an eta and an SLA due timestamp
+  // (field name varies across endpoints), and both parse to valid dates.
+  const etaDue = (row: AnyRecord) => row.slaDueAt ?? row.sla_due_at ?? row.slaWindowEnd ?? row.sla_window_end;
+  const withEta = rows.filter((row) => {
+    const e = row.eta ? new Date(String(row.eta)).getTime() : NaN;
+    const d = etaDue(row) ? new Date(String(etaDue(row))).getTime() : NaN;
+    return !Number.isNaN(e) && !Number.isNaN(d);
+  });
+  const onTime = withEta.filter((row) => new Date(String(row.eta)) <= new Date(String(etaDue(row)))).length;
   const revenueMargin = rows.reduce((acc, row) => acc + Number(row.marginEstimate ?? 0), 0);
   return {
     ...summary,
