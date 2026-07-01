@@ -71,7 +71,7 @@ public static class FleetTmsLogisticsEndpoints
 
     // ── Orders ──────────────────────────────────────────────────────────────────
 
-    private static async Task<IResult> Orders(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Orders(HttpContext http, Database db, CancellationToken ct, string? status = null, int page = 1, int pageSize = 50)
     {
         if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);
@@ -235,7 +235,7 @@ WHERE id=@id AND company_id=@companyId",
         return Ok(new { items });
     }
 
-    private static async Task<IResult> LastMile(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> LastMile(HttpContext http, Database db, CancellationToken ct, string? status = null, int page = 1, int pageSize = 50)
     {
         if (RequireView(http) is { } denied) return denied;
         var companyId = Cid(http);

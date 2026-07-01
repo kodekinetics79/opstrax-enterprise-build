@@ -1453,7 +1453,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/admin/audit-events", CreateAdminAuditEvent);
 
         // ===== BATCH 7: EXECUTIVE DASHBOARD ======================================
-        app.MapGet("/api/executive/snapshots", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM executive_snapshots WHERE deleted_at IS NULL ORDER BY snapshot_date DESC LIMIT 14", ct: ct));
+        app.MapGet("/api/executive/snapshots", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 14", ct: ct));
         app.MapGet("/api/executive/summary", ExecutiveSummary);
         app.MapGet("/api/executive/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 10", ct: ct));
 
@@ -2680,7 +2680,7 @@ public static partial class EndpointMappings
                      SUM(CASE WHEN status='Maintenance' OR risk_score >= 55 OR geofence_status LIKE 'Outside%' THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(utilization_score),1) utilization_score,
                      SUM(CASE WHEN geofence_status LIKE 'Outside%' THEN 1 ELSE 0 END) geofence_exceptions,
-                     SUM(assigned_vehicle_id IS NULL) unassigned
+                     SUM(CASE WHEN assigned_vehicle_id IS NULL THEN 1 ELSE 0 END) unassigned
               FROM assets WHERE deleted_at IS NULL AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -9881,8 +9881,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN drivers d ON d.id=COALESCE(dd.driver_id, dr.driver_id)
               LEFT JOIN users ru ON ru.id=dd.resolved_by
               WHERE COALESCE(dr.company_id, dd.company_id)=@cid
-                AND (@status IS NULL OR dd.status=@status)
-                AND (@vid IS NULL OR COALESCE(dd.vehicle_id, dr.vehicle_id)=@vid)
+                AND (@status::text IS NULL OR dd.status=@status::text)
+                AND (@vid::bigint IS NULL OR COALESCE(dd.vehicle_id, dr.vehicle_id)=@vid::bigint)
               ORDER BY dd.out_of_service DESC, ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.created_at ASC
               LIMIT 100",
             c =>
@@ -12581,7 +12581,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "SELECT id, template_name, inspection_type, vehicle_type, status FROM dvir_templates WHERE status='Active' ORDER BY inspection_type, template_name",
             ct: ct);
         var items = await db.QueryAsync(
-            "SELECT template_id, item_category, item_name, item_description, sort_order, is_required FROM inspection_checklist_items ORDER BY template_id, sort_order",
+            "SELECT template_id, item_category, item_label AS item_name, sort_order, required AS is_required FROM inspection_checklist_items ORDER BY template_id, sort_order",
             ct: ct);
         // Group items by template_id
         var grouped = items.GroupBy(i => i["templateId"]?.ToString() ?? "")
@@ -13520,8 +13520,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var insights = new List<object>();
 
         // On-time delivery trend
-        var otd30 = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var otd7  = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical'))) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var otd30 = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var otd7  = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         if (otd30.HasValue && otd7.HasValue)
         {
             var diff = Math.Round(otd7.Value - otd30.Value, 1);
@@ -13538,10 +13538,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         // Route compliance
-        var compAvg = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        var compAvg = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         if (compAvg.HasValue && compAvg.Value < 85)
         {
-            var lowCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND compliance_score < 70 AND start_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+            var lowCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND compliance_score < 70 AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
             insights.Add(new
             {
                 type     = "route_compliance",
@@ -13580,7 +13580,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             });
 
         // Coaching overdue
-        var overdueCoach = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_date < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
+        var overdueCoach = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_at < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         if (overdueCoach > 0)
             insights.Add(new
             {
