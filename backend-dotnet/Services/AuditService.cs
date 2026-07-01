@@ -56,7 +56,25 @@ public sealed class AuditService(Database db)
                 cmd.Parameters.AddWithValue("@actionName", actionName);
                 cmd.Parameters.AddWithValue("@entityName", entityName);
                 cmd.Parameters.AddWithValue("@entityId", entityId);
-                cmd.Parameters.AddWithValue("@details", string.IsNullOrWhiteSpace(detailsJson) ? DBNull.Value : detailsJson);
+                cmd.Parameters.AddWithValue("@details", NormalizeDetailsJson(detailsJson));
             }, ct);
+    }
+
+    // Callers pass @details as a JSONB literal, but many pass a plain string (e.g.
+    // "proof:156"), which fails @details::jsonb with "invalid input syntax for type json".
+    // Normalize: valid JSON passes through; a non-JSON string is wrapped as {"detail":"…"};
+    // empty -> NULL (the SQL COALESCE then supplies the default).
+    private static object NormalizeDetailsJson(string? detailsJson)
+    {
+        if (string.IsNullOrWhiteSpace(detailsJson)) return DBNull.Value;
+        try
+        {
+            using var _ = System.Text.Json.JsonDocument.Parse(detailsJson);
+            return detailsJson; // already valid JSON
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return System.Text.Json.JsonSerializer.Serialize(new { detail = detailsJson });
+        }
     }
 }

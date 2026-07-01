@@ -128,9 +128,12 @@ public sealed class DemoTenantSeeder(Database db)
         var dispatch = 0;
         foreach (var (jobId, aStatus) in new[] { (jobs[2], "accepted"), (jobs[3], "in_transit"), (jobs[5], "rejected"), (completedJobs[0], "delivered") })
         {
+            // Set BOTH status (legacy display) and assignment_status (the canonical lowercase
+            // P4 token the dispatch state machine reads) — otherwise assignment_status is empty
+            // and every status transition is rejected as "from '' to ...".
             await db.ExecuteAsync(
-                @"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, driver_id, status, assigned_at)
-                  VALUES (@companyId, @jobId, @vehicleId, @driverId, @status, NOW() - INTERVAL '4 hours')",
+                @"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, driver_id, status, assignment_status, assigned_at)
+                  VALUES (@companyId, @jobId, @vehicleId, @driverId, @status, @status, NOW() - INTERVAL '4 hours')",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId); c.Parameters.AddWithValue("@vehicleId", vehicles[0]); c.Parameters.AddWithValue("@driverId", drivers[0]); c.Parameters.AddWithValue("@status", aStatus); }, ct);
             dispatch++;
         }
@@ -195,7 +198,11 @@ public sealed class DemoTenantSeeder(Database db)
         // Note: the granular finance.* perms gate the API; the frontend Finance/AR *routes*
         // (/invoices, /cost-leakage, …) gate on the coarse legacy "finance:view". Grant both so
         // the demo admin can actually reach the AR/finance pages in the browser, not just the API.
-        const string internalPerms = "[\"dashboard:view\",\"vehicles:view\",\"vehicles:create\",\"vehicles:update\",\"drivers:view\",\"shipments:view\",\"shipments:create\",\"shipments:update\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"customers:view\",\"customers:create\",\"maintenance:view\",\"maintenance:manage\",\"compliance:view\",\"alerts:view\",\"alerts:acknowledge\",\"reports:view\",\"reports:export\",\"safety:view\",\"operations.proof.read\",\"operations.proof.validate\",\"finance:view\",\"finance.invoice.read\",\"finance.ar.summary.read\",\"finance.revenue.summary.read\",\"finance.job.ready_to_bill\",\"finance.invoice_draft.read\",\"finance.invoice_draft.create\",\"finance.invoice.issue\",\"finance.invoice.payment.record\",\"notifications:view\",\"settings:view\"]";
+        // Full-operations permission set so a pilot can exercise EVERY module end-to-end
+        // (create/dispatch/status/POD/maintenance/safety writes + finance), matching the
+        // "Fleet Manager" role's intent. Missing dispatch:update/cancel/override and job:*
+        // previously 403'd the dispatch status/POD and job-lifecycle flows in the browser.
+        const string internalPerms = "[\"dashboard:view\",\"vehicles:view\",\"vehicles:create\",\"vehicles:update\",\"vehicles:assign\",\"drivers:view\",\"drivers:create\",\"drivers:update\",\"drivers:assign\",\"shipments:view\",\"shipments:create\",\"shipments:update\",\"job:create\",\"job:update\",\"job:status\",\"job:assign\",\"jobs:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"dispatch:cancel\",\"dispatch:override\",\"customers:view\",\"customers:create\",\"customers:update\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"maintenance:manage\",\"compliance:view\",\"compliance:update\",\"alerts:view\",\"alerts:acknowledge\",\"alerts:close\",\"reports:view\",\"reports:export\",\"safety:view\",\"safety:create\",\"safety:update\",\"safety:review\",\"operations.proof.read\",\"operations.proof.validate\",\"customer_portal:view\",\"customer_portal:manage\",\"finance:view\",\"finance.invoice.read\",\"finance.ar.summary.read\",\"finance.revenue.summary.read\",\"finance.job.ready_to_bill\",\"finance.invoice_draft.read\",\"finance.invoice_draft.create\",\"finance.invoice.issue\",\"finance.invoice.payment.record\",\"notifications:view\",\"notifications:manage\",\"messages:send\",\"settings:view\"]";
         await SeedUserAsync(companyId, "admin@meridian.demo", "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
         await SeedUserAsync(companyId, "portal@acme.demo", "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
 
