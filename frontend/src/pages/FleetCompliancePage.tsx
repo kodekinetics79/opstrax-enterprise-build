@@ -223,9 +223,9 @@ function SaudiReadiness() {
               <Sparkles className="h-3.5 w-3.5" />
               Saudi/GCC readiness foundation
             </div>
-            <h2 className="text-2xl font-black text-slate-950 dark:text-white">Live compliance and invoice-readiness data with no stubbed fallback.</h2>
+            <h2 className="text-2xl font-black text-slate-950 dark:text-white">Compliance &amp; invoice readiness</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
-              This view is backed by real tenant rows for regions, compliance documents, expiry alerts, and invoice readiness so the module feels operational on `localhost:10000`.
+              Track regional coverage, compliance documents, expiry alerts, and invoice readiness across your fleet in one view.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <StatusBadge status={readiness.eInvoiceReadinessStatus ?? "not_ready"} />

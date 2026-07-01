@@ -158,11 +158,7 @@ function getSessionPlanLabel(session: SessionLike) {
     company?.tier,
   ];
   const found = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  return found ? String(found) : "Plan not surfaced";
-}
-
-function getSessionPermissionCount(session: SessionLike) {
-  return session?.permissions?.length ?? 0;
+  return found ? String(found) : "Enterprise";
 }
 
 function findActiveModule(pathname: string) {
@@ -227,8 +223,8 @@ type ExperienceProfile = {
 
 function getExperienceProfile(pathname: string, title: string): ExperienceProfile {
   const base = {
-    clientOutcome: `A cleaner way to work through ${title.toLowerCase()} with clear next actions and no dead-end demo surfaces.`,
-    maintenanceOutcome: "Shared UI primitives, route-aware shortcuts, and one layout pattern keep future changes fast to ship and hard to break.",
+    clientOutcome: `Work through ${title.toLowerCase()} with clear next actions and one-click access to the surfaces that resolve each issue.`,
+    maintenanceOutcome: "",
     shortcuts: [
       { label: "Dashboard", route: "/command-center" },
       { label: "Proof Center", route: "/operations/proof-center" },
@@ -394,7 +390,6 @@ export function AppShell() {
   const roleLabel = getSessionRoleLabel(session);
   const companyLabel = getSessionCompanyLabel(session);
   const planLabel = getSessionPlanLabel(session);
-  const permissionCount = getSessionPermissionCount(session);
   const accessibleModuleCount = visibleSections.reduce((total, section) => total + section.items.length, 0);
   const firstFilteredRoute = filteredSections.flatMap((section) => section.items).find((module) => matchesFilter(module, module.group, normalizedSidebarQuery));
   const backTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
@@ -453,7 +448,7 @@ export function AppShell() {
       <div className="rounded-[22px] border border-slate-200/80 bg-white/74 px-3.5 py-3 shadow-[0_12px_30px_rgba(15,23,42,.04)] backdrop-blur-md">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Session lens</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Signed in as</p>
             <p className="mt-1 truncate text-[14px] font-bold text-slate-950">{displayName}</p>
             <p className="truncate text-xs text-slate-500">{roleLabel} · {companyLabel}</p>
           </div>
@@ -462,7 +457,7 @@ export function AppShell() {
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <span className="badge badge-muted text-[9px]">{permissionCount} permissions</span>
+          <span className="badge badge-muted text-[9px]">{roleLabel}</span>
           <span className="badge badge-info text-[9px]">{planLabel}</span>
         </div>
       </div>

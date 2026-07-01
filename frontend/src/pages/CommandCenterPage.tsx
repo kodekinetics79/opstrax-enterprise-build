@@ -117,9 +117,6 @@ export function CommandCenterPage() {
               <span className="inline-flex items-center gap-1.5 rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-700 ring-1 ring-teal-200/70">
                 <Gauge className="h-3 w-3" /> Operations
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.22em] text-teal-700">
-                Local build active
-              </span>
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
@@ -132,7 +129,7 @@ export function CommandCenterPage() {
               <span className="ml-2 text-base font-medium text-slate-400">· Fleet Operations</span>
             </h1>
             <p className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
-              Updated locally for <span className="ml-1 font-black text-teal-700">localhost:10000</span>
+              Last updated <span className="ml-1 font-black text-teal-700">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
             </p>
             <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
               {critCount > 0

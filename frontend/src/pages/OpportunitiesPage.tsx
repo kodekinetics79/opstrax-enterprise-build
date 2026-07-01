@@ -164,8 +164,8 @@ export function OpportunitiesPage() {
           <p className="mt-1 text-sm font-semibold text-slate-900">Qualified opportunities stay connected to live contract and pricing work.</p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Pipeline truth</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">No seed fallback is used here, so the board reflects actual backend state.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live pipeline</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">This board reflects your current opportunities in real time.</p>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Risk visibility</p>
