@@ -3063,7 +3063,7 @@ public static partial class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
-            VALUES (@companyId, @code, @type, @make, @model, @year, @vin, @plate, @status, COALESCE(@odometer, 0), 92, 96)", c =>
+            VALUES (@companyId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Active'), COALESCE(@odometer, 0), 92, 96)", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 BindVehicle(c, body);
@@ -3094,7 +3094,7 @@ public static partial class EndpointMappings
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, status, safety_score, readiness_score)
-            VALUES (@companyId, @code, @name, @phone, @email, @license, @status, 92, 93)", c =>
+            VALUES (@companyId, @code, @name, @phone, @email, @license, COALESCE(@status,'Active'), 92, 93)", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 BindDriver(c, body);
@@ -3123,7 +3123,7 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(
             @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score)
-              VALUES (@companyId, @code, @name, @contact, @email, @phone, @billing, @shipping, @status, @slaTier, 94, 92, 18)",
+              VALUES (@companyId, @code, @name, @contact, @email, @phone, @billing, @shipping, COALESCE(@status,'Active'), COALESCE(@slaTier,'Standard'), 94, 92, 18)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
