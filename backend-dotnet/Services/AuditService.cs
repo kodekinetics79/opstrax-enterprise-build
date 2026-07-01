@@ -28,7 +28,7 @@ public sealed class AuditService(Database db)
                 cmd.Parameters.AddWithValue("@actor", actor);
                 cmd.Parameters.AddWithValue("@actionName", actionName);
                 cmd.Parameters.AddWithValue("@entityName", entityName);
-                cmd.Parameters.AddWithValue("@entityId", entityId);
+                cmd.Parameters.AddWithValue("@entityId", (object?)entityId ?? DBNull.Value);
             }, ct);
     }
 
@@ -55,7 +55,7 @@ public sealed class AuditService(Database db)
                 cmd.Parameters.AddWithValue("@actor", actor);
                 cmd.Parameters.AddWithValue("@actionName", actionName);
                 cmd.Parameters.AddWithValue("@entityName", entityName);
-                cmd.Parameters.AddWithValue("@entityId", entityId);
+                cmd.Parameters.AddWithValue("@entityId", (object?)entityId ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("@details", NormalizeDetailsJson(detailsJson));
             }, ct);
     }

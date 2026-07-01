@@ -3373,9 +3373,9 @@ public static partial class EndpointMappings
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@customerId", job?["customerId"]);
-                c.Parameters.AddWithValue("@tracking", job?["trackingCode"]);
-                c.Parameters.AddWithValue("@eta", Get(body, "eta"));
+                c.Parameters.AddWithValue("@customerId", job?["customerId"] ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@tracking", job?["trackingCode"] ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@eta", Get(body, "eta") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@confidence", Get(body, "confidenceLevel") is DBNull ? "High" : Get(body, "confidenceLevel"));
                 c.Parameters.AddWithValue("@message", Get(body, "message") is DBNull ? "OpsTrax ETA update sent from dispatch." : Get(body, "message"));
                 c.Parameters.AddWithValue("@channel", Get(body, "channel") is DBNull ? "Email/SMS" : Get(body, "channel"));
