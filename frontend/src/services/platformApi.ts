@@ -114,6 +114,11 @@ export const platformApi = {
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
   setEntitlement: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/entitlements`, body)),
 
+  // Country profiles (market/localization defaults driving tenant-creation cascade)
+  countryProfiles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/country-profiles")),
+  countryProfile: (code: string) => unwrap<AnyRecord>(platformClient.get(`/api/platform/country-profiles/${code}`)),
+  upsertCountryProfile: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/country-profiles", body)),
+
   // Packages
   packages: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/packages")),
   createPackage: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/packages", body)),

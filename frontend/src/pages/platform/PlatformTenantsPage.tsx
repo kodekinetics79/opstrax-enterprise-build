@@ -115,9 +115,16 @@ export function PlatformTenantsPage() {
 function CreateTenantDrawer({ packages, onClose, onCreated }: {
   packages: AnyRecord[]; onClose: () => void; onCreated: () => void;
 }) {
-  const [form, setForm] = useState({ name: "", industry: "Logistics", packageId: "", seatLimit: "5", adminEmail: "", trialDays: "14" });
+  const [form, setForm] = useState({ name: "", industry: "Logistics", packageId: "", seatLimit: "5", adminEmail: "", trialDays: "14", countryCode: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Country list is server-driven (never hardcoded) so new countries appear here
+  // as soon as they are added through the platform country-profile CRUD.
+  const { data: countryProfiles } = useQuery({ queryKey: ["platform", "country-profiles"], queryFn: platformApi.countryProfiles });
+  const countries = (countryProfiles ?? []) as AnyRecord[];
+  const selectedCountry = countries.find((c) => String(c.countryCode) === form.countryCode);
+  const autoFeatures = ((selectedCountry?.autoEnabledFeatures ?? []) as unknown[]).map(String);
 
   const submit = async () => {
     setBusy(true); setErr(null);
@@ -129,6 +136,7 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
         seatLimit: Number(form.seatLimit),
         adminEmail: form.adminEmail || undefined,
         trialDays: Number(form.trialDays),
+        countryCode: form.countryCode || undefined,
         status: "trial",
       });
       onCreated();
@@ -143,6 +151,39 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
       <div className="space-y-4">
         <PField label="Company name"><PInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Acme Logistics" /></PField>
         <PField label="Industry"><PInput value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} /></PField>
+        <PField label="Country">
+          <PSelect value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value })}>
+            <option value="">— None (defaults: USD, no auto-enabled features) —</option>
+            {countries.map((c) => (
+              <option key={String(c.countryCode)} value={String(c.countryCode)}>
+                {String(c.countryName)} ({String(c.countryCode)})
+              </option>
+            ))}
+          </PSelect>
+        </PField>
+
+        {selectedCountry && (
+          <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-sm">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-teal-300">On creation, this country will apply</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-300">
+              <span className="text-slate-500">Currency</span><span className="font-medium text-slate-100">{String(selectedCountry.defaultCurrency)}</span>
+              <span className="text-slate-500">Locale</span><span className="font-medium text-slate-100">{String(selectedCountry.defaultLocale)}</span>
+              <span className="text-slate-500">Text direction</span><span className="font-medium text-slate-100 uppercase">{String(selectedCountry.textDirection)}</span>
+              <span className="text-slate-500">Calendar</span><span className="font-medium text-slate-100">{String(selectedCountry.calendarSystem)}</span>
+              <span className="text-slate-500">Invoicing</span><span className="font-medium text-slate-100">{String(selectedCountry.invoicingScheme)}</span>
+            </div>
+            <p className="mt-3 mb-1.5 text-xs text-slate-400">
+              Auto-enabled features {autoFeatures.length === 0 ? "— none" : `(${autoFeatures.length})`}:
+            </p>
+            {autoFeatures.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {autoFeatures.map((f) => <PBadge key={f} value={f} />)}
+              </div>
+            )}
+            <p className="mt-3 text-[11px] text-slate-500">These are defaults — every feature can still be toggled per-tenant after creation.</p>
+          </div>
+        )}
+
         <PField label="Package">
           <PSelect value={form.packageId} onChange={(e) => setForm({ ...form, packageId: e.target.value })}>
             <option value="">— None (trial, no package) —</option>
