@@ -427,7 +427,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
       {selectedRecord ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
             {detailQ.isLoading ? (
               <LoadingState />
@@ -476,11 +476,11 @@ function TelematicsDetailDrawer({
   const latestHealth = detail.healthEvents[0];
   return (
     <>
-      <p className="section-title text-teal-300">{kind === "gps-tracking" ? "GPS Detail" : kind === "obd-j1939" ? "Diagnostics Detail" : "Sensor Detail"}</p>
+      <p className="section-title text-teal-600">{kind === "gps-tracking" ? "GPS Detail" : kind === "obd-j1939" ? "Diagnostics Detail" : "Sensor Detail"}</p>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white">{row.vehicleCode}</h2>
-          <p className="mt-1 text-sm text-slate-400">{row.deviceName} · {row.driverName} · {row.routeAssociation}</p>
+          <h2 className="text-2xl font-bold text-slate-900">{row.vehicleCode}</h2>
+          <p className="mt-1 text-sm text-slate-500">{row.deviceName} · {row.driverName} · {row.routeAssociation}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge status={row.dataFreshnessStatus} />
@@ -559,13 +559,13 @@ function TelematicsDetailDrawer({
 
 function InfoPanel({ title, items }: { title: string; items: Array<[string, string]> }) {
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
-      <p className="text-sm font-semibold text-white">{title}</p>
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
       <div className="mt-4 space-y-2">
         {items.map(([label, value]) => (
-          <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.05] bg-black/10 px-3 py-2">
+          <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
             <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-            <span className="text-right text-sm text-slate-200">{value || "—"}</span>
+            <span className="text-right text-sm text-slate-700">{value || "—"}</span>
           </div>
         ))}
       </div>
@@ -575,9 +575,9 @@ function InfoPanel({ title, items }: { title: string; items: Array<[string, stri
 
 function ContextCard({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-      <p className="font-semibold text-white">{title}</p>
-      <p className="mt-2 text-sm text-slate-400">{body}</p>
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="font-semibold text-slate-900">{title}</p>
+      <p className="mt-2 text-sm text-slate-500">{body}</p>
     </div>
   );
 }

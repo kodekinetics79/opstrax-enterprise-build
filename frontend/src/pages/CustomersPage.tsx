@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader } from "@/components/ui";
 import { customers as seedCustomers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -185,16 +185,17 @@ export function CustomersPage() {
         />
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Customers</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Customer accounts, SLA health, delivery experience, and risk monitoring</p>
-        </div>
-        <div className="flex gap-2">
-          <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("customers", filtered)}>Export CSV</button>
-          <button type="button" className="btn-primary text-sm" onClick={() => setShowAdd(true)}>Add Customer</button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="CRM"
+        title="Customers"
+        description="Customer accounts, SLA health, delivery experience, and risk monitoring"
+        actions={
+          <>
+            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("customers", filtered)}>Export CSV</button>
+            <button type="button" className="btn-primary text-sm" onClick={() => setShowAdd(true)}>Add Customer</button>
+          </>
+        }
+      />
 
       {/* KPI strip */}
       <div className="flex flex-wrap gap-3">
@@ -221,11 +222,7 @@ export function CustomersPage() {
               key={f}
               type="button"
               onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
+              className={statusFilter === f ? "control-tab control-tab-active" : "control-tab"}
             >
               {f}
             </button>
@@ -235,7 +232,7 @@ export function CustomersPage() {
           title="SLA Tier filter"
           value={tierFilter}
           onChange={(e) => setTierFilter(e.target.value as typeof tierFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+          className="field w-auto py-1.5 text-sm"
         >
           <option value="All">All Tiers</option>
           <option value="Platinum">Platinum</option>
@@ -247,7 +244,7 @@ export function CustomersPage() {
           placeholder="Search by name, code, contact…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
+          className="field ml-auto w-56 py-1.5 text-sm"
         />
       </div>
 
@@ -306,28 +303,28 @@ export function CustomersPage() {
       {/* Detail drawer */}
       {selected && (
         <div className="fixed inset-0 z-40 flex justify-end" onClick={() => setSelected(null)}>
-          <div className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-              <span className="text-sm font-semibold text-white">{String(selected.name)}</span>
-              <button type="button" className="text-slate-400 hover:text-white" aria-label="Close" onClick={() => setSelected(null)}>✕</button>
+          <div className="bg-white w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <span className="text-sm font-semibold text-slate-900">{String(selected.name)}</span>
+              <button type="button" className="text-slate-400 hover:text-slate-600" aria-label="Close" onClick={() => setSelected(null)}>✕</button>
             </div>
-            <div className="px-5 py-4 border-b border-white/6 flex gap-2 flex-wrap">
+            <div className="px-5 py-4 border-b border-slate-100 flex gap-2 flex-wrap">
               <StatusBadge status={String(selected.status ?? "Active")} />
               <SlaTierBadge tier={String(selected.slaTier ?? "Standard")} />
               <RiskBadge level={String(selected.riskHeatScore ?? "Low")} />
             </div>
-            <div className="px-5 py-4 flex flex-col gap-3 border-b border-white/6">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Scores</p>
+            <div className="px-5 py-4 flex flex-col gap-3 border-b border-slate-100">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Scores</p>
               <div className="flex items-center gap-2 text-xs">
-                <span className="w-28 text-slate-400 shrink-0">SLA Health</span>
+                <span className="w-28 text-slate-500 shrink-0">SLA Health</span>
                 <ScoreBar score={Number(selected.slaHealthScore ?? 0)} />
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <span className="w-28 text-slate-400 shrink-0">Delivery Exp.</span>
+                <span className="w-28 text-slate-500 shrink-0">Delivery Exp.</span>
                 <ScoreBar score={Number(selected.deliveryExperienceScore ?? selected.customerDeliveryExperienceScore ?? 0)} />
               </div>
             </div>
-            <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
+            <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-slate-100">
               {[
                 ["Code", String(selected.customerCode ?? "")],
                 ["Contact", String(selected.contactName ?? "—")],
@@ -337,27 +334,27 @@ export function CustomersPage() {
                 ["Risk Score", String(selected.riskScore ?? "—")],
               ].map(([k, v]) => (
                 <div key={String(k)}>
-                  <p className="text-xs text-slate-400">{String(k)}</p>
-                  <p className="text-sm font-semibold text-white mt-0.5 break-all">{String(v)}</p>
+                  <p className="text-xs text-slate-500">{String(k)}</p>
+                  <p className="text-sm font-semibold text-slate-900 mt-0.5 break-all">{String(v)}</p>
                 </div>
               ))}
             </div>
             {!!selected.recommendedAction && (
               <div className="px-5 py-4">
-                <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Recommended Action</p>
-                <p className="text-sm text-slate-300 leading-relaxed">{String(selected.recommendedAction)}</p>
+                <p className="text-xs font-semibold text-teal-600 uppercase tracking-wide mb-1.5">Recommended Action</p>
+                <p className="text-sm text-slate-600 leading-relaxed">{String(selected.recommendedAction)}</p>
               </div>
             )}
             {!!selected.billingAddress && (
               <div className="px-5 pb-4">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Billing Address</p>
-                <p className="text-xs text-slate-300">{String(selected.billingAddress)}</p>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Billing Address</p>
+                <p className="text-xs text-slate-600">{String(selected.billingAddress)}</p>
               </div>
             )}
-            <div className="px-5 py-4 border-t border-white/6 mt-auto">
+            <div className="px-5 py-4 border-t border-slate-100 mt-auto">
               <button
                 type="button"
-                className="w-full text-sm px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-medium transition-colors"
+                className="btn-primary w-full justify-center text-sm"
                 onClick={() => {
                   void qc.invalidateQueries({ queryKey: ["customers"] });
                   setSelected(null);

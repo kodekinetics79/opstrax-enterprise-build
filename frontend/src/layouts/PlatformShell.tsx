@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut,
+  LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -11,6 +11,7 @@ const NAV: NavItem[] = [
   { to: "/platform", label: "Command Center", icon: LayoutDashboard, permission: "platform:dashboard:view" },
   { to: "/platform/tenants", label: "Tenants", icon: Building2, permission: "platform:tenants:view" },
   { to: "/platform/packages", label: "Packages & Pricing", icon: Package, permission: "platform:packages:view" },
+  { to: "/platform/revenue", label: "Revenue & Usage", icon: Gauge, permission: "platform:packages:view" },
   { to: "/platform/billing", label: "Billing & Invoices", icon: Receipt, permission: "platform:billing:view" },
   { to: "/platform/health", label: "Customer Success", icon: HeartPulse, permission: "platform:health:view" },
   { to: "/platform/audit", label: "Security & Audit", icon: ScrollText, permission: "platform:audit:view" },

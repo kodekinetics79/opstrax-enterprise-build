@@ -87,6 +87,16 @@ export const PERMISSIONS = {
   TELEMATICS_SENSORS_EXPORT: "telematics:sensors:export",
 
   CUSTOMER_PORTAL_VIEW: "customer_portal:view",
+  CUSTOMER_PORTAL_MANAGE: "customer_portal:manage",
+
+  // Fleet/TMS commercial surfaces (carriers, fuel, billing) — added with the
+  // fleet.* taxonomy so nav/actions for these areas can be permission-gated.
+  CARRIERS_VIEW: "carriers:view",
+  CARRIERS_MANAGE: "carriers:manage",
+  FUEL_VIEW: "fuel:view",
+  FUEL_MANAGE: "fuel:manage",
+  BILLING_VIEW: "billing:view",
+  BILLING_MANAGE: "billing:manage",
 
   // P9 — Platform operations (admin/engineering access only)
   OPS_VIEW: "ops:view",
@@ -184,7 +194,17 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_SENSORS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.sensors.update", "telematics:sensors:update", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
 
-  [P.CUSTOMER_PORTAL_VIEW]: ["customer_portal.view", "customer-portal:view", "customer_portal:view"],
+  [P.CUSTOMER_PORTAL_VIEW]: ["customer_portal.view", "customer-portal:view", "customer_portal:view", "fleet.tracking.view", "fleet.pod.view"],
+  [P.CUSTOMER_PORTAL_MANAGE]: ["customer_portal.manage", "customer-portal:manage", "customer_portal:manage", "fleet.customer_tracking.manage", "dispatch.manage", "dispatch:manage"],
+
+  [P.CARRIERS_VIEW]: ["carriers.view", "carriers:view", "fleet.carriers.view", "fleet.view", "fleet:view", "dispatch.view", "dispatch:view"],
+  [P.CARRIERS_MANAGE]: ["carriers.manage", "carriers:manage", "fleet.carriers.manage", "dispatch.manage", "dispatch:manage"],
+
+  [P.FUEL_VIEW]: ["fuel.view", "fuel:view", "fleet.fuel.view", "fleet.view", "fleet:view"],
+  [P.FUEL_MANAGE]: ["fuel.manage", "fuel:manage", "fleet.fuel.manage", "fleet.manage", "fleet:manage"],
+
+  [P.BILLING_VIEW]: ["billing.view", "billing:view", "fleet.billing.view", "reports.view", "reports:view"],
+  [P.BILLING_MANAGE]: ["billing.manage", "billing:manage", "fleet.billing.manage"],
 
   [P.OPS_VIEW]: ["ops.view", "ops:view", "platform.ops:view"],
 } satisfies Record<Permission, string[]>;
@@ -238,11 +258,19 @@ const FLEET_MANAGER_PERMISSIONS = [
   P.MAINTENANCE_VIEW, P.MAINTENANCE_CREATE, P.MAINTENANCE_UPDATE, P.MAINTENANCE_CLOSE,
   P.COMPLIANCE_VIEW, P.COMPLIANCE_UPDATE, P.COMPLIANCE_EXPORT,
   P.REPORTS_VIEW, P.REPORTS_EXPORT,
+  P.CUSTOMER_PORTAL_VIEW, P.CUSTOMER_PORTAL_MANAGE,
+  P.CARRIERS_VIEW, P.CARRIERS_MANAGE, P.FUEL_VIEW, P.FUEL_MANAGE, P.BILLING_VIEW,
   P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,
   P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_EXPORT,
   P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
   P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
   P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_UPDATE, P.TELEMATICS_SENSORS_EXPORT,
+];
+
+const FLEET_OWNER_PERMISSIONS = [
+  ...FLEET_MANAGER_PERMISSIONS,
+  P.BILLING_MANAGE,
+  P.SETTINGS_VIEW, P.SETTINGS_UPDATE,
 ];
 
 const DISPATCHER_PERMISSIONS = [
@@ -251,11 +279,33 @@ const DISPATCHER_PERMISSIONS = [
   P.DRIVERS_VIEW,
   P.SHIPMENTS_VIEW, P.SHIPMENTS_CREATE, P.SHIPMENTS_UPDATE, P.SHIPMENTS_EXPORT,
   P.DISPATCH_VIEW, P.DISPATCH_CREATE, P.DISPATCH_UPDATE, P.DISPATCH_ASSIGN, P.DISPATCH_CANCEL,
+  // customer_portal:manage is supervisor-only (see P41HardeningTests) — Dispatcher omitted.
+  P.CARRIERS_VIEW, P.FUEL_VIEW,
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE,
   P.CUSTOMERS_VIEW,
   P.REPORTS_VIEW,
   P.TELEMATICS_DEVICES_VIEW,
   P.TELEMATICS_GPS_VIEW,
+];
+
+const CARRIER_PARTNER_PERMISSIONS = [
+  P.DASHBOARD_VIEW,
+  P.SHIPMENTS_VIEW,
+  P.CARRIERS_VIEW,
+  P.DISPATCH_VIEW,
+];
+
+const FINANCE_BILLING_USER_PERMISSIONS = [
+  P.DASHBOARD_VIEW,
+  P.BILLING_VIEW, P.BILLING_MANAGE,
+  P.REPORTS_VIEW, P.REPORTS_EXPORT,
+  P.SHIPMENTS_VIEW,
+  P.CUSTOMERS_VIEW,
+];
+
+const CUSTOMER_VIEWER_PERMISSIONS = [
+  P.CUSTOMER_PORTAL_VIEW,
+  P.SHIPMENTS_VIEW,
 ];
 
 const SAFETY_MANAGER_PERMISSIONS = [
@@ -326,12 +376,16 @@ const READ_ONLY_AUDITOR_PERMISSIONS = [
 export const ROLE_PERMISSIONS = {
   super_admin: ["*"],
   tenant_admin: TENANT_ADMIN_PERMISSIONS,
+  fleet_owner: FLEET_OWNER_PERMISSIONS,
   fleet_manager: FLEET_MANAGER_PERMISSIONS,
   dispatcher: DISPATCHER_PERMISSIONS,
   safety_manager: SAFETY_MANAGER_PERMISSIONS,
   maintenance_manager: MAINTENANCE_MANAGER_PERMISSIONS,
   driver: DRIVER_PERMISSIONS,
   customer: CUSTOMER_PERMISSIONS,
+  customer_viewer: CUSTOMER_VIEWER_PERMISSIONS,
+  carrier_partner: CARRIER_PARTNER_PERMISSIONS,
+  finance_billing_user: FINANCE_BILLING_USER_PERMISSIONS,
   read_only_auditor: READ_ONLY_AUDITOR_PERMISSIONS,
 
   // Legacy aliases kept for compatibility with older seeded/authenticated sessions.

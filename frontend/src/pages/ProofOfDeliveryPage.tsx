@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
@@ -289,24 +289,21 @@ export function ProofOfDeliveryPage() {
   return (
     <div className="flex flex-col gap-6 py-6">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+        <div className="fixed top-4 right-4 z-50 panel border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium px-4 py-2.5 shadow-lg">
           {toast}
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Proof of Delivery</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Delivery evidence surface tied directly to job status, shipment promise, and invoice readiness</p>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => exportCsv("proof-of-delivery", filtered)}
-        >
-          Export CSV
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Shipments"
+        title="Proof of Delivery"
+        description="Delivery evidence surface tied directly to job status, shipment promise, and invoice readiness"
+        actions={
+          <button type="button" className="btn-primary text-sm" onClick={() => exportCsv("proof-of-delivery", filtered)}>
+            Export CSV
+          </button>
+        }
+      />
 
       {/* KPI strip */}
       <div className="flex flex-wrap gap-3">
@@ -324,9 +321,9 @@ export function ProofOfDeliveryPage() {
         ))}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-3 text-white">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Lifecycle assurance</p>
-        <p className="mt-1 text-sm text-slate-100">
+      <div className="panel px-4 py-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-600">Lifecycle assurance</p>
+        <p className="mt-1 text-sm text-slate-600">
           Every POD row is now anchored to a real shipment job. Pending proof, captured evidence, and job delivery status are evaluated together so dispatch, customer updates, and invoice readiness stay in sync.
         </p>
       </div>
@@ -339,11 +336,7 @@ export function ProofOfDeliveryPage() {
               key={f}
               type="button"
               onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
+              className={statusFilter === f ? "control-tab control-tab-active" : "control-tab"}
             >
               {f}
             </button>
@@ -354,7 +347,7 @@ export function ProofOfDeliveryPage() {
           placeholder="Search job, tracking code, customer, driver…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
+          className="field ml-auto w-56 py-1.5 text-sm"
         />
       </div>
 

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
@@ -129,26 +129,26 @@ function DriverDrawer({
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
       <div
-        className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
+        className="bg-white w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-          <span className="text-sm font-semibold text-white">Driver Scorecard</span>
-          <button type="button" className="text-slate-400 hover:text-white" onClick={onClose}>✕</button>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <span className="text-sm font-semibold text-slate-900">Driver Scorecard</span>
+          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
 
-        <div className="px-5 pt-5 pb-4 flex items-center gap-4 border-b border-white/6">
+        <div className="px-5 pt-5 pb-4 flex items-center gap-4 border-b border-slate-100">
           <ScoreRing score={score} size={64} />
           <div>
-            <p className="text-base font-semibold text-white">{String(driver.driverName ?? "Driver")}</p>
-            <p className="text-xs text-slate-400 mt-0.5">{String(driver.driverCode ?? "")}</p>
-            <p className={`text-xs mt-1 font-medium ${score >= 85 ? "text-teal-400" : score >= 70 ? "text-amber-400" : "text-red-400"}`}>
+            <p className="text-base font-semibold text-slate-900">{String(driver.driverName ?? "Driver")}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{String(driver.driverCode ?? "")}</p>
+            <p className={`text-xs mt-1 font-medium ${score >= 85 ? "text-teal-600" : score >= 70 ? "text-amber-600" : "text-red-600"}`}>
               {scoreLabel}
             </p>
           </div>
         </div>
 
-        <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
+        <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-slate-100">
           {[
             ["Safety Score", `${score}/100`],
             ["Risk Score", `${risk}`],
@@ -156,14 +156,14 @@ function DriverDrawer({
             ["Incidents", driver.incidentCount],
           ].map(([k, v]) => (
             <div key={String(k)}>
-              <p className="text-xs text-slate-400">{String(k)}</p>
-              <p className="text-sm font-semibold text-white mt-0.5">{String(v ?? "--")}</p>
+              <p className="text-xs text-slate-500">{String(k)}</p>
+              <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(v ?? "--")}</p>
             </div>
           ))}
         </div>
 
-        <div className="px-5 py-4 flex flex-col gap-2.5 border-b border-white/6">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Behavior Breakdown</p>
+        <div className="px-5 py-4 flex flex-col gap-2.5 border-b border-slate-100">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Behavior Breakdown</p>
           <BehaviorBar label="Harsh Braking" count={Number(driver.harshBrakingCount ?? 0)} max={maxCount} color="bg-red-400" />
           <BehaviorBar label="Harsh Accel." count={Number(driver.harshAccelerationCount ?? 0)} max={maxCount} color="bg-orange-400" />
           <BehaviorBar label="Speeding" count={Number(driver.speedingCount ?? 0)} max={maxCount} color="bg-amber-400" />
@@ -171,9 +171,9 @@ function DriverDrawer({
           <BehaviorBar label="Coaching Completed" count={Number(driver.coachingCompletedCount ?? 0)} max={maxCount} color="bg-teal-400" />
         </div>
 
-        <div className="px-5 py-4 border-b border-white/6">
-          <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">AI Recommendation</p>
-          <p className="text-sm text-slate-300 leading-relaxed">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <p className="text-xs font-semibold text-teal-600 uppercase tracking-wide mb-1.5">AI Recommendation</p>
+          <p className="text-sm text-slate-600 leading-relaxed">
             {risk >= 60
               ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
               : risk >= 35
@@ -186,7 +186,7 @@ function DriverDrawer({
           <div className="px-5 py-4">
             <button
               type="button"
-              className="w-full bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
+              className="btn-primary w-full justify-center text-sm"
               onClick={() => onCoach(driver)}
             >
               Create Coaching Task
@@ -226,7 +226,7 @@ function CoachingModal({
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-slate-700">Coaching notes</label>
           <textarea
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 resize-none focus:outline-none focus:ring-2 focus:ring-violet-400"
+            className="field resize-none"
             rows={3}
             placeholder="Focus areas, session goals..."
             value={notes}
@@ -318,24 +318,21 @@ export function DriverScorecardsPage() {
   return (
     <div className="flex flex-col gap-6 py-6">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+        <div className="fixed top-4 right-4 z-50 panel border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium px-4 py-2.5 shadow-lg">
           {toast}
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Driver Safety Scorecards</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events &amp; coaching</p>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => exportCsv("driver-scorecards", drivers)}
-        >
-          Export CSV
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Safety"
+        title="Driver Safety Scorecards"
+        description="Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events & coaching"
+        actions={
+          <button type="button" className="btn-primary text-sm" onClick={() => exportCsv("driver-scorecards", drivers)}>
+            Export CSV
+          </button>
+        }
+      />
 
       {/* KPI strip */}
       <div className="flex flex-wrap gap-3">
@@ -361,11 +358,7 @@ export function DriverScorecardsPage() {
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors capitalize ${
-              tab === t
-                ? "bg-teal-50 border-teal-300 text-teal-700"
-                : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-            }`}
+            className={tab === t ? "control-tab control-tab-active capitalize" : "control-tab capitalize"}
           >
             {t === "trends" ? "Fleet Trends" : `${t.charAt(0).toUpperCase() + t.slice(1)} Scorecards`}
           </button>
@@ -376,7 +369,7 @@ export function DriverScorecardsPage() {
             placeholder="Search drivers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-48"
+            className="field ml-auto w-48 py-1.5 text-sm"
           />
         )}
       </div>

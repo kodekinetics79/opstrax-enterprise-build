@@ -5,6 +5,7 @@ import { PlatformLoginPage } from "./PlatformLoginPage";
 import { PlatformCommandCenterPage } from "./PlatformCommandCenterPage";
 import { PlatformTenantsPage } from "./PlatformTenantsPage";
 import { PlatformPackagesPage } from "./PlatformPackagesPage";
+import { PlatformRevenuePage } from "./PlatformRevenuePage";
 import { PlatformBillingPage } from "./PlatformBillingPage";
 import { PlatformHealthPage } from "./PlatformHealthPage";
 import { PlatformAuditPage } from "./PlatformAuditPage";
@@ -34,6 +35,7 @@ export default function PlatformApp() {
           <Route index element={<Guard permission="platform:dashboard:view"><PlatformCommandCenterPage /></Guard>} />
           <Route path="tenants" element={<Guard permission="platform:tenants:view"><PlatformTenantsPage /></Guard>} />
           <Route path="packages" element={<Guard permission="platform:packages:view"><PlatformPackagesPage /></Guard>} />
+          <Route path="revenue" element={<Guard permission="platform:packages:view"><PlatformRevenuePage /></Guard>} />
           <Route path="billing" element={<Guard permission="platform:billing:view"><PlatformBillingPage /></Guard>} />
           <Route path="health" element={<Guard permission="platform:health:view"><PlatformHealthPage /></Guard>} />
           <Route path="audit" element={<Guard permission="platform:audit:view"><PlatformAuditPage /></Guard>} />

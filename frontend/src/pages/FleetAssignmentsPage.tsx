@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { dispatchApi } from "@/services/dispatchApi";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AssignmentSection = "overview" | "board" | "exceptions" | "owners";
@@ -175,37 +175,15 @@ export function FleetAssignmentsPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(99,102,241,0.12),rgba(20,184,166,0.12),rgba(245,158,11,0.10))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-violet-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700 shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-violet-500" /> Dispatch pairing intelligence
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Assignments</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Elevated from a static history table into a live pairing command surface that exposes coverage, eligibility pressure, exceptions and partner capacity in one place.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => exportCsv("assignments", exportRows as AnyRecord[])}
-              className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
-            >
-              Export live view
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/dispatch")}
-              className="btn-primary h-10 bg-gradient-to-r from-violet-600 to-teal-600 shadow-md shadow-violet-200/60 hover:from-violet-500 hover:to-teal-500"
-            >
-              Open dispatch cockpit <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Dispatch Pairing"
+        title="Assignments"
+        description="Elevated from a static history table into a live pairing command surface that exposes coverage, eligibility pressure, exceptions and partner capacity in one place."
+        actions={<>
+          <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="btn-ghost">Export live view</button>
+          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary">Open dispatch cockpit <ArrowRight className="h-4 w-4" /></button>
+        </>}
+      />
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-4">

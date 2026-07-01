@@ -145,10 +145,10 @@ export function DriverMessagingPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 pb-px">
+      <div className="flex gap-1.5 p-2">
         {TABS.map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-50 text-teal-700 border border-b-0 border-teal-300" : "text-slate-500 hover:text-slate-700"}`}>
+            className={`control-tab ${tab === t ? "control-tab-active" : ""}`}>
             {t}
           </button>
         ))}

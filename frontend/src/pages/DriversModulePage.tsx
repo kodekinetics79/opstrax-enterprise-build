@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, ShieldAlert, Sparkles, UserCheck, Users } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize, PageHeader } from "@/components/ui";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
@@ -134,29 +134,15 @@ export function DriversModulePage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/80 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(16,185,129,0.14),rgba(14,165,233,0.12),rgba(251,191,36,0.12))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700 shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Driver module
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Drivers</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Organized around the real driver workflow so readiness, coaching, HOS, compliance and records are easier to find than in one oversized list view.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => exportCsv("drivers", rows)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
-              Export drivers
-            </button>
-            <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary h-10 bg-gradient-to-r from-emerald-600 to-sky-600 shadow-md shadow-sky-200/60 hover:from-emerald-500 hover:to-sky-500">
-              Open roster <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Driver Module"
+        title="Drivers"
+        description="Organized around the real driver workflow so readiness, coaching, HOS, compliance and records are easier to find than in one oversized list view."
+        actions={<>
+          <button type="button" onClick={() => exportCsv("drivers", rows)} className="btn-ghost">Export drivers</button>
+          <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary">Open roster <ArrowRight className="h-4 w-4" /></button>
+        </>}
+      />
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-5">

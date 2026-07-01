@@ -5,6 +5,7 @@ import {
   Phone, Server, Shield, ShieldCheck, Truck, Zap,
 } from "lucide-react";
 import { aboutApi } from "@/services/aboutApi";
+import { PageHeader } from "@/components/ui";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -55,31 +56,11 @@ export function AboutPage() {
     <div className="space-y-8 pb-8">
 
       {/* ── Hero ── */}
-      <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-br from-slate-900 via-slate-900 to-teal-950/30 p-8">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-teal-400/8 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-8 left-1/3 h-32 w-64 rounded-full bg-blue-500/6 blur-3xl" />
-        <div className="relative">
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-blue-500 shadow-xl shadow-teal-400/25">
-              <Zap className="h-6 w-6 text-slate-950" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-extrabold text-white">About OpsTrax</h1>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-teal-300/70">Transport Management Solution</p>
-            </div>
-            <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
-              <span className="live-dot h-[6px] w-[6px]" />
-              <span className="text-xs font-bold text-teal-300">Live Tenant Active</span>
-            </div>
-          </div>
-          <p className="max-w-3xl text-base text-slate-300 leading-relaxed">
-            OpsTrax Transport Management Solution is an enterprise-grade connected operations platform for fleets, transport teams, drivers, vehicles, assets, dispatch, maintenance, safety, compliance, cost intelligence, and AI-powered decision support.
-          </p>
-          <p className="mt-3 text-sm font-semibold text-teal-300/80 italic">
-            Connected transport. Intelligent control. Enterprise execution.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Platform"
+        title="About OpsTrax"
+        description="OpsTrax Transport Management Solution is an enterprise-grade connected operations platform for fleets, transport teams, drivers, vehicles, assets, dispatch, maintenance, safety, compliance, cost intelligence, and AI-powered decision support."
+      />
 
       {/* ── Build / Health Status ── */}
       {health && (

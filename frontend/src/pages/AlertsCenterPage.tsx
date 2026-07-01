@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type Alert = {
@@ -585,36 +585,24 @@ export function AlertsCenterPage() {
         </div>
       ) : null}
 
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(239,68,68,0.10),rgba(251,191,36,0.12),rgba(20,184,166,0.10))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-rose-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 shadow-sm">
-              <BellRing className="h-3.5 w-3.5" /> Exception command
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Alerts Center</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Reworked as an action-first command surface so operations teams can triage, own and clear live alerts without bouncing between modules or relying on cosmetic severity chips.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
-              Export live queue
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-                void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
-              }}
-              className="btn-primary h-10 bg-gradient-to-r from-rose-600 to-amber-500 shadow-md shadow-rose-200/60 hover:from-rose-500 hover:to-amber-400"
-            >
-              Refresh alerts <RefreshCw className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Exception Command"
+        title="Alerts Center"
+        description="Reworked as an action-first command surface so operations teams can triage, own and clear live alerts without bouncing between modules or relying on cosmetic severity chips."
+        actions={<>
+          <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost">Export live queue</button>
+          <button
+            type="button"
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+              void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
+            }}
+            className="btn-primary"
+          >
+            Refresh alerts <RefreshCw className="h-4 w-4" />
+          </button>
+        </>}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Open queue" value={String(summary.open)} trend={`${summary.critical} critical`} />
