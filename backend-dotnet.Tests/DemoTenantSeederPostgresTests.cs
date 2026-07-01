@@ -14,6 +14,11 @@ public class DemoTenantSeederPostgresTests
     private const string LocalConnectionString =
         "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
 
+    // Isolated, throwaway tenant code — MUST differ from the production DemoTenantSeeder
+    // code so this test never deletes/recreates the real runtime demo tenant a pilot uses.
+    private const string TestCompanyCode = "MERIDIAN-DEMO-TEST";
+    private const string TestCompanyName = "Meridian Logistics — Demo (Test)";
+
     [Fact]
     public async Task DemoSeed_ProducesExpectedCountsAndArSpread_AndIsIdempotent()
     {
@@ -22,10 +27,10 @@ public class DemoTenantSeederPostgresTests
         await DeleteDemoTenantAsync(db); // clean slate for a full seed
 
         var seeder = new DemoTenantSeeder(db);
-        var result = await seeder.SeedAsync();
+        var result = await seeder.SeedAsync(TestCompanyCode, TestCompanyName);
 
         Assert.False(result.AlreadySeeded);
-        Assert.Equal("Meridian Logistics — Demo", result.CompanyName);
+        Assert.Equal(TestCompanyName, result.CompanyName);
         Assert.Equal(5, result.Vehicles);
         Assert.Equal(5, result.Drivers);
         Assert.Equal(3, result.Customers);
@@ -74,14 +79,16 @@ public class DemoTenantSeederPostgresTests
         Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM customer_feedback WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // Idempotent — a second run must NOT duplicate.
-        var second = await seeder.SeedAsync();
+        var second = await seeder.SeedAsync(TestCompanyCode, TestCompanyName);
         Assert.True(second.AlreadySeeded);
         Assert.Equal(companyId, second.CompanyId);
-        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code='MERIDIAN-DEMO'"));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code", c => c.Parameters.AddWithValue("@code", TestCompanyCode)));
         Assert.Equal(12, await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // Two demo login users were seeded (internal admin + customer-portal).
-        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND email IN ('admin@meridian.demo','portal@acme.demo')", c => c.Parameters.AddWithValue("@c", companyId)));
+        // Two demo login users seeded for this tenant (emails are code-suffixed for the
+        // isolated test tenant so they never collide with the runtime demo tenant's users).
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND (email LIKE 'admin%@meridian.demo' OR email LIKE 'portal%@acme.demo')", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // NOTE: intentionally NOT deleted — the demo tenant persists so it is usable in a
         // live demo. The seeder is idempotent, so a subsequent suite run re-seeds cleanly.
@@ -123,7 +130,7 @@ public class DemoTenantSeederPostgresTests
     // company row undeletable and made the idempotency assertion state-dependent.
     private static async Task DeleteDemoTenantAsync(Database db)
     {
-        var companyId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM companies WHERE company_code='MERIDIAN-DEMO' LIMIT 1),0)");
+        var companyId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM companies WHERE company_code=@code LIMIT 1),0)", c => c.Parameters.AddWithValue("@code", TestCompanyCode));
         if (companyId == 0) return;
 
         var pairs = await db.QueryAsync(

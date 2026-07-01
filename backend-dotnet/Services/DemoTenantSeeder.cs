@@ -35,21 +35,27 @@ public sealed class DemoTenantSeeder(Database db)
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
 
+    // companyCode/companyName are overridable so integration TESTS can seed an ISOLATED
+    // throwaway tenant (e.g. "MERIDIAN-DEMO-TEST") without touching the real runtime demo
+    // tenant a pilot is using. Runtime callers use the defaults.
     public async Task<DemoSeedResult> SeedAsync(CancellationToken ct = default)
+        => await SeedAsync(DemoCompanyCode, DemoCompanyName, ct);
+
+    public async Task<DemoSeedResult> SeedAsync(string companyCode, string companyName, CancellationToken ct = default)
     {
         var existing = await db.ScalarLongAsync(
             "SELECT COALESCE((SELECT id FROM companies WHERE company_code=@code LIMIT 1), 0)",
-            c => c.Parameters.AddWithValue("@code", DemoCompanyCode), ct);
+            c => c.Parameters.AddWithValue("@code", companyCode), ct);
         if (existing > 0)
         {
-            return new DemoSeedResult(true, existing, DemoCompanyName, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            return new DemoSeedResult(true, existing, companyName, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 "Demo tenant already exists — skipped (idempotent).");
         }
 
         var companyId = await db.InsertAsync(
             @"INSERT INTO companies (company_code, name, industry, timezone, status)
               VALUES (@code, @name, 'Transport & Logistics', 'America/New_York', 'Active')",
-            c => { c.Parameters.AddWithValue("@code", DemoCompanyCode); c.Parameters.AddWithValue("@name", DemoCompanyName); }, ct);
+            c => { c.Parameters.AddWithValue("@code", companyCode); c.Parameters.AddWithValue("@name", companyName); }, ct);
 
         var correlation = new InMemoryCorrelationContext($"demo-{Guid.NewGuid():N}", $"demo-cause-{Guid.NewGuid():N}", $"demo-req-{Guid.NewGuid():N}", companyId.ToString(), ActorTypes.TenantUser, "1");
         var spine = new BusinessSpineService(db);
@@ -232,10 +238,17 @@ public sealed class DemoTenantSeeder(Database db)
         // "Fleet Manager" role's intent. Missing dispatch:update/cancel/override and job:*
         // previously 403'd the dispatch status/POD and job-lifecycle flows in the browser.
         const string internalPerms = "[\"dashboard:view\",\"vehicles:view\",\"vehicles:create\",\"vehicles:update\",\"vehicles:assign\",\"fleet:manage\",\"fleet.manage\",\"fleet.read\",\"drivers:view\",\"drivers:create\",\"drivers:update\",\"drivers:assign\",\"shipments:view\",\"shipments:create\",\"shipments:update\",\"job:create\",\"job:update\",\"job:status\",\"job:assign\",\"jobs:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"dispatch:cancel\",\"dispatch:override\",\"customers:view\",\"customers:create\",\"customers:update\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"maintenance:manage\",\"compliance:view\",\"compliance:update\",\"alerts:view\",\"alerts:acknowledge\",\"alerts:close\",\"reports:view\",\"reports:export\",\"safety:view\",\"safety:create\",\"safety:update\",\"safety:review\",\"safety:manage\",\"operations.proof.read\",\"operations.proof.validate\",\"customer_portal:view\",\"customer_portal:manage\",\"finance:view\",\"finance.invoice.read\",\"finance.ar.summary.read\",\"finance.revenue.summary.read\",\"finance.job.ready_to_bill\",\"finance.invoice_draft.read\",\"finance.invoice_draft.create\",\"finance.invoice.issue\",\"finance.invoice.payment.record\",\"rate_card.read\",\"rate_card.manage\",\"contract.read\",\"contract.manage\",\"notifications:view\",\"notifications:manage\",\"messages:send\",\"settings:view\"]";
-        await SeedUserAsync(companyId, "admin@meridian.demo", "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
-        await SeedUserAsync(companyId, "portal@acme.demo", "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
+        // users.email is globally UNIQUE. The canonical demo tenant keeps the well-known
+        // logins; a non-default (e.g. test) tenant gets a code-suffixed variant so it never
+        // collides with the runtime demo tenant's users.
+        var isCanonical = string.Equals(companyCode, DemoCompanyCode, StringComparison.Ordinal);
+        var suffix = isCanonical ? "" : "+" + companyCode.ToLowerInvariant();
+        var adminEmail = $"admin{suffix}@meridian.demo";
+        var portalEmail = $"portal{suffix}@acme.demo";
+        await SeedUserAsync(companyId, adminEmail, "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
+        await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
 
-        return new DemoSeedResult(false, companyId, DemoCompanyName,
+        return new DemoSeedResult(false, companyId, companyName,
             vehicles.Count, drivers.Count, customers.Count, jobs.Count, trips, dispatch, proofs,
             invoiceIds.Count, payments, feedback, 2, 1, 1,
             "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Logins: admin@meridian.demo / portal@acme.demo (password: MeridianDemo!23).");
