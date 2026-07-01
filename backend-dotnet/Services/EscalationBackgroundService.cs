@@ -48,6 +48,13 @@ public sealed class EscalationBackgroundService(
         var db = scope.ServiceProvider.GetRequiredService<Database>();
         var notif = scope.ServiceProvider.GetRequiredService<NotificationService>();
 
+        // Cross-tenant worker: processes escalation_rules for ALL companies and filters
+        // by company_id per query, so it runs under the platform-admin bypass scope.
+        await db.RunInSystemScopeAsync(() => RunEscalationCycleCoreAsync(db, notif, ct), ct);
+    }
+
+    private async Task RunEscalationCycleCoreAsync(Database db, NotificationService notif, CancellationToken ct)
+    {
         // Load enabled escalation rules
         var rules = await db.QueryAsync(
             @"SELECT id, company_id, rule_name, event_type, severity,

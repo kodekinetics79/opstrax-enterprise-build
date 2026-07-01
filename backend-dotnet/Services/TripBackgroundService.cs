@@ -46,7 +46,9 @@ public sealed class TripBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
-                await RunCycleAsync(ct);
+                // Cross-tenant worker (all-company routes, filtered by company_id):
+                // run the whole tick under the platform-admin bypass scope.
+                await db.RunInSystemScopeAsync(() => RunCycleAsync(ct), ct);
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, ct);
             }

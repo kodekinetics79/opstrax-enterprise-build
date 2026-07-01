@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
 namespace Opstrax.Api.Services;
@@ -7,6 +8,7 @@ namespace Opstrax.Api.Services;
 public sealed class OutboxDispatcherBackgroundService(
     IOutboxDispatcher dispatcher,
     OutboxDispatcherOptions options,
+    Database db,
     ILogger<OutboxDispatcherBackgroundService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -24,13 +26,18 @@ public sealed class OutboxDispatcherBackgroundService(
         {
             try
             {
-                var processed = 0;
-                do
+                // Cross-tenant worker (drains all-tenant outbox/inbox): run the drain under
+                // the platform-admin bypass scope so it functions as the restricted role.
+                await db.RunInSystemScopeAsync(async () =>
                 {
-                    processed = await dispatcher.DispatchOutboxOnceAsync(stoppingToken);
-                    processed += await dispatcher.DispatchInboxOnceAsync(stoppingToken);
-                }
-                while (processed > 0 && !stoppingToken.IsCancellationRequested);
+                    var processed = 0;
+                    do
+                    {
+                        processed = await dispatcher.DispatchOutboxOnceAsync(stoppingToken);
+                        processed += await dispatcher.DispatchInboxOnceAsync(stoppingToken);
+                    }
+                    while (processed > 0 && !stoppingToken.IsCancellationRequested);
+                }, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

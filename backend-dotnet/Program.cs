@@ -12,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
 builder.Services.AddScoped<AuditService>();
@@ -38,6 +39,8 @@ builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
 builder.Services.AddScoped<IncidentService>();
+builder.Services.AddScoped<CustomerPortalService>();
+builder.Services.AddScoped<DemoTenantSeeder>();
 builder.Services.AddScoped<OpsMetricsService>();
 builder.Services.AddSingleton<FoundationSchemaService>();
 builder.Services.AddSingleton<SafetyMaintenanceFoundationSchemaService>();
@@ -76,6 +79,11 @@ if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || o
 builder.Services.AddSingleton<SecuritySchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
+// Country profiles — platform-managed market/localization defaults + tenant cascade
+builder.Services.AddSingleton<CountryProfileSchemaService>();
+builder.Services.AddScoped<CountryProfileService>();
+// Tenant offboarding — schema-driven cascade delete (pilot "delete on request")
+builder.Services.AddScoped<TenantOffboardingService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
@@ -122,6 +130,13 @@ const int apiRequestLimitPerWindow = 240;
 
 using (var scope = app.Services.CreateScope())
 {
+    // Schema init does DDL + seeding and MUST run as the DB owner, never the
+    // restricted runtime role (opstrax_app is NOSUPERUSER/NOBYPASSRLS with no DDL
+    // grants). If PG_CONNECTION was misconfigured to point schema-init at the app
+    // role, fail LOUDLY here rather than emitting dozens of confusing permission
+    // errors mid-bootstrap. See 2026_06_30_stage20_rls_force_and_app_role.sql.
+    await AssertSchemaInitRoleAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
+
     await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch3", () => scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync());
@@ -161,6 +176,7 @@ using (var scope = app.Services.CreateScope())
     }
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "CountryProfiles",    () => scope.ServiceProvider.GetRequiredService<CountryProfileSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
@@ -184,6 +200,16 @@ app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseMiddleware<CsrfMiddleware>();
 app.UseCors("OpsTraxCors");
 app.UseSwagger();
+
+// RLS enforcement (Option A1). OFF by default: when false the request pipeline
+// behaves exactly as before (no per-request transaction / GUC). Set to true ONLY
+// in an environment whose PG_CONNECTION uses the restricted `opstrax_app` role
+// (see 2026_06_30_stage20_rls_force_and_app_role.sql). When true, each authenticated
+// request runs inside a tenant-scoped transaction (set_config('app.current_tenant_id',
+// …, true)); the pre-tenant auth bootstrap and public/platform paths run under the
+// separate platform_admin_bypass GUC so they are never silently blocked by RLS.
+var rlsEnforceTenantContext = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
+
 app.UseWhen(
     context => context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase),
     branch =>
@@ -191,6 +217,33 @@ app.UseWhen(
         branch.Use(async (context, next) =>
         {
             var path = context.Request.Path.Value ?? string.Empty;
+
+            // Ambient tenant-scope plumbing (no-ops entirely when RLS is off).
+            var scopes = context.RequestServices.GetRequiredService<TenantScopeAccessor>();
+            var scopedDb = context.RequestServices.GetRequiredService<Database>();
+
+            // Runs a single bootstrap read (session / entitlement) under the platform
+            // bypass GUC so it succeeds even under the restricted role before tenant
+            // context exists. Scoped to just the read — leaves the ambient scope alone.
+            async Task<T> BootstrapReadAsync<T>(Func<Task<T>> read)
+            {
+                if (!rlsEnforceTenantContext) return await read();
+                await using var sys = await scopedDb.BeginSystemScopeAsync(context.RequestAborted);
+                scopes.Current = sys;
+                try { var r = await read(); await sys.CompleteAsync(context.RequestAborted); return r; }
+                finally { scopes.Current = null; }
+            }
+
+            // Wraps next() under a bypass scope for no-tenant-context paths (public /
+            // platform / device-auth), so their handlers can reach RLS tables.
+            async Task InvokeUnderBypassAsync()
+            {
+                if (!rlsEnforceTenantContext) { await next(); return; }
+                await using var sys = await scopedDb.BeginSystemScopeAsync(context.RequestAborted);
+                scopes.Current = sys;
+                try { await next(); await sys.CompleteAsync(context.RequestAborted); }
+                finally { scopes.Current = null; }
+            }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
@@ -211,7 +264,7 @@ app.UseWhen(
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)))
             {
-                await next();
+                await InvokeUnderBypassAsync();
                 return;
             }
 
@@ -277,8 +330,10 @@ app.UseWhen(
             }
 
             var db = context.RequestServices.GetRequiredService<Database>();
-            var session = await db.QuerySingleAsync(
-                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.permissions_json, r.permissions_json role_permissions_json
+            // Pre-tenant bootstrap read of RLS-protected auth tables — runs under the
+            // platform bypass so it succeeds under the restricted role (no tenant yet).
+            var session = await BootstrapReadAsync(() => db.QuerySingleAsync(
+                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.permissions_json, r.permissions_json role_permissions_json
                   FROM user_sessions s
                   JOIN users u ON u.id = s.user_id
                   LEFT JOIN roles r ON r.id = u.role_id
@@ -286,7 +341,7 @@ app.UseWhen(
                     AND s.expires_at > NOW()
                     AND u.status='Active'
                   LIMIT 1",
-                c => c.Parameters.AddWithValue("@token", token));
+                c => c.Parameters.AddWithValue("@token", token)));
 
             if (session is null)
             {
@@ -328,6 +383,13 @@ app.UseWhen(
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
             context.Items[EndpointMappings.AuthRoleItemKey] = roleName;
             context.Items[EndpointMappings.AuthPermissionsItemKey] = permissions.ToArray();
+            // Customer-portal binding: non-null when the user is a customer_portal user.
+            // Internal endpoints reject any principal carrying this (see RequirePermission
+            // / RequireInternalUser) — a stricter boundary than tenant RBAC.
+            if (session.TryGetValue("customerId", out var custId) && custId is not null && custId is not DBNull)
+            {
+                context.Items[EndpointMappings.AuthCustomerIdItemKey] = Convert.ToInt64(custId);
+            }
 
             // ── Feature entitlement enforcement (server-side, tenant-isolated) ──────
             // Platform Admin controls which modules a tenant may access. If a tenant has
@@ -337,13 +399,13 @@ app.UseWhen(
             var moduleKey = ModuleKeyForPath(path);
             if (moduleKey is not null)
             {
-                var blocked = await db.ScalarLongAsync(
+                var blocked = await BootstrapReadAsync(() => db.ScalarLongAsync(
                     "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@mk AND enabled=false",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
                         c.Parameters.AddWithValue("@mk", moduleKey);
-                    });
+                    }));
                 if (blocked > 0)
                 {
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -352,7 +414,23 @@ app.UseWhen(
                 }
             }
 
-            await next();
+            // Authenticated handler runs inside a tenant-scoped transaction so every
+            // query is filtered by RLS on app.current_tenant_id (no-op when RLS is off).
+            if (rlsEnforceTenantContext)
+            {
+                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, context.RequestAborted);
+                scopes.Current = reqScope;
+                try
+                {
+                    await next();
+                    await reqScope.CompleteAsync(context.RequestAborted);
+                }
+                finally { scopes.Current = null; }
+            }
+            else
+            {
+                await next();
+            }
         });
     });
 app.MapGet("/swagger", () => Results.Content(SwaggerHtml(), "text/html"));
@@ -500,6 +578,8 @@ app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapRevenueEndpoints();
 app.MapRevenueReadinessEndpoints();
+app.MapCustomerPortalEndpoints();
+app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();
 app.MapSafetyMaintenanceFoundationEndpoints();
 
@@ -592,6 +672,50 @@ static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step
     catch (Exception ex)
     {
         app.Logger.LogWarning(ex, "{SchemaStep} schema bootstrap failed; continuing startup", name);
+    }
+}
+
+// Guard: schema init must connect as the DB owner, not the restricted `opstrax_app`
+// role. A NOBYPASSRLS non-superuser role has no DDL grants and would fail every
+// CREATE/ALTER — so we detect it up front and throw, halting startup with a clear
+// message instead of a cascade of permission errors. Only enforced when RLS is on
+// (the only scenario in which a restricted role is even in play); otherwise a warning.
+static async Task AssertSchemaInitRoleAsync(WebApplication app, Database db)
+{
+    try
+    {
+        var row = await db.QuerySingleAsync(
+            @"SELECT current_user AS role_name,
+                     (SELECT rolsuper     FROM pg_roles WHERE rolname = current_user) AS is_super,
+                     (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypass_rls");
+        var roleName = row?["roleName"]?.ToString() ?? "unknown";
+        var isSuper = row?["isSuper"] is bool s && s;
+        var bypassRls = row?["bypassRls"] is bool b && b;
+
+        // The owner is either a superuser or has BYPASSRLS (the app role has neither).
+        var looksLikeOwner = isSuper || bypassRls;
+        var rlsEnforced = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
+
+        if (!looksLikeOwner)
+        {
+            var msg = $"Schema init is connected as role '{roleName}' which is NOSUPERUSER/NOBYPASSRLS " +
+                      "— this is the restricted runtime role, not the DB owner. Schema DDL/seeding will fail. " +
+                      "Point PG_CONNECTION (for migrations/init) at the owner role; use opstrax_app only for the runtime.";
+            if (rlsEnforced)
+                throw new InvalidOperationException(msg);
+            app.Logger.LogWarning("{Msg}", msg);
+        }
+        else
+        {
+            app.Logger.LogInformation("Schema init role check OK — running as owner-capable role '{Role}' (super={Super}, bypassrls={Bypass}).",
+                roleName, isSuper, bypassRls);
+        }
+    }
+    catch (InvalidOperationException) { throw; }
+    catch (Exception ex)
+    {
+        // Never block startup on the check itself failing (e.g. restricted pg_roles view).
+        app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding.");
     }
 }
 

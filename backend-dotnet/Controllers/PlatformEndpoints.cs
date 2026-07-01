@@ -42,10 +42,19 @@ public static class PlatformEndpoints
         app.MapPost("/api/platform/tenants/{id:long}/assign-package", TenantAssignPackage);
         app.MapPost("/api/platform/tenants/{id:long}/reset-admin-invite", TenantResetInvite);
         app.MapGet("/api/platform/tenants/{id:long}/audit", TenantAudit);
+        // Offboarding — schema-driven cascade delete of ALL tenant-owned rows + the company.
+        app.MapDelete("/api/platform/tenants/{id:long}", TenantDelete);
 
         // ── Feature Entitlements ────────────────────────────────────────────────
         app.MapGet("/api/platform/tenants/{id:long}/entitlements", EntitlementsGet);
         app.MapPut("/api/platform/tenants/{id:long}/entitlements", EntitlementsSet);
+
+        // ── Country Profiles (market/localization defaults + tenant cascade) ─────
+        app.MapGet("/api/platform/country-profiles", CountryProfilesList);
+        app.MapGet("/api/platform/country-profiles/{code}", CountryProfileGet);
+        app.MapPost("/api/platform/country-profiles", CountryProfileUpsert);
+        app.MapPut("/api/platform/country-profiles/{code}", CountryProfileUpsertByCode);
+        app.MapDelete("/api/platform/country-profiles/{code}", CountryProfileDelete);
 
         // ── Packages & Pricing ──────────────────────────────────────────────────
         app.MapGet("/api/platform/packages", PackagesList);
@@ -511,7 +520,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { tenant, entitlements, invoices }));
     }
 
-    private static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    private static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -526,8 +535,22 @@ public static class PlatformEndpoints
         var packageId = Long(body, "packageId");
         var seatLimit = (int)(Long(body, "seatLimit") ?? 5);
         var status = Str(body, "status") ?? "trial";
-        var currency = Str(body, "billingCurrency") ?? "USD";
         var trialDays = (int)(Long(body, "trialDays") ?? 14);
+
+        // Country profile (optional): resolve BEFORE insert so its default currency
+        // seeds the subscription. Reject an unknown code rather than silently ignoring.
+        var countryCode = Str(body, "countryCode") ?? Str(body, "country_code");
+        CountryProfileService.CountryProfile? countryProfile = null;
+        if (!string.IsNullOrWhiteSpace(countryCode))
+        {
+            countryProfile = await countries.GetAsync(countryCode!, ct);
+            if (countryProfile is null)
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown country_code: {countryCode}"), statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Explicit billingCurrency in the body wins; otherwise inherit the country
+        // profile default; otherwise USD.
+        var currency = Str(body, "billingCurrency") ?? countryProfile?.DefaultCurrency ?? "USD";
 
         var companyId = await db.InsertAsync(
             "INSERT INTO companies (company_code, name, industry, status) VALUES (@code, @name, @ind, 'Active')",
@@ -561,15 +584,28 @@ public static class PlatformEndpoints
         if (packageId.HasValue)
             await SeedEntitlementsFromPackageAsync(db, companyId, packageId.Value, principal!.Email, ct);
 
+        // Country cascade: populate company country/currency/timezone and auto-enable
+        // the profile's feature keys as country defaults (never locks — the entitlement
+        // override path can still toggle any of them afterwards).
+        CountryProfileService.CascadeResult? cascade = null;
+        if (countryProfile is not null)
+            cascade = await countries.ApplyToTenantAsync(companyId, countryCode!, principal!.Email, ct);
+
         // Optional tenant admin invite
         var adminEmail = Str(body, "adminEmail");
         if (!string.IsNullOrWhiteSpace(adminEmail))
             await CreateAdminInviteAsync(db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
 
         await AuditAsync(db, principal!, http, "tenant.created", "Tenant", companyId, companyId,
-            new { name, code, status, packageId, seatLimit }, ct);
+            new { name, code, status, packageId, seatLimit, countryCode = cascade?.CountryCode, currency = cascade?.Currency, autoEnabled = cascade?.EnabledFeatures }, ct);
 
-        return Results.Ok(ApiResponse<object>.Ok(new { id = companyId, name, code, status }, "Tenant created"));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id = companyId, name, code, status,
+            country = cascade?.CountryCode,
+            currency = cascade?.Currency ?? currency,
+            autoEnabledFeatures = cascade?.EnabledFeatures ?? [],
+        }, "Tenant created"));
     }
 
     private static async Task<IResult> TenantUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -705,6 +741,44 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
+    // Hard delete a tenant and ALL its data (pilot "delete on request"). Schema-driven
+    // cascade — see TenantOffboardingService. Requires an explicit confirm token in the
+    // body ({"confirm":"<companyCode>"}) so a tenant can never be purged by a stray DELETE.
+    private static async Task<IResult> TenantDelete(long id, HttpContext http, [Microsoft.AspNetCore.Mvc.FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] Dictionary<string, object?>? body, Database db, TenantOffboardingService offboarding, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var tenant = await db.QuerySingleAsync(
+            "SELECT id, name, company_code FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (tenant is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var companyCode = tenant["companyCode"]?.ToString() ?? "";
+        var confirm = body is not null ? Str(body, "confirm") : null;
+        if (!string.Equals(confirm, companyCode, StringComparison.Ordinal))
+            return Results.Json(ApiResponse<object>.Fail("Confirmation required",
+                $"To permanently delete this tenant and ALL its data, send {{\"confirm\":\"{companyCode}\"}}."),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        var result = await offboarding.DeleteTenantAsync(id, ct);
+
+        // Audit AFTER deletion; platform_audit_log is a platform table (not deleted with the
+        // tenant), so the record of the offboarding survives.
+        await AuditAsync(db, principal!, http, "tenant.deleted", "Tenant", id, id,
+            new { companyCode, name = tenant["name"], result.TotalRowsDeleted, tableCount = result.DeletedByTable.Count }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            companyCode,
+            companyDeleted = result.CompanyDeleted,
+            totalRowsDeleted = result.TotalRowsDeleted,
+            tablesAffected = result.DeletedByTable.Count,
+        }, "Tenant permanently deleted"));
+    }
+
     // ════════════════════════════════════════════════════════════════════════════
     // ENTITLEMENTS
     // ════════════════════════════════════════════════════════════════════════════
@@ -751,6 +825,99 @@ public static class PlatformEndpoints
             "Entitlement", id, id, new { moduleKey, enabled, limit, tier }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, moduleKey, enabled }, "Entitlement updated"));
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // COUNTRY PROFILES
+    // ════════════════════════════════════════════════════════════════════════════
+
+    private static async Task<IResult> CountryProfilesList(HttpContext http, Database db, CountryProfileService countries, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:countries:view", ct);
+        if (error is not null) return error;
+        var profiles = await countries.ListAsync(ct);
+        return Results.Ok(ApiResponse<object>.Ok(profiles.Select(ToDto)));
+    }
+
+    private static async Task<IResult> CountryProfileGet(string code, HttpContext http, Database db, CountryProfileService countries, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:countries:view", ct);
+        if (error is not null) return error;
+        var profile = await countries.GetAsync(code, ct);
+        if (profile is null) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+        return Results.Ok(ApiResponse<object>.Ok(ToDto(profile)));
+    }
+
+    private static Task<IResult> CountryProfileUpsert(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
+        => CountryProfileUpsertCore(http, body, db, countries, null, ct);
+
+    private static Task<IResult> CountryProfileUpsertByCode(string code, HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
+        => CountryProfileUpsertCore(http, body, db, countries, code, ct);
+
+    private static async Task<IResult> CountryProfileUpsertCore(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, string? routeCode, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:countries:manage", ct);
+        if (error is not null) return error;
+
+        var countryCode = routeCode ?? Str(body, "countryCode") ?? Str(body, "country_code");
+        if (string.IsNullOrWhiteSpace(countryCode) || countryCode.Trim().Length != 2)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "countryCode must be an ISO 3166-1 alpha-2 code"), statusCode: StatusCodes.Status400BadRequest);
+
+        var name = Str(body, "countryName");
+        var currency = Str(body, "defaultCurrency");
+        var locale = Str(body, "defaultLocale");
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(currency) || string.IsNullOrWhiteSpace(locale))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "countryName, defaultCurrency and defaultLocale are required"), statusCode: StatusCodes.Status400BadRequest);
+
+        var direction = (Str(body, "textDirection") ?? "ltr").ToLowerInvariant();
+        if (direction is not ("ltr" or "rtl"))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "textDirection must be 'ltr' or 'rtl'"), statusCode: StatusCodes.Status400BadRequest);
+
+        var features = ReadStringArray(body, "autoEnabledFeatures");
+        var taxRate = Decimal(body, "defaultTaxRate");
+
+        var profile = new CountryProfileService.CountryProfile(
+            countryCode.Trim().ToUpperInvariant(),
+            name!,
+            currency!,
+            locale!,
+            direction,
+            Str(body, "calendarSystem") ?? "gregorian",
+            Str(body, "invoicingScheme") ?? "standard",
+            Str(body, "taxIdLabel") ?? "Tax ID",
+            taxRate,
+            Str(body, "dataResidencyNote"),
+            features);
+
+        var saved = await countries.UpsertAsync(profile, ct);
+        await AuditAsync(db, principal!, http, "country_profile.upserted", "CountryProfile", null, null,
+            new { saved.CountryCode, saved.DefaultCurrency, saved.AutoEnabledFeatures }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(ToDto(saved), "Country profile saved"));
+    }
+
+    private static async Task<IResult> CountryProfileDelete(string code, HttpContext http, Database db, CountryProfileService countries, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:countries:manage", ct);
+        if (error is not null) return error;
+        var removed = await countries.DeleteAsync(code, ct);
+        if (!removed) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+        await AuditAsync(db, principal!, http, "country_profile.deleted", "CountryProfile", null, null, new { countryCode = code }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { countryCode = code.Trim().ToUpperInvariant() }, "Country profile deleted"));
+    }
+
+    private static object ToDto(CountryProfileService.CountryProfile p) => new
+    {
+        countryCode = p.CountryCode,
+        countryName = p.CountryName,
+        defaultCurrency = p.DefaultCurrency,
+        defaultLocale = p.DefaultLocale,
+        textDirection = p.TextDirection,
+        calendarSystem = p.CalendarSystem,
+        invoicingScheme = p.InvoicingScheme,
+        taxIdLabel = p.TaxIdLabel,
+        defaultTaxRate = p.DefaultTaxRate,
+        dataResidencyNote = p.DataResidencyNote,
+        autoEnabledFeatures = p.AutoEnabledFeatures,
+    };
 
     // ════════════════════════════════════════════════════════════════════════════
     // PACKAGES
@@ -1069,6 +1236,30 @@ public static class PlatformEndpoints
             return null;
         }
         return long.TryParse(v.ToString(), out var fallback) ? fallback : null;
+    }
+
+    private static decimal? Decimal(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var v) || v is null) return null;
+        if (v is JsonElement je)
+        {
+            if (je.ValueKind == JsonValueKind.Number && je.TryGetDecimal(out var n)) return n;
+            if (je.ValueKind == JsonValueKind.String && decimal.TryParse(je.GetString(), out var sn)) return sn;
+            return null;
+        }
+        return decimal.TryParse(v.ToString(), out var fallback) ? fallback : null;
+    }
+
+    private static List<string> ReadStringArray(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var v) || v is null) return [];
+        if (v is JsonElement je && je.ValueKind == JsonValueKind.Array)
+            return je.EnumerateArray()
+                .Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() : e.ToString())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s!.Trim())
+                .ToList();
+        return [];
     }
 
     private static bool? Bool(Dictionary<string, object?> body, string key)

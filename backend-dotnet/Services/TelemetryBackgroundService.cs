@@ -26,8 +26,17 @@ public sealed class TelemetryBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
             try
             {
-                await CheckStaleDevicesAsync(stoppingToken);
-                await PruneExpiredNoncesAsync(stoppingToken);
+                // Cross-tenant worker (all-company positions/nonces, filtered by company_id):
+                // run the whole tick under the platform-admin bypass scope.
+                using (var tickScope = scopeFactory.CreateScope())
+                {
+                    var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
+                    await tickDb.RunInSystemScopeAsync(async () =>
+                    {
+                        await CheckStaleDevicesAsync(stoppingToken);
+                        await PruneExpiredNoncesAsync(stoppingToken);
+                    }, stoppingToken);
+                }
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, stoppingToken);
             }

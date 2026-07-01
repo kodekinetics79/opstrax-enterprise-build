@@ -36,11 +36,18 @@ public sealed class ServiceRunTracker(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<Database>();
-            return await db.ScalarLongAsync(
-                @"INSERT INTO service_run_history (service_name, status, started_at, heartbeat_at)
-                  VALUES (@sn, 'running', NOW(), NOW())
-                  RETURNING id",
-                c => c.Parameters.AddWithValue("@sn", serviceName), ct);
+            // Tracker tables (service_run_history/heartbeats) are platform-level; under
+            // RLS enforcement the off-pipeline write needs the bypass scope.
+            long id = -1;
+            await db.RunInSystemScopeAsync(async () =>
+            {
+                id = await db.ScalarLongAsync(
+                    @"INSERT INTO service_run_history (service_name, status, started_at, heartbeat_at)
+                      VALUES (@sn, 'running', NOW(), NOW())
+                      RETURNING id",
+                    c => c.Parameters.AddWithValue("@sn", serviceName), ct);
+            }, ct);
+            return id;
         }
         catch (Exception ex)
         {
@@ -57,9 +64,9 @@ public sealed class ServiceRunTracker(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<Database>();
-            await db.ExecuteAsync(
+            await db.RunInSystemScopeAsync(() => db.ExecuteAsync(
                 "UPDATE service_run_history SET heartbeat_at = NOW() WHERE id = @id",
-                c => c.Parameters.AddWithValue("@id", runId), ct);
+                c => c.Parameters.AddWithValue("@id", runId), ct), ct);
         }
         catch { /* non-critical — tracker must not crash the service */ }
     }
@@ -74,6 +81,8 @@ public sealed class ServiceRunTracker(
             using var scope = scopeFactory.CreateScope();
             var db        = scope.ServiceProvider.GetRequiredService<Database>();
 
+            await db.RunInSystemScopeAsync(async () =>
+            {
             if (runId > 0)
                 await db.ExecuteAsync(
                     @"UPDATE service_run_history
@@ -101,6 +110,7 @@ public sealed class ServiceRunTracker(
                     last_error_safe      = NULL,
                     updated_at           = NOW()",
                 c => c.Parameters.AddWithValue("@sn", serviceName), ct);
+            }, ct);
         }
         catch (Exception ex)
         {
@@ -122,6 +132,8 @@ public sealed class ServiceRunTracker(
             var db             = scope.ServiceProvider.GetRequiredService<Database>();
             var incidentSvc    = scope.ServiceProvider.GetRequiredService<IncidentService>();
 
+            await db.RunInSystemScopeAsync(async () =>
+            {
             if (runId > 0)
                 await db.ExecuteAsync(
                     @"UPDATE service_run_history
@@ -171,6 +183,7 @@ public sealed class ServiceRunTracker(
                     safeDescription: $"The service has failed {consecutiveFails} times consecutively. Last error: {safeMsg}",
                     ct:              ct);
             }
+            }, ct);
         }
         catch (Exception trackEx)
         {

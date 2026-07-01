@@ -29,8 +29,13 @@ public sealed class MaintenanceBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
-                await RunCycleAsync(ct);
-                await RefreshFleetHealthSnapshotsAsync(ct);
+                // Cross-tenant worker (all-company PM rules, filtered by company_id):
+                // run the whole tick under the platform-admin bypass scope.
+                await db.RunInSystemScopeAsync(async () =>
+                {
+                    await RunCycleAsync(ct);
+                    await RefreshFleetHealthSnapshotsAsync(ct);
+                }, ct);
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, ct);
             }

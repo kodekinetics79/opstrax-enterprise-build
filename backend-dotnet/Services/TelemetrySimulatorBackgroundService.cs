@@ -52,7 +52,17 @@ public sealed class TelemetrySimulatorBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
             try
             {
-                var moved = await TickAsync(intervalSeconds, speedMultiplier, stoppingToken);
+                // Cross-tenant worker (updates all-company positions): run the tick under
+                // the platform-admin bypass scope so it functions as the restricted role.
+                var moved = 0;
+                using (var tickScope = scopeFactory.CreateScope())
+                {
+                    var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
+                    await tickDb.RunInSystemScopeAsync(async () =>
+                    {
+                        moved = await TickAsync(intervalSeconds, speedMultiplier, stoppingToken);
+                    }, stoppingToken);
+                }
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, moved, (int)sw.ElapsedMilliseconds, stoppingToken);
             }
