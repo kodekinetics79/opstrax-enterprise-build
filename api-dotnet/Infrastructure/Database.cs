@@ -8,9 +8,19 @@ public sealed class Database
 
     public Database(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("Default")
-            ?? throw new InvalidOperationException("Missing ConnectionStrings:Default");
+        // Credentials are environment-only — never hard-coded in appsettings.json.
+        // Resolution order: ConnectionStrings:Default (incl. the ConnectionStrings__Default
+        // env var) → the MYSQL_CONNECTION env var. Fails fast if neither is set.
+        _connectionString =
+            Coalesce(
+                configuration.GetConnectionString("Default"),
+                Environment.GetEnvironmentVariable("MYSQL_CONNECTION"))
+            ?? throw new InvalidOperationException(
+                "Database connection string is not configured. Set ConnectionStrings__Default or MYSQL_CONNECTION.");
     }
+
+    private static string? Coalesce(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
     public async Task<MySqlConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
     {

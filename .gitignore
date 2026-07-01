@@ -20,6 +20,7 @@ npm-debug.log*
 .vercel
 appsettings.json
 appsettings.*.json
+!appsettings.example.json
 frontend/tsconfig.tsbuildinfo
 tsconfig.tsbuildinfo
 /package-lock.json
