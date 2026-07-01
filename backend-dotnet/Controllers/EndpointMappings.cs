@@ -3233,7 +3233,7 @@ public static partial class EndpointMappings
                                 dropoff_address, dropoff_latitude, dropoff_longitude, scheduled_start, scheduled_end, sla_window_start, sla_window_end,
                                 required_vehicle_type, required_driver_certification, assigned_driver_id, assigned_vehicle_id, route_id, status, eta,
                                 sla_status, proof_status, customer_update_status, tracking_code, risk_score, revenue_estimate, cost_estimate, margin_estimate, notes)
-              VALUES (@companyId, @customerId, @code, @code, @type, @priority, @pickup, @pickupLat, @pickupLng,
+              VALUES (@companyId, @customerId, @code, @code, COALESCE(@type,'Delivery'), COALESCE(@priority,'Medium'), @pickup, @pickupLat, @pickupLng,
                       @dropoff, @dropLat, @dropLng, COALESCE(@start, NOW()), COALESCE(@end, NOW() + 4 * INTERVAL '1 hour'),
                       @slaStart, @slaEnd, @requiredVehicleType, @requiredDriverCertification, @driverId, @vehicleId, @routeId,
                       COALESCE(@status,'Unassigned'), COALESCE(@eta, @end), COALESCE(@slaStatus,'On Track'), COALESCE(@proofStatus,'Pending'),
@@ -3310,19 +3310,22 @@ public static partial class EndpointMappings
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", companyId);
-            c.Parameters.AddWithValue("@vehicleId", Get(body, "vehicleId"));
-            c.Parameters.AddWithValue("@driverId", Get(body, "driverId"));
+            c.Parameters.AddWithValue("@vehicleId", Get(body, "vehicleId") ?? (object)DBNull.Value);
+            c.Parameters.AddWithValue("@driverId", Get(body, "driverId") ?? (object)DBNull.Value);
         }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
+        // match_reasons_json is jsonb -> cast the string param; assignment_status uses the
+        // canonical lowercase P4 token ('assigned') so the dispatch state machine accepts
+        // transitions on assignments created via the job-assign path.
         await db.ExecuteAsync(@"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, driver_id, match_score, status, assignment_status, match_reasons_json)
-                                VALUES (@companyId, @jobId, @vehicleId, @driverId, @score, 'Assigned', 'Assigned', @reasons)", c =>
+                                VALUES (@companyId, @jobId, @vehicleId, @driverId, @score, 'Assigned', 'assigned', COALESCE(@reasons::jsonb, '[]'::jsonb))", c =>
         {
             c.Parameters.AddWithValue("@companyId", companyId);
             c.Parameters.AddWithValue("@jobId", id);
-            c.Parameters.AddWithValue("@vehicleId", Get(body, "vehicleId"));
-            c.Parameters.AddWithValue("@driverId", Get(body, "driverId"));
+            c.Parameters.AddWithValue("@vehicleId", Get(body, "vehicleId") ?? (object)DBNull.Value);
+            c.Parameters.AddWithValue("@driverId", Get(body, "driverId") ?? (object)DBNull.Value);
             c.Parameters.AddWithValue("@score", match.Score);
-            c.Parameters.AddWithValue("@reasons", match.ReasonsJson);
+            c.Parameters.AddWithValue("@reasons", (object?)match.ReasonsJson ?? DBNull.Value);
         }, ct);
         await audit.LogAsync(http, "job.assigned", "Job", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Job", id, "job.assigned", "Job assigned to driver and vehicle", ct);
