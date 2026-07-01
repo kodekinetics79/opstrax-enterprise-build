@@ -40,6 +40,7 @@ const AlertsCenterPage = lazy(() => import("@/pages/AlertsCenterPage").then((mod
 const DispatchPage = lazy(() => import("@/pages/DispatchPage").then((module) => ({ default: module.DispatchPage })));
 const DispatchCommandPage = lazy(() => import("@/pages/DispatchCommandPage").then((module) => ({ default: module.DispatchCommandPage })));
 const ProofOfDeliveryPage = lazy(() => import("@/pages/ProofOfDeliveryPage").then((module) => ({ default: module.ProofOfDeliveryPage })));
+const CustomerPortalPage = lazy(() => import("@/pages/CustomerPortalPage").then((module) => ({ default: module.CustomerPortalPage })));
 const DriverScorecardsPage = lazy(() => import("@/pages/DriverScorecardsPage").then((module) => ({ default: module.DriverScorecardsPage })));
 const LastMileDeliveryPage = lazy(() => import("@/pages/LastMileDeliveryPage").then((module) => ({ default: module.LastMileDeliveryPage })));
 const OperationsProofCenterPage = lazy(() => import("@/pages/OperationsProofCenterPage").then((module) => ({ default: module.OperationsProofCenterPage })));
@@ -200,7 +201,7 @@ export default function App() {
 
         {/* ── Customer Portal ── */}
         <Route path="/customer-eta" element={<RequirePermission permission="customer_portal:view"><CustomerEtaPage /></RequirePermission>} />
-        <Route path="/customer-portal" element={<RequirePermission permission="customer_portal:view"><CustomerEtaPage /></RequirePermission>} />
+        <Route path="/customer-portal" element={<RequirePermission permission="customer_portal:view"><CustomerPortalPage /></RequirePermission>} />
         <Route path="/customer-visibility" element={<RequirePermission permission="customer_portal:view"><CustomerVisibilityPage /></RequirePermission>} />
 
         {/* ── Fleet Health + Safety Command Center ── */}
@@ -249,6 +250,7 @@ export default function App() {
 
         {/* ── Financials (standalone) ── */}
         <Route path="/invoices"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
+        <Route path="/ar-aging"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/payments"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/profitability" element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
 

@@ -50,8 +50,12 @@ public class Stage16ASourceRegressionTests
         Assert.DoesNotContain("withFallback", finance);
         Assert.DoesNotContain("seedInvoices", finance);
         Assert.DoesNotContain("seedCustomers", finance);
-        Assert.Contains("Ready to bill", finance);
-        Assert.Contains("No seed fallback is used on this surface.", finance);
+        // The Invoices/AR-aging surfaces are wired to the real revenue spine (issued_invoices)
+        // and the tested AR-aging endpoint — NOT the generic module_records feed.
+        Assert.Contains("/api/issued-invoices", finance);
+        Assert.Contains("/api/finance/ar-aging", finance);
+        Assert.DoesNotContain("/api/invoices", finance);
+        Assert.Contains("Sourced from the live revenue spine (issued_invoices).", finance);
     }
 
     [Fact]

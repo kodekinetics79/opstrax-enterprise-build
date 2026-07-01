@@ -120,6 +120,7 @@ export const modules: ModuleConfig[] = [
   { key: "fuel-idling",    title: "Fuel Transactions", route: "/fuel-idling",    group: "Financials", description: "Fuel purchases, cards, stations, odometer and anomaly flags.", accent: "green",  requiredPermission: "fuel.view" },
   { key: "expenses",       title: "Expenses",          route: "/expenses",       group: "Financials", description: "Operating expenses, approvals, tax, receipts and budget variance.", accent: "amber",  requiredPermission: "finance.view" },
   { key: "invoices",       title: "Invoices",          route: "/invoices",       group: "Financials", description: "Invoice lifecycle, aging, payment state and shipment linkage.", accent: "blue",   requiredPermission: "finance.view" },
+  { key: "ar-aging",       title: "AR Aging",          route: "/ar-aging",       group: "Financials", description: "Outstanding receivables bucketed by days past due, per customer.", accent: "amber",  requiredPermission: "finance.view" },
   { key: "payments",       title: "Payments",          route: "/payments",       group: "Financials", description: "Collections, payment methods, unapplied cash and customer payment health.", accent: "green",  requiredPermission: "finance.view" },
   { key: "profitability",  title: "Profitability",     route: "/profitability",  group: "Financials", description: "Revenue by customer, route and shipment; cost by vehicle; margin leakage.", accent: "purple", requiredPermission: "finance.view" },
 
@@ -202,6 +203,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "fuel-idling": Fuel,
   expenses: WalletCards,
   invoices: DollarSign,
+  "ar-aging": DollarSign,
   payments: CreditCard,
   profitability: BarChart3,
   "user-management": UserCog,
