@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -132,17 +133,17 @@ export function CarbonTrackingPage() {
               <AreaChart data={MONTHLY_TREND} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                 <defs>
                   <linearGradient id="co2grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#0d9488" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#0d9488" stopOpacity={0} />
+                    <stop offset="5%"  stopColor={chart.teal600} stopOpacity={0.2} />
+                    <stop offset="95%" stopColor={chart.teal600} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
                 <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Area type="monotone" dataKey="emissions" name="Actual (t CO₂)" stroke="#0d9488" fill="url(#co2grad)" strokeWidth={2} />
-                <Area type="monotone" dataKey="target"    name="Target (t CO₂)"  stroke="#94a3b8" fill="none" strokeDasharray="5 3" strokeWidth={1.5} />
+                <Area type="monotone" dataKey="emissions" name="Actual (t CO₂)" stroke={chart.teal600} fill="url(#co2grad)" strokeWidth={2} />
+                <Area type="monotone" dataKey="target"    name="Target (t CO₂)"  stroke={chart.slate400} fill="none" strokeDasharray="5 3" strokeWidth={1.5} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -171,7 +172,7 @@ export function CarbonTrackingPage() {
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} domain={[1.4, 2.0]} />
                   <Tooltip formatter={(v) => [`${String(v)} kg/km`, "Intensity"]} />
-                  <Bar dataKey="intensity" name="kg CO₂/km" fill="#0d9488" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="intensity" name="kg CO₂/km" fill={chart.teal600} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -236,22 +237,22 @@ export function PredictiveAnalyticsPage() {
             <AreaChart data={RISK_TREND} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
               <defs>
                 <linearGradient id="maintGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} /><stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chart.amber500} stopOpacity={0.3} /><stop offset="95%" stopColor={chart.amber500} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="safetyGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#dc2626" stopOpacity={0.2} /><stop offset="95%" stopColor="#dc2626" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chart.red600} stopOpacity={0.2} /><stop offset="95%" stopColor={chart.red600} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="slaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0d9488" stopOpacity={0.2} /><stop offset="95%" stopColor="#0d9488" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chart.teal600} stopOpacity={0.2} /><stop offset="95%" stopColor={chart.teal600} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="week" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-              <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }} />
-              <Area type="monotone" dataKey="maintenance" name="Maintenance" stroke="#f59e0b" fill="url(#maintGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="safety"      name="Safety"      stroke="#dc2626" fill="url(#safetyGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="sla"         name="SLA"         stroke="#0d9488" fill="url(#slaGrad)" strokeWidth={2} />
+              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
+              <XAxis dataKey="week" tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
+              <Area type="monotone" dataKey="maintenance" name="Maintenance" stroke={chart.amber500} fill="url(#maintGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="safety"      name="Safety"      stroke={chart.red600} fill="url(#safetyGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="sla"         name="SLA"         stroke={chart.teal600} fill="url(#slaGrad)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -269,12 +270,12 @@ export function PredictiveAnalyticsPage() {
               ]}
               margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-              <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} unit="K" />
-              <Tooltip formatter={(v: unknown) => [`AED ${Number(v ?? 0)}K`, "At Risk"]} contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }} />
-              <ReferenceLine y={0} stroke="#e2e8f0" />
-              <Bar dataKey="value" name="AED K" fill="#dc2626" radius={[4, 4, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
+              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} unit="K" />
+              <Tooltip formatter={(v: unknown) => [`AED ${Number(v ?? 0)}K`, "At Risk"]} contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
+              <ReferenceLine y={0} stroke={tokens.border} />
+              <Bar dataKey="value" name="AED K" fill={chart.red600} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

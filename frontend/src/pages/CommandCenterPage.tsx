@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { tokens, chart } from "@/styles/tokens";
 import {
   Activity, AlertOctagon, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight,
   CheckCircle2, Clock, Download, Gauge, Package, RadioTower,
@@ -18,31 +19,31 @@ import type { AnyRecord } from "@/types";
 
 /* ── Severity tokens ─────────────────────────────────────── */
 const SEV: Record<string, { dot: string; ring: string; chip: string; bar: string; icon: typeof AlertOctagon }> = {
-  Critical: { dot: "#ef4444", ring: "ring-red-200",    chip: "bg-red-50 text-red-700 border-red-200",       bar: "bg-red-500",   icon: AlertOctagon },
-  Warning:  { dot: "#f59e0b", ring: "ring-amber-200",  chip: "bg-amber-50 text-amber-700 border-amber-200",  bar: "bg-amber-400", icon: AlertTriangle },
-  Info:     { dot: "#3b82f6", ring: "ring-blue-200",   chip: "bg-blue-50 text-blue-700 border-blue-200",     bar: "bg-blue-400",  icon: Activity },
+  Critical: { dot: chart.red500, ring: "ring-red-200",    chip: "bg-red-50 text-red-700 border-red-200",       bar: "bg-red-500",   icon: AlertOctagon },
+  Warning:  { dot: chart.amber500, ring: "ring-amber-200",  chip: "bg-amber-50 text-amber-700 border-amber-200",  bar: "bg-amber-400", icon: AlertTriangle },
+  Info:     { dot: chart.blue500, ring: "ring-blue-200",   chip: "bg-blue-50 text-blue-700 border-blue-200",     bar: "bg-blue-400",  icon: Activity },
 };
 
 /* ── KPI presentation (icon + accent per slot) ───────────── */
 const KPI_META = [
-  { icon: Package,       tint: "text-teal-600",   ring: "bg-teal-50",   accent: "#0d9488", route: "/active-shipments" },
-  { icon: AlertTriangle, tint: "text-amber-600",  ring: "bg-amber-50",  accent: "#d97706", route: "/alerts" },
-  { icon: Clock,         tint: "text-rose-600",   ring: "bg-rose-50",   accent: "#e11d48", route: "/dispatch" },
-  { icon: Truck,         tint: "text-blue-600",   ring: "bg-blue-50",   accent: "#2563eb", route: "/vehicles" },
-  { icon: ShieldCheck,   tint: "text-indigo-600", ring: "bg-indigo-50", accent: "#4f46e5", route: "/incidents" },
+  { icon: Package,       tint: "text-teal-600",   ring: "bg-teal-50",   accent: chart.teal600, route: "/active-shipments" },
+  { icon: AlertTriangle, tint: "text-amber-600",  ring: "bg-amber-50",  accent: chart.amber600, route: "/alerts" },
+  { icon: Clock,         tint: "text-rose-600",   ring: "bg-rose-50",   accent: chart.rose600, route: "/dispatch" },
+  { icon: Truck,         tint: "text-blue-600",   ring: "bg-blue-50",   accent: chart.blue600, route: "/vehicles" },
+  { icon: ShieldCheck,   tint: "text-indigo-600", ring: "bg-indigo-50", accent: chart.indigo600, route: "/incidents" },
 ];
 
 const FLEET_CFG = [
-  { key: "driving", label: "Driving", color: "#0d9488", icon: Truck,     route: "/vehicles" },
-  { key: "idling",  label: "Idling",  color: "#f59e0b", icon: Zap,       route: "/vehicles" },
-  { key: "parked",  label: "Parked",  color: "#64748b", icon: Clock,     route: "/vehicles" },
-  { key: "offline", label: "Offline", color: "#ef4444", icon: RadioTower, route: "/iot-devices" },
+  { key: "driving", label: "Driving", color: chart.teal600, icon: Truck,     route: "/vehicles" },
+  { key: "idling",  label: "Idling",  color: chart.amber500, icon: Zap,       route: "/vehicles" },
+  { key: "parked",  label: "Parked",  color: chart.slate500, icon: Clock,     route: "/vehicles" },
+  { key: "offline", label: "Offline", color: chart.red500, icon: RadioTower, route: "/iot-devices" },
 ];
 
 const POSTURE: Record<string, { chip: string; dot: string }> = {
-  Elevated: { chip: "border-red-200 bg-red-50 text-red-700",         dot: "#ef4444" },
-  Guarded:  { chip: "border-amber-200 bg-amber-50 text-amber-700",   dot: "#f59e0b" },
-  Stable:   { chip: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "#10b981" },
+  Elevated: { chip: "border-red-200 bg-red-50 text-red-700",         dot: chart.red500 },
+  Guarded:  { chip: "border-amber-200 bg-amber-50 text-amber-700",   dot: chart.amber500 },
+  Stable:   { chip: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: chart.emerald500 },
 };
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -109,7 +110,7 @@ export function CommandCenterPage() {
         {/* soft glass blobs for depth */}
         <span className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-teal-300/20 blur-3xl" />
         <span className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full bg-blue-300/15 blur-3xl" />
-        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: "linear-gradient(90deg,#0d9488,#2563eb,#7c3aed)" }} />
+        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: `linear-gradient(90deg,${chart.teal600},${chart.blue600},${chart.violet600})` }} />
         <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
@@ -293,7 +294,7 @@ export function CommandCenterPage() {
                     <Pie data={donut} dataKey="value" innerRadius={36} outerRadius={50} paddingAngle={2} stroke="none">
                       {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Pie>
-                    <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} />
+                    <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -402,9 +403,9 @@ export function CommandCenterPage() {
 
       {/* ── Trends strip ───────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <TrendCard title="Throughput" unit="jobs · this week" color="#0d9488" type="bar"  agg="sum"  data={weeklyJobs} />
-        <TrendCard title="Cost Leakage" unit="spend · this week" color="#f59e0b" type="area" agg="sum"  data={costData} prefix="$" />
-        <TrendCard title="Safety Score" unit="fleet composite" color="#6366f1" type="area" agg="last" data={safetyTrend} />
+        <TrendCard title="Throughput" unit="jobs · this week" color={chart.teal600} type="bar"  agg="sum"  data={weeklyJobs} />
+        <TrendCard title="Cost Leakage" unit="spend · this week" color={chart.amber500} type="area" agg="sum"  data={costData} prefix="$" />
+        <TrendCard title="Safety Score" unit="fleet composite" color={chart.indigo500} type="area" agg="last" data={safetyTrend} />
       </div>
     </div>
   );
@@ -445,7 +446,7 @@ function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
         <ResponsiveContainer width="100%" height="100%">
           {type === "bar" ? (
             <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: "#64748b", fontSize: 10 }} />
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: chart.slate500, fontSize: 10 }} />
               <Bar dataKey="v" radius={[3, 3, 0, 0]}>
                 {data.map((d, i) => <Cell key={i} fill={d.v >= peak * 0.66 ? color : `${color}66`} />)}
               </Bar>
@@ -458,7 +459,7 @@ function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
                   <stop offset="100%" stopColor={color} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} labelStyle={{ display: "none" }} />
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} labelStyle={{ display: "none" }} />
               <Area type="monotone" dataKey="v" stroke={color} strokeWidth={2} fill={`url(#${gradId})`} dot={false} />
             </AreaChart>
           )}
@@ -540,7 +541,7 @@ function BridgeCard({
   );
 }
 
-const tipStyle = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 11, padding: "4px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.08)" } as const;
+const tipStyle = { background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 11, padding: "4px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.08)" } as const;
 
 /* ── Loading / error state ───────────────────────────────── */
 function CenterState({ spin, label, sub, action }: { spin?: boolean; label: string; sub?: string; action?: React.ReactNode }) {

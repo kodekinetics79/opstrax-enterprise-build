@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, CheckCircle, ChevronRight,
@@ -102,10 +103,10 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
       <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
         <div className="relative h-16 w-16 shrink-0">
           <svg viewBox="0 0 36 36" className="h-16 w-16 -rotate-90">
-            <circle cx="18" cy="18" r="14" fill="none" stroke="#e2e8f0" strokeWidth="3" />
+            <circle cx="18" cy="18" r="14" fill="none" stroke={tokens.border} strokeWidth="3" />
             <circle
               cx="18" cy="18" r="14" fill="none"
-              stroke={score >= 80 ? "#10b981" : score >= 60 ? "#f59e0b" : "#ef4444"}
+              stroke={score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
               strokeWidth="3"
               strokeDasharray={`${(score / 100) * 87.96} 87.96`}
               strokeLinecap="round"

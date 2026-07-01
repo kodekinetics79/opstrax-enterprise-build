@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -557,10 +558,10 @@ export function FleetUtilizationPage() {
                         <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
                         <Tooltip
-                          contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, fontSize: 12 }}
+                          contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 12, fontSize: 12 }}
                         />
-                        <Bar dataKey="utilization" fill="#0f766e" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="readiness" fill="#60a5fa" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="utilization" fill={chart.teal700} radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="readiness" fill={chart.blue400} radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>

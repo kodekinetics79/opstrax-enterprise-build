@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -711,10 +712,10 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
       ? "Availability, safety, compliance and assignment signals in one place so dispatch does not gamble with driver fit."
       : "Trailer and equipment control focused on utilization, geofence trust, and fast reassignment.";
   const lanes = [
-    { label: "Ready", value: ready, pct: rows.length ? Math.round((ready / rows.length) * 100) : 0, color: "#059669", bg: "bg-emerald-50", border: "border-emerald-200" },
-    { label: "Blocked", value: blockers, pct: rows.length ? Math.round((blockers / rows.length) * 100) : 0, color: "#d97706", bg: "bg-amber-50", border: "border-amber-200" },
-    { label: "Assigned", value: assigned, pct: assignedPct, color: "#2563eb", bg: "bg-blue-50", border: "border-blue-200" },
-    { label: kind === "vehicles" ? "Blind spots" : "Review", value: kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length, pct: rows.length ? Math.round(((kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length) / rows.length) * 100) : 0, color: "#7c3aed", bg: "bg-violet-50", border: "border-violet-200" },
+    { label: "Ready", value: ready, pct: rows.length ? Math.round((ready / rows.length) * 100) : 0, color: chart.emerald600, bg: "bg-emerald-50", border: "border-emerald-200" },
+    { label: "Blocked", value: blockers, pct: rows.length ? Math.round((blockers / rows.length) * 100) : 0, color: chart.amber600, bg: "bg-amber-50", border: "border-amber-200" },
+    { label: "Assigned", value: assigned, pct: assignedPct, color: chart.blue600, bg: "bg-blue-50", border: "border-blue-200" },
+    { label: kind === "vehicles" ? "Blind spots" : "Review", value: kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length, pct: rows.length ? Math.round(((kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length) / rows.length) * 100) : 0, color: chart.violet600, bg: "bg-violet-50", border: "border-violet-200" },
   ];
   const watchList = [...rows].sort((a, b) => riskValue(b) - riskValue(a)).slice(0, 4);
 
@@ -728,7 +729,7 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
           <h2 className="relative mt-3 text-2xl font-black leading-tight">{title}</h2>
           <p className="relative mt-3 text-sm leading-relaxed text-blue-50/90">{sub}</p>
           <div className="relative mt-8 grid grid-cols-[120px_1fr] items-center gap-5">
-            <div className="grid h-28 w-28 place-items-center rounded-full bg-white/15 shadow-inner" style={{ background: `conic-gradient(#ffffff ${Math.min(100, Math.max(0, primaryScore)) * 3.6}deg, rgba(255,255,255,.22) 0deg)` }}>
+            <div className="grid h-28 w-28 place-items-center rounded-full bg-white/15 shadow-inner" style={{ background: `conic-gradient(${tokens.surface} ${Math.min(100, Math.max(0, primaryScore)) * 3.6}deg, rgba(255,255,255,.22) 0deg)` }}>
               <div className="grid h-20 w-20 place-items-center rounded-full bg-blue-600/95 text-center shadow-lg">
                 <span className="text-2xl font-black">{Math.round(primaryScore || 0)}%</span>
               </div>
@@ -853,10 +854,10 @@ function VehiclePlanningForecast({ data, loading }: { data?: AnyRecord; loading:
             <div className="mt-4 h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartRows}>
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: chart.slate500 }} />
                   <Tooltip cursor={{ fill: "rgba(37,99,235,.06)" }} />
                   <Bar dataKey="score" radius={[8, 8, 0, 0]}>
-                    {chartRows.map((row) => <Cell key={row.name} fill={row.score > 180 ? "#dc2626" : row.score > 90 ? "#f59e0b" : "#2563eb"} />)}
+                    {chartRows.map((row) => <Cell key={row.name} fill={row.score > 180 ? chart.red600 : row.score > 90 ? chart.amber500 : chart.blue600} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -878,7 +879,7 @@ function VehiclePlanningForecast({ data, loading }: { data?: AnyRecord; loading:
                       <StatusBadge status={row.lifecycleStatus || row.lifecycle_status} />
                     </div>
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round(score / 2.6))}%`, background: score > 180 ? "#dc2626" : score > 90 ? "#f59e0b" : "#2563eb" }} />
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round(score / 2.6))}%`, background: score > 180 ? chart.red600 : score > 90 ? chart.amber500 : chart.blue600 }} />
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-bold text-slate-600">{String(row.replacementWindow || row.replacement_window)} replacement window</p>

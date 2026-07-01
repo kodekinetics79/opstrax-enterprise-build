@@ -250,6 +250,17 @@ body {
 }
 .field::placeholder { color: var(--text-muted); }
 
+/* ---------- GLOBAL KEYBOARD FOCUS RING ----------
+   Visible focus indicator for keyboard navigation (WCAG 2.4.7), using the
+   primary brand accent (--teal). `:focus-visible` only triggers for keyboard
+   (not mouse) focus, so it does not collide with the `.field:focus` box-shadow
+   ring — the two compose: fields keep their soft inset ring AND gain the outline
+   when reached via keyboard. */
+*:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
 /* ---------- SECTION TITLE ---------- */
 .section-title {
   font-size: .7rem;

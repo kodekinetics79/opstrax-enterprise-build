@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { chart } from "@/styles/tokens";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -73,14 +74,14 @@ function GeofenceMap({
       const isActive = String(z.status) === "Active";
       const circle = L.circle([lat, lng], {
         radius,
-        color: isSelected ? "#0d9488" : isActive ? "#6366f1" : "#94a3b8",
+        color: isSelected ? chart.teal600 : isActive ? chart.indigo500 : chart.slate400,
         weight: isSelected ? 3 : 2,
-        fillColor: isSelected ? "#0d9488" : isActive ? "#6366f1" : "#94a3b8",
+        fillColor: isSelected ? chart.teal600 : isActive ? chart.indigo500 : chart.slate400,
         fillOpacity: isSelected ? 0.2 : 0.08,
       });
       const marker = L.circleMarker([lat, lng], {
         radius: 5,
-        color: isSelected ? "#0d9488" : isActive ? "#6366f1" : "#94a3b8",
+        color: isSelected ? chart.teal600 : isActive ? chart.indigo500 : chart.slate400,
         fillOpacity: 1,
       });
       circle.bindTooltip(String(z.name), { permanent: false, direction: "top" });

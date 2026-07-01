@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
@@ -23,10 +24,10 @@ function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
   const dash = (score / 100) * circ;
-  const color = score >= 85 ? "#14b8a6" : score >= 70 ? "#f59e0b" : "#ef4444";
+  const color = score >= 85 ? chart.teal500 : score >= 70 ? chart.amber500 : chart.red500;
   return (
     <svg width={size} height={size} className="shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={6} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tokens.border} strokeWidth={6} />
       <circle
         cx={size / 2} cy={size / 2} r={r} fill="none"
         stroke={color} strokeWidth={6}
@@ -461,10 +462,10 @@ export function DriverScorecardsPage() {
                 <XAxis dataKey="trendDate" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v.slice(5)} />
                 <YAxis domain={[60, 100]} tick={{ fontSize: 11 }} />
                 <Tooltip
-                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: "#475569" }}
+                  contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: tokens.textSecondary }}
                 />
-                <Line type="monotone" dataKey="fleetSafetyScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Safety Score" />
+                <Line type="monotone" dataKey="fleetSafetyScore" stroke={chart.teal500} strokeWidth={2} dot={false} name="Safety Score" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -476,13 +477,13 @@ export function DriverScorecardsPage() {
                 <XAxis dataKey="trendDate" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v.slice(5)} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip
-                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: "#475569" }}
+                  contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: tokens.textSecondary }}
                 />
-                <Bar dataKey="harshBrakingCount" fill="#ef4444" name="Harsh Braking" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="harshAccelerationCount" fill="#f97316" name="Harsh Accel." radius={[2, 2, 0, 0]} />
-                <Bar dataKey="speedingCount" fill="#f59e0b" name="Speeding" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="dashcamEventCount" fill="#8b5cf6" name="Dashcam" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="harshBrakingCount" fill={chart.red500} name="Harsh Braking" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="harshAccelerationCount" fill={chart.orange500} name="Harsh Accel." radius={[2, 2, 0, 0]} />
+                <Bar dataKey="speedingCount" fill={chart.amber500} name="Speeding" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="dashcamEventCount" fill={chart.violet500} name="Dashcam" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

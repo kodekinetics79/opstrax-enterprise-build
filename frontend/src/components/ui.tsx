@@ -138,16 +138,19 @@ export function StatusBadge({ status }: { status?: unknown }) {
   let cls: string;
   let pulse = false;
 
+  // Text colors use the 700-level ramp so the label meets WCAG AA (≥4.5:1)
+  // against the light tinted pill backgrounds. (300-level text was designed for
+  // dark surfaces and fails AA on the v4.0 light panels.)
   if (/critical|failed|breach|expired/i.test(text)) {
-    cls = "border-red-400/30 bg-red-500/10 text-red-300"; pulse = true;
+    cls = "border-red-400/30 bg-red-500/10 text-red-700"; pulse = true;
   } else if (/risk|anomaly|overdue|missing|rejected/i.test(text)) {
-    cls = "border-red-400/20 bg-red-500/8 text-red-300";
+    cls = "border-red-400/20 bg-red-500/8 text-red-700";
   } else if (/warning|review|pending|near|expiring|at.risk/i.test(text)) {
-    cls = "border-amber-400/28 bg-amber-500/10 text-amber-300";
+    cls = "border-amber-400/28 bg-amber-500/10 text-amber-700";
   } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant/i.test(text)) {
-    cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-300";
+    cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-700";
   } else if (/ai|intelligence|predict/i.test(text)) {
-    cls = "border-violet-400/28 bg-violet-500/10 text-violet-300";
+    cls = "border-violet-400/28 bg-violet-500/10 text-violet-700";
   } else {
     cls = "border-slate-300 bg-slate-50 text-slate-600";
   }
@@ -165,13 +168,14 @@ export function StatusBadge({ status }: { status?: unknown }) {
    ============================================================ */
 export function RiskBadge({ risk }: { risk?: unknown }) {
   const text = String(risk ?? "Low");
+  // 700-level text for WCAG AA contrast on the light tinted pill (see StatusBadge).
   const cls = /critical/i.test(text)
-    ? "border-red-400/35 bg-red-500/12 text-red-300 font-extrabold"
+    ? "border-red-400/35 bg-red-500/12 text-red-700 font-extrabold"
     : /high/i.test(text)
-    ? "border-red-400/25 bg-red-500/8 text-red-300"
+    ? "border-red-400/25 bg-red-500/8 text-red-700"
     : /medium|warning/i.test(text)
-    ? "border-amber-400/30 bg-amber-500/10 text-amber-300"
-    : "border-emerald-400/25 bg-emerald-500/8 text-emerald-300";
+    ? "border-amber-400/30 bg-amber-500/10 text-amber-700"
+    : "border-emerald-400/25 bg-emerald-500/8 text-emerald-700";
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] shadow-sm ${cls}`}>
       {text}
@@ -329,8 +333,21 @@ export function DataTable({
               sorted.map((row, index) => (
                 <tr
                   key={String(row.id ?? index)}
-                  onClick={() => onSelect?.(row)}
-                  className="group cursor-pointer transition-colors hover:bg-slate-50"
+                  onClick={onSelect ? () => onSelect(row) : undefined}
+                  onKeyDown={
+                    onSelect
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onSelect(row);
+                          }
+                        }
+                      : undefined
+                  }
+                  tabIndex={onSelect ? 0 : undefined}
+                  role={onSelect ? "button" : undefined}
+                  aria-label={onSelect ? "View record details" : undefined}
+                  className={`group transition-colors hover:bg-slate-50 ${onSelect ? "cursor-pointer" : ""}`}
                 >
                   {columns.map((col) => (
                     <td key={col} className="px-5 py-3.5 text-slate-600">

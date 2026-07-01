@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { tokens, chart } from "@/styles/tokens";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
@@ -195,9 +196,9 @@ export function OpportunitiesPage() {
             <CartesianGrid stroke="rgba(0,0,0,0.05)" strokeDasharray="3 3" />
             <XAxis dataKey="stage" tick={{ fontSize: 10 }} />
             <YAxis tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }}
+            <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
               formatter={(val, name) => [String(val), name === "count" ? "Deals" : "Value (000s)"]} />
-            <Bar dataKey="count" fill="#14b8a6" radius={[3, 3, 0, 0]} name="count" />
+            <Bar dataKey="count" fill={chart.teal500} radius={[3, 3, 0, 0]} name="count" />
           </BarChart>
         </ResponsiveContainer>
       </div>

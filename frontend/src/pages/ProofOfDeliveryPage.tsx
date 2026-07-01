@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { tokens } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
@@ -45,7 +46,7 @@ function SignatureCanvas({ onCapture }: { onCapture: (dataUrl: string) => void }
     const ctx = canvasRef.current!.getContext("2d")!;
     ctx.lineWidth = 2;
     ctx.lineCap = "round";
-    ctx.strokeStyle = "#0f172a";
+    ctx.strokeStyle = tokens.textPrimary;
     const { x, y } = getPos(e);
     ctx.lineTo(x, y);
     ctx.stroke();
