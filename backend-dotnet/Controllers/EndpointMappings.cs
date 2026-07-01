@@ -1621,6 +1621,10 @@ public static partial class EndpointMappings
         // integrations has its own dedicated, tenant-scoped handler (GET /api/integrations
         // above) — skip MapDedicatedModule to avoid an ambiguous duplicate route.
         MapDedicatedModule(app, "user-management");
+        // quotations: the Quotations page calls /api/quotations; back it with the generic
+        // module_records CRUD so it renders + supports create/edit (full quote→contract
+        // conversion is a separate roadmap feature).
+        MapDedicatedModule(app, "quotations");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
         MapDedicatedModule(app, "companies");
