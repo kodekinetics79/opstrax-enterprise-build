@@ -3086,6 +3086,23 @@ public static partial class EndpointMappings
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
+
+        // Validation — required field + tenant-scoped uniqueness (VIN and vehicle_code
+        // must be unique within a fleet; duplicates corrupt telematics/assignment joins).
+        var code = Get(body, "vehicleCode")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(code))
+            return Results.BadRequest(ApiResponse<object>.Fail("Vehicle validation failed", ["Vehicle code is required."]));
+        var errors = new List<string>();
+        var vin = Get(body, "vin")?.ToString()?.Trim();
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+            errors.Add($"Vehicle code '{code}' already exists in this fleet.");
+        if (!string.IsNullOrWhiteSpace(vin) && await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND LOWER(vin)=LOWER(@vin) AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vin", vin); }, ct) > 0)
+            errors.Add($"VIN '{vin}' is already registered to another vehicle.");
+        if (errors.Count > 0)
+            return Results.Conflict(ApiResponse<object>.Fail("Vehicle validation failed", errors.ToArray()));
+
         var id = await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
             VALUES (@companyId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Active'), COALESCE(@odometer, 0), 92, 96)", c =>
             {
@@ -3117,6 +3134,22 @@ public static partial class EndpointMappings
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
+
+        var code = Get(body, "driverCode")?.ToString()?.Trim();
+        var name = Get(body, "fullName")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Driver validation failed", ["Driver code and full name are required."]));
+        var errors = new List<string>();
+        var license = Get(body, "licenseNumber")?.ToString()?.Trim();
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+            errors.Add($"Driver code '{code}' already exists in this fleet.");
+        if (!string.IsNullOrWhiteSpace(license) && await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(license_number)=LOWER(@lic) AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@lic", license); }, ct) > 0)
+            errors.Add($"License number '{license}' is already registered to another driver.");
+        if (errors.Count > 0)
+            return Results.Conflict(ApiResponse<object>.Fail("Driver validation failed", errors.ToArray()));
+
         var id = await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, status, safety_score, readiness_score)
             VALUES (@companyId, @code, @name, @phone, @email, @license, COALESCE(@status,'Active'), 92, 93)", c =>
             {
