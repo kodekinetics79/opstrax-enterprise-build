@@ -220,13 +220,13 @@ function enrichDevice(device: MutableDeviceRecord): DeviceCommandRecord {
   return {
     ...device,
     assignedDriverName: device.assignedDriverName || String(driver?.fullName ?? driver?.name ?? ""),
-    linkedVehicleStatus: String(vehicle?.status ?? "Ready"),
-    linkedVehicleLocation: String(shipment?.origin ?? vehicle?.status ?? "Yard"),
+    linkedVehicleStatus: String(vehicle?.status ?? "—"),
+    linkedVehicleLocation: String(shipment?.origin ?? vehicle?.status ?? "—"),
     linkedShipmentId: String(shipment?.shipmentId ?? device.shipmentId ?? ""),
     linkedShipmentStatus: String(shipment?.currentStatus ?? "No active shipment"),
     openAlertCount: alerts.length,
-    maintenanceStatus: String(maintenance?.status ?? vehicle?.maintenanceStatus ?? "Nominal"),
-    complianceSummary: String(compliance?.status ?? device.complianceStatus ?? "Approved"),
+    maintenanceStatus: String(maintenance?.status ?? vehicle?.maintenanceStatus ?? "—"),
+    complianceSummary: String(compliance?.status ?? device.complianceStatus ?? "Not assessed"),
   };
 }
 
@@ -404,21 +404,23 @@ function mergeBackendDevices(apiRows: AnyRecord[]): MutableDeviceRecord[] {
       driverId: String(seed?.driverId ?? seed?.assignedDriverId ?? ""),
       assignedDriverName: String(row.driver_name ?? seed?.assignedDriverName ?? ""),
       shipmentId: String(seed?.shipmentId ?? ""),
-      tenantId: Number(seed?.tenantId ?? 1),
-      tenantName: String(seed?.tenantName ?? "Northshore Fleet Logistics"),
-      firmwareVersion: String(row.firmware_version ?? seed?.firmwareVersion ?? "Pending firmware scan"),
-      targetFirmwareVersion: String(seed?.targetFirmwareVersion ?? row.firmware_version ?? "Pending firmware scan"),
-      lastCheckIn: String(row.last_sync_at ?? seed?.lastCheckIn ?? nowIso()),
-      connectionStatus: String(row.status ?? seed?.connectionStatus ?? "Online"),
-      powerStatus: String(seed?.powerStatus ?? "Vehicle power"),
-      signalStrength: String(seed?.signalStrength ?? "Strong"),
-      dataHealthScore: Number(seed?.dataHealthScore ?? 92),
-      installStatus: String(seed?.installStatus ?? "Installed"),
-      complianceStatus: String(seed?.complianceStatus ?? "Approved"),
-      warrantyStatus: String(seed?.warrantyStatus ?? "Active"),
-      supportStatus: String(seed?.supportStatus ?? "Enterprise"),
-      lifecycleStatus: String(seed?.lifecycleStatus ?? "Active"),
-      archivedAt: seed?.archivedAt ?? null,
+      tenantId: Number(row.company_id ?? seed?.tenantId ?? 0),
+      tenantName: String(row.company_name ?? ""),
+      // Honest: surface real API values; where the backend does not (yet) supply a
+      // field, show a truthful "unknown/pending" marker rather than a fabricated value.
+      firmwareVersion: String(row.firmware_version ?? "Unknown"),
+      targetFirmwareVersion: String(row.firmware_version ?? "—"),
+      lastCheckIn: String(row.last_sync_at ?? row.last_heartbeat_at ?? "—"),
+      connectionStatus: String(row.status ?? "Unknown"),
+      powerStatus: "—",
+      signalStrength: "—",
+      dataHealthScore: Number(row.data_health_score ?? 0),
+      installStatus: String(row.install_status ?? "Unknown"),
+      complianceStatus: String(row.compliance_status ?? "Not assessed"),
+      warrantyStatus: String(row.warranty_status ?? "—"),
+      supportStatus: String(row.support_status ?? "—"),
+      lifecycleStatus: String(row.status ?? "Unknown"),
+      archivedAt: row.deleted_at ? String(row.deleted_at) : null,
     };
   });
   return merged;

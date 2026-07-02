@@ -338,6 +338,41 @@ public sealed class DemoTenantSeeder(Database db)
             }
         }
 
+        // Real ELD/telematics devices — one per vehicle — so the IoT / Telematics
+        // pages render genuine device records instead of the frontend seed overlay.
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_devices WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct) == 0)
+        {
+            var providers = new[] { "Geotab", "Samsara", "Motive" };
+            var models = new[] { "GO9", "VG34", "LBB-3" };
+            var deviceStatuses = new[] { "Active", "Active", "Active", "Diagnostic", "Active" };
+            var di = 0;
+            foreach (var v in vehicleRows)
+            {
+                var vehicleId = Convert.ToInt64(v["id"]);
+                var p = di % providers.Length;
+                await db.ExecuteAsync(
+                    @"INSERT INTO eld_devices
+                        (company_id, device_serial, device_model, provider, vehicle_id, firmware_version,
+                         status, last_heartbeat_at, last_sync_at, created_at)
+                      VALUES
+                        (@cid, @serial, @model, @provider, @vid, @fw,
+                         @status, NOW() - make_interval(mins => @hb), NOW() - make_interval(mins => @hb), NOW() - INTERVAL '90 days')",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@serial", $"ELD-{companyId}-{di + 1:D3}");
+                        c.Parameters.AddWithValue("@model", models[p]);
+                        c.Parameters.AddWithValue("@provider", providers[p]);
+                        c.Parameters.AddWithValue("@vid", vehicleId);
+                        c.Parameters.AddWithValue("@fw", $"v{4 + p}.{rng.Next(0, 9)}.{rng.Next(0, 9)}");
+                        c.Parameters.AddWithValue("@status", deviceStatuses[di % deviceStatuses.Length]);
+                        c.Parameters.AddWithValue("@hb", rng.Next(1, 45));
+                    }, ct);
+                di++;
+            }
+        }
+
         return fuelInserts;
     }
 
