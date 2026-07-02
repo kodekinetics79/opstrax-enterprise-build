@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
   Search, Send, Sparkles, Trash2, TriangleAlert, Truck, X,
@@ -12,7 +12,7 @@ import {
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
-import { useJobDetail, useJobs, useJobSummary } from "@/hooks/useBatch2";
+import { useJobDetail, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
 
@@ -93,7 +93,15 @@ export function JobsPage() {
     const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
-  const jobs = useJobs();
+  const JOBS_PAGE_SIZE = 50;
+  const [jobsOffset, setJobsOffset] = useState(0);
+  // Server-side paginated + searched — never fetches all 4000+ jobs at once.
+  const jobsPaged = useQuery({
+    queryKey: ["jobs", "paged", query.trim(), jobsOffset],
+    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query }),
+  });
+  const jobs = { data: jobsPaged.data?.rows ?? [], isLoading: jobsPaged.isLoading, isError: jobsPaged.isError, isFetching: jobsPaged.isFetching, error: jobsPaged.error };
+  const jobsTotal = jobsPaged.data?.total ?? (jobsPaged.data?.rows?.length ?? 0);
   const summary = useJobSummary();
   const detail = useJobDetail(selected?.id as string | number | undefined);
   const qc = useQueryClient();
@@ -260,12 +268,23 @@ export function JobsPage() {
       <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
         <div className="relative flex-1 lg:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field h-10 pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, drivers, addresses..." />
+          <input className="field h-10 pl-9" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
         <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
         </select>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} of {scopedRows.length} jobs</span>
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} shown · {jobsTotal.toLocaleString()} total</span>
+        {jobsTotal > JOBS_PAGE_SIZE && (
+          <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+            <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
+              onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
+            <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
+            <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
+              onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
+          </span>
+        )}
       </div>
 
       {rows.length ? (

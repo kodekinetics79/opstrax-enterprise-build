@@ -1,4 +1,5 @@
 import { apiClient, unwrap } from "@/services/apiClient";
+import { apiPaged } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 function asRows(value: unknown): AnyRecord[] {
@@ -7,6 +8,7 @@ function asRows(value: unknown): AnyRecord[] {
 
 export const jobsApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/jobs")),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/jobs", opts),
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")),
   detail: (id: string | number) =>
     unwrap<AnyRecord>(apiClient.get(`/api/jobs/${id}`)).then((detail) => ({
