@@ -2,7 +2,7 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch1SchemaService(Database db)
+public sealed class Batch1SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
@@ -16,9 +16,14 @@ public sealed class Batch1SchemaService(Database db)
             await db.ExecuteAsync(sql, ct: ct);
         }
 
-        foreach (var sql in SeedStatements)
+        // Demo/synthetic data only on explicit opt-in — these statements mutate
+        // existing tenant rows cross-tenant (see DemoSeedGate).
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
         {
-            await db.ExecuteAsync(sql, ct: ct);
+            foreach (var sql in SeedStatements)
+            {
+                await db.ExecuteAsync(sql, ct: ct);
+            }
         }
     }
 
