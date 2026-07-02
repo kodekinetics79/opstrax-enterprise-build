@@ -254,6 +254,93 @@ public sealed class DemoTenantSeeder(Database db)
             "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Logins: admin@meridian.demo / portal@acme.demo (password: MeridianDemo!23).");
     }
 
+    // ── Backdated time-series enrichment (idempotent) ──────────────────────────────
+    // Generates realistic ~90-day history for the tables that drive trend charts but
+    // that the create-path seeder leaves empty/thin: fuel_transactions (Carbon,
+    // fuel analytics) and location_events (live map breadcrumbs, trip compliance).
+    // Safe to run repeatedly on an EXISTING tenant — it no-ops once history exists,
+    // so it can enrich the already-created MERIDIAN-DEMO without a re-seed.
+    public async Task<int> EnrichTimeSeriesAsync(long companyId, CancellationToken ct = default)
+    {
+        var already = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM fuel_transactions WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (already > 0) return 0; // history already present — idempotent no-op.
+
+        // Real vehicles for this tenant, with a per-type fuel profile.
+        var vehicleRows = await db.QueryAsync(
+            "SELECT id, type FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL ORDER BY id",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (vehicleRows.Count == 0) return 0;
+
+        var rng = new Random(unchecked((int)(companyId * 2654435761)));
+        var fuelInserts = 0;
+
+        // Diesel ~ $4.10/gal; each vehicle refuels roughly every 4 days over 90 days.
+        foreach (var v in vehicleRows)
+        {
+            var vehicleId = Convert.ToInt64(v["id"]);
+            var vtype = v.GetValueOrDefault("type")?.ToString() ?? "Truck";
+            var baseGallons = vtype.Contains("Van", StringComparison.OrdinalIgnoreCase) ? 22.0
+                            : vtype.Contains("Reefer", StringComparison.OrdinalIgnoreCase) ? 68.0
+                            : vtype.Contains("Box", StringComparison.OrdinalIgnoreCase) ? 40.0
+                            : 55.0;
+            for (var daysAgo = 88; daysAgo >= 1; daysAgo -= 4)
+            {
+                var gallons = Math.Round(baseGallons * (0.85 + rng.NextDouble() * 0.3), 1);
+                var unitPrice = Math.Round(3.95 + rng.NextDouble() * 0.35, 3);
+                var idleMinutes = rng.Next(20, 140);
+                await db.ExecuteAsync(
+                    @"INSERT INTO fuel_transactions
+                        (company_id, vehicle_id, transaction_time, gallons, quantity, unit, unit_price,
+                         total_cost, currency, fuel_type, idle_minutes, payment_method, anomaly_status, fuel_station)
+                      VALUES
+                        (@cid, @vid, NOW() - make_interval(days => @d, hours => @h), @g, @g, 'gallon', @up,
+                         @tc, 'USD', 'Diesel', @idle, 'Fuel Card', 'normal', @station)",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@vid", vehicleId);
+                        c.Parameters.AddWithValue("@d", daysAgo);
+                        c.Parameters.AddWithValue("@h", rng.Next(6, 20));
+                        c.Parameters.AddWithValue("@g", gallons);
+                        c.Parameters.AddWithValue("@up", unitPrice);
+                        c.Parameters.AddWithValue("@tc", Math.Round(gallons * unitPrice, 2));
+                        c.Parameters.AddWithValue("@idle", idleMinutes);
+                        c.Parameters.AddWithValue("@station", $"Depot Fuel {rng.Next(1, 5)}");
+                    }, ct);
+                fuelInserts++;
+            }
+        }
+
+        // Denser location breadcrumbs for the last 24h across active vehicles so the
+        // live map / trip breadcrumbs have a real trail (not a single stale point).
+        foreach (var v in vehicleRows.Take(3))
+        {
+            var vehicleId = Convert.ToInt64(v["id"]);
+            var lat = 24.7 + rng.NextDouble() * 0.4;  // Riyadh-ish region for the KSA pilot feel
+            var lng = 46.6 + rng.NextDouble() * 0.4;
+            for (var minsAgo = 720; minsAgo >= 15; minsAgo -= 15)
+            {
+                lat += (rng.NextDouble() - 0.5) * 0.01;
+                lng += (rng.NextDouble() - 0.5) * 0.01;
+                await db.ExecuteAsync(
+                    @"INSERT INTO location_events (company_id, vehicle_id, event_time, received_at, event_type, lat, lng, speed_mph, source)
+                      VALUES (@cid, @vid, NOW() - make_interval(mins => @m), NOW() - make_interval(mins => @m), 'gps_ping', @lat, @lng, @spd, 'demo-history')",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@vid", vehicleId);
+                        c.Parameters.AddWithValue("@m", minsAgo);
+                        c.Parameters.AddWithValue("@lat", Math.Round(lat, 6));
+                        c.Parameters.AddWithValue("@lng", Math.Round(lng, 6));
+                        c.Parameters.AddWithValue("@spd", rng.Next(0, 70));
+                    }, ct);
+            }
+        }
+
+        return fuelInserts;
+    }
+
     private async Task AgeInvoiceAsync(Guid invoiceId, int issuedDaysAgo, int dueInDays, CancellationToken ct)
         => await db.ExecuteAsync(
             "UPDATE issued_invoices SET issued_at = NOW() - make_interval(days => @issued), due_at = NOW() + make_interval(days => @due) WHERE id=@id",
