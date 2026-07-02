@@ -24,7 +24,13 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: ${PG_CONNECTION}
+      # RLS ENFORCEMENT: connect as the restricted, non-BYPASSRLS app role and turn on
+      # per-request tenant scoping. This makes Postgres RLS the active backstop so any
+      # read missing a company_id predicate fail-closes to the current tenant instead of
+      # leaking cross-tenant. PG_CONNECTION_APP should use the opstrax_app role; falls
+      # back to PG_CONNECTION only if unset (dev convenience).
+      ConnectionStrings__DefaultConnection: ${PG_CONNECTION_APP:-${PG_CONNECTION}}
+      Rls__EnforceTenantContext: "true"
       Cors__AllowedOrigins: http://localhost:10000
     ports:
       - "8088:8080"

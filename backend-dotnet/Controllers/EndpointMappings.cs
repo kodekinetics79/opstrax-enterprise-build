@@ -11463,13 +11463,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var insights = new List<Dictionary<string, object?>>();
         var staleRows = await db.QueryAsync(
-            @"SELECT cv.shipment_id, cv.dispatch_assignment_id, lvp.recorded_at
+            @"SELECT cv.shipment_id, cv.dispatch_assignment_id, lvp.event_time
               FROM customer_visibility cv
               JOIN dispatch_assignments da ON da.id = cv.dispatch_assignment_id
               LEFT JOIN latest_vehicle_positions lvp ON lvp.vehicle_id = da.vehicle_id
               WHERE cv.company_id = @companyId
                 AND da.assignment_status NOT IN ('delivered','cancelled')
-                AND (lvp.recorded_at IS NULL OR lvp.recorded_at < NOW() - 30 * INTERVAL '1 minute')
+                AND (lvp.event_time IS NULL OR lvp.event_time < NOW() - 30 * INTERVAL '1 minute')
               LIMIT 10",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct);
 
