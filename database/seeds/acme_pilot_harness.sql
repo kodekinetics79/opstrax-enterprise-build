@@ -156,6 +156,17 @@ BEGIN
            CURRENT_DATE + ((v.id%20)-5) * INTERVAL '1 day'
     FROM vehicles v WHERE v.company_id=cid AND v.id%10=0;
 
-    RAISE NOTICE 'ACME-TRANSPORT seeded: 1000 veh, 1250 drv, 1800 assets, 300 cust, 4000 jobs.';
+    -- ── Live vehicle positions so the Live Map renders at scale (active+online) ──
+    INSERT INTO latest_vehicle_positions (company_id, vehicle_id, lat, lng, speed_mph, event_time, received_at)
+    SELECT v.company_id, v.id,
+           32.0 + (v.id % 1500) / 100.0,
+           -119.0 + (v.id % 4000) / 100.0,
+           CASE WHEN v.status='Active' THEN (v.id % 70) ELSE 0 END,
+           NOW() - ((v.id % 20) * INTERVAL '1 minute'),
+           NOW() - ((v.id % 20) * INTERVAL '1 minute')
+    FROM vehicles v
+    WHERE v.company_id=cid AND v.status IN ('Active','Idle') AND v.device_status='Online';
+
+    RAISE NOTICE 'ACME-TRANSPORT seeded: 1000 veh, 1250 drv, 1800 assets, 300 cust, 4000 jobs, live positions.';
 END
 $acme$;
