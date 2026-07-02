@@ -495,6 +495,22 @@ public static partial class EndpointMappings
               ORDER BY co2_this_month DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
+        // Real monthly CO2 trend, derived from fuel_transactions (Scope 1 direct
+        // emissions = gallons * 10.21 kg). Last 6 calendar months, tenant-scoped.
+        // Only months with actual fuel data appear — no fabricated backfill.
+        app.MapGet("/api/carbon-emissions/trend", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+            @"SELECT to_char(date_trunc('month', ft.transaction_time), 'Mon') AS month,
+                     date_trunc('month', ft.transaction_time) AS month_start,
+                     ROUND((COALESCE(SUM(ft.gallons),0) * 10.21 / 1000.0)::numeric, 1) AS emissions,
+                     ROUND((COALESCE(SUM(ft.idle_minutes),0) * 10.21 * 0.05 / 1000.0)::numeric, 2) AS idling
+              FROM fuel_transactions ft
+              JOIN vehicles v ON v.id = ft.vehicle_id
+              WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                AND ft.transaction_time >= date_trunc('month', NOW()) - 5 * INTERVAL '1 month'
+              GROUP BY date_trunc('month', ft.transaction_time)
+              ORDER BY month_start",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+
         // ── Digital Forms ──
         app.MapGet("/api/digital-forms/templates", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.id, mr.record_code form_key, mr.title, mr.tags category,

@@ -5,53 +5,34 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const CO2_PER_GALLON = 10.21; // kg CO₂ per gallon diesel
-const CO2_PER_KM_REEFER = 0.82; // higher due to refrigeration unit
-const CO2_PER_KM_TRUCK = 0.62;
-const CO2_PER_KM_VAN = 0.34;
-
-// ── Live data ─────────────────────────────────────────────────────────────────
-
-const MONTHLY_TREND: AnyRecord[] = [
-  { month: "Jan", emissions: 142, target: 155, intensity: 1.8 },
-  { month: "Feb", emissions: 138, target: 152, intensity: 1.75 },
-  { month: "Mar", emissions: 145, target: 150, intensity: 1.82 },
-  { month: "Apr", emissions: 131, target: 148, intensity: 1.66 },
-  { month: "May", emissions: 127, target: 145, intensity: 1.61 },
-  { month: "Jun", emissions: 119, target: 143, intensity: 1.51 },
-];
-
-const SCOPE_DATA = [
-  { scope: "Scope 1 (Direct)", co2: 119, pct: 71 },
-  { scope: "Scope 2 (Energy)", co2: 28,  pct: 17 },
-  { scope: "Scope 3 (Supply Chain)", co2: 20, pct: 12 },
-];
-
-const REDUCTION_TARGETS = [
-  { label: "vs 2024 baseline",      target: -15, actual: -16.2, met: true  },
-  { label: "Idle reduction target", target: -20, actual: -18.4, met: false },
-  { label: "Route optimisation",    target: -10, actual: -12.1, met: true  },
-  { label: "Fleet electrification", target: -5,  actual: -2.0,  met: false },
-];
-
-const carbonApi = () => withFallback(
+// ── Live data clients — every figure below is derived from real tenant data.
+// Per-vehicle emissions are computed server-side from fuel_transactions.
+const carbonApi = () =>
   unwrap<AnyRecord[]>(apiClient.get("/api/carbon-emissions")).then((rows) =>
     rows.map((r) => ({
       ...r,
       vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "",
+      vehicleType: r.vehicleType ?? r.vehicle_type ?? "",
       co2ThisMonth: Number(r.co2ThisMonth ?? r.co2_this_month ?? 0),
+      kmThisMonth: Number(r.kmThisMonth ?? r.km_this_month ?? 0),
+      idlingCo2: Number(r.idlingCo2 ?? r.idling_co2 ?? 0),
       co2PerKm: Number(r.co2PerKm ?? r.co2_per_km ?? 0),
       trend: r.trend ?? "Stable",
     }))
-  ),
-  () => []
-);
+  );
+
+// Real monthly trend (tonnes) grouped from fuel_transactions server-side.
+const trendApi = () =>
+  unwrap<AnyRecord[]>(apiClient.get("/api/carbon-emissions/trend")).then((rows) =>
+    rows.map((r) => ({
+      month: String(r.month ?? ""),
+      emissions: Number(r.emissions ?? 0),
+      idling: Number(r.idling ?? 0),
+    }))
+  );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,19 +52,34 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
+function EmptyPanel({ title, note }: { title: string; note: string }) {
+  return (
+    <div className="panel">
+      <p className="text-sm font-semibold text-slate-700 mb-1">{title}</p>
+      <p className="text-xs text-slate-400">{note}</p>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function CarbonTrackingPage() {
   const [activeView, setActiveView] = useState<"overview" | "vehicles" | "targets">("overview");
 
   const q = useQuery({ queryKey: ["carbon-emissions"], queryFn: carbonApi });
+  const trendQ = useQuery({ queryKey: ["carbon-trend"], queryFn: trendApi });
   const vehicles = (q.data ?? []) as AnyRecord[];
+  const trend = (trendQ.data ?? []) as AnyRecord[];
 
   const totalCo2 = vehicles.reduce((s, v) => s + Number(v.co2ThisMonth ?? 0), 0);
   const totalKm  = vehicles.reduce((s, v) => s + Number(v.kmThisMonth ?? 0), 0);
   const avgIntensity = totalKm > 0 ? totalCo2 / totalKm : 0;
   const idlingCo2 = vehicles.reduce((s, v) => s + Number(v.idlingCo2 ?? 0), 0);
-  const targetCo2 = 143; // tonnes this month
+
+  // Scope 1 (direct fuel combustion) is what we actually measure. Scope 2 (purchased
+  // energy) and Scope 3 (supply chain) require sources we do not yet track — shown
+  // honestly as "not tracked" rather than fabricated.
+  const scope1Tonnes = totalCo2 / 1000;
 
   if (q.isLoading) return <LoadingState />;
 
@@ -92,22 +88,22 @@ export function CarbonTrackingPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Carbon Tracking</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Fleet CO₂ emissions, sustainability KPIs, Scope 1/2/3 breakdown and reduction targets</p>
+          <p className="text-sm text-slate-500 mt-0.5">Fleet CO₂ emissions from fuel data · Scope 1 direct emissions · idling waste</p>
         </div>
         <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("carbon-emissions", vehicles)}>Export CSV</button>
       </div>
 
-      {/* KPI strip */}
+      {/* KPI strip — all derived from live per-vehicle data */}
       <div className="flex flex-wrap gap-3">
         {[
-          { label: "CO₂ This Month",    val: `${totalCo2.toLocaleString()} kg`,  accent: totalCo2 < targetCo2 * 1000 ? "text-teal-600" : "text-amber-600" },
-          { label: "Intensity (kg/km)", val: avgIntensity.toFixed(2),             accent: avgIntensity < 0.65 ? "text-teal-600" : "text-amber-600" },
-          { label: "Idling CO₂",        val: `${idlingCo2.toLocaleString()} kg`, accent: "text-amber-600" },
-          { label: "vs Target",         val: `${((totalCo2 / (targetCo2 * 1000) - 1) * 100).toFixed(1)}%`, accent: totalCo2 < targetCo2 * 1000 ? "text-teal-600" : "text-red-600" },
-          { label: "Monthly Target",    val: `${targetCo2}t CO₂` },
+          { label: "CO₂ This Month",     val: `${totalCo2.toLocaleString()} kg`,  accent: "text-slate-900" },
+          { label: "Intensity (kg/km)",  val: totalKm > 0 ? avgIntensity.toFixed(2) : "—", accent: "text-slate-900" },
+          { label: "Idling CO₂",         val: `${idlingCo2.toLocaleString()} kg`, accent: idlingCo2 > 0 ? "text-amber-600" : "text-slate-900" },
+          { label: "Scope 1 (tonnes)",   val: scope1Tonnes.toFixed(1), accent: "text-slate-900" },
+          { label: "Vehicles Reporting", val: String(vehicles.length), accent: "text-slate-900" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{val}</span>
+            <span className={`text-xl font-bold ${accent}`}>{val}</span>
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
         ))}
@@ -126,61 +122,74 @@ export function CarbonTrackingPage() {
       {/* ── Overview ── */}
       {activeView === "overview" && (
         <div className="flex flex-col gap-4">
-          {/* Monthly trend chart */}
+          {/* Monthly trend chart — real fuel_transactions grouped by month */}
           <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-4">Monthly CO₂ Emissions vs Target (tonnes)</p>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={MONTHLY_TREND} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-                <defs>
-                  <linearGradient id="co2grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor={chart.teal600} stopOpacity={0.2} />
-                    <stop offset="95%" stopColor={chart.teal600} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip />
-                <Legend />
-                <Area type="monotone" dataKey="emissions" name="Actual (t CO₂)" stroke={chart.teal600} fill="url(#co2grad)" strokeWidth={2} />
-                <Area type="monotone" dataKey="target"    name="Target (t CO₂)"  stroke={chart.slate400} fill="none" strokeDasharray="5 3" strokeWidth={1.5} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <p className="text-sm font-semibold text-slate-700 mb-4">Monthly CO₂ Emissions (tonnes)</p>
+            {trend.length >= 2 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                  <defs>
+                    <linearGradient id="co2grad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor={chart.teal600} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={chart.teal600} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Legend />
+                  <Area type="monotone" dataKey="emissions" name="Emissions (t CO₂)" stroke={chart.teal600} fill="url(#co2grad)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="idling"    name="Idling (t CO₂)"    stroke={chart.slate400} fill="none" strokeDasharray="5 3" strokeWidth={1.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-xs text-slate-400 py-8 text-center">
+                Monthly trend appears once at least two months of fuel data have accrued
+                {trend.length === 1 ? " (1 month recorded so far)." : "."}
+              </p>
+            )}
           </div>
 
-          {/* Scope breakdown + intensity chart side by side */}
+          {/* Scope breakdown — honest: only Scope 1 is measured today */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="panel">
               <p className="text-sm font-semibold text-slate-700 mb-4">Scope Breakdown (GHG Protocol)</p>
               <div className="flex flex-col gap-3">
-                {SCOPE_DATA.map((s) => (
-                  <div key={s.scope}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="text-slate-600 font-medium">{s.scope}</span>
-                      <span className="font-semibold text-slate-800">{s.co2}t · {s.pct}%</span>
-                    </div>
-                    <ProgressBar pct={s.pct} color={s.scope.startsWith("Scope 1") ? "bg-teal-500" : s.scope.startsWith("Scope 2") ? "bg-blue-400" : "bg-slate-300"} />
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="text-slate-600 font-medium">Scope 1 (Direct — fuel combustion)</span>
+                    <span className="font-semibold text-slate-800">{scope1Tonnes.toFixed(1)}t</span>
                   </div>
-                ))}
+                  <ProgressBar pct={100} color="bg-teal-500" />
+                </div>
+                <p className="text-xs text-slate-400 pt-1">
+                  Scope 2 (purchased energy) and Scope 3 (supply chain) are not yet tracked —
+                  connect an energy/procurement source to report them.
+                </p>
               </div>
             </div>
 
             <div className="panel">
-              <p className="text-sm font-semibold text-slate-700 mb-4">CO₂ Intensity (kg/km) by Month</p>
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart data={MONTHLY_TREND} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} domain={[1.4, 2.0]} />
-                  <Tooltip formatter={(v) => [`${String(v)} kg/km`, "Intensity"]} />
-                  <Bar dataKey="intensity" name="kg CO₂/km" fill={chart.teal600} radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <p className="text-sm font-semibold text-slate-700 mb-4">Idling CO₂ by Month (tonnes)</p>
+              {trend.length >= 2 ? (
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={trend} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => [`${String(v)} t`, "Idling CO₂"]} />
+                    <Bar dataKey="idling" name="Idling t CO₂" fill={chart.teal600} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-xs text-slate-400 py-8 text-center">Accrues with monthly fuel data.</p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ── By Vehicle ── */}
+      {/* ── By Vehicle ── (already real) */}
       {activeView === "vehicles" && (
         <div className="panel overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -208,65 +217,21 @@ export function CarbonTrackingPage() {
                     <td className="px-4 py-3"><TrendBadge trend={String(v.trend ?? "Stable")} /></td>
                   </tr>
                 ))}
+                {vehicles.length === 0 && (
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">No fuel activity recorded for any vehicle this month.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* ── Targets ── */}
+      {/* ── Targets ── honest: reduction targets need a baseline the platform doesn't store yet */}
       {activeView === "targets" && (
-        <div className="flex flex-col gap-4">
-          <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-1">2026 Reduction Targets</p>
-            <p className="text-xs text-slate-400 mb-5">Percentage reduction vs 2024 baseline</p>
-            <div className="flex flex-col gap-5">
-              {REDUCTION_TARGETS.map((t) => {
-                const progressPct = Math.min(Math.abs(t.actual) / Math.abs(t.target) * 100, 100);
-                return (
-                  <div key={t.label}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-slate-700">{t.label}</span>
-                        {t.met
-                          ? <span className="text-xs px-2 py-0.5 rounded-full border bg-teal-50 border-teal-200 text-teal-700 font-medium">On Track</span>
-                          : <span className="text-xs px-2 py-0.5 rounded-full border bg-amber-50 border-amber-200 text-amber-700 font-medium">Behind</span>
-                        }
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs text-slate-500">Target: <strong>{t.target}%</strong></span>
-                        <span className="text-xs text-slate-500 ml-2">Actual: <strong className={t.met ? "text-teal-600" : "text-amber-600"}>{t.actual}%</strong></span>
-                      </div>
-                    </div>
-                    <ProgressBar pct={progressPct} color={t.met ? "bg-teal-500" : "bg-amber-400"} />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-1">Improvement Opportunities</p>
-            <p className="text-xs text-slate-400 mb-4">AI-identified actions to close the gap to target</p>
-            <div className="flex flex-col gap-3">
-              {[
-                { action: "Reduce idling across top 5 vehicles",                saving: "14t CO₂/yr",  difficulty: "Low"  },
-                { action: "Shift 3 reefer routes to off-peak hours",             saving: "9t CO₂/yr",   difficulty: "Low"  },
-                { action: "Switch 2 city-delivery vans to electric",             saving: "31t CO₂/yr",  difficulty: "High" },
-                { action: "Optimise multi-stop routes with AI (2% avg savings)", saving: "8t CO₂/yr",   difficulty: "Low"  },
-                { action: "Enable predictive coasting on BOX-106 telematics",    saving: "4t CO₂/yr",   difficulty: "Low"  },
-              ].map((op) => (
-                <div key={op.action} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-                  <div className="flex-1">
-                    <p className="text-sm text-slate-700">{op.action}</p>
-                  </div>
-                  <span className="text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">{op.saving}</span>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${op.difficulty === "Low" ? "bg-slate-50 border-slate-200 text-slate-500" : "bg-amber-50 border-amber-200 text-amber-700"}`}>{op.difficulty}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <EmptyPanel
+          title="Reduction Targets"
+          note="Set science-based reduction targets against a baseline year to track progress here. Target management is not yet configured for this tenant."
+        />
       )}
     </div>
   );
