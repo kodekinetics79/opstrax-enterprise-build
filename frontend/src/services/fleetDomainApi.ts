@@ -12,6 +12,23 @@ export async function withFallback<T>(request: Promise<T>, _fallback?: () => T):
 const apiList = (endpoint: string) => unwrap<AnyRecord[]>(apiClient.get(endpoint));
 const apiRecord = (endpoint: string) => unwrap<AnyRecord>(apiClient.get(endpoint));
 
+export interface PagedResult { rows: AnyRecord[]; total: number; limit: number; offset: number; }
+
+// Paginated list read for high-volume endpoints. Sends limit/offset/search and reads
+// the backend X-Total-Count header so the UI can page through 1000+ rows without ever
+// fetching the whole table.
+export async function apiPaged(endpoint: string, opts: { limit?: number; offset?: number; search?: string } = {}): Promise<PagedResult> {
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  const params: Record<string, string | number> = { limit, offset };
+  if (opts.search && opts.search.trim()) params.search = opts.search.trim();
+  const response = await apiClient.get(endpoint, { params });
+  const env = response.data as { success: boolean; data: AnyRecord[]; message?: string };
+  if (!env.success) throw new Error(env.message || "Request failed");
+  const total = Number(response.headers?.["x-total-count"] ?? env.data.length);
+  return { rows: env.data ?? [], total: Number.isFinite(total) ? total : (env.data?.length ?? 0), limit, offset };
+}
+
 // Detail endpoints return an envelope of { record, ...relatedCollections }. Normalise the
 // shape and default any collection the backend legitimately omits to an empty array so the
 // drawer renders "no linked records yet" rather than crashing — never to fake data.

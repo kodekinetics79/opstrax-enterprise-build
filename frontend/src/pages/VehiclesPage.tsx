@@ -71,8 +71,18 @@ export function VehiclesPage() {
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const PAGE_SIZE = 50;
 
-  const list = useQuery({ queryKey: ["vehicles"], queryFn: vehiclesApi.list });
+  // Server-side paginated + searched — never fetches the full fleet. The search term
+  // is applied server-side (so a 1000-vehicle fleet is searchable); the status filter
+  // below operates on the returned page. Reset to page 1 whenever search changes.
+  const list = useQuery({
+    queryKey: ["vehicles", "paged", search.trim(), offset],
+    queryFn: () => vehiclesApi.listPaged({ limit: PAGE_SIZE, offset, search }),
+  });
+  const pagedRows = (list.data?.rows ?? []) as AnyRecord[];
+  const totalRows = list.data?.total ?? pagedRows.length;
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary });
   const planning = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights });
   const detail = useQuery({
@@ -82,23 +92,18 @@ export function VehiclesPage() {
   });
   const drivers = useQuery({ queryKey: ["drivers", "assign-pool"], queryFn: driversApi.list, enabled: canAssign });
 
-  const rows = useMemo(() => scopeRowsForSession("vehicles", list.data || [], session), [list.data, session]);
+  const rows = useMemo(() => scopeRowsForSession("vehicles", pagedRows, session), [pagedRows, session]);
 
+  // Status filter operates on the current server page (search is already applied
+  // server-side across the whole fleet).
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     return rows.filter((row) => {
       const status = String(g(row, "status") ?? "");
-      const matchFilter =
-        filter === "All" ? true :
+      return filter === "All" ? true :
         filter === "At risk" ? (riskTier(row) === "High" || /maintenance|delayed/i.test(status)) :
         status.toLowerCase().includes(filter.toLowerCase());
-      const matchSearch = !q || [
-        g(row, "vehicleCode", "vehicle_code"), g(row, "make"), g(row, "model"),
-        g(row, "plateNumber", "plate_number"), g(row, "assignedDriver", "assigned_driver"),
-      ].some((v) => String(v ?? "").toLowerCase().includes(q));
-      return matchFilter && matchSearch;
     });
-  }, [rows, search, filter]);
+  }, [rows, filter]);
 
   const sum = (summary.data as AnyRecord) || {};
   const readiness = Math.round(num(g(sum, "fleetReadinessScore", "fleet_readiness_score")) || avg(rows, "fleetReadinessScore"));
@@ -177,7 +182,7 @@ export function VehiclesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search code, make, plate, driver…"
+          <input value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} placeholder="Search code, make, plate, driver…"
             className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100" />
         </div>
         <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
@@ -238,6 +243,28 @@ export function VehiclesPage() {
         </div>
       ) : (
         <EmptyState title="No vehicles match" subtitle="Adjust your search or filter, or add a new vehicle." />
+      )}
+
+      {/* Server-side pager — never loads the whole fleet at once */}
+      {totalRows > PAGE_SIZE && (
+        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600">
+          <span>
+            Showing <strong>{totalRows === 0 ? 0 : offset + 1}–{Math.min(offset + PAGE_SIZE, totalRows)}</strong> of <strong>{totalRows.toLocaleString()}</strong> vehicles
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={offset === 0 || list.isFetching}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 transition enabled:hover:bg-slate-50 disabled:opacity-40">
+              ← Prev
+            </button>
+            <span className="text-xs text-slate-400">Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(totalRows / PAGE_SIZE))}</span>
+            <button type="button" disabled={offset + PAGE_SIZE >= totalRows || list.isFetching}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 transition enabled:hover:bg-slate-50 disabled:opacity-40">
+              Next →
+            </button>
+          </div>
+        </div>
       )}
 
       {selectedRecord && (

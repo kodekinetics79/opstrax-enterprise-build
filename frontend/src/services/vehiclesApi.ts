@@ -1,9 +1,10 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getVehicleById, getVehicles } from "@/services/fleetDomainApi";
+import { getVehicleById, getVehicles, apiPaged } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const vehiclesApi = {
   list: () => getVehicles(),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/vehicles", opts),
   summary: () => getVehicles().then((rows) => ({
     fleetReadinessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.fleetReadinessScore ?? 0), 0) / Math.max(rows.length, 1)),
     dataCompletenessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.dataCompletenessScore ?? 0), 0) / Math.max(rows.length, 1)),
