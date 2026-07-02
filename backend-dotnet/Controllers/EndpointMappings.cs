@@ -2607,7 +2607,8 @@ public static partial class EndpointMappings
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
               WHERE v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
             "v.vehicle_code",
-            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
+            searchColumns: new[] { "v.vehicle_code", "v.make", "v.model", "v.vin", "v.plate_number", "v.status", "d.full_name" });
     }
 
     private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
@@ -2628,7 +2629,8 @@ public static partial class EndpointMappings
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
               WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
             "d.full_name",
-            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
+            searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" });
     }
 
     private static Task<IResult> Customers(HttpContext http, Database db, CancellationToken ct)
@@ -2952,7 +2954,8 @@ public static partial class EndpointMappings
                         LEFT JOIN customers c ON c.id=j.customer_id
                         WHERE j.deleted_at IS NULL AND j.company_id=@cid",
             "j.scheduled_start DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct,
+            searchColumns: new[] { "j.job_code", "j.job_number", "j.status", "j.pickup_address", "j.dropoff_address", "c.name", "v.vehicle_code", "d.full_name" });
     }
 
     private static async Task<IResult> JobsSummary(HttpContext http, Database db, CancellationToken ct)
@@ -5120,7 +5123,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // the full count so the UI can paginate. Response body stays a plain data array
     // (backward compatible). `orderBy` is a trusted literal (never user input).
     private static async Task<IResult> PagedRows(HttpContext http, Database db, string baseSql, string orderBy,
-        Action<NpgsqlCommand> bind, string message = "", CancellationToken ct = default)
+        Action<NpgsqlCommand> bind, string message = "", CancellationToken ct = default, string[]? searchColumns = null)
     {
         var q = http.Request.Query;
         var limit = 500;
@@ -5128,10 +5131,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var offset = 0;
         if (int.TryParse(q["offset"], out var o) && o > 0) offset = o;
 
-        var total = await db.ScalarLongAsync($"SELECT COUNT(*) FROM ({baseSql}) _cnt", bind, ct);
+        // Server-side search: ?search= does a case-insensitive ILIKE across the trusted
+        // searchColumns (literal identifiers, never user input); the term is a bound
+        // parameter. Essential at fleet scale — the client cannot filter 1000+ rows it
+        // never received.
+        var search = q["search"].ToString().Trim();
+        var searchClause = "";
+        if (!string.IsNullOrEmpty(search) && searchColumns is { Length: > 0 })
+            searchClause = " AND (" + string.Join(" OR ", searchColumns.Select(c => $"{c} ILIKE @_search")) + ")";
+
+        void BindAll(NpgsqlCommand c)
+        {
+            bind(c);
+            if (searchClause.Length > 0) c.Parameters.AddWithValue("@_search", $"%{search}%");
+        }
+
+        var total = await db.ScalarLongAsync($"SELECT COUNT(*) FROM ({baseSql}{searchClause}) _cnt", BindAll, ct);
         var rows = await db.QueryAsync(
-            $"{baseSql} ORDER BY {orderBy} LIMIT @_limit OFFSET @_offset",
-            c => { bind(c); c.Parameters.AddWithValue("@_limit", limit); c.Parameters.AddWithValue("@_offset", offset); }, ct);
+            $"{baseSql}{searchClause} ORDER BY {orderBy} LIMIT @_limit OFFSET @_offset",
+            c => { BindAll(c); c.Parameters.AddWithValue("@_limit", limit); c.Parameters.AddWithValue("@_offset", offset); }, ct);
         http.Response.Headers["X-Total-Count"] = total.ToString();
         return Results.Ok(ApiResponse<object>.Ok(rows, message));
     }
