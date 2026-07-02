@@ -135,7 +135,7 @@ export function LiveMapPage() {
     return counts;
   }, [liveEntities]);
 
-  const visibleEntities = useMemo(
+  const matchedEntities = useMemo(
     () =>
       liveEntities
         .filter((e) => matchesFilter(e, activeFilter) && matchesSearch(e, search))
@@ -146,6 +146,12 @@ export function LiveMapPage() {
         }),
     [liveEntities, activeFilter, search],
   );
+
+  // Cap the rendered roster so a large fleet (1000+ units) doesn't put 1000 DOM rows
+  // on screen at once. Attention-priority sort means offline/moving units surface
+  // first; search + status filters narrow beyond the cap.
+  const ROSTER_CAP = 200;
+  const visibleEntities = useMemo(() => matchedEntities.slice(0, ROSTER_CAP), [matchedEntities]);
 
   const focusOn = (entity: AnyRecord) => {
     setSelected(entity);
@@ -300,7 +306,9 @@ export function LiveMapPage() {
             <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
             <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
             <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
-            <span className="ml-auto text-xs font-semibold text-slate-400">{visibleEntities.length} of {liveEntities.length} shown</span>
+            <span className="ml-auto text-xs font-semibold text-slate-400">
+              {matchedEntities.length > ROSTER_CAP ? `first ${ROSTER_CAP} of ${matchedEntities.length} — refine filters` : `${matchedEntities.length} of ${liveEntities.length} shown`}
+            </span>
           </div>
 
           <div className="map-surface mt-4 min-h-[560px] flex-1">
