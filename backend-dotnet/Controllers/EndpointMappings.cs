@@ -126,6 +126,8 @@ public static partial class EndpointMappings
         // Safety event workflow — tenant-scoped, RBAC-gated, audit-logged
         app.MapGet("/api/safety/events", SafetyEventsList);
         app.MapGet("/api/safety/events/{id:long}", SafetyEventGet);
+        app.MapPost("/api/safety/events", CreateSafetyEvent);
+        app.MapPut("/api/safety/events/{id:long}", UpdateSafetyEvent);
         app.MapPost("/api/safety/events/{id:long}/review", SafetyEventReview);
         app.MapPost("/api/safety/events/{id:long}/dismiss", SafetyEventDismiss);
         app.MapPost("/api/safety/events/{id:long}/resolve", SafetyEventResolve);
@@ -3253,9 +3255,9 @@ public static partial class EndpointMappings
                                 required_vehicle_type, required_driver_certification, assigned_driver_id, assigned_vehicle_id, route_id, status, eta,
                                 sla_status, proof_status, customer_update_status, tracking_code, risk_score, revenue_estimate, cost_estimate, margin_estimate, notes)
               VALUES (@companyId, @customerId, @code, @code, COALESCE(@type,'Delivery'), COALESCE(@priority,'Medium'), @pickup, @pickupLat, @pickupLng,
-                      @dropoff, @dropLat, @dropLng, COALESCE(@start, NOW()), COALESCE(@end, NOW() + 4 * INTERVAL '1 hour'),
-                      @slaStart, @slaEnd, @requiredVehicleType, @requiredDriverCertification, @driverId, @vehicleId, @routeId,
-                      COALESCE(@status,'Unassigned'), COALESCE(@eta, @end), COALESCE(@slaStatus,'On Track'), COALESCE(@proofStatus,'Pending'),
+                      @dropoff, @dropLat, @dropLng, COALESCE(@start::timestamptz, NOW()), COALESCE(@end::timestamptz, NOW() + 4 * INTERVAL '1 hour'),
+                      @slaStart::timestamptz, @slaEnd::timestamptz, @requiredVehicleType, @requiredDriverCertification, @driverId, @vehicleId, @routeId,
+                      COALESCE(@status,'Unassigned'), COALESCE(@eta::timestamptz, @end::timestamptz), COALESCE(@slaStatus,'On Track'), COALESCE(@proofStatus,'Pending'),
                       COALESCE(@customerUpdateStatus,'Not Sent'), COALESCE(@trackingCode, CONCAT('ETA-', @code)), COALESCE(@riskScore, 0),
                       @revenue, @cost, @margin, @notes)",
             c =>
