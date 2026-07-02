@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowRight,
   Camera,
   CheckCircle,
   Gauge,
@@ -20,7 +21,7 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import { controlTowerApi } from "@/services/controlTowerApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
-import { AiInsightCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, LoadingState, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
@@ -161,25 +162,53 @@ export function LiveMapPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Operations"
-        title="Live Fleet Map"
-        description="Real-time vehicle positions, status and geofences — streamed live from the operational database."
-        actions={
-          telemetry.connected ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700">
-              <Wifi className="h-3.5 w-3.5" /> GPS live · {telemetry.positions.length} units
-              {telemetry.lastUpdated ? <span className="font-medium text-teal-600/70">· {telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">
-              <WifiOff className="h-3.5 w-3.5" /> {telemetry.error ?? "Connecting to stream…"}
-            </span>
-          )
-        }
-      />
+      {/* ── Hero banner ─────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
 
-      {/* Status segmentation — the single primary metric row. */}
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Satellite className="h-3 w-3" /> Operations
+                </span>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">
+                  {telemetry.connected ? `Live · ${telemetry.positions.length} units` : "Reconnecting"}
+                  {telemetry.lastUpdated ? ` · ${telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                </span>
+              </div>
+
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Live Fleet Map
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Real-time vehicle positions, status and geofences — streamed live from the operational database
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {telemetry.connected ? (
+                <span className="inline-flex items-center gap-2 rounded-lg bg-white/90 px-4 py-2 text-xs font-bold text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Wifi className="h-3.5 w-3.5" /> GPS live
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-2 rounded-lg bg-white/90 px-4 py-2 text-xs font-bold text-slate-500 ring-1 ring-slate-200/50 shadow-sm">
+                  <WifiOff className="h-3.5 w-3.5" /> {telemetry.error ?? "Connecting…"}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Status segmentation ─────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
@@ -188,54 +217,70 @@ export function LiveMapPage() {
       </div>
 
       <div className="grid items-stretch gap-5 xl:grid-cols-[1.55fr_.45fr]">
-        {/* Hero map */}
-        <section className="panel flex flex-col p-5">
-          <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
-            <h2 className="section-title">Live Operations Map</h2>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
-              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.onlineDevices ?? 0)} label="devices" />
-              <MetaStat icon={<Camera className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.onlineCameras ?? 0)} label="cameras" />
-              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={String(kpis.telemetryQuality ?? "--")} label="quality" />
-              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.speedAlerts ?? 0)} label="speed alerts" />
+        {/* ── Hero map ────────────────────────────────────────────── */}
+        <section className="lm-map-panel">
+          <div className="lm-map-header">
+            <h2 className="lm-map-title">Live Operations Map</h2>
+            <div className="lm-meta-stats">
+              <span className="lm-meta-stat">
+                <Satellite className="lm-meta-stat-icon text-teal-500" />
+                <span className="lm-meta-stat-value">{String(kpis.onlineDevices ?? 0)}</span>
+                <span>devices</span>
+              </span>
+              <span className="lm-meta-stat">
+                <Camera className="lm-meta-stat-icon text-violet-500" />
+                <span className="lm-meta-stat-value">{String(kpis.onlineCameras ?? 0)}</span>
+                <span>cameras</span>
+              </span>
+              <span className="lm-meta-stat">
+                <Gauge className="lm-meta-stat-icon text-blue-500" />
+                <span className="lm-meta-stat-value">{String(kpis.telemetryQuality ?? "--")}</span>
+                <span>quality</span>
+              </span>
+              <span className="lm-meta-stat">
+                <ShieldAlert className="lm-meta-stat-icon text-amber-500" />
+                <span className="lm-meta-stat-value">{String(kpis.speedAlerts ?? 0)}</span>
+                <span>speed alerts</span>
+              </span>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="lm-filter-bar">
             {QUICK_FILTERS.map((filter) => (
               <button
                 type="button"
                 key={filter}
-                className={filter === activeFilter ? "btn-primary py-1.5 text-xs" : "btn-ghost py-1.5 text-xs"}
+                className={filter === activeFilter ? "fh-chip fh-chip-active" : "fh-chip"}
                 onClick={() => setActiveFilter(activeFilter === filter ? "All" : filter)}
               >
                 {filter}
               </button>
             ))}
-            <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
-            <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
-            <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
-            <span className="ml-auto text-xs font-semibold text-slate-400">{visibleEntities.length} of {liveEntities.length} shown</span>
+            <span className="lm-filter-divider" />
+            <LayerToggle label="Vehicles" icon={<Truck className="lm-layer-toggle-icon" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
+            <LayerToggle label="Geofences" icon={<Layers className="lm-layer-toggle-icon" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
+            <span className="lm-filter-count">{visibleEntities.length} of {liveEntities.length} shown</span>
           </div>
 
-          <div className="map-surface mt-4 min-h-[560px] flex-1">
+          <div className="lm-map-surface">
             <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
           </div>
         </section>
 
-        {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel flex max-h-[760px] flex-col overflow-hidden p-0">
-          <div className="border-b border-slate-100 px-4 pb-3 pt-4">
-            <div className="flex items-center justify-between">
-              <h2 className="section-title">Live Roster</h2>
-              <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${telemetry.connected ? "text-teal-600" : "text-slate-400"}`}>
-                <span className={`h-2 w-2 rounded-full ${telemetry.connected ? "animate-pulse bg-teal-500" : "bg-slate-300"}`} />
+        {/* ── Right sidebar: roster + alerts ─────────────────────── */}
+        <aside className="lm-sidebar-panel">
+          <div className="lm-sidebar-header">
+            <div className="lm-sidebar-title-row">
+              <h2 className="lm-sidebar-title">Live Roster</h2>
+              <span className={`lm-live-badge ${telemetry.connected ? "text-teal-600" : "text-slate-400"}`}>
+                <span className={`lm-live-dot ${telemetry.connected ? "bg-teal-500" : "bg-slate-300"}`} />
                 {telemetry.connected ? "Live" : "Reconnecting"}
               </span>
             </div>
-            <div className="relative mt-3">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <div className="lm-search-wrap">
+              <Search className="lm-search-icon" />
               <input
-                className="field pl-10"
+                className="lm-search-input"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Vehicle code, driver, status…"
@@ -243,9 +288,9 @@ export function LiveMapPage() {
             </div>
           </div>
 
-          <div className="min-h-[180px] flex-1 space-y-2 overflow-y-auto px-4 py-3">
+          <div className="lm-roster-list">
             {visibleEntities.length === 0 ? (
-              <p className="px-1 py-6 text-center text-sm text-slate-500">No vehicles match the current filters.</p>
+              <p className="lm-roster-empty">No vehicles match the current filters.</p>
             ) : (
               visibleEntities.map((entity) => (
                 <RosterRow key={String(entity.id ?? entity.vehicleId ?? entity.label)} entity={entity} onClick={() => focusOn(entity)} />
@@ -253,15 +298,15 @@ export function LiveMapPage() {
             )}
           </div>
 
-          <div className="border-t border-slate-100 px-4 py-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                Telemetry Alerts{openAlerts.length > 0 ? ` · ${openAlerts.length}` : ""}
-              </h3>
-            </div>
-            <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">
+          <div className="lm-alerts-section">
+            <h3 className="lm-alerts-title">
+              Telemetry Alerts{openAlerts.length > 0 ? ` · ${openAlerts.length}` : ""}
+            </h3>
+            <div className="lm-alerts-list">
               {openAlerts.length === 0 ? (
-                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
+                <p className="lm-alerts-empty">
+                  <CheckCircle className="lm-alerts-empty-icon" /> No open alerts.
+                </p>
               ) : (
                 openAlerts.slice(0, 6).map((alert) => (
                   <TelemetryAlertRow
@@ -278,7 +323,7 @@ export function LiveMapPage() {
       </div>
 
       {recommendations.length > 0 && (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="lm-recommendations">
           {recommendations.slice(0, 2).map((item) => <AiInsightCard key={String(item.id)} insight={item} />)}
         </div>
       )}
@@ -302,18 +347,16 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
-        active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
-      }`}
+      className={`lm-status-card ${active ? "lm-status-card-active" : ""}`}
     >
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
-          <span className="truncate text-sm font-semibold text-slate-700">{label}</span>
+          <span className={`lm-status-dot ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+          <span className="lm-status-label">{label}</span>
         </div>
-        <p className="mt-1 pl-[18px] text-[11px] font-medium text-slate-400">{meaning}</p>
+        <p className="mt-1 pl-[18px] lm-status-meaning">{meaning}</p>
       </div>
-      <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <span className={`lm-status-count ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
   );
 }
@@ -334,18 +377,18 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-blue-300 hover:bg-blue-50/40"
+      className="lm-roster-row"
     >
-      <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${ROSTER_DOT[bucket]} ${bucket === "Moving" ? "animate-pulse" : ""}`} />
+      <span className={`lm-roster-dot ${ROSTER_DOT[bucket]} ${bucket === "Moving" ? "animate-pulse" : ""}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-sm font-bold text-slate-900">{label}</p>
+          <p className="lm-roster-name">{label}</p>
           <RiskBadge risk={entity.riskLevel ?? entity.risk_level} />
         </div>
-        <p className="truncate text-xs text-slate-500">{driver}</p>
-        <div className="mt-1 flex items-center gap-2 text-[11px] font-medium text-slate-400">
+        <p className="lm-roster-driver">{driver}</p>
+        <div className="lm-roster-meta">
           {bucket === "Moving" ? (
-            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speed)} mph</span>
+            <span className="lm-roster-speed"><Navigation className="lm-roster-speed-icon" />{Math.round(speed)} mph</span>
           ) : (
             <span className={bucket === "Offline" ? "text-rose-500" : "text-indigo-500"}>{bucket === "Offline" ? "Offline" : "Idle"}</span>
           )}
@@ -362,9 +405,7 @@ function LayerToggle({ label, icon, active, onClick }: { label: string; icon: Re
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-        active ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-400"
-      }`}
+      className={`lm-layer-toggle ${active ? "lm-layer-toggle-active" : ""}`}
     >
       {icon}
       {label}
@@ -394,18 +435,24 @@ function TelemetryAlertRow({ alert, onAck, onResolve }: { alert: AnyRecord; onAc
   const sev = String(alert.severity ?? "Warning");
   const msg = String(alert.message ?? "");
   const vehicle = String(alert.vehicleCode ?? alert.vehicle_code ?? "");
+  const sevClass = {
+    High: "lm-alert-card-high",
+    Critical: "lm-alert-card-critical",
+    Warning: "lm-alert-card-warning",
+    Low: "lm-alert-card-low",
+  }[sev] ?? "lm-alert-card-warning";
   return (
-    <div className={`rounded-xl border p-3 ${SEVERITY_STYLES[sev] ?? SEVERITY_STYLES.Warning}`}>
-      <div className="flex items-start gap-2">
-        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+    <div className={`lm-alert-card ${sevClass}`}>
+      <div className="lm-alert-header">
+        <ShieldAlert className="lm-alert-icon" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-900">{type.replace(/_/g, " ")}{vehicle ? ` · ${vehicle}` : ""}</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{msg}</p>
+          <p className="lm-alert-title">{type.replace(/_/g, " ")}{vehicle ? ` · ${vehicle}` : ""}</p>
+          <p className="lm-alert-message">{msg}</p>
         </div>
       </div>
-      <div className="mt-2 flex gap-2">
-        <button type="button" onClick={onAck} className="btn-ghost flex items-center gap-1 px-2 py-1 text-xs"><CheckCircle className="h-3 w-3" /> Ack</button>
-        <button type="button" onClick={onResolve} className="btn-ghost flex items-center gap-1 px-2 py-1 text-xs"><X className="h-3 w-3" /> Resolve</button>
+      <div className="lm-alert-actions">
+        <button type="button" onClick={onAck} className="fh-btn-ghost py-1 text-[11px]"><CheckCircle className="h-3 w-3" /> Ack</button>
+        <button type="button" onClick={onResolve} className="fh-btn-ghost py-1 text-[11px]"><X className="h-3 w-3" /> Resolve</button>
       </div>
     </div>
   );
@@ -416,17 +463,19 @@ function VehicleDetailDrawer({ detail, loading, onClose }: { detail?: AnyRecord;
   if (!record && !loading) return null;
   if (!record) return null;
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <aside className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <button type="button" aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
-        <p className="section-title">Live Vehicle Detail</p>
-        <h2 className="mt-3 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
-        <div className="mt-4 flex flex-wrap gap-2">
+    <div className="lm-drawer-overlay" onClick={onClose}>
+      <aside className="lm-drawer-panel" onClick={(e) => e.stopPropagation()}>
+        <button type="button" aria-label="Close" className="lm-drawer-close" onClick={onClose}><X className="lm-drawer-close-icon" /></button>
+        <p className="lm-drawer-eyebrow">Live Vehicle Detail</p>
+        <h2 className="lm-drawer-vehicle-code">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
+        <div className="lm-drawer-badges">
           <StatusBadge status={record.status} />
           <RiskBadge risk={record.riskScore ?? record.risk_score} />
-          <span className="badge"><MapPin className="mr-1 inline h-3 w-3" />Last seen {String(record.lastSeenAt ?? record.last_seen_at ?? "--")}</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+            <MapPin className="h-3 w-3" />Last seen {String(record.lastSeenAt ?? record.last_seen_at ?? "--")}
+          </span>
         </div>
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="lm-drawer-grid">
           <Mini title="Live Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status"]} />
           <Mini title="Health & Diagnostics" record={record} keys={["readinessScore", "readiness_score", "dataQualityScore", "data_quality_score", "riskScore", "risk_score", "odometerMiles", "odometer_miles", "type"]} />
         </div>
@@ -451,11 +500,11 @@ function Mini({ title, record, keys }: { title: string; record: AnyRecord; keys:
       return true;
     });
   return (
-    <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <h3 className="section-title">{title}</h3>
-      <div className="mt-3 space-y-2">
-        {rows.length === 0 ? <p className="text-sm text-slate-500">No data.</p> : rows.map(({ key, value }) => (
-          <p key={key} className="text-sm text-slate-600"><span className="text-slate-500">{labelize(key.replace(/_/g, ""))}:</span> {String(value)}</p>
+    <section className="lm-mini-card">
+      <h3 className="lm-mini-title">{title}</h3>
+      <div className="lm-mini-rows">
+        {rows.length === 0 ? <p className="lm-mini-empty">No data.</p> : rows.map(({ key, value }) => (
+          <p key={key} className="lm-mini-row"><span className="lm-mini-label">{labelize(key.replace(/_/g, ""))}:</span> {String(value)}</p>
         ))}
       </div>
     </section>
@@ -464,19 +513,19 @@ function Mini({ title, record, keys }: { title: string; record: AnyRecord; keys:
 
 function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; columns: string[] }) {
   return (
-    <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <h3 className="section-title flex items-center gap-2"><Route className="h-4 w-4 text-slate-400" />{title}</h3>
+    <section className="lm-grid-card">
+      <h3 className="lm-grid-title"><Route className="lm-grid-title-icon" />{title}</h3>
       {!rows.length ? (
-        <p className="mt-3 text-sm text-slate-500">No records yet.</p>
+        <p className="lm-grid-empty">No records yet.</p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[680px] text-left text-sm">
-            <thead className="text-xs uppercase tracking-[0.16em] text-slate-500">
-              <tr>{columns.map((c) => <th key={c} className="px-3 py-2">{labelize(c)}</th>)}</tr>
+        <div className="lm-grid-table-wrap">
+          <table className="lm-grid-table">
+            <thead>
+              <tr>{columns.map((c) => <th key={c}>{labelize(c)}</th>)}</tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody>
               {rows.slice(0, 10).map((row, i) => (
-                <tr key={String(row.id ?? i)}>{columns.map((c) => <td key={c} className="px-3 py-2 text-slate-600">{String(row[c] ?? "--")}</td>)}</tr>
+                <tr key={String(row.id ?? i)}>{columns.map((c) => <td key={c}>{String(row[c] ?? "--")}</td>)}</tr>
               ))}
             </tbody>
           </table>

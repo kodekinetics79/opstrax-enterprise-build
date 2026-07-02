@@ -1,10 +1,9 @@
 import { useState, useMemo } from "react";
 import {
-  Activity, AlertTriangle, Clock, MapPin, Radio, ShieldAlert,
-  Truck, Wifi, WifiOff, Zap, Wrench, ChevronRight,
+  Activity, AlertTriangle, ArrowRight, Clock, Gauge, MapPin, Radio,
+  ShieldAlert, Truck, Wifi, WifiOff, Zap, Wrench, ChevronRight,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { PageHeader } from "@/components/ui";
 
 type VStatus = "Driving" | "Idling" | "Parked" | "Offline" | "OOS";
 type MStatus = "Healthy" | "Due Soon" | "Overdue" | "Critical";
@@ -94,27 +93,55 @@ export function FleetOverviewPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Fleet Overview"
-        title="Live Vehicle Status"
-        description={`${FLEET.length} vehicles tracked · ${counts.Driving} on road · ${flagged} flagged for review`}
-        actions={
-          <button type="button" className="btn-primary" onClick={() => navigate("/vehicles")}>
-            Full Fleet Registry
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        }
-      />
+      {/* ── Hero banner ─────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
 
-      {/* Status KPI strip */}
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Gauge className="h-3 w-3" /> Fleet Overview
+                </span>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live · 15s refresh</span>
+              </div>
+
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Live Vehicle Status
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {FLEET.length} vehicles tracked · {counts.Driving} on road · {flagged} flagged for review
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="fh-btn-primary"
+                onClick={() => navigate("/vehicles")}
+              >
+                Full Fleet Registry
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Status KPI strip ────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiStrip
           label="Driving"
           count={counts.Driving}
           Icon={Truck}
           accent="text-emerald-600"
-          bg="bg-emerald-50"
-          border="border-emerald-200"
           dot="bg-emerald-500 animate-pulse"
           onClick={() => setTab("Driving")}
           active={tab === "Driving"}
@@ -124,8 +151,6 @@ export function FleetOverviewPage() {
           count={counts.Idling}
           Icon={Zap}
           accent="text-amber-600"
-          bg="bg-amber-50"
-          border="border-amber-200"
           dot="bg-amber-400"
           onClick={() => setTab("Idling")}
           active={tab === "Idling"}
@@ -135,8 +160,6 @@ export function FleetOverviewPage() {
           count={counts.Parked}
           Icon={Clock}
           accent="text-slate-600"
-          bg="bg-slate-50"
-          border="border-slate-200"
           dot="bg-slate-400"
           onClick={() => setTab("Parked")}
           active={tab === "Parked"}
@@ -146,8 +169,6 @@ export function FleetOverviewPage() {
           count={counts.OOS}
           Icon={ShieldAlert}
           accent="text-red-600"
-          bg="bg-red-50"
-          border="border-red-200"
           dot="bg-red-500 animate-pulse"
           onClick={() => setTab("OOS")}
           active={tab === "OOS"}
@@ -157,153 +178,158 @@ export function FleetOverviewPage() {
           count={counts.Offline}
           Icon={WifiOff}
           accent="text-slate-500"
-          bg="bg-slate-50"
-          border="border-slate-200"
           dot="bg-slate-300"
           onClick={() => setTab("Offline")}
           active={tab === "Offline"}
         />
       </div>
 
-      {/* Filter tabs + roster table */}
-      <div className="panel overflow-hidden">
+      {/* ── Fleet roster table ──────────────────────────────────── */}
+      <div className="fo-table-panel">
         {/* Tab bar */}
-        <div className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3 pb-0">
+        <div className="fo-tab-bar">
           {STATUS_TABS.map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`relative px-3 py-2 text-sm font-medium transition-colors ${
-                tab === t
-                  ? "text-slate-950 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-teal-500"
-                  : "text-slate-400 hover:text-slate-700"
-              }`}
+              className={`fo-tab ${tab === t ? "fo-tab-active" : ""}`}
             >
               {t}
               {t !== "All" && (
-                <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-semibold ${
-                  tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500"
-                }`}>
+                <span className={`fo-tab-count ${tab === t ? "fo-tab-count-active" : "fo-tab-count-inactive"}`}>
                   {counts[t as Exclude<Tab, "All">] ?? 0}
                 </span>
               )}
             </button>
           ))}
-          <span className="ml-auto text-xs text-slate-400 pb-2">
-            <Activity className="inline h-3 w-3 mr-1 text-teal-500" />
+          <span className="fo-tab-live">
+            <span className="fo-tab-live-dot" />
             Live · updates every 15 s
           </span>
         </div>
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Vehicle</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Driver</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Status</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Location</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Speed</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">HOS</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Maint.</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Signal</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Last Update</th>
-                <th className="px-3 py-3" />
+          <table className="fo-table">
+            <thead className="fo-table-head">
+              <tr>
+                <th>Vehicle</th>
+                <th>Driver</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Speed</th>
+                <th>HOS</th>
+                <th>Maint.</th>
+                <th>Signal</th>
+                <th>Last Update</th>
+                <th style={{ width: 80 }} />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody>
               {filtered.map((v) => {
                 const sc = STATUS_CFG[v.status];
                 const mc = MAINT_CFG[v.maintenance];
                 const hc = HOS_CFG[v.hosStatus];
+                const statusClass = {
+                  Driving: "fo-status-driving",
+                  Idling:  "fo-status-idling",
+                  Parked:  "fo-status-parked",
+                  Offline: "fo-status-offline",
+                  OOS:     "fo-status-oos",
+                }[v.status] ?? "fo-status-parked";
+
                 return (
                   <tr
                     key={v.id}
-                    className={`group transition-colors hover:bg-slate-50/60 ${v.flag ? "bg-red-50/30" : ""}`}
+                    className={`fo-table-row ${v.flag ? "fo-table-row-flagged" : ""}`}
                   >
                     {/* Vehicle */}
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${sc.dot}`} />
+                    <td className="fo-table-cell">
+                      <div className="fo-vehicle-id">
+                        <span className={`fo-vehicle-dot ${sc.dot}`} />
                         <div>
-                          <p className="font-semibold text-slate-900">{v.id}</p>
-                          <p className="text-[11px] text-slate-400">{v.type}</p>
+                          <p className="fo-vehicle-name">{v.id}</p>
+                          <p className="fo-vehicle-type">{v.type}</p>
                         </div>
                       </div>
                     </td>
                     {/* Driver */}
-                    <td className="px-3 py-3">
+                    <td className="fo-table-cell">
                       {v.driver ? (
-                        <p className="text-slate-700">{v.driver}</p>
+                        <span className="text-[13px] text-slate-700 font-medium">{v.driver}</span>
                       ) : (
-                        <p className="text-slate-400 italic">Unassigned</p>
+                        <span className="text-[13px] text-slate-400 italic">Unassigned</span>
                       )}
                     </td>
                     {/* Status */}
-                    <td className="px-3 py-3">
-                      <span className={sc.badge}>{sc.label}</span>
+                    <td className="fo-table-cell">
+                      <span className={`fo-status-badge ${statusClass}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
+                        {sc.label}
+                      </span>
                     </td>
                     {/* Location */}
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                        <span className="text-slate-600">{v.location}</span>
-                      </div>
-                      {v.flag && (
-                        <div className="mt-0.5 flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
-                          <span className="text-[11px] text-amber-700">{v.flag}</span>
+                    <td className="fo-table-cell">
+                      <div className="fo-location">
+                        <MapPin className="fo-location-icon" />
+                        <div>
+                          <span className="fo-location-text">{v.location}</span>
+                          {v.flag && (
+                            <div className="fo-flag">
+                              <AlertTriangle className="fo-flag-icon" />
+                              {v.flag}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </td>
                     {/* Speed */}
-                    <td className="px-3 py-3 text-slate-700">
+                    <td className="fo-table-cell">
                       {v.status === "Driving" && v.speed > 0 ? (
-                        <span className="font-medium">{v.speed} <span className="text-xs font-normal text-slate-400">km/h</span></span>
+                        <span className="fo-speed">{v.speed}<span className="fo-speed-unit">km/h</span></span>
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
                     </td>
                     {/* HOS */}
-                    <td className="px-3 py-3">
+                    <td className="fo-table-cell">
                       {v.hosStatus === "--" ? (
-                        <span className={hc.cls}>—</span>
+                        <span className="text-slate-400">—</span>
                       ) : (
                         <div>
-                          <span className={hc.cls}>{v.hosStatus}</span>
-                          <p className="text-[11px] text-slate-400">{v.hosHrs.toFixed(1)} h driven</p>
+                          <span className={`fo-hos-status ${hc.cls}`}>{v.hosStatus}</span>
+                          <p className="fo-hos-hours">{v.hosHrs.toFixed(1)} h driven</p>
                         </div>
                       )}
                     </td>
                     {/* Maintenance */}
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-1">
-                        <Wrench className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    <td className="fo-table-cell">
+                      <div className="fo-maint">
+                        <Wrench className="fo-maint-icon" />
                         <span className={mc.cls}>{v.maintenance}</span>
                       </div>
                     </td>
                     {/* Signal */}
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-1.5">
+                    <td className="fo-table-cell">
+                      <div className="fo-signal">
                         {SIGNAL_ICON[v.signal]}
-                        <span className="text-[11px] text-slate-500">{v.signal}</span>
+                        <span>{v.signal}</span>
                       </div>
                     </td>
                     {/* Last update */}
-                    <td className="px-3 py-3">
-                      <span className="text-xs text-slate-500">{v.lastSeen}</span>
+                    <td className="fo-table-cell">
+                      <span className="fo-last-seen">{v.lastSeen}</span>
                     </td>
                     {/* Action */}
-                    <td className="px-3 py-3">
+                    <td className="fo-table-cell">
                       <button
                         type="button"
-                        className="btn-ghost invisible h-7 gap-1 px-3 text-xs group-hover:visible"
+                        className="fo-action-btn"
                         onClick={() => navigate("/vehicles")}
                       >
                         Detail
-                        <ChevronRight className="h-3 w-3" />
+                        <ChevronRight className="fo-action-btn-icon" />
                       </button>
                     </td>
                   </tr>
@@ -313,28 +339,28 @@ export function FleetOverviewPage() {
           </table>
 
           {filtered.length === 0 && (
-            <div className="py-12 text-center">
-              <Radio className="mx-auto h-8 w-8 text-slate-300" />
-              <p className="mt-2 text-sm font-semibold text-slate-500">No vehicles match this filter</p>
+            <div className="fo-empty">
+              <Radio className="fo-empty-icon" />
+              <p className="fo-empty-text">No vehicles match this filter</p>
             </div>
           )}
         </div>
 
         {/* Footer strip */}
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
+        <div className="fo-footer-strip">
           <span>{filtered.length} of {FLEET.length} vehicles shown</span>
-          <div className="flex items-center gap-4">
-            <span>
-              <Wifi className="mr-1 inline h-3 w-3 text-emerald-500" />
+          <div className="fo-footer-stats">
+            <span className="fo-footer-stat">
+              <Wifi className="fo-footer-stat-icon text-emerald-500" />
               {FLEET.filter((v) => v.signal === "Strong").length} strong signal
             </span>
-            <span>
-              <ShieldAlert className="mr-1 inline h-3 w-3 text-amber-500" />
+            <span className="fo-footer-stat">
+              <ShieldAlert className="fo-footer-stat-icon text-amber-500" />
               {flagged} flagged
             </span>
             <button
               type="button"
-              className="text-teal-600 hover:underline"
+              className="fo-footer-link"
               onClick={() => navigate("/iot-devices")}
             >
               Device Health →
@@ -348,14 +374,12 @@ export function FleetOverviewPage() {
 
 /* ── KPI strip card ─────────────────────────────────── */
 function KpiStrip({
-  label, count, Icon, accent, bg, border, dot, onClick, active,
+  label, count, Icon, accent, dot, onClick, active,
 }: {
   label: string;
   count: number;
   Icon: React.ElementType;
   accent: string;
-  bg: string;
-  border: string;
   dot: string;
   onClick: () => void;
   active: boolean;
@@ -364,19 +388,17 @@ function KpiStrip({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-all ${
-        active ? `${bg} ${border} ring-2 ring-offset-1 ring-teal-400` : "bg-white border-slate-200 hover:border-slate-300"
-      }`}
+      className={`fo-kpi-card ${active ? "fo-kpi-active" : ""}`}
     >
-      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${active ? bg : "bg-slate-50"}`}>
-        <Icon className={`h-4.5 w-4.5 ${active ? accent : "text-slate-400"}`} />
+      <div className={`fo-kpi-icon ${active ? "fo-kpi-icon-active" : "fo-kpi-icon-inactive"}`}>
+        <Icon className={`h-5 w-5 ${active ? accent : "text-slate-400"}`} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-          <p className="text-2xl font-bold text-slate-900">{count}</p>
+        <div className="fo-kpi-count">
+          <span className={`fo-kpi-dot ${dot}`} />
+          <span className={active ? accent : "text-slate-900"}>{count}</span>
         </div>
-        <p className={`truncate text-xs font-semibold ${active ? accent : "text-slate-500"}`}>{label}</p>
+        <p className={`fo-kpi-label ${active ? accent : "text-slate-500"}`}>{label}</p>
       </div>
     </button>
   );
