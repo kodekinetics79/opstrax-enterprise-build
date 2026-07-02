@@ -94,6 +94,29 @@ BEGIN
     FROM notifications n
     WHERE n.company_id=cid AND NOT EXISTS (SELECT 1 FROM notification_recipients nr WHERE nr.notification_id=n.id);
 
-    RAISE NOTICE 'ACME enrichment: 50 routes, 600 dispatch, 400 trips, 30 geofences, 120 WOs, 80 alerts, 40 notifications (+recipients).';
+    -- ── Branches (12) + depots/yards (20), fleet distribution, branch manager ──
+    -- Requires Stage 25 (branches table + branch_id columns).
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='branches')
+       AND (SELECT count(*) FROM branches WHERE company_id=cid)=0 THEN
+        INSERT INTO branches (company_id, branch_code, name, branch_type, region, city, status)
+        SELECT cid, 'ACME-BR-'||LPAD(g::text,2,'0'),
+               (ARRAY['Midwest','South','Northeast','West','Southeast','Mountain'])[(g%6)+1]||' Branch '||g,
+               'branch', (ARRAY['Midwest','South','Northeast','West'])[(g%4)+1],
+               (ARRAY['Chicago','Dallas','Atlanta','Denver','Phoenix','Houston'])[(g%6)+1], 'Active'
+        FROM generate_series(1,12) g;
+        INSERT INTO branches (company_id, branch_code, name, branch_type, city, status)
+        SELECT cid, 'ACME-DP-'||LPAD(g::text,2,'0'), 'Depot '||g, (CASE WHEN g%3=0 THEN 'yard' ELSE 'depot' END),
+               (ARRAY['Chicago','Dallas','Atlanta','Denver'])[(g%4)+1], 'Active'
+        FROM generate_series(1,20) g;
+        UPDATE vehicles v SET branch_id = (SELECT id FROM branches WHERE company_id=cid AND branch_type='branch' ORDER BY id OFFSET (v.id % 12) LIMIT 1) WHERE v.company_id=cid;
+        UPDATE drivers d  SET branch_id = (SELECT id FROM branches WHERE company_id=cid AND branch_type='branch' ORDER BY id OFFSET (d.id % 12) LIMIT 1) WHERE d.company_id=cid;
+        INSERT INTO users (company_id, branch_id, email, full_name, role_name, role_id, status, permissions_json, demo_password)
+        VALUES (cid, (SELECT id FROM branches WHERE company_id=cid AND branch_type='branch' ORDER BY id LIMIT 1),
+                'branchmgr@acme-transport.com', 'Acme Branch Manager', 'Fleet Manager', 3, 'Active',
+                '[\"dashboard:view\",\"vehicles:view\",\"drivers:view\",\"shipments:view\",\"dispatch:view\"]'::jsonb, 'AcmeBr!23')
+        ON CONFLICT (email) DO NOTHING;
+    END IF;
+
+    RAISE NOTICE 'ACME enrichment: 50 routes, 600 dispatch, 400 trips, 30 geofences, 120 WOs, 80 alerts, 40 notifications, 12 branches + 20 depots.';
 END
 $enrich$;

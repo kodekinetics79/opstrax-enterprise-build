@@ -17,6 +17,10 @@ public static partial class EndpointMappings
     public const string AuthUserIdItemKey = "opstrax.auth.user_id";
     public const string AuthCompanyIdItemKey = "opstrax.auth.company_id";
     public const string AuthRoleItemKey = "opstrax.auth.role";
+    // Set (non-null) by the auth middleware when the user is bound to a branch. NULL =
+    // tenant-wide access (sees all branches). Enables branch-scoped visibility beneath
+    // tenant isolation (a branch manager sees only their branch's fleet).
+    public const string AuthBranchIdItemKey = "opstrax.auth.branch_id";
     // Set (non-null) by the auth middleware ONLY for customer-portal users (users bound
     // to a customer_id). Internal endpoints reject any principal carrying this.
     public const string AuthCustomerIdItemKey = "opstrax.auth.customer_id";
@@ -1459,6 +1463,13 @@ public static partial class EndpointMappings
         app.MapGet("/api/audit/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='audit-logs' ORDER BY score DESC LIMIT 10", ct: ct));
 
         // ===== ADMIN / GOVERNANCE ==============================================
+        // ── Branches / Depots / Yards (org hierarchy) ──
+        app.MapGet("/api/branches", BranchesList);
+        app.MapGet("/api/branches/{id:long}", BranchDetail);
+        app.MapPost("/api/branches", CreateBranch);
+        app.MapPut("/api/branches/{id:long}", UpdateBranch);
+        app.MapDelete("/api/branches/{id:long}", SoftDeleteWithPermission("branches", "branch.deleted", "fleet:manage"));
+
         app.MapGet("/api/admin/overview", AdminOverview);
         app.MapGet("/api/admin/users", AdminUsers);
         app.MapGet("/api/admin/users/{id:long}", AdminUserDetail);
@@ -1811,6 +1822,101 @@ public static partial class EndpointMappings
         companyId = 0;
         if (!http.Items.TryGetValue(AuthCompanyIdItemKey, out var value) || value is null) return false;
         return long.TryParse(value.ToString(), out companyId) && companyId > 0;
+    }
+
+    // Branch scoping: returns the user's branch_id, or null if they are tenant-wide
+    // (see all branches). Callers append a branch filter only when this is non-null.
+    public static long? GetBranchId(HttpContext http)
+        => http.Items.TryGetValue(AuthBranchIdItemKey, out var v) && v is not null && long.TryParse(v.ToString(), out var b) && b > 0
+            ? b : null;
+
+    // ── Branch / depot / yard CRUD ──
+    private static Task<IResult> BranchesList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dashboard:view") is { } denied) return Task.FromResult(denied);
+        var (branchClause, branchId) = BranchFilter(http, "b");
+        return OkRows(db,
+            @"SELECT b.*, u.full_name manager_name,
+                     (SELECT COUNT(*) FROM vehicles v WHERE v.branch_id=b.id AND v.deleted_at IS NULL) vehicle_count,
+                     (SELECT COUNT(*) FROM drivers d WHERE d.branch_id=b.id AND d.deleted_at IS NULL) driver_count
+              FROM branches b
+              LEFT JOIN users u ON u.id=b.manager_user_id
+              WHERE b.deleted_at IS NULL AND b.company_id=@cid" + branchClause + " ORDER BY b.branch_type, b.name",
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+    }
+
+    private static async Task<IResult> BranchDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
+        var row = await db.QuerySingleAsync(
+            "SELECT b.*, u.full_name manager_name FROM branches b LEFT JOIN users u ON u.id=b.manager_user_id WHERE b.id=@id AND b.company_id=@cid AND b.deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+        return row is null ? Results.NotFound(ApiResponse<object>.Fail("Branch not found")) : Results.Ok(ApiResponse<object>.Ok(row));
+    }
+
+    private static async Task<IResult> CreateBranch(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
+        var companyId = GetCompanyId(http);
+        var code = Get(body, "branchCode")?.ToString()?.Trim();
+        var name = Get(body, "name")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Branch validation failed", ["Branch code and name are required."]));
+        var type = (Get(body, "branchType")?.ToString()?.Trim() ?? "branch").ToLowerInvariant();
+        if (type is not ("branch" or "depot" or "yard")) type = "branch";
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM branches WHERE company_id=@cid AND LOWER(branch_code)=LOWER(@code) AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+            return Results.Conflict(ApiResponse<object>.Fail("Branch validation failed", [$"Branch code '{code}' already exists."]));
+
+        var id = await db.InsertAsync(
+            @"INSERT INTO branches (company_id, branch_code, name, branch_type, region, address, city, state, country_code, timezone, status)
+              VALUES (@cid, @code, @name, @type, @region, @address, @city, @state, @country, @tz, 'Active')",
+            c => {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@name", name);
+                c.Parameters.AddWithValue("@type", type);
+                c.Parameters.AddWithValue("@region", Get(body, "region"));
+                c.Parameters.AddWithValue("@address", Get(body, "address"));
+                c.Parameters.AddWithValue("@city", Get(body, "city"));
+                c.Parameters.AddWithValue("@state", Get(body, "state"));
+                c.Parameters.AddWithValue("@country", Get(body, "countryCode"));
+                c.Parameters.AddWithValue("@tz", Get(body, "timezone"));
+            }, ct);
+        await audit.LogAsync(http, "branch.created", "Branch", id, ct: ct);
+        return Results.Created($"/api/branches/{id}", ApiResponse<object>.Ok(new { id }, "Branch created"));
+    }
+
+    private static async Task<IResult> UpdateBranch(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "fleet:manage");
+        if (denied is not null) return denied;
+        var affected = await db.ExecuteAsync(
+            @"UPDATE branches SET name=COALESCE(@name,name), branch_type=COALESCE(@type,branch_type),
+                     region=COALESCE(@region,region), address=COALESCE(@address,address), city=COALESCE(@city,city),
+                     state=COALESCE(@state,state), status=COALESCE(@status,status), manager_user_id=COALESCE(@mgr,manager_user_id), updated_at=NOW()
+              WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => {
+                c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@name", Get(body, "name")); c.Parameters.AddWithValue("@type", Get(body, "branchType"));
+                c.Parameters.AddWithValue("@region", Get(body, "region")); c.Parameters.AddWithValue("@address", Get(body, "address"));
+                c.Parameters.AddWithValue("@city", Get(body, "city")); c.Parameters.AddWithValue("@state", Get(body, "state"));
+                c.Parameters.AddWithValue("@status", Get(body, "status"));
+                c.Parameters.AddWithValue("@mgr", Get(body, "managerUserId"));
+            }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Branch not found"));
+        await audit.LogAsync(http, "branch.updated", "Branch", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Branch updated"));
+    }
+
+    // Appends a branch filter to a list query when the user is branch-bound, and binds
+    // @branchId. `alias` is the table alias in the query (e.g. "v" for vehicles). The
+    // filter allows the row through if it matches the user's branch OR has no branch
+    // (shared/tenant-level records remain visible). Trusted literal alias, never input.
+    public static (string clause, long? branchId) BranchFilter(HttpContext http, string alias)
+    {
+        var branchId = GetBranchId(http);
+        return branchId is null ? ("", null) : ($" AND ({alias}.branch_id = @branchId OR {alias}.branch_id IS NULL)", branchId);
     }
 
     private static IEnumerable<string> PermissionAliases(string permission)
@@ -2486,6 +2592,7 @@ public static partial class EndpointMappings
     private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return Task.FromResult(denied);
+        var (branchClause, branchId) = BranchFilter(http, "v");
         return PagedRows(http, db,
             @"SELECT v.*, d.full_name assigned_driver,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score,
@@ -2498,14 +2605,15 @@ public static partial class EndpointMappings
                           ELSE 'Keep in active rotation' END recommended_action
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
-              WHERE v.deleted_at IS NULL AND v.company_id=@cid",
+              WHERE v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
             "v.vehicle_code",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
     }
 
     private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return Task.FromResult(denied);
+        var (branchClause, branchId) = BranchFilter(http, "d");
         return PagedRows(http, db,
             @"SELECT d.*, v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
@@ -2518,9 +2626,9 @@ public static partial class EndpointMappings
                           ELSE 'Ready for dispatch' END recommended_action
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
-              WHERE d.deleted_at IS NULL AND d.company_id=@cid",
+              WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
             "d.full_name",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
     }
 
     private static Task<IResult> Customers(HttpContext http, Database db, CancellationToken ct)

@@ -349,7 +349,7 @@ app.UseWhen(
             // Pre-tenant bootstrap read of RLS-protected auth tables — runs under the
             // platform bypass so it succeeds under the restricted role (no tenant yet).
             var session = await BootstrapReadAsync(() => db.QuerySingleAsync(
-                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.permissions_json, r.permissions_json role_permissions_json
+                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id, u.permissions_json, r.permissions_json role_permissions_json
                   FROM user_sessions s
                   JOIN users u ON u.id = s.user_id
                   LEFT JOIN roles r ON r.id = u.role_id
@@ -399,6 +399,9 @@ app.UseWhen(
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
             context.Items[EndpointMappings.AuthRoleItemKey] = roleName;
             context.Items[EndpointMappings.AuthPermissionsItemKey] = permissions.ToArray();
+            // Branch scoping: non-null when the user is bound to a branch; NULL = tenant-wide.
+            if (session.TryGetValue("branchId", out var bid) && bid is not null && bid is not DBNull)
+                context.Items[EndpointMappings.AuthBranchIdItemKey] = Convert.ToInt64(bid);
             // Customer-portal binding: non-null when the user is a customer_portal user.
             // Internal endpoints reject any principal carrying this (see RequirePermission
             // / RequireInternalUser) — a stricter boundary than tenant RBAC.
