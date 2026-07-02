@@ -394,109 +394,65 @@ export function AppShell() {
   const firstFilteredRoute = filteredSections.flatMap((section) => section.items).find((module) => matchesFilter(module, module.group, normalizedSidebarQuery));
   const backTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
 
-  /* ── Sidebar nav content (shared between desktop + mobile) ── */
+  /* ── Sidebar nav content (shared between desktop + mobile) ──
+     Design system: ONE quiet surface (no nested cards), hierarchy from spacing +
+     a single hairline, single-line 32px rows, identity rendered exactly once
+     (footer). Section color survives only as two precise signals: a 4px dot by
+     the group label, and the active item lighting up a segment of the group's
+     guide-line. */
   const navContent = (
-    <div className="flex h-full flex-col gap-3.5">
+    <div className="flex h-full min-h-0 flex-col">
 
-      {/* Brand + search */}
-      <div className="rounded-[26px] border border-slate-200/80 bg-white/82 px-3.5 py-3 shadow-[0_14px_34px_rgba(15,23,42,.05)] backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <div className="shrink-0">
-            <OpsTraxLogo size={34} />
+      {/* ── Brand ── */}
+      <div className="mx-3 flex items-center gap-2.5 border-b border-slate-200/60 px-1 pb-3.5 pt-4">
+        <OpsTraxLogo size={28} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="text-[14px] font-black tracking-tight text-slate-950">OpsTrax</p>
+            <span className="live-dot h-1.5 w-1.5" title="Live" />
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <p className="text-[15px] font-black tracking-tight text-slate-950">OpsTrax</p>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-600 ring-1 ring-emerald-200">
-                <span className="live-dot h-1.5 w-1.5" /> Live
-              </span>
-            </div>
-            <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-slate-400">{companyLabel}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 border-t border-slate-200/80 pt-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Quick filter</p>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-              {accessibleModuleCount} visible
-            </span>
-          </div>
-          <div className="relative mt-2">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              className="field h-10 w-full rounded-xl py-0 pl-9 pr-3 text-[13px]"
-              placeholder="Filter modules or press Enter…"
-              value={sidebarQuery}
-              onChange={(event) => setSidebarQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                if (firstFilteredRoute) {
-                  navigate(firstFilteredRoute.route);
-                  setSidebarQuery("");
-                  return;
-                }
-                navigate(resolveSearchRoute(sidebarQuery));
-                setSidebarQuery("");
-              }}
-            />
-          </div>
+          <p className="truncate text-[10px] font-medium tracking-wide text-slate-400">{companyLabel}</p>
         </div>
       </div>
 
-      <div className="rounded-[22px] border border-slate-200/80 bg-white/74 px-3.5 py-3 shadow-[0_12px_30px_rgba(15,23,42,.04)] backdrop-blur-md">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Signed in as</p>
-            <p className="mt-1 truncate text-[14px] font-bold text-slate-950">{displayName}</p>
-            <p className="truncate text-xs text-slate-500">{roleLabel} · {companyLabel}</p>
-          </div>
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50 to-blue-50 text-sm font-extrabold text-teal-700">
-            {initials}
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          <span className="badge badge-muted text-[9px]">{roleLabel}</span>
-          <span className="badge badge-info text-[9px]">{planLabel}</span>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto pb-2 pt-1">
+      {/* ── Navigation ── */}
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
         {filteredSections.length === 0 ? (
-          <div className="rounded-[20px] border border-dashed border-slate-200 bg-white/70 px-4 py-5 text-center">
-            <p className="text-sm font-semibold text-slate-800">No modules match this filter</p>
-            <p className="mt-1 text-xs text-slate-500">Try a different search term or clear the filter to see all accessible sections.</p>
+          <div className="px-2 py-6 text-center">
+            <p className="text-[13px] font-semibold text-slate-700">No modules match</p>
+            <p className="mt-1 text-xs text-slate-400">Try a different term or clear the search.</p>
           </div>
         ) : filteredSections.map((section) => {
           const isPinnedOpen = section.items.some((module) => isRouteActive(module.route, location.pathname));
           const isOpen = normalizedSidebarQuery.length > 0 || isPinnedOpen || sectionOpen?.[section.label] !== false;
           return (
-            <div key={section.label}>
+            <div key={section.label} className="mb-0.5">
               {/* Group header */}
               <button
                 type="button"
-                className="flex w-full items-center justify-between rounded-2xl px-3 py-2 transition-colors hover:bg-slate-100/80"
+                className="group/hdr flex w-full items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-slate-100/70"
                 onClick={() => toggleGroup(section.label)}
                 aria-expanded={isOpen}
               >
-                <span className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold uppercase tracking-[0.22em] ${section.color} opacity-80`}>
-                    {section.label}
+                <span aria-hidden className={`h-1 w-1 shrink-0 rounded-full bg-current ${section.color}`} />
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                  {section.label}
+                </span>
+                {!isOpen && (
+                  <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold leading-4 text-slate-400">
+                    {section.items.length}
                   </span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <ChevronDown
-                    className="h-3.5 w-3.5 text-slate-400 transition-transform duration-200"
-                    style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
-                  />
-                </span>
+                )}
+                <ChevronDown
+                  className="ml-auto h-3 w-3 text-slate-300 opacity-0 transition-all duration-200 group-hover/hdr:opacity-100"
+                  style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
+                />
               </button>
 
-              {/* Group items */}
+              {/* Group items — hung off a guide-line; the active item lights up
+                  its segment of the line in the section color. */}
               {isOpen && (
-                <div className="mt-1 space-y-1 pb-2 pl-1">
+                <div className="mb-1 ml-[13px] border-l border-slate-200/80 pl-2">
                   {section.items.map((module) => {
                     const Icon = moduleIcons[module.key];
                     const active = isRouteActive(module.route, location.pathname);
@@ -506,24 +462,17 @@ export function AppShell() {
                         to={module.route}
                         title={module.description}
                         aria-current={active ? "page" : undefined}
-                        className={`group relative flex items-center gap-2.5 rounded-xl py-2 pl-3.5 pr-3 text-sm transition-all duration-150 ${
+                        className={`relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors duration-100 ${
                           active
-                            ? "bg-gradient-to-r from-teal-50 via-blue-50 to-transparent font-semibold text-slate-950 shadow-sm ring-1 ring-blue-200/70"
-                            : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                            ? "bg-slate-100 font-semibold text-slate-950"
+                            : "font-medium text-slate-600 hover:bg-slate-100/70 hover:text-slate-950"
                         }`}
                       >
-                        <>
-                          {active && <span className="nav-active-bar" />}
-                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
-                            active ? "bg-white shadow-sm ring-1 ring-slate-200/80" : "bg-transparent group-hover:bg-white/70"
-                          }`}>
-                            <Icon className={`h-4 w-4 shrink-0 transition-colors ${active ? section.color : "text-slate-400 group-hover:text-slate-600"}`} />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate">{module.title}</span>
-                            <span className="block truncate text-[10px] font-medium text-slate-400">{module.group}</span>
-                          </span>
-                        </>
+                        {active && (
+                          <span aria-hidden className={`absolute -left-[9px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-current ${section.color}`} />
+                        )}
+                        <Icon className={`h-4 w-4 shrink-0 transition-colors ${active ? section.color : "text-slate-400"}`} />
+                        <span className="truncate">{module.title}</span>
                       </Link>
                     );
                   })}
@@ -534,27 +483,6 @@ export function AppShell() {
         })}
       </nav>
 
-      {/* User footer */}
-      <div className="border-t border-slate-200/80 pt-3">
-        <div className="flex items-center gap-3 rounded-[18px] px-3 py-2.5 transition hover:bg-slate-100/80">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-50 to-blue-50 border border-blue-200 text-sm font-extrabold text-blue-700">
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
-            <p className="truncate text-xs text-slate-500">{roleLabel} · {companyLabel}</p>
-          </div>
-          <button
-            type="button"
-            className="icon-btn shrink-0"
-            title="Sign out"
-            onClick={() => { void logout(); }}
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        <p className="px-3 pb-1 pt-2 text-[10px] text-slate-400">OpsTrax · Kode Kinetics</p>
-      </div>
     </div>
   );
 
@@ -562,10 +490,9 @@ export function AppShell() {
     <div className="control-shell h-screen overflow-hidden text-slate-800">
 
       {/* ── Desktop Sidebar ── */}
-      <aside className="fixed left-4 top-4 bottom-4 z-30 hidden w-[300px] overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] p-2.5 shadow-[0_24px_60px_rgba(15,23,42,.08)] xl:flex xl:flex-col">
-        <div className="flex h-full flex-col overflow-hidden rounded-[26px] bg-white/42 p-2 backdrop-blur-xl">
-          {navContent}
-        </div>
+      {/* Single quiet surface — no nested shells; hierarchy comes from spacing. */}
+      <aside className="fixed left-4 top-4 bottom-4 z-30 hidden w-[280px] overflow-hidden rounded-2xl border border-slate-200/80 bg-white/88 shadow-[0_18px_44px_rgba(15,23,42,.08)] backdrop-blur-xl xl:flex xl:flex-col">
+        {navContent}
       </aside>
 
       {/* ── Mobile Sidebar ── */}
@@ -592,7 +519,7 @@ export function AppShell() {
       {/* ── Main ── */}
       {/* Fixed to viewport height: header stays pinned, the page body below owns
           its own scroll so KPIs/metrics never leave the visible screen. */}
-      <div className="flex h-screen flex-col overflow-hidden xl:pl-[316px]">
+      <div className="flex h-screen flex-col overflow-hidden xl:pl-[296px]">
 
         {/* ── Header ── */}
         <header className="shell-header z-20 shrink-0 border-b border-slate-200 bg-white/92 backdrop-blur-xl">
@@ -646,6 +573,33 @@ export function AppShell() {
                     })}
                   </ol>
                 </nav>
+              </div>
+
+              {/* ── Global module search (top center) ── */}
+              <div className="hidden min-w-0 flex-1 justify-center px-4 md:flex">
+                <div className="relative w-full max-w-md">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    className="h-9 w-full rounded-lg border border-transparent bg-slate-100/80 pl-8 pr-8 text-[13px] text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-200 focus:bg-white"
+                    placeholder={`Search ${accessibleModuleCount} modules…`}
+                    value={sidebarQuery}
+                    onChange={(event) => setSidebarQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (firstFilteredRoute) {
+                        navigate(firstFilteredRoute.route);
+                        setSidebarQuery("");
+                        return;
+                      }
+                      navigate(resolveSearchRoute(sidebarQuery));
+                      setSidebarQuery("");
+                    }}
+                  />
+                  {sidebarQuery.length > 0 && firstFilteredRoute && (
+                    <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-200 bg-white px-1 text-[10px] font-semibold leading-4 text-slate-400">↵</kbd>
+                  )}
+                </div>
               </div>
 
               {/* Live clock */}
@@ -726,11 +680,18 @@ export function AppShell() {
                 <div className="relative" ref={profileRef}>
                   <button
                     type="button"
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-500/15 to-blue-500/10 border border-teal-500/25 text-[13px] font-extrabold text-teal-700 transition hover:border-teal-500/40 hover:from-teal-500/25"
+                    className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1 py-1 transition hover:border-slate-200 hover:bg-slate-100/70 lg:pr-2"
                     title="My profile"
                     onClick={() => setProfileOpen((v) => !v)}
                   >
-                    {initials}
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-50 to-blue-50 text-[12px] font-extrabold text-teal-700 ring-1 ring-teal-200/70">
+                      {initials}
+                    </span>
+                    <span className="hidden min-w-0 flex-col items-start leading-tight lg:flex">
+                      <span className="max-w-[140px] truncate text-[12px] font-semibold text-slate-900">{displayName}</span>
+                      <span className="max-w-[140px] truncate text-[10px] text-slate-500">{roleLabel} · {planLabel}</span>
+                    </span>
+                    <ChevronDown className="hidden h-3 w-3 shrink-0 text-slate-400 lg:block" />
                   </button>
                   {profileOpen && (
                     <div className="panel absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-0 shadow-lg">
