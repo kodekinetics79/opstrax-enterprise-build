@@ -74,6 +74,21 @@ public static partial class EndpointMappings
         app.MapPost("/api/control-tower/actions/create-dispatch-review", SimpleAction("dispatch.review.created", "Dispatch review created"));
         app.MapPost("/api/control-tower/actions/create-maintenance-review", SimpleAction("maintenance.review.created", "Maintenance review created"));
 
+        // Server-side full-dataset CSV export (tenant + branch scoped, permission-gated,
+        // streamed) — the client CSV only had the current page after pagination.
+        app.MapGet("/api/vehicles/export", (HttpContext http, Database db, CancellationToken ct) =>
+            ExportCsv(http, db, "vehicles:view", "vehicles", "v",
+                "SELECT v.vehicle_code, v.type, v.make, v.model, v.year, v.vin, v.plate_number, v.status, v.odometer_miles, v.device_status FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@cid",
+                "v.vehicle_code", ct));
+        app.MapGet("/api/drivers/export", (HttpContext http, Database db, CancellationToken ct) =>
+            ExportCsv(http, db, "drivers:view", "drivers", "d",
+                "SELECT d.driver_code, d.full_name, d.phone, d.email, d.license_number, d.license_expiry, d.status, d.safety_score, d.compliance_score FROM drivers d WHERE d.deleted_at IS NULL AND d.company_id=@cid",
+                "d.full_name", ct));
+        app.MapGet("/api/jobs/export", (HttpContext http, Database db, CancellationToken ct) =>
+            ExportCsv(http, db, "shipments:view", "jobs", "j",
+                "SELECT j.job_code, j.status, j.priority, j.pickup_address, j.dropoff_address, j.scheduled_start, j.scheduled_end FROM jobs j WHERE j.deleted_at IS NULL AND j.company_id=@cid",
+                "j.scheduled_start DESC", ct));
+
         app.MapGet("/api/vehicles/summary", VehicleSummary);
         app.MapGet("/api/vehicles/planning-insights", VehiclePlanningInsights);
         app.MapGet("/api/vehicles", Vehicles);
@@ -5116,6 +5131,40 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> OkRows(Database db, string sql, Action<NpgsqlCommand>? bind = null, string message = "", CancellationToken ct = default)
         => Results.Ok(ApiResponse<object>.Ok(await db.QueryAsync(sql, bind, ct), message));
+
+    // Server-side CSV export of a full (tenant + branch scoped) dataset. Permission-
+    // gated; the same branch filter as the list applies; hard-capped at 100k rows to
+    // bound memory. Honours ?search= via the caller's baseSql shape. Streams a text/csv
+    // attachment. `alias`/`orderBy` are trusted literals, never user input.
+    private static async Task<IResult> ExportCsv(HttpContext http, Database db, string permission, string name,
+        string alias, string baseSql, string orderBy, CancellationToken ct)
+    {
+        if (RequirePermission(http, permission) is { } denied) return denied;
+        var (branchClause, branchId) = BranchFilter(http, alias);
+
+        var rows = await db.QueryAsync(
+            $"{baseSql}{branchClause} ORDER BY {orderBy} LIMIT 100000",
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+
+        var sb = new System.Text.StringBuilder();
+        if (rows.Count > 0)
+        {
+            var cols = rows[0].Keys.ToList();
+            sb.AppendLine(string.Join(",", cols));
+            foreach (var row in rows)
+                sb.AppendLine(string.Join(",", cols.Select(k =>
+                {
+                    var v = row[k]?.ToString() ?? "";
+                    return v.Contains(',') || v.Contains('"') || v.Contains('\n')
+                        ? "\"" + v.Replace("\"", "\"\"") + "\"" : v;
+                })));
+        }
+        else sb.AppendLine("(no rows)");
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var ts = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm");
+        return Results.File(bytes, "text/csv", $"{name}_{ts}.csv");
+    }
 
     // Enterprise-scale list read: caps the result set and honours ?limit=&offset=.
     // Prevents unbounded payloads on high-volume tables (vehicles/drivers/jobs) at

@@ -36,6 +36,19 @@ function asRows(value: unknown): AnyRecord[] {
   return Array.isArray(value) ? (value as AnyRecord[]) : [];
 }
 
+// Server-side full-dataset export: downloads the CSV blob (tenant + branch scoped,
+// permission-gated on the server) so an export covers the whole fleet, not just the
+// current page. Falls back to throwing so the caller can toast on failure.
+export async function downloadServerExport(endpoint: string, filename: string): Promise<void> {
+  const response = await apiClient.get(endpoint, { responseType: "blob" });
+  const url = URL.createObjectURL(response.data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function getDashboardSummary() {
   return apiRecord("/api/command-center/summary");
 }

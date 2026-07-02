@@ -7,6 +7,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
+import { downloadServerExport } from "@/services/fleetDomainApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
@@ -156,7 +157,8 @@ export function VehiclesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2.5">
-          <button type="button" disabled={!canExport} onClick={() => canExport && exportCsv("vehicles", filtered)}
+          <button type="button" disabled={!canExport} onClick={() => { if (!canExport) return; void downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0,10)}.csv`).catch(() => exportCsv("vehicles", filtered)); }}
+            title="Export the full fleet (all pages)"
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40">
             <Download className="h-4 w-4" /> Export
           </button>
