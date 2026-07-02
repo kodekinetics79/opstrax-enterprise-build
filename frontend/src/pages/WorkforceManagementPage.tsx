@@ -43,38 +43,6 @@ function normalizeDrivers(rows: AnyRecord[]): AnyRecord[] {
   }));
 }
 
-const SCHEDULE_SHIFTS: ShiftType[] = [
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Rest (HOS)", "Off", "Morning",
-  "Afternoon", "Afternoon", "Morning", "Night",
-  "Off", "Morning", "Afternoon", "Off",
-  "Night", "Off", "Morning", "Afternoon",
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Afternoon", "Off", "Morning",
-  "Off", "Morning", "Afternoon", "Night",
-  "Morning", "Off", "Morning", "Afternoon",
-  "Afternoon", "Morning", "Night", "Rest (HOS)",
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Rest (HOS)", "Off", "Morning",
-  "Afternoon", "Morning", "Off", "Afternoon",
-  "Night", "Off", "Morning", "Afternoon",
-  "Morning", "Morning", "Night", "Off",
-  "Afternoon", "Morning", "Off", "Night",
-  "Morning", "Afternoon", "Rest (HOS)", "Morning",
-  "Night", "Off", "Morning", "Afternoon",
-  "Off", "Morning", "Afternoon", "Night",
-  "Morning", "Afternoon", "Off", "Morning",
-];
-
-function buildSchedule(drivers: AnyRecord[]): AnyRecord[] {
-  return drivers.map((d, di) =>
-    DAYS.reduce<AnyRecord>((acc, day, dayIdx) => {
-      acc[day] = SCHEDULE_SHIFTS[(di * 7 + dayIdx) % SCHEDULE_SHIFTS.length];
-      return acc;
-    }, { driverId: d.id, driverName: String(d.name), code: String(d.code) })
-  );
-}
-
 const workforceApi = {
   drivers: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/drivers")).then(normalizeDrivers),
   schedule: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/schedule")),
@@ -153,6 +121,36 @@ export function WorkforceManagementPage() {
   const available  = drivers.filter((d) => String(d.status) === "Available").length;
   const hosRest    = drivers.filter((d) => String(d.status) === "Rest (HOS)").length;
   const nearHosLimit = drivers.filter((d) => Number(d.hoursThisWeek) >= 60).length;
+
+  // Real, data-derived workforce insights (no fabricated recommendations).
+  const workforceInsights = (() => {
+    const out: { title: string; body: string; priority: "High" | "Medium" | "Low" }[] = [];
+    const hosDrivers = drivers.filter((d) => Number(d.hoursThisWeek) >= 60);
+    if (hosDrivers.length > 0) {
+      out.push({
+        title: `${hosDrivers.length} driver${hosDrivers.length > 1 ? "s" : ""} approaching the HOS weekly limit`,
+        body: `${hosDrivers.map((d) => `${String(d.name)} (${Number(d.hoursThisWeek)}h)`).join(", ")} — near the ${Number(hosDrivers[0].hosLimit ?? 70)}h ceiling. Rebalance upcoming shifts to avoid forced rest disruption.`,
+        priority: "High",
+      });
+    }
+    const lowSafety = drivers.filter((d) => Number(d.safetyScore) > 0 && Number(d.safetyScore) < 70);
+    if (lowSafety.length > 0) {
+      out.push({
+        title: `${lowSafety.length} driver${lowSafety.length > 1 ? "s" : ""} below the safety-score threshold`,
+        body: `${lowSafety.map((d) => `${String(d.name)} (${Number(d.safetyScore)})`).join(", ")} scored under 70. Review recent safety events and assign coaching.`,
+        priority: "Medium",
+      });
+    }
+    const restNeeded = drivers.filter((d) => String(d.status) === "Rest (HOS)");
+    if (restNeeded.length > 0) {
+      out.push({
+        title: `${restNeeded.length} driver${restNeeded.length > 1 ? "s" : ""} on mandatory HOS rest`,
+        body: `${restNeeded.map((d) => String(d.name)).join(", ")} ${restNeeded.length > 1 ? "are" : "is"} in a required rest period and unavailable for dispatch. Plan coverage accordingly.`,
+        priority: "Low",
+      });
+    }
+    return out;
+  })();
 
   const filteredDrivers = filterStatus
     ? drivers.filter((d) => String(d.status) === filterStatus)
@@ -277,6 +275,11 @@ export function WorkforceManagementPage() {
                     })}
                   </tr>
                 ))}
+                {schedule.length === 0 && (
+                  <tr><td colSpan={DAYS.length + 1} className="px-4 py-10 text-center text-sm text-slate-400">
+                    No shifts scheduled yet. Assign shifts from the roster to build this week's plan.
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -346,16 +349,16 @@ export function WorkforceManagementPage() {
         </div>
       )}
 
-      {/* ── AI Insights Tab ── */}
+      {/* ── Insights Tab ── derived from real driver data, not fabricated ── */}
       {tab === "Insights" && (
         <div className="flex flex-col gap-3">
-          {[
-            { title: `${nearHosLimit} drivers approaching HOS 70-hour weekly limit`, body: "Drivers DRV-007, DRV-005 and DRV-009 have 62h, 55h and 44h respectively. Reassign weekend runs to DRV-010 (29h) to prevent forced rest-day disruption.", priority: "High", action: "Rebalance Roster" },
-            { title: "Schedule coverage gap: Saturday Night shift understaffed", body: "Current schedule leaves only 1 driver on Night shift Saturday. 3 active jobs require Night-shift coverage. Move DRV-002 from Off to Night to resolve.", priority: "High", action: "Fix Coverage" },
-            { title: "Optimize Morning shift distribution for fuel efficiency", body: "Clustering Morning drivers in DXB-North routes reduces average deadhead by 18km per trip. AI routing overlay can implement automatically.", priority: "Medium", action: "Apply Routing" },
-            { title: "2 drivers with C+E licence underutilized this week", body: "DRV-004 and DRV-010 hold C+E truck licences but are scheduled for van routes. Reassigning heavy loads frees up 2 C-licence drivers for multi-stop city runs.", priority: "Medium", action: "Optimize Assignment" },
-            { title: "Driver DRV-007 flagged for 3 consecutive Night shifts", body: "Regulatory guidelines recommend no more than 2 consecutive Night shifts without a day break. Reschedule Thursday to Off to maintain driver health compliance.", priority: "Low", action: "Adjust Roster" },
-          ].map((rec, i) => (
+          {workforceInsights.length === 0 ? (
+            <div className="panel py-10 text-center">
+              <Bot className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-2 text-sm font-semibold text-slate-500">No workforce risks detected</p>
+              <p className="mt-1 text-xs text-slate-400">All drivers are within HOS limits, assigned, and clear of safety flags.</p>
+            </div>
+          ) : workforceInsights.map((rec, i) => (
             <div key={i} className="panel flex items-start gap-4 p-4">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
                 <Bot className="h-4 w-4 text-violet-600" />
@@ -366,7 +369,6 @@ export function WorkforceManagementPage() {
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${rec.priority === "High" ? "border-red-200 bg-red-50 text-red-700" : rec.priority === "Medium" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{rec.priority}</span>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">{rec.body}</p>
-                <button type="button" className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition">{rec.action} →</button>
               </div>
               <Clock className="h-4 w-4 shrink-0 text-slate-400 mt-0.5" />
             </div>
