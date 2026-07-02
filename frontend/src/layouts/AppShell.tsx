@@ -559,7 +559,7 @@ export function AppShell() {
   );
 
   return (
-    <div className="control-shell min-h-screen text-slate-800">
+    <div className="control-shell h-screen overflow-hidden text-slate-800">
 
       {/* ── Desktop Sidebar ── */}
       <aside className="fixed left-4 top-4 bottom-4 z-30 hidden w-[300px] overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f7fbff_100%)] p-2.5 shadow-[0_24px_60px_rgba(15,23,42,.08)] xl:flex xl:flex-col">
@@ -590,10 +590,12 @@ export function AppShell() {
       )}
 
       {/* ── Main ── */}
-      <div className="xl:pl-[316px]">
+      {/* Fixed to viewport height: header stays pinned, the page body below owns
+          its own scroll so KPIs/metrics never leave the visible screen. */}
+      <div className="flex h-screen flex-col overflow-hidden xl:pl-[316px]">
 
         {/* ── Header ── */}
-        <header className="shell-header sticky top-0 z-20 border-b border-slate-200 bg-white/92 backdrop-blur-xl">
+        <header className="shell-header z-20 shrink-0 border-b border-slate-200 bg-white/92 backdrop-blur-xl">
           <div className="mx-auto max-w-[1800px] px-4 md:px-6">
             <div className="flex h-[54px] items-center gap-3">
 
@@ -779,19 +781,24 @@ export function AppShell() {
           </div>
         </header>
 
-        <div className="mx-auto max-w-[1800px] px-4 pt-4 md:px-6">
-          <WorkspaceExperience
-            pageTitle={currentPageTitle}
-            clientOutcome={experience.clientOutcome}
-            maintenanceOutcome={experience.maintenanceOutcome}
-            shortcuts={experience.shortcuts}
-          />
-        </div>
+        {/* ── Body: fills the space under the fixed header. Pages that want a
+            fixed-viewport layout render a `flex h-full flex-col` root and let their
+            own data region scroll; simpler pages just scroll this container. ── */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
+            <WorkspaceExperience
+              pageTitle={currentPageTitle}
+              clientOutcome={experience.clientOutcome}
+              maintenanceOutcome={experience.maintenanceOutcome}
+              shortcuts={experience.shortcuts}
+            />
+          </div>
 
-        {/* ── Content ── */}
-        <main className="mx-auto max-w-[1800px] px-4 py-6 md:px-6">
-          <Outlet />
-        </main>
+          {/* ── Content ── */}
+          <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-4 py-6 md:px-6">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

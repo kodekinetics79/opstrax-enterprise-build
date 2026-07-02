@@ -153,21 +153,23 @@ export function FleetOverviewPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Fleet Overview"
-        title="Live Vehicle Status"
-        description={`${fleet.length} vehicles tracked · ${counts.Active} active · ${flagged} flagged for review`}
-        actions={
-          <button type="button" className="btn-primary" onClick={() => navigate("/vehicles")}>
-            Full Fleet Registry
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        }
-      />
+    <div className="flex h-full flex-col gap-4">
+      <div className="shrink-0">
+        <PageHeader
+          eyebrow="Fleet Overview"
+          title="Live Vehicle Status"
+          description={`${fleet.length} vehicles tracked · ${counts.Active} active · ${flagged} flagged for review`}
+          actions={
+            <button type="button" className="btn-primary" onClick={() => navigate("/vehicles")}>
+              Full Fleet Registry
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          }
+        />
+      </div>
 
-      {/* Status KPI strip */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      {/* Status KPI strip — pinned, always visible */}
+      <div className="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-5">
         <KpiStrip label="Active"     count={counts.Active}    Icon={Truck}      accent="text-emerald-600" bg="bg-emerald-50" border="border-emerald-200" dot="bg-emerald-500 animate-pulse" onClick={() => setTab("Active")}    active={tab === "Active"} />
         <KpiStrip label="Idle"       count={counts.Idle}      Icon={Zap}        accent="text-amber-600"   bg="bg-amber-50"   border="border-amber-200"   dot="bg-amber-400"                 onClick={() => setTab("Idle")}      active={tab === "Idle"} />
         <KpiStrip label="Available"  count={counts.Available} Icon={Clock}      accent="text-slate-600"   bg="bg-slate-50"   border="border-slate-200"   dot="bg-slate-400"                 onClick={() => setTab("Available")} active={tab === "Available"} />
@@ -175,9 +177,9 @@ export function FleetOverviewPage() {
         <KpiStrip label="Offline"    count={counts.Offline}   Icon={WifiOff}    accent="text-slate-500"   bg="bg-slate-50"   border="border-slate-200"   dot="bg-slate-300"                 onClick={() => setTab("Offline")}   active={tab === "Offline"} />
       </div>
 
-      {/* Filter tabs + roster table */}
-      <div className="panel overflow-hidden">
-        <div className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3 pb-0">
+      {/* Filter tabs + roster table — flexes to fill remaining height; table scrolls inside */}
+      <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-4 pt-3 pb-0">
           {STATUS_TABS.map((t) => (
             <button
               key={t}
@@ -205,9 +207,9 @@ export function FleetOverviewPage() {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-white">
               <tr className="border-b border-slate-100">
                 <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Vehicle</th>
                 <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Driver</th>
@@ -293,7 +295,7 @@ export function FleetOverviewPage() {
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
+        <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
           <span>{filtered.length} of {fleet.length} vehicles shown</span>
           <div className="flex items-center gap-4">
             <span>
