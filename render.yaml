@@ -14,27 +14,31 @@ services:
         value: http://0.0.0.0:8080
       - key: PORT
         value: "8080"
+      # Neon connection string (postgresql://user:pass@host/db?sslmode=require).
+      # Set in the Render dashboard after the service is created — never in git.
       - key: PG_CONNECTION
+        sync: false
+      # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
+      - key: Cors__AllowedOrigins
+        sync: false
+      # Bootstrap Platform Admin credential. MUST be set explicitly in production —
+      # ConfigValidationService fails /health/deep if unset or left at the default.
+      - key: PLATFORM_SUPERADMIN_EMAIL
+        sync: false
+      - key: PLATFORM_SUPERADMIN_PASSWORD
         sync: false
 
   - type: web
     name: opstrax-events
     runtime: docker
-    rootDir: node-services/events
+    rootDir: services/node-events
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: PORT
+        value: "8090"
+      # Allowed frontend origin for CORS — set to the deployed Vercel URL.
       - key: CORS_ORIGIN
-        sync: false
-      - key: MYSQL_HOST
-        sync: false
-      - key: MYSQL_PORT
-        value: "3306"
-      - key: MYSQL_DATABASE
-        sync: false
-      - key: MYSQL_USER
-        sync: false
-      - key: MYSQL_PASSWORD
         sync: false
