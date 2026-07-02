@@ -149,7 +149,7 @@ export function LeadsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       {showCreate && <CreateLeadModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">

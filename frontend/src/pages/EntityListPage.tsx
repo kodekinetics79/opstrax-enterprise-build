@@ -337,7 +337,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : `Unable to load ${cfg.title.toLowerCase()}.`} />;
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow={cfg.eyebrow}
         title={cfg.title}

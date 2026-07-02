@@ -215,7 +215,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 py-6 max-w-3xl">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6 max-w-3xl">
       <div>
         <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
           <Settings className="h-5 w-5 text-slate-400" />{t("settings")}

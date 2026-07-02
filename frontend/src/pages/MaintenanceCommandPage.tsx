@@ -84,7 +84,7 @@ export function MaintenanceCommandPage() {
   const insights         = (d?.insights     as AnyRecord[]) ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Fleet Maintenance"
         title="Maintenance Command Center"

@@ -77,7 +77,7 @@ export function AlertRulesPage() {
   if (rulesQ.isError) return <ErrorState message={rulesQ.error instanceof Error ? rulesQ.error.message : "Unable to load alert rules."} />;
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Alert Rules"
         title="Live alert thresholds and escalation channels"

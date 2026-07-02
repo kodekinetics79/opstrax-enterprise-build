@@ -174,7 +174,7 @@ export function FleetAssignmentsPage() {
     assignments;
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-10">
       <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(99,102,241,0.12),rgba(20,184,166,0.12),rgba(245,158,11,0.10))]" />
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-violet-200/35 blur-3xl" />

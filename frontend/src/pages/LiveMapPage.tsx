@@ -164,7 +164,7 @@ export function LiveMapPage() {
   const openAlerts = alerts.data ?? [];
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
         title="Live Fleet Map"

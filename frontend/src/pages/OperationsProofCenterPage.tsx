@@ -239,7 +239,7 @@ export function OperationsProofCenterPage() {
   };
 
   return (
-    <div className="control-tower space-y-8">
+    <div className="control-tower flex h-full flex-col gap-8 overflow-y-auto">
       <PageHeader
         eyebrow="Operational Proof"
         title="Operational Proof Center"

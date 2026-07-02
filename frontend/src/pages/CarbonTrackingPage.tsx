@@ -88,7 +88,7 @@ export function CarbonTrackingPage() {
   if (q.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Carbon Tracking</h1>

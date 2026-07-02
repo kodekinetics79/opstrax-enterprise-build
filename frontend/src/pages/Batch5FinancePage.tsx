@@ -196,7 +196,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const s = summaryQ.data ?? {};
 
   return (
-    <div className="space-y-8">
+    <div className="flex h-full flex-col gap-8 overflow-y-auto">
       {/* Header */}
       <PageHeader
         eyebrow={config.eyebrow}

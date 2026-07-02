@@ -435,7 +435,7 @@ function ConfigPanel() {
 
 export default function PlatformOpsPage() {
   return (
-    <div className="p-4 max-w-7xl mx-auto">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-4 max-w-7xl mx-auto w-full">
       <div className="mb-4">
         <h1 className="text-lg font-bold text-gray-900">Platform Operations</h1>
         <p className="text-xs text-gray-500 mt-0.5">

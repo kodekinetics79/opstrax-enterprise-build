@@ -142,7 +142,7 @@ export function RateCardsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       {showCreate && <CreateRateCardModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

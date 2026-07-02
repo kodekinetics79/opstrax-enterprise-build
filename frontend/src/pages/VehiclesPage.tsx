@@ -136,7 +136,7 @@ export function VehiclesPage() {
   const selectedRecord = (detail.data?.record as AnyRecord) || rows.find((r) => String(r.id) === String(selectedId)) || null;
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="flex h-full flex-col gap-8 overflow-y-auto pb-10">
       {/* Header */}
       <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 lg:flex-row lg:items-end lg:justify-between">
         <div>

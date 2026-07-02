@@ -147,7 +147,7 @@ export function CustomersPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       {showAdd && (
         <AddCustomerModal
           onClose={() => setShowAdd(false)}

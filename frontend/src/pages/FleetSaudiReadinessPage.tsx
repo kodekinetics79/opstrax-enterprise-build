@@ -157,7 +157,7 @@ export function FleetSaudiReadinessPage() {
   }
 
   return (
-    <div className="control-tower relative space-y-6 overflow-hidden">
+    <div className="control-tower relative flex h-full flex-col gap-6 overflow-y-auto">
       <style>{`
         @keyframes kx-glow { 0%,100% { transform: scale(1); opacity: .35; } 50% { transform: scale(1.08); opacity: .65; } }
         @keyframes kx-rise { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
