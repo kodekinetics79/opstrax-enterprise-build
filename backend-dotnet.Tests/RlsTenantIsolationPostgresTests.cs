@@ -120,4 +120,42 @@ public class RlsTenantIsolationPostgresTests
                 c => { c.Parameters.AddWithValue("@ma", MarkerA); c.Parameters.AddWithValue("@mb", MarkerB); });
         }
     }
+
+    // COVERAGE REGRESSION GUARD (SEC-2): every tenant-owned table (one carrying a
+    // bigint company_id/tenant_id) MUST have RLS enabled. A table added by a later
+    // schema service without RLS would silently depend only on hand-written WHERE
+    // predicates — exactly the leak Stage 22 closed. This test fails loudly if that
+    // ever regresses, so the isolation guarantee is enforced by CI, not vigilance.
+    //
+    // The exclusion set mirrors Stage 19/22: control-plane / intentionally
+    // cross-tenant tables that are NOT tenant-scoped.
+    [Fact]
+    public async Task Every_tenant_table_has_row_level_security_enabled()
+    {
+        var owner = Db(OwnerConnectionString);
+        var unprotected = await owner.QueryAsync(
+            @"SELECT c.table_name
+              FROM information_schema.columns c
+              JOIN information_schema.tables t
+                ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+              WHERE c.table_schema = 'public'
+                AND t.table_type = 'BASE TABLE'
+                AND c.column_name IN ('company_id','tenant_id')
+                AND c.data_type = 'bigint'
+                AND c.table_name NOT IN (
+                    'platform_admin_users','platform_sessions','platform_audit_log',
+                    'platform_packages','platform_invoices','companies','schema_migrations')
+              EXCEPT
+              SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND rowsecurity
+              ORDER BY 1");
+
+        var names = unprotected
+            .Select(r => r.GetValueOrDefault("tableName")?.ToString() ?? r.GetValueOrDefault("table_name")?.ToString())
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToList();
+
+        Assert.True(names.Count == 0,
+            "Tenant tables missing RLS (add ENABLE ROW LEVEL SECURITY + tenant_isolation policy, " +
+            "or re-run the Stage 22 reconciliation migration): " + string.Join(", ", names));
+    }
 }
