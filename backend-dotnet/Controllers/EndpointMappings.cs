@@ -1465,6 +1465,7 @@ public static partial class EndpointMappings
         app.MapDelete("/api/admin/users/{id:long}", DeleteAdminUser);
         app.MapGet("/api/admin/roles", AdminRoles);
         app.MapGet("/api/admin/permissions", AdminPermissions);
+        app.MapPost("/api/admin/roles", CreateAdminRole);
         app.MapPut("/api/admin/roles/{id:long}", UpdateAdminRole);
         app.MapPost("/api/admin/audit-events", CreateAdminAuditEvent);
 
@@ -7382,6 +7383,33 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(permissions, "Permissions"));
     }
 
+    // Self-service custom-role creation — lets an admin define a new role from the
+    // available permission catalog (GET /api/admin/permissions), not just edit the
+    // 16 built-ins. Gated on roles:create + audited.
+    private static async Task<IResult> CreateAdminRole(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = await RequireAdminPermission(http, audit, "roles:create", "Role", body, ct);
+        if (denied is not null) return denied;
+
+        var name = Get(body, "name")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Role name is required."]));
+
+        var clash = await db.ScalarLongAsync("SELECT COUNT(*) FROM roles WHERE LOWER(name)=LOWER(@name)",
+            c => c.Parameters.AddWithValue("@name", name), ct);
+        if (clash > 0)
+            return Results.Conflict(ApiResponse<object>.Fail("Role already exists", [$"A role named '{name}' already exists."]));
+
+        var permissionKeys = ExtractPermissions(Get(body, "permissions") ?? Get(body, "permissionsJson"));
+        var permissions = System.Text.Json.JsonSerializer.Serialize(permissionKeys);
+        var id = await db.InsertAsync(
+            "INSERT INTO roles (name, permissions_json) VALUES (@name, @permissions::jsonb)",
+            c => { c.Parameters.AddWithValue("@name", name); c.Parameters.AddWithValue("@permissions", permissions); }, ct);
+        await audit.LogAsync(http, "role.created", "Role", id,
+            System.Text.Json.JsonSerializer.Serialize(new { name, permissionCount = permissionKeys.Count }), ct: ct);
+        return Results.Created($"/api/admin/roles/{id}", ApiResponse<object>.Ok(new { id, name, permissions = permissionKeys }, "Role created"));
+    }
+
     private static async Task<IResult> UpdateAdminRole(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = await RequireAdminPermission(http, audit, "roles:update", "Role", new { id }, ct);
@@ -7394,7 +7422,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var permissions = System.Text.Json.JsonSerializer.Serialize(permissionKeys);
         var name = Get(body, "name") ?? existing.GetValueOrDefault("name")?.ToString() ?? "Role";
         await db.ExecuteAsync(
-            "UPDATE roles SET name=COALESCE(NULLIF(@name,''), name), permissions_json=@permissions WHERE id=@id",
+            "UPDATE roles SET name=COALESCE(NULLIF(@name,''), name), permissions_json=@permissions::jsonb WHERE id=@id",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
