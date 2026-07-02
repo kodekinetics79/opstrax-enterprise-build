@@ -41,6 +41,9 @@ public static class PlatformEndpoints
         app.MapPost("/api/platform/tenants/{id:long}/status", TenantStatus);
         app.MapPost("/api/platform/tenants/{id:long}/assign-package", TenantAssignPackage);
         app.MapPost("/api/platform/tenants/{id:long}/reset-admin-invite", TenantResetInvite);
+        // Emergency/support control: kill every active session for a tenant without
+        // changing its subscription status (suspend/cancel also do this implicitly).
+        app.MapPost("/api/platform/tenants/{id:long}/revoke-sessions", TenantRevokeSessions);
         app.MapGet("/api/platform/tenants/{id:long}/audit", TenantAudit);
         // Offboarding — schema-driven cascade delete of ALL tenant-owned rows + the company.
         app.MapDelete("/api/platform/tenants/{id:long}", TenantDelete);
@@ -179,19 +182,65 @@ public static class PlatformEndpoints
     // AUTH HANDLERS
     // ════════════════════════════════════════════════════════════════════════════
 
-    private sealed record PlatformLoginRequest(string Email, string Password);
+    internal sealed record PlatformLoginRequest(string Email, string Password);
 
-    private static async Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
+    // Failed-login lockout: 5 failures per email+IP within 15 minutes → 429.
+    // In-memory (single runtime process); the audit trail is the durable record.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset WindowStart, int Count)> FailedLogins = new();
+    private const int MaxFailedLogins = 5;
+    private static readonly TimeSpan FailedLoginWindow = TimeSpan.FromMinutes(15);
+
+    // Audit a failed/locked login attempt. No principal exists yet, so this writes the
+    // attempted email directly. NEVER include the submitted password in details.
+    private static Task AuditLoginFailureAsync(Database db, HttpContext http, string email, string action, string reason, CancellationToken ct)
+        => AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db, "platform_audit_log", "id",
+            @"INSERT INTO platform_audit_log (actor_admin_id, actor_email, actor_role, action, entity_type, entity_id, target_company_id, details_json, ip_address)
+              VALUES (NULL, @email, NULL, @action, 'PlatformAdmin', NULL, NULL, CAST(@details AS JSONB), @ip)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@email", email);
+                c.Parameters.AddWithValue("@action", action);
+                c.Parameters.AddWithValue("@details", JsonSerializer.Serialize(new { reason }));
+                c.Parameters.AddWithValue("@ip", http.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+            }, ct);
+
+    internal static async Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
     {
+        var email = (request.Email ?? "").Trim();
+        var failKey = email.ToLowerInvariant() + "|" + (http.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+
+        if (FailedLogins.TryGetValue(failKey, out var fails) &&
+            DateTimeOffset.UtcNow - fails.WindowStart <= FailedLoginWindow &&
+            fails.Count >= MaxFailedLogins)
+        {
+            await AuditLoginFailureAsync(db, http, email, "platform.login_locked", "too_many_failed_attempts", ct);
+            return Results.Json(ApiResponse<object>.Fail("Too many failed attempts", "Try again later"), statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
+        async Task<IResult> FailAsync(string reason)
+        {
+            FailedLogins.AddOrUpdate(
+                failKey,
+                _ => (DateTimeOffset.UtcNow, 1),
+                (_, cur) => DateTimeOffset.UtcNow - cur.WindowStart > FailedLoginWindow
+                    ? (DateTimeOffset.UtcNow, 1)
+                    : (cur.WindowStart, cur.Count + 1));
+            await AuditLoginFailureAsync(db, http, email, "platform.login_failed", reason, ct);
+            return Results.Json(ApiResponse<object>.Fail("Invalid credentials"), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
         var admin = await db.QuerySingleAsync(
             @"SELECT a.id, a.email, a.full_name, a.password_hash, r.role_key, r.name role_name
               FROM platform_admins a LEFT JOIN platform_roles r ON r.id = a.role_id
               WHERE a.email=@e AND a.status='Active' LIMIT 1",
-            c => c.Parameters.AddWithValue("@e", request.Email ?? ""), ct);
-        if (admin is null) return Results.Json(ApiResponse<object>.Fail("Invalid credentials"), statusCode: StatusCodes.Status401Unauthorized);
+            c => c.Parameters.AddWithValue("@e", email), ct);
+        if (admin is null) return await FailAsync("unknown_or_inactive_account");
 
         if (!VerifyPassword(request.Password ?? "", admin["passwordHash"]?.ToString()))
-            return Results.Json(ApiResponse<object>.Fail("Invalid credentials"), statusCode: StatusCodes.Status401Unauthorized);
+            return await FailAsync("invalid_password");
+
+        FailedLogins.TryRemove(failKey, out _);
 
         var adminId = Convert.ToInt64(admin["id"]);
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -496,7 +545,7 @@ public static class PlatformEndpoints
           LEFT JOIN tenant_subscriptions ts ON ts.company_id = c.id
           LEFT JOIN packages p ON p.id = ts.package_id";
 
-    private static async Task<IResult> TenantsList(HttpContext http, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantsList(HttpContext http, Database db, CancellationToken ct)
     {
         var (_, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
         if (error is not null) return error;
@@ -504,7 +553,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    private static async Task<IResult> TenantDetail(long id, HttpContext http, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantDetail(long id, HttpContext http, Database db, CancellationToken ct)
     {
         var (_, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
         if (error is not null) return error;
@@ -520,7 +569,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { tenant, entitlements, invoices }));
     }
 
-    private static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
+    internal static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -531,6 +580,13 @@ public static class PlatformEndpoints
 
         var code = Str(body, "companyCode");
         if (string.IsNullOrWhiteSpace(code)) code = "T-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+
+        // Duplicate tenant code must be a clean 409, not an unhandled unique-violation 500.
+        var codeTaken = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code",
+            c => c.Parameters.AddWithValue("@code", code!), ct);
+        if (codeTaken > 0)
+            return Results.Json(ApiResponse<object>.Fail("Conflict", $"Tenant code '{code}' already exists"), statusCode: StatusCodes.Status409Conflict);
+
         var industry = Str(body, "industry") ?? "Logistics";
         var packageId = Long(body, "packageId");
         var seatLimit = (int)(Long(body, "seatLimit") ?? 5);
@@ -552,14 +608,22 @@ public static class PlatformEndpoints
         // profile default; otherwise USD.
         var currency = Str(body, "billingCurrency") ?? countryProfile?.DefaultCurrency ?? "USD";
 
-        var companyId = await db.InsertAsync(
-            "INSERT INTO companies (company_code, name, industry, status) VALUES (@code, @name, @ind, 'Active')",
-            c =>
-            {
-                c.Parameters.AddWithValue("@code", code!);
-                c.Parameters.AddWithValue("@name", name!);
-                c.Parameters.AddWithValue("@ind", industry);
-            }, ct);
+        long companyId;
+        try
+        {
+            companyId = await db.InsertAsync(
+                "INSERT INTO companies (company_code, name, industry, status) VALUES (@code, @name, @ind, 'Active')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@code", code!);
+                    c.Parameters.AddWithValue("@name", name!);
+                    c.Parameters.AddWithValue("@ind", industry);
+                }, ct);
+        }
+        catch (Npgsql.PostgresException pex) when (pex.SqlState == "23505") // race on unique company_code
+        {
+            return Results.Json(ApiResponse<object>.Fail("Conflict", $"Tenant code '{code}' already exists"), statusCode: StatusCodes.Status409Conflict);
+        }
 
         var mrrCents = packageId.HasValue ? await ComputeMrrAsync(db, packageId.Value, seatLimit, ct) : 0;
 
@@ -608,10 +672,14 @@ public static class PlatformEndpoints
         }, "Tenant created"));
     }
 
-    private static async Task<IResult> TenantUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
+
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (exists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
 
         await db.ExecuteAsync(
             @"UPDATE tenant_subscriptions SET
@@ -646,10 +714,14 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Tenant updated"));
     }
 
-    private static async Task<IResult> TenantStatus(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantStatus(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
+
+        var tenantExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (tenantExists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
 
         var action = (Str(body, "action") ?? "").ToLowerInvariant();
         string? newStatus = action switch
@@ -727,7 +799,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { id, packageId, mrrCents }, "Package assigned"));
     }
 
-    private static async Task<IResult> TenantResetInvite(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantResetInvite(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -737,6 +809,22 @@ public static class PlatformEndpoints
         await CreateAdminInviteAsync(db, id, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
         await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail }, "Admin invite reset"));
+    }
+
+    internal static async Task<IResult> TenantRevokeSessions(long id, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (exists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE company_id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+
+        await AuditAsync(db, principal!, http, "tenant.sessions_revoked", "Tenant", id, id, new { sessionsRevoked = revoked }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Tenant sessions revoked"));
     }
 
     private static async Task<IResult> TenantAudit(long id, HttpContext http, Database db, CancellationToken ct)
@@ -754,7 +842,10 @@ public static class PlatformEndpoints
     // body ({"confirm":"<companyCode>"}) so a tenant can never be purged by a stray DELETE.
     private static async Task<IResult> TenantDelete(long id, HttpContext http, [Microsoft.AspNetCore.Mvc.FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] Dictionary<string, object?>? body, Database db, TenantOffboardingService offboarding, CancellationToken ct)
     {
-        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        // Hard delete requires the dedicated offboard permission — deliberately NOT
+        // granted by "platform:tenants:manage" so routine tenant admins (sales, CS)
+        // can never purge a tenant. Super admin qualifies via the platform:* wildcard.
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:offboard", ct);
         if (error is not null) return error;
 
         var tenant = await db.QuerySingleAsync(
@@ -791,7 +882,7 @@ public static class PlatformEndpoints
     // ENTITLEMENTS
     // ════════════════════════════════════════════════════════════════════════════
 
-    private static async Task<IResult> EntitlementsGet(long id, HttpContext http, Database db, CancellationToken ct)
+    internal static async Task<IResult> EntitlementsGet(long id, HttpContext http, Database db, CancellationToken ct)
     {
         var (_, error) = await RequireAsync(http, db, "platform:entitlements:view", ct);
         if (error is not null) return error;
@@ -801,7 +892,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    private static async Task<IResult> EntitlementsSet(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> EntitlementsSet(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:entitlements:manage", ct);
         if (error is not null) return error;
@@ -809,6 +900,16 @@ public static class PlatformEndpoints
         var moduleKey = Str(body, "moduleKey");
         if (string.IsNullOrWhiteSpace(moduleKey))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "moduleKey is required"), statusCode: StatusCodes.Status400BadRequest);
+
+        // Module keys are lowercase snake_case identifiers (they feed the request-path
+        // gate in Program.cs). Reject anything else so a typo or hostile payload can
+        // never become a phantom entitlement row.
+        if (!System.Text.RegularExpressions.Regex.IsMatch(moduleKey, "^[a-z][a-z0-9_]{1,59}$"))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "moduleKey must be a lowercase snake_case identifier"), statusCode: StatusCodes.Status400BadRequest);
+
+        var tenantExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (tenantExists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
 
         var enabled = Bool(body, "enabled") ?? true;
         var limit = Long(body, "limitValue");
@@ -1026,7 +1127,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    private static async Task<IResult> InvoiceCreate(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> InvoiceCreate(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:billing:manage", ct);
         if (error is not null) return error;
@@ -1059,7 +1160,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { id = newId, invoiceNumber = number }, "Invoice created"));
     }
 
-    private static async Task<IResult> InvoiceMarkPaid(long id, HttpContext http, Database db, CancellationToken ct)
+    internal static async Task<IResult> InvoiceMarkPaid(long id, HttpContext http, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:billing:manage", ct);
         if (error is not null) return error;
@@ -1118,7 +1219,7 @@ public static class PlatformEndpoints
     // AUDIT + ROLES
     // ════════════════════════════════════════════════════════════════════════════
 
-    private static async Task<IResult> AuditList(HttpContext http, Database db, CancellationToken ct)
+    internal static async Task<IResult> AuditList(HttpContext http, Database db, CancellationToken ct)
     {
         var (_, error) = await RequireAsync(http, db, "platform:audit:view", ct);
         if (error is not null) return error;

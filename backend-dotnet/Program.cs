@@ -234,6 +234,32 @@ app.UseWhen(
         {
             var path = context.Request.Path.Value ?? string.Empty;
 
+            // Rate limiting runs BEFORE the auth-bypass branch so unauthenticated
+            // surfaces (/api/auth/login, /api/platform/*, public tracking) are covered
+            // too — otherwise login brute-force is unthrottled. Health probes are
+            // exempt (k8s / load-balancer probes share few source IPs).
+            var isHealthProbe =
+                string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
+            if (!isHealthProbe)
+            {
+                var rlIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                var rlNow = DateTimeOffset.UtcNow;
+                var rlWindow = rateWindows.AddOrUpdate(
+                    rlIp,
+                    _ => (rlNow, 1),
+                    (_, current) => rlNow - current.WindowStart > rateWindowSize
+                        ? (rlNow, 1)
+                        : (current.WindowStart, current.Count + 1));
+                if (rlNow - rlWindow.WindowStart <= rateWindowSize && rlWindow.Count > apiRequestLimitPerWindow)
+                {
+                    context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Too many requests", "Rate limit exceeded"));
+                    return;
+                }
+            }
+
             // Ambient tenant-scope plumbing (no-ops entirely when RLS is off).
             var scopes = context.RequestServices.GetRequiredService<TenantScopeAccessor>();
             var scopedDb = context.RequestServices.GetRequiredService<Database>();
@@ -281,22 +307,6 @@ app.UseWhen(
                  path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)))
             {
                 await InvokeUnderBypassAsync();
-                return;
-            }
-
-            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            var now = DateTimeOffset.UtcNow;
-            var window = rateWindows.AddOrUpdate(
-                remoteIp,
-                _ => (now, 1),
-                (_, current) => now - current.WindowStart > rateWindowSize
-                    ? (now, 1)
-                    : (current.WindowStart, current.Count + 1));
-
-            if (now - window.WindowStart <= rateWindowSize && window.Count > apiRequestLimitPerWindow)
-            {
-                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Too many requests", "Rate limit exceeded"));
                 return;
             }
 

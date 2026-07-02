@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Building2 } from "lucide-react";
+import { Plus, Building2, Search } from "lucide-react";
 import type { AnyRecord } from "@/types";
 import { platformApi, formatMoney } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 import {
-  PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer,
+  PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm,
 } from "./ui";
 
 const GATED_MODULES = [
@@ -23,6 +23,8 @@ export function PlatformTenantsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["platform", "tenants"] });
@@ -30,10 +32,19 @@ export function PlatformTenantsPage() {
     if (selectedId) qc.invalidateQueries({ queryKey: ["platform", "tenant", selectedId] });
   };
 
+  const all = (tenants ?? []) as AnyRecord[];
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return all.filter((t) => {
+      if (statusFilter && String(t.status ?? "") !== statusFilter) return false;
+      if (!q) return true;
+      return [t.name, t.companyCode, t.packageName, t.industry]
+        .some((v) => String(v ?? "").toLowerCase().includes(q));
+    });
+  }, [all, search, statusFilter]);
+
   if (isLoading) return <PLoading />;
   if (error) return <PError message={(error as Error)?.message} />;
-
-  const rows = (tenants ?? []) as AnyRecord[];
 
   return (
     <div className="space-y-7">
@@ -44,8 +55,33 @@ export function PlatformTenantsPage() {
         actions={canManage ? <PButton onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> New Tenant</PButton> : undefined}
       />
 
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-64 flex-1 max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, code, package…"
+            className="w-full rounded-[14px] border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none shadow-sm focus:border-teal-400 focus:ring-2 focus:ring-teal-400/15"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label="Filter by subscription status"
+          className="rounded-[14px] border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none shadow-sm focus:border-teal-400"
+        >
+          <option value="">All statuses</option>
+          {["trial", "active", "past_due", "suspended", "cancelled", "manual_contract"].map((s) => (
+            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+          ))}
+        </select>
+      </div>
+
       {rows.length === 0 ? (
-        <PEmpty title="No tenants yet" subtitle="Create your first tenant to start provisioning the SaaS business." />
+        all.length === 0
+          ? <PEmpty title="No tenants yet" subtitle="Create your first tenant to start provisioning the SaaS business." />
+          : <PEmpty title="No tenants match" subtitle="Adjust the search or status filter." />
       ) : (
         <PCard className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -212,17 +248,24 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
   const { data, isLoading } = useQuery({ queryKey: ["platform", "tenant", id], queryFn: () => platformApi.tenant(id) });
   const [busy, setBusy] = useState(false);
   const [assignPkg, setAssignPkg] = useState("");
+  const [confirm, setConfirm] = useState<"suspend" | "cancel" | "revoke" | null>(null);
+  const [seatEdit, setSeatEdit] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reload = () => { qc.invalidateQueries({ queryKey: ["platform", "tenant", id] }); onChanged(); };
 
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    try { await fn(); reload(); } finally { setBusy(false); }
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    setBusy(true); setNotice(null);
+    try { await fn(); reload(); if (done) setNotice(done); }
+    catch (e) { setNotice(e instanceof Error ? e.message : "Action failed"); }
+    finally { setBusy(false); setConfirm(null); }
   };
 
   const tenant = (data?.tenant ?? {}) as AnyRecord;
   const entitlements = (data?.entitlements ?? []) as AnyRecord[];
   const entMap = new Map(entitlements.map((e) => [String(e.moduleKey), e]));
+  const tenantCode = String(tenant.companyCode ?? "");
 
   return (
     <PDrawer open onClose={onClose} title={isLoading ? "Loading…" : String(tenant.name ?? "Tenant")}>
@@ -244,14 +287,66 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
             <Info label="Contract end" value={String(tenant.contractEnd ?? "—").slice(0, 10) || "—"} />
           </div>
 
+          {notice && (
+            <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-2.5 text-sm text-teal-700">{notice}</div>
+          )}
+
           {canManage && (
             <section>
               <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Subscription actions</h3>
               <div className="flex flex-wrap gap-2">
-                <PButton variant="ghost" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "activate" }))}>Activate</PButton>
-                <PButton variant="ghost" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "extend-trial", days: 14 }))}>Extend trial +14d</PButton>
-                <PButton variant="ghost" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "suspend" }))}>Suspend</PButton>
-                <PButton variant="danger" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "cancel" }))}>Cancel</PButton>
+                <PButton variant="ghost" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "activate" }), "Tenant activated")}>Activate</PButton>
+                <PButton variant="ghost" disabled={busy} onClick={() => act(() => platformApi.tenantStatus(id, { action: "extend-trial", days: 14 }), "Trial extended 14 days")}>Extend trial +14d</PButton>
+                <PButton variant="ghost" disabled={busy} onClick={() => setConfirm("suspend")}>Suspend</PButton>
+                <PButton variant="danger" disabled={busy} onClick={() => setConfirm("cancel")}>Cancel</PButton>
+              </div>
+            </section>
+          )}
+
+          {canManage && (
+            <section>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Limits</h3>
+              <div className="flex gap-2">
+                <PInput
+                  type="number"
+                  min={1}
+                  value={seatEdit}
+                  onChange={(e) => setSeatEdit(e.target.value)}
+                  placeholder={`Seat limit (current: ${String(tenant.seatLimit ?? "—")})`}
+                  aria-label="Seat limit"
+                />
+                <PButton
+                  disabled={busy || !seatEdit || Number(seatEdit) < 1}
+                  onClick={() => act(() => platformApi.updateTenant(id, { seatLimit: Number(seatEdit) }), "Seat limit updated")}
+                >
+                  Save
+                </PButton>
+              </div>
+            </section>
+          )}
+
+          {canManage && (
+            <section>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Tenant admin & sessions</h3>
+              <div className="flex gap-2">
+                <PInput
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="admin@tenant.com"
+                  aria-label="Tenant admin email"
+                />
+                <PButton
+                  disabled={busy || !inviteEmail.includes("@")}
+                  onClick={() => act(() => platformApi.resetInvite(id, { adminEmail: inviteEmail }), "Admin invite sent/reset")}
+                >
+                  Invite / Reset admin
+                </PButton>
+              </div>
+              <div className="mt-2">
+                <PButton variant="ghost" disabled={busy} onClick={() => setConfirm("revoke")}>
+                  Revoke all tenant sessions
+                </PButton>
               </div>
             </section>
           )}
@@ -295,6 +390,35 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
               })}
             </div>
           </section>
+
+          <PConfirm
+            open={confirm === "suspend"}
+            title="Suspend this tenant?"
+            body={<>All users of <strong>{String(tenant.name ?? "this tenant")}</strong> will be locked out immediately and every active session revoked. You can reactivate at any time.</>}
+            confirmLabel="Suspend tenant"
+            busy={busy}
+            onConfirm={() => act(() => platformApi.tenantStatus(id, { action: "suspend" }), "Tenant suspended — sessions revoked")}
+            onClose={() => setConfirm(null)}
+          />
+          <PConfirm
+            open={confirm === "cancel"}
+            title="Cancel this tenant's subscription?"
+            body={<>Cancelling locks out all users and revokes every session. Tenant data is retained. This is a commercial off-switch — reactivation requires platform action.</>}
+            confirmLabel="Cancel subscription"
+            confirmText={tenantCode || undefined}
+            busy={busy}
+            onConfirm={() => act(() => platformApi.tenantStatus(id, { action: "cancel" }), "Tenant cancelled — sessions revoked")}
+            onClose={() => setConfirm(null)}
+          />
+          <PConfirm
+            open={confirm === "revoke"}
+            title="Revoke all tenant sessions?"
+            body={<>Every logged-in user of <strong>{String(tenant.name ?? "this tenant")}</strong> is signed out immediately. The subscription status does not change.</>}
+            confirmLabel="Revoke sessions"
+            busy={busy}
+            onConfirm={() => act(() => platformApi.revokeSessions(id), "All tenant sessions revoked")}
+            onClose={() => setConfirm(null)}
+          />
         </div>
       )}
     </PDrawer>

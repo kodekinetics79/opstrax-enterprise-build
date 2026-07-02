@@ -7495,7 +7495,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : Results.Ok(ApiResponse<object>.Ok(row, "User"));
     }
 
-    private static async Task<IResult> CreateAdminUser(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    internal static async Task<IResult> CreateAdminUser(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = await RequireAdminPermission(http, audit, "users:create", "User", body, ct);
         if (denied is not null) return denied;
@@ -7506,33 +7506,54 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             ? requestedCompanyId
             : currentCompanyId;
         var role = await ResolveRoleRecord(body, db, ct);
-        var fullName = Get(body, "fullName") ?? Get(body, "name") ?? "New User";
-        var email = Get(body, "email") ?? $"user-{Guid.NewGuid():N}@example.com";
-        var password = Get(body, "password")?.ToString();
+        // Get() returns DBNull (not null) for absent keys, which silently defeats
+        // `?? default` and inserts NULL into NOT NULL columns (500 on the live API
+        // whenever an optional field is omitted). Normalize DBNull away first.
+        static object? Val(object? v) => v is null or DBNull ? null : v;
+        var fullName = Val(Get(body, "fullName")) ?? Val(Get(body, "name")) ?? "New User";
+        var email = Val(Get(body, "email")) ?? $"user-{Guid.NewGuid():N}@example.com";
+        var password = Val(Get(body, "password"))?.ToString();
         if (string.IsNullOrWhiteSpace(password))
         {
             return Results.BadRequest(ApiResponse<object>.Fail("Password is required for new users"));
         }
-        var status = Get(body, "status") ?? "Active";
-        var permissionsJson = role?.GetValueOrDefault("permissionsJson") ?? Get(body, "permissionsJson") ?? "[]";
+        var status = Val(Get(body, "status")) ?? "Active";
+        var roleName = Val(role?.GetValueOrDefault("name")) ?? Val(Get(body, "roleName")) ?? "Tenant Admin";
+        var permissionsJson = Val(role?.GetValueOrDefault("permissionsJson")) ?? Val(Get(body, "permissionsJson")) ?? "[]";
+
+        // Seat-limit quota (Platform Admin commercial control): block creation once the
+        // tenant is at its subscribed seat count. No subscription row = no cap (legacy).
+        var seatLimit = await db.ScalarLongAsync(
+            "SELECT COALESCE((SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@cid), 0)",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (seatLimit > 0)
+        {
+            var seatCount = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM users WHERE company_id=@cid AND status <> 'Disabled' AND customer_id IS NULL",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            if (seatCount >= seatLimit)
+                return Results.Json(ApiResponse<object>.Fail("Seat limit reached",
+                    $"This organization is licensed for {seatLimit} seats and has {seatCount}. Increase the seat limit to add more users."),
+                    statusCode: StatusCodes.Status409Conflict);
+        }
 
         var id = await db.InsertAsync(
             @"INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, password_hash, permissions_json, status)
-              VALUES (@companyId, @roleId, @fullName, @email, @roleName, @demoPassword, @passwordHash, @permissionsJson, @status)",
+              VALUES (@companyId, @roleId, @fullName, @email, @roleName, @demoPassword, @passwordHash, @permissionsJson::jsonb, @status)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@roleId", role?.GetValueOrDefault("id") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
-                c.Parameters.AddWithValue("@roleName", role?.GetValueOrDefault("name") ?? Get(body, "roleName") ?? "Tenant Admin");
+                c.Parameters.AddWithValue("@roleName", roleName);
                 c.Parameters.AddWithValue("@demoPassword", password);
                 c.Parameters.AddWithValue("@passwordHash", HashPassword(password));
                 c.Parameters.AddWithValue("@permissionsJson", permissionsJson);
                 c.Parameters.AddWithValue("@status", status);
             }, ct);
 
-        await audit.LogAsync(http, "user.created", "User", id, System.Text.Json.JsonSerializer.Serialize(new { email, role = role?.GetValueOrDefault("name") ?? Get(body, "roleName") }), ct);
+        await audit.LogAsync(http, "user.created", "User", id, System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName }), ct);
         return Results.Created($"/api/admin/users/{id}", ApiResponse<object>.Ok(new { id }, "User created"));
     }
 

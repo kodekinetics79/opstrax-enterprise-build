@@ -59,6 +59,22 @@ public sealed class ConfigValidationService(IConfiguration config)
         else
             issues.Add(new("environment_mode", "warn", $"Environment is '{env}'"));
 
+        // Platform superadmin bootstrap credential. PlatformSchemaService falls back to
+        // a well-known demo password when the env var is unset — acceptable ONLY for
+        // local/dev. In production the env var MUST be set and MUST NOT be the default.
+        var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
+        var platformPwd = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD") ?? config["Platform:SuperAdminPassword"];
+        if (string.IsNullOrWhiteSpace(platformPwd))
+            issues.Add(new("platform_superadmin_password", isProduction ? "fail" : "warn",
+                "PLATFORM_SUPERADMIN_PASSWORD is not set — the bootstrap platform admin uses a well-known default password"));
+        else if (string.Equals(platformPwd, "Platform@12345", StringComparison.Ordinal))
+            issues.Add(new("platform_superadmin_password", isProduction ? "fail" : "warn",
+                "PLATFORM_SUPERADMIN_PASSWORD is set to the well-known default — rotate it"));
+        else if (platformPwd.Length < 12)
+            issues.Add(new("platform_superadmin_password", "warn", $"Platform superadmin password is short ({platformPwd.Length} chars; ≥12 recommended)"));
+        else
+            issues.Add(new("platform_superadmin_password", "pass", "Platform superadmin password is configured (value redacted)"));
+
         // Demo / seed data guard
         var seedEnabled = config["Demo:SeedDataEnabled"] ?? config["SeedDataEnabled"];
         if (string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase))

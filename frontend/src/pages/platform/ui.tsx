@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 // Dark, executive-grade primitives for the Platform Admin control plane.
@@ -142,6 +142,45 @@ export function PError({ message }: { message?: string }) {
       <p className="font-semibold">Unable to load</p>
       <p className="mt-1 text-sm text-red-600/90">{message ?? "Please try again."}</p>
     </PCard>
+  );
+}
+
+// Destructive-action confirmation. When `confirmText` is provided the user must
+// type it exactly (e.g. the tenant code) before the confirm button enables —
+// required by the control-plane standard for cancel/offboard-class actions.
+export function PConfirm({ open, title, body, confirmLabel = "Confirm", confirmText, danger = true, busy, onConfirm, onClose }: {
+  open: boolean; title: string; body?: ReactNode; confirmLabel?: string; confirmText?: string;
+  danger?: boolean; busy?: boolean; onConfirm: () => void; onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  if (!open) return null;
+  const blocked = Boolean(confirmText) && typed !== confirmText;
+  return (
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        className="w-full max-w-md rounded-[20px] border border-slate-200 bg-white p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-bold text-slate-950">{title}</h2>
+        {body && <div className="mt-2 text-sm leading-6 text-slate-600">{body}</div>}
+        {confirmText && (
+          <div className="mt-4">
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Type <span className="font-mono text-slate-800">{confirmText}</span> to confirm
+            </p>
+            <PInput value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={confirmText} autoFocus />
+          </div>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <PButton variant="ghost" onClick={onClose} disabled={busy}>Cancel</PButton>
+          <PButton variant={danger ? "danger" : "primary"} onClick={onConfirm} disabled={busy || blocked}>
+            {confirmLabel}
+          </PButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
