@@ -2475,7 +2475,7 @@ public static partial class EndpointMappings
     private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        return PagedRows(http, db,
             @"SELECT v.*, d.full_name assigned_driver,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score,
                      CASE WHEN v.risk_score >= 70 OR v.status IN ('Delayed','Maintenance') THEN 'High'
@@ -2487,13 +2487,15 @@ public static partial class EndpointMappings
                           ELSE 'Keep in active rotation' END recommended_action
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id
-              WHERE v.deleted_at IS NULL AND v.company_id=@cid
-              ORDER BY v.vehicle_code",
+              WHERE v.deleted_at IS NULL AND v.company_id=@cid",
+            "v.vehicle_code",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
     private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
-        => OkRows(db,
+    {
+        if (RequirePermission(http, "drivers:view") is { } denied) return Task.FromResult(denied);
+        return PagedRows(http, db,
             @"SELECT d.*, v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
                      CASE WHEN d.risk_score >= 70 OR d.status='Delayed' THEN 'High'
@@ -2505,9 +2507,10 @@ public static partial class EndpointMappings
                           ELSE 'Ready for dispatch' END recommended_action
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
-              WHERE d.deleted_at IS NULL AND d.company_id=@cid
-              ORDER BY d.full_name",
+              WHERE d.deleted_at IS NULL AND d.company_id=@cid",
+            "d.full_name",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static Task<IResult> Customers(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
@@ -2816,7 +2819,7 @@ public static partial class EndpointMappings
     private static Task<IResult> Jobs(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "shipments:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db, @"SELECT j.*, v.vehicle_code, d.full_name driver_name, c.name customer_name
+        return PagedRows(http, db, @"SELECT j.*, v.vehicle_code, d.full_name driver_name, c.name customer_name
                              , COALESCE(j.job_number, j.job_code) job_number
                              , CONCAT(TO_CHAR(j.scheduled_start, 'Mon DD HH24:MI'), ' - ', TO_CHAR(j.scheduled_end, 'HH24:MI')) time_window
                              , CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'High' WHEN j.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score
@@ -2828,8 +2831,8 @@ public static partial class EndpointMappings
                         LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
                         LEFT JOIN drivers d ON d.id=j.assigned_driver_id
                         LEFT JOIN customers c ON c.id=j.customer_id
-                        WHERE j.deleted_at IS NULL AND j.company_id=@cid
-                        ORDER BY j.scheduled_start DESC",
+                        WHERE j.deleted_at IS NULL AND j.company_id=@cid",
+            "j.scheduled_start DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
@@ -4958,6 +4961,28 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> OkRows(Database db, string sql, Action<NpgsqlCommand>? bind = null, string message = "", CancellationToken ct = default)
         => Results.Ok(ApiResponse<object>.Ok(await db.QueryAsync(sql, bind, ct), message));
+
+    // Enterprise-scale list read: caps the result set and honours ?limit=&offset=.
+    // Prevents unbounded payloads on high-volume tables (vehicles/drivers/jobs) at
+    // fleet scale. Default cap 500, hard max 2000. The X-Total-Count header carries
+    // the full count so the UI can paginate. Response body stays a plain data array
+    // (backward compatible). `orderBy` is a trusted literal (never user input).
+    private static async Task<IResult> PagedRows(HttpContext http, Database db, string baseSql, string orderBy,
+        Action<NpgsqlCommand> bind, string message = "", CancellationToken ct = default)
+    {
+        var q = http.Request.Query;
+        var limit = 500;
+        if (int.TryParse(q["limit"], out var l) && l > 0) limit = Math.Min(l, 2000);
+        var offset = 0;
+        if (int.TryParse(q["offset"], out var o) && o > 0) offset = o;
+
+        var total = await db.ScalarLongAsync($"SELECT COUNT(*) FROM ({baseSql}) _cnt", bind, ct);
+        var rows = await db.QueryAsync(
+            $"{baseSql} ORDER BY {orderBy} LIMIT @_limit OFFSET @_offset",
+            c => { bind(c); c.Parameters.AddWithValue("@_limit", limit); c.Parameters.AddWithValue("@_offset", offset); }, ct);
+        http.Response.Headers["X-Total-Count"] = total.ToString();
+        return Results.Ok(ApiResponse<object>.Ok(rows, message));
+    }
 
     private static Action<NpgsqlCommand>? BindModule(string moduleKey, ModuleDefinition definition)
         => definition.RequiresModuleKey ? c => c.Parameters.AddWithValue("@key", moduleKey) : null;
