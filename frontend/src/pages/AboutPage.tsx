@@ -52,7 +52,7 @@ export function AboutPage() {
   const support   = platform?.support as AnyRecord | undefined;
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="flex h-full flex-col gap-8 pb-8 overflow-y-auto">
 
       {/* ── Hero ── */}
       <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-br from-slate-900 via-slate-900 to-teal-950/30 p-8">

@@ -358,7 +358,7 @@ export function AnalyticsDashboardPage() {
   const [tab, setTab] = useState<Tab>("executive");
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto">
       <div>
         <h1 className="text-xl font-bold text-slate-800">Analytics Dashboard</h1>
         <p className="text-sm text-slate-500 mt-0.5">

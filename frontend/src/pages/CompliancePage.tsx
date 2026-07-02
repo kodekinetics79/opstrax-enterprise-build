@@ -122,7 +122,7 @@ export function CompliancePage() {
   if (hasError) return <EmptyState title="Compliance unavailable" subtitle="Unable to load compliance records right now. Refresh to try again." />;
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

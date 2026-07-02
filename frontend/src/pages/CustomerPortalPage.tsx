@@ -60,7 +60,7 @@ export function CustomerPortalPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Your account"
         title="Customer Portal"

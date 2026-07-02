@@ -69,7 +69,7 @@ export function AuditLogsPage() {
   const createExport = useCreateAuditExport();
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

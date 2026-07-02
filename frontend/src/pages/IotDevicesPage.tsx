@@ -930,7 +930,7 @@ function TimelineList({ rows, emptyText }: { rows: Array<{ title: string; subtit
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3 overflow-y-auto">
       {rows.map((row) => (
         <div key={`${row.title}-${row.meta}`} className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
           <div className="flex items-start justify-between gap-3">
