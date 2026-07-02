@@ -113,7 +113,7 @@ BEGIN
         INSERT INTO users (company_id, branch_id, email, full_name, role_name, role_id, status, permissions_json, demo_password)
         VALUES (cid, (SELECT id FROM branches WHERE company_id=cid AND branch_type='branch' ORDER BY id LIMIT 1),
                 'branchmgr@acme-transport.com', 'Acme Branch Manager', 'Fleet Manager', 3, 'Active',
-                '[\"dashboard:view\",\"vehicles:view\",\"drivers:view\",\"shipments:view\",\"dispatch:view\"]'::jsonb, 'AcmeBr!23')
+                '["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view"]'::jsonb, 'AcmeBr!23')
         ON CONFLICT (email) DO NOTHING;
     END IF;
 
