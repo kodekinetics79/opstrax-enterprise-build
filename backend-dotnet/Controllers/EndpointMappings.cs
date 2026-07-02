@@ -7388,7 +7388,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   full_name=COALESCE(NULLIF(@fullName,''), full_name),
                   email=COALESCE(NULLIF(@email,''), email),
                   role_name=@roleName,
-                  permissions_json=@permissionsJson,
+                  permissions_json=@permissionsJson::jsonb,
                   status=COALESCE(NULLIF(@status,''), status)
               WHERE id=@id
               AND (@allUsers=1 OR company_id=@companyId)",
@@ -7406,9 +7406,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             }, ct);
 
         await audit.LogAsync(http, "user.updated", "User", id, System.Text.Json.JsonSerializer.Serialize(new { roleChanged, companyId }), ct);
-        if (roleChanged)
+
+        // Revoke the user's active sessions when their role/permissions change or they
+        // are deactivated — otherwise the old (possibly higher) privileges keep working
+        // via the in-flight token until it expires.
+        var newStatus = Get(body, "status")?.ToString()?.Trim();
+        var deactivated = !string.IsNullOrWhiteSpace(newStatus) &&
+                          newStatus.ToLowerInvariant() is "disabled" or "inactive" or "suspended";
+        if (roleChanged || deactivated)
         {
-            await audit.LogAsync(http, "user.role.changed", "User", id, System.Text.Json.JsonSerializer.Serialize(new { from = oldRoleName, to = newRoleName }), ct);
+            await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+            await audit.LogAsync(http, "user.role.changed", "User", id, System.Text.Json.JsonSerializer.Serialize(new { from = oldRoleName, to = newRoleName, sessionsRevoked = true }), ct);
         }
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "User updated"));
     }

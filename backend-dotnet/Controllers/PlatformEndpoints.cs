@@ -683,8 +683,16 @@ public static class PlatformEndpoints
         await db.ExecuteAsync("UPDATE companies SET status=@s WHERE id=@id",
             c => { c.Parameters.AddWithValue("@s", companyStatus); c.Parameters.AddWithValue("@id", id); }, ct);
 
-        await AuditAsync(db, principal!, http, $"tenant.{action}", "Tenant", id, id, new { newStatus }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, status = newStatus }, $"Tenant {action} applied"));
+        // Revoke active sessions immediately on suspend/cancel — otherwise a user who
+        // is already logged in keeps operating until their token expires (up to 8h).
+        // Blocking new logins is not enough; existing sessions must be killed too.
+        var revoked = 0;
+        if (newStatus is "suspended" or "cancelled")
+            revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE company_id=@id",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+
+        await AuditAsync(db, principal!, http, $"tenant.{action}", "Tenant", id, id, new { newStatus, sessionsRevoked = revoked }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = newStatus, sessionsRevoked = revoked }, $"Tenant {action} applied"));
     }
 
     private static async Task<IResult> TenantAssignPackage(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
