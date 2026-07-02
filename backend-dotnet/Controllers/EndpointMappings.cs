@@ -2745,8 +2745,10 @@ public static partial class EndpointMappings
         {
             record,
             complianceStatus = await db.QuerySingleAsync(
-                @"SELECT dcs.*, cp.profile_name, cp.authority, cp.country_code profile_country_code, cp.ruleset_name,
-                         cp.eld_required, cp.max_drive_hours, cp.max_shift_hours, cp.min_off_duty_hours
+                @"SELECT dcs.*, cp.profile_name, cp.authority, cp.country_code profile_country_code,
+                         cp.hos_ruleset AS ruleset_name, cp.eld_required,
+                         cp.max_driving_hours AS max_drive_hours, cp.max_duty_hours AS max_shift_hours,
+                         cp.rest_requirement_hours AS min_off_duty_hours
                   FROM driver_compliance_status dcs
                   LEFT JOIN compliance_profiles cp ON cp.id=dcs.profile_id
                   WHERE dcs.driver_id=@id
@@ -6194,7 +6196,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                        cr.origin_zone,
                        cr.destination_zone,
                        cr.vehicle_type,
-                       COALESCE(cr.currency, 'USD') AS currency,
+                       'USD'::text AS currency,
                        cr.base_rate,
                        cr.minimum_charge,
                        cr.fuel_surcharge_percent,
@@ -9034,7 +9036,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN vehicles    v    ON v.id = se.vehicle_id
               LEFT JOIN eld_devices e    ON e.id = se.device_id
               LEFT JOIN users       ur   ON ur.id = se.reviewed_by
-              LEFT JOIN users       ures ON ures.id = se.resolved_by
+              LEFT JOIN users       ures ON ures.id = se.reviewed_by
               WHERE se.id = @id AND se.company_id = @cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
@@ -11348,7 +11350,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ON CONFLICT (company_id, shipment_id) DO UPDATE SET
                 public_tracking_token = EXCLUDED.public_tracking_token,
                 visibility_status = 'active',
-                share_enabled = 1,
+                share_enabled = TRUE,
                 expires_at = EXCLUDED.expires_at,
                 dispatch_assignment_id = COALESCE(EXCLUDED.dispatch_assignment_id, customer_visibility.dispatch_assignment_id),
                 trip_id = COALESCE(EXCLUDED.trip_id, customer_visibility.trip_id),
@@ -11384,7 +11386,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN dispatch_assignments da ON da.id = cv.dispatch_assignment_id
               LEFT JOIN trips t ON t.id = COALESCE(cv.trip_id, da.trip_id)
               WHERE cv.public_tracking_token = @token
-                AND cv.share_enabled = 1
+                AND cv.share_enabled = TRUE
                 AND cv.expires_at > NOW()
                 AND cv.visibility_status = 'active'
               LIMIT 1",
@@ -11421,7 +11423,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             @"SELECT cv.dispatch_assignment_id, cv.company_id, cv.share_enabled, cv.expires_at, cv.visibility_status
               FROM customer_visibility cv
               WHERE cv.public_tracking_token = @token
-                AND cv.share_enabled = 1
+                AND cv.share_enabled = TRUE
                 AND cv.expires_at > NOW()
                 AND cv.visibility_status = 'active'
               LIMIT 1",
@@ -11443,7 +11445,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             @"SELECT cv.dispatch_assignment_id, cv.company_id, cv.share_enabled, cv.expires_at, cv.visibility_status
               FROM customer_visibility cv
               WHERE cv.public_tracking_token = @token
-                AND cv.share_enabled = 1
+                AND cv.share_enabled = TRUE
                 AND cv.expires_at > NOW()
                 AND cv.visibility_status = 'active'
               LIMIT 1",
