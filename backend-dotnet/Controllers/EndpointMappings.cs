@@ -1984,7 +1984,7 @@ public static partial class EndpointMappings
     {
         var user = await db.QuerySingleAsync(
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.demo_password,
-                     c.id company_id, c.name company_name, c.company_code
+                     c.id company_id, c.name company_name, c.company_code, c.status company_status
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.email=@email LIMIT 1",
             cmd =>
@@ -1992,6 +1992,17 @@ public static partial class EndpointMappings
                 cmd.Parameters.AddWithValue("@email", request.Email);
             }, ct);
         if (user is null) return Results.Unauthorized();
+
+        // Tenant lifecycle gate: a suspended/cancelled tenant must be locked out
+        // entirely (non-payment, contract breach, security hold). Platform admins
+        // manage tenant status; tenant users cannot log in while the company is not
+        // active. Checked BEFORE password verification so no session is ever issued.
+        var companyStatus = (user.GetValueOrDefault("companyStatus")?.ToString() ?? "active").ToLowerInvariant();
+        if (companyStatus is "suspended" or "cancelled" or "canceled" or "disabled")
+            return Results.Json(
+                ApiResponse<object>.Fail("Account unavailable",
+                    "Your organization's account is not active. Contact your administrator."),
+                statusCode: StatusCodes.Status403Forbidden);
 
         var passwordHash = user["passwordHash"]?.ToString();
         var passwordOk = VerifyPasswordHash(request.Password, passwordHash);
