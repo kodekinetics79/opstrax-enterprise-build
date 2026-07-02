@@ -13844,6 +13844,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         app.MapPost("/api/security/export-requests/{id:long}/approve",       ExportRequestApprove);
         app.MapPost("/api/security/export-requests/{id:long}/reject",        ExportRequestReject);
 
+        // ── Data-subject rights (GDPR Art.15/17, PIPEDA, Saudi PDPL) ───────────
+        // Export a data subject's personal data (access/portability) and erase it
+        // (right to be forgotten) by anonymizing PII while preserving referential
+        // integrity + the audit trail. Tenant-scoped, gated, audited.
+        app.MapGet("/api/privacy/data-subject/{entityType}/{id:long}/export", DataSubjectExport);
+        app.MapPost("/api/privacy/data-subject/{entityType}/{id:long}/erase", DataSubjectErase);
+
         // ── Security insights ──────────────────────────────────────────────
         app.MapGet("/api/security/insights",     SecurityInsights);
 
@@ -14106,6 +14113,63 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var status = http.Request.Query["status"].FirstOrDefault();
         var rows   = await svc.GetRequestsAsync(GetCompanyId(http), status, http.RequestAborted);
         return Results.Ok(ApiResponse<object>.Ok(rows, $"{rows.Count} export requests"));
+    }
+
+    // GDPR Art.15/20 / PIPEDA / PDPL — export a data subject's personal data.
+    // entityType: "driver" | "customer". Tenant-scoped, gated on compliance:view, audited.
+    private static async Task<IResult> DataSubjectExport(HttpContext http, string entityType, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "compliance:view");
+        if (denied is not null) return denied;
+        var companyId = GetCompanyId(http);
+
+        var (table, piiCols) = entityType.ToLowerInvariant() switch
+        {
+            "driver"   => ("drivers",   "id, full_name, phone, email, license_number, status, created_at"),
+            "customer" => ("customers", "id, name, contact_name, email, phone, status, created_at"),
+            _ => ("", ""),
+        };
+        if (table.Length == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Unsupported entity type", ["Use 'driver' or 'customer'."]));
+
+        var subject = await db.QuerySingleAsync(
+            $"SELECT {piiCols} FROM {table} WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (subject is null) return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
+
+        await audit.LogAsync(http, "privacy.data_subject.exported", entityType, id,
+            System.Text.Json.JsonSerializer.Serialize(new { entityType, id }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { entityType, subject, exportedAt = DateTime.UtcNow }, "Data subject export generated"));
+    }
+
+    // GDPR Art.17 / PDPL — erase (anonymize) a data subject's PII while preserving
+    // referential integrity (FKs, historical aggregates) and recording the erasure in
+    // the audit trail. Soft-marks the record and redacts identifying fields.
+    private static async Task<IResult> DataSubjectErase(HttpContext http, string entityType, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = await RequireAdminPermission(http, audit, "compliance:update", entityType, new { id, action = "erase" }, ct);
+        if (denied is not null) return denied;
+        var companyId = GetCompanyId(http);
+        var token = $"ERASED-{id}";
+
+        var sql = entityType.ToLowerInvariant() switch
+        {
+            "driver" => @"UPDATE drivers SET full_name=@tok, phone=NULL, email=NULL, license_number=NULL,
+                          status='Archived' WHERE id=@id AND company_id=@cid",
+            "customer" => @"UPDATE customers SET name=@tok, contact_name=NULL, email=NULL, phone=NULL,
+                            status='Archived' WHERE id=@id AND company_id=@cid",
+            _ => "",
+        };
+        if (sql.Length == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Unsupported entity type", ["Use 'driver' or 'customer'."]));
+
+        var affected = await db.ExecuteAsync(sql,
+            c => { c.Parameters.AddWithValue("@tok", token); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
+
+        await audit.LogAsync(http, "privacy.data_subject.erased", entityType, id,
+            System.Text.Json.JsonSerializer.Serialize(new { entityType, id, method = "anonymization" }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { entityType, id, erased = true }, "Data subject PII erased (anonymized); records retained for referential integrity"));
     }
 
     private static async Task<IResult> ExportRequestCreate(
