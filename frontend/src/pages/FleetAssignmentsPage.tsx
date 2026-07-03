@@ -332,11 +332,11 @@ export function FleetAssignmentsPage() {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md"
+                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
-                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-violet-500" />
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
                   </div>
                   <p className="mt-2 text-sm text-slate-500">{item.note}</p>
                 </button>
@@ -362,7 +362,7 @@ export function FleetAssignmentsPage() {
                       type="button"
                       onClick={() => setSelectedId(String(row.id))}
                       className={`w-full rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
-                        selectedId === String(row.id) ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white hover:border-slate-300"
+                        selectedId === String(row.id) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:border-slate-300"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -526,7 +526,7 @@ function ModuleCard({
       </div>
       <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
       <p className="mt-2 text-sm text-slate-500">{body}</p>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-violet-600">{action}</p>
+      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
     </button>
   );
 }

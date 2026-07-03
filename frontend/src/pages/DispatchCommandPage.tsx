@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CheckCircle, ChevronRight, Clock,
+  AlertTriangle, CheckCircle, ChevronRight, Clock, Compass,
   MapPin, ShieldAlert, Truck, User, XCircle, Zap,
 } from "lucide-react";
-import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
+import { DataTable, KpiCard, LoadingState, RiskBadge, StatusBadge } from "@/components/ui";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -147,21 +147,35 @@ export function DispatchCommandPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Dispatch Operations"
-        title="Dispatch Command Center"
-        description="Backend-authoritative assignment, eligibility gates, status execution, and exception management."
-        actions={
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => exportDispatchCsv(assignments.data ?? [])}
-          >
-            Export Assignments
-          </button>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Compass className="h-3 w-3" /> Dispatch Operations
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Assignment, eligibility, and exception management</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Dispatch Command Center
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Backend-authoritative assignment, eligibility gates, status execution, and exception management.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-ghost" onClick={() => exportDispatchCsv(assignments.data ?? [])}>
+                Export Assignments
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {/* KPI Strip */}
       <div className="grid gap-4 md:grid-cols-4">
@@ -204,21 +218,25 @@ export function DispatchCommandPage() {
       )}
 
       {/* Tabs */}
-      <section className="panel p-5">
-        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap gap-1">
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
-              className={tab === activeTab ? "control-tab control-tab-active" : "control-tab"}
+              className={`rounded-xl px-3 py-2.5 text-left transition ${
+                tab === activeTab ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+              }`}
               onClick={() => setActiveTab(tab)}
             >
-              {tab}
+              <div className="text-xs font-bold uppercase tracking-[0.14em]">{tab}</div>
             </button>
           ))}
         </div>
+      </nav>
 
-        <div className="mt-5">
+      <section className="panel p-5">
+        <div>
           {activeTab === "Board" && (
             <BoardTab
               stageMap={stageMap}
@@ -538,7 +556,7 @@ function AssignmentsTab({
                     {canUpdate && nextOpts.length > 0 && (
                       <button
                         type="button"
-                        className="btn-ghost text-xs py-0.5 px-2"
+                        className="fh-btn-ghost text-xs py-0.5 px-2"
                         onClick={() => onStatusChange(Number(r["id"]), nextOpts[0])}
                       >
                         <ChevronRight className="h-3 w-3" />
@@ -548,7 +566,7 @@ function AssignmentsTab({
                     {showCancel && (
                       <button
                         type="button"
-                        className="btn-ghost text-xs py-0.5 px-2 text-red-600"
+                        className="fh-btn-ghost text-xs py-0.5 px-2 text-red-600"
                         onClick={() => onCancel(Number(r["id"]))}
                       >
                         Cancel
@@ -591,7 +609,7 @@ function EligibilityTab({
             <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Vehicle ID</span>
             <input
               type="number"
-              className="mt-1 block w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+              className="mt-1 block w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
               value={vehicleId}
               onChange={(e) => onVehicleChange(e.target.value)}
               placeholder="e.g. 42"
@@ -601,7 +619,7 @@ function EligibilityTab({
             <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Driver ID</span>
             <input
               type="number"
-              className="mt-1 block w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+              className="mt-1 block w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
               value={driverId}
               onChange={(e) => onDriverChange(e.target.value)}
               placeholder="e.g. 17"
@@ -870,7 +888,7 @@ function ExceptionModal({
         <label className="block mb-3">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Exception Type</span>
           <select
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
             value={exceptionType}
             onChange={(e) => onTypeChange(e.target.value)}
           >
@@ -882,7 +900,7 @@ function ExceptionModal({
         <label className="block mb-4">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Notes</span>
           <textarea
-            className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
             rows={3}
             value={notes}
             onChange={(e) => onNotesChange(e.target.value)}
@@ -890,7 +908,7 @@ function ExceptionModal({
           />
         </label>
         <div className="flex gap-3 justify-end">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="fh-btn-ghost" onClick={onClose}>Cancel</button>
           <button
             type="button"
             className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"

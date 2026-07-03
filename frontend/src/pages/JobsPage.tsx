@@ -1,12 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
+  ArrowRight, CheckCircle2, ClipboardList, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
   Search, Send, Sparkles, Trash2, TriangleAlert, Truck, X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
+  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState,
   RiskBadge, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -193,18 +193,36 @@ export function JobsPage() {
   const unassigned = Number(visibleSummary.unassignedJobs ?? 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       <Toaster toast={toast} onClose={() => setToast(null)} />
 
-      <PageHeader
-        eyebrow={surfaceConfig.eyebrow}
-        title={surfaceConfig.title}
-        description={surfaceConfig.description}
-        actions={<>
-          <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
-          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
-        </>}
-      />
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ClipboardList className="h-3 w-3" /> {surfaceConfig.eyebrow}
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Order execution and shipment tracking</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {surfaceConfig.title}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {surfaceConfig.description}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
+              <button type="button" className="fh-btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {/* Ops intelligence bar — derived from live data, one-click triage */}
       <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 text-white sm:flex-row sm:items-center sm:justify-between">
@@ -258,8 +276,8 @@ export function JobsPage() {
 
       {/* Toolbar */}
       <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
-        <div className="relative flex-1 lg:max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <div className="relative min-w-[220px] flex-1 lg:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 shrink-0 -translate-y-1/2 text-slate-400" />
           <input className="field h-10 pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
         <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
@@ -349,11 +367,11 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
             <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
-            <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
+            <button type="button" className="fh-btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
           </div>
         </div>
 
@@ -370,7 +388,7 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
                   <button
                     key={next}
                     type="button"
-                    className="btn-ghost h-9 py-0"
+                    className="fh-btn-ghost h-9 py-0"
                     disabled={!canDispatch || statusPending}
                     title={!canDispatch ? "You do not have permission to perform this action." : `Move job to ${next}`}
                     onClick={() => canDispatch && onStatus(String(record.id), next)}
@@ -427,8 +445,8 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
           ))}
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
+          <button type="button" className="fh-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="fh-btn-primary" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
         </div>
       </form>
     </div>

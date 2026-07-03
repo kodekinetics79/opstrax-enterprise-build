@@ -253,8 +253,8 @@ export function DataTable({
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
       <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3.5 md:flex-row md:items-center md:justify-between">
-        <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+        <div className="relative min-w-[220px] max-w-xs flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 shrink-0 -translate-y-1/2 text-slate-500" />
           <input
             className="field h-9 py-0 pl-9 pr-3 text-sm"
             placeholder="Search records..."

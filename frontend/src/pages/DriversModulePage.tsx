@@ -209,11 +209,11 @@ export function DriversModulePage() {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md"
+                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
-                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-emerald-500" />
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
                   </div>
                   <p className="mt-2 text-sm text-slate-500">{item.note}</p>
                 </button>
@@ -262,7 +262,7 @@ function ModuleCard({ title, body, action, onClick, icon }: { title: string; bod
       </div>
       <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
       <p className="mt-2 text-sm text-slate-500">{body}</p>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-emerald-600">{action}</p>
+      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
     </button>
   );
 }
@@ -411,7 +411,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                 key={rowId(row)}
                 type="button"
                 onClick={() => setSelectedId(rowId(row))}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</span>
@@ -610,7 +610,7 @@ function RelatedJumpRow({ onNavigate }: { onNavigate: (route: string) => void })
           key={item.label}
           type="button"
           onClick={() => onNavigate(item.route)}
-          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50/50"
+          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-teal-200 hover:bg-teal-50/50"
         >
           <div className="font-semibold text-slate-900">{item.label}</div>
           <div className="mt-1 text-xs text-slate-500">{item.note}</div>
@@ -625,7 +625,7 @@ function RelatedChip({ label, onClick }: { label: string; onClick: () => void })
     <button
       type="button"
       onClick={onClick}
-      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-white"
+      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-teal-200 hover:bg-white"
     >
       {label}
     </button>

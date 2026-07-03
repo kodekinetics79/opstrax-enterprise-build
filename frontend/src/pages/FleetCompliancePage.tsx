@@ -152,7 +152,7 @@ function CanadaReadiness() {
             <option value="endorsement">Endorsement</option>
           </select>
           <input type="date" title="Expiry date" placeholder="Expiry date" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
-          <button onClick={addDoc} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add document</button>
+          <button onClick={addDoc} className="fh-btn-primary">Add document</button>
         </div>
         <div className="mt-4">{docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "issuingRegion", "expiryDate", "documentStatus"]} />}</div>
       </section>
@@ -163,7 +163,7 @@ function CanadaReadiness() {
             <h2 className="text-lg font-semibold text-slate-900">Vehicle Inspections / DVIR Readiness</h2>
             <p className="text-sm text-slate-500">Track vehicle inspection status and DVIR compliance</p>
           </div>
-          <button onClick={addInspection} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add inspection</button>
+          <button onClick={addInspection} className="fh-btn-primary">Add inspection</button>
         </div>
         <div className="mt-4">{inspections.length === 0 ? <EmptyState /> : <DataTable rows={inspections} columns={["vehicleLabel", "inspectionType", "status", "inspectorName", "inspectedAt"]} />}</div>
       </section>
@@ -174,7 +174,7 @@ function CanadaReadiness() {
             <h2 className="text-lg font-semibold text-slate-900">IFTA Fuel-Tax Readiness</h2>
             <p className="text-sm text-slate-500">Monitor jurisdiction mileage and fuel tax compliance</p>
           </div>
-          <button onClick={addMileage} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add mileage</button>
+          <button onClick={addMileage} className="fh-btn-primary">Add mileage</button>
         </div>
         <p className="mt-3 text-xs text-slate-500">{ifta?.note}</p>
         <div className="mt-4">{(ifta?.mileageByJurisdiction ?? []).length === 0 ? <EmptyState title="No jurisdiction records" /> : <DataTable rows={ifta?.mileageByJurisdiction ?? []} columns={["provinceState", "country", "distance", "distanceUnit", "taxPeriod"]} />}</div>
@@ -282,7 +282,7 @@ function SaudiReadiness() {
           </select>
           <input type="date" title="Gregorian expiry" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.gregorianExpiryDate} onChange={(e) => setForm({ ...form, gregorianExpiryDate: e.target.value })} />
           <input placeholder="Hijri expiry (1447-..)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.hijriExpiryDate} onChange={(e) => setForm({ ...form, hijriExpiryDate: e.target.value })} />
-          <button onClick={addDoc} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add document</button>
+          <button onClick={addDoc} className="fh-btn-primary">Add document</button>
         </div>
         <div className="mt-4">{docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "documentStatus", "hijriExpiryDate", "expiryDate"]} />}</div>
       </section>

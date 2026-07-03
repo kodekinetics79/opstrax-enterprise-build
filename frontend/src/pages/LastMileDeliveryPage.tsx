@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MapPin } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
-import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, KpiCard, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Seed fallback ─────────────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
   return (
     <button
       type="button"
-      className={`w-full text-left rounded-xl border p-4 transition-colors hover:bg-slate-50 ${
+      className={`w-full text-left rounded-2xl border p-4 transition-colors hover:bg-slate-50 ${
         selected ? "border-teal-400 bg-teal-50" : "border-slate-200 bg-white"
       }`}
       onClick={onSelect}
@@ -246,43 +247,55 @@ export function LastMileDeliveryPage() {
   if (routesQ.isError) return <ErrorState message={(routesQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="space-y-6 pb-10">
       {toast && (
         <div className="fixed top-4 right-4 z-50 panel border-emerald-200 bg-emerald-50 text-emerald-800 text-sm font-medium px-4 py-2.5 shadow-lg">
           {toast}
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Last Mile Delivery</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Real-time stop sequencing, ETA management, proof of delivery and customer notification</p>
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <MapPin className="h-3 w-3" /> Last Mile
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Stop sequencing and customer delivery</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Last Mile Delivery
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Real-time stop sequencing, ETA management, proof of delivery and customer notification
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="fh-btn-ghost"
+                onClick={() => exportCsv("last-mile-delivery", flatStops)}
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
         </div>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => exportCsv("last-mile-delivery", flatStops)}
-        >
-          Export CSV
-        </button>
-      </div>
+      </header>
 
       {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Active Routes", val: s.activeRoutes ?? routes.filter((r) => r.status === "Active").length, accent: "text-teal-600" },
-          { label: "Planned Routes", val: s.plannedRoutes ?? routes.filter((r) => r.status === "Planned").length },
-          { label: "Delayed", val: s.delayedRoutes ?? routes.filter((r) => r.status === "Delayed").length, accent: "text-red-600" },
-          { label: "Completed", val: s.completedRoutes ?? routes.filter((r) => r.status === "Completed").length, accent: "text-slate-600" },
-          { label: "Avg Stops / Route", val: s.averageStopsPerRoute ?? "--" },
-          { label: "Route Efficiency", val: s.routeEfficiencyScore ? `${s.routeEfficiencyScore}%` : "--", accent: "text-violet-600" },
-          { label: "High Risk Routes", val: s.highRiskRoutes ?? 0, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard label="Active Routes" value={String(s.activeRoutes ?? routes.filter((r) => r.status === "Active").length)} />
+        <KpiCard label="Planned Routes" value={String(s.plannedRoutes ?? routes.filter((r) => r.status === "Planned").length)} />
+        <KpiCard label="Delayed" value={String(s.delayedRoutes ?? routes.filter((r) => r.status === "Delayed").length)} status={Number(s.delayedRoutes ?? 0) > 0 ? "Review" : undefined} />
+        <KpiCard label="Completed" value={String(s.completedRoutes ?? routes.filter((r) => r.status === "Completed").length)} />
+        <KpiCard label="Avg Stops / Route" value={String(s.averageStopsPerRoute ?? "--")} />
+        <KpiCard label="Route Efficiency" value={s.routeEfficiencyScore ? `${s.routeEfficiencyScore}%` : "--"} />
+        <KpiCard label="High Risk Routes" value={String(s.highRiskRoutes ?? 0)} status={Number(s.highRiskRoutes ?? 0) > 0 ? "Review" : undefined} />
       </div>
 
       {/* Filter bar */}
@@ -293,7 +306,7 @@ export function LastMileDeliveryPage() {
               key={f}
               type="button"
               onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-sm font-medium border transition-colors ${
                 statusFilter === f
                   ? "bg-teal-50 border-teal-300 text-teal-700"
                   : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
@@ -308,7 +321,7 @@ export function LastMileDeliveryPage() {
           placeholder="Search routes, drivers…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52"
+          className="ml-auto rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 w-52"
         />
       </div>
 
