@@ -682,7 +682,7 @@ static string? ModuleKeyForPath(string path)
         ("/api/contracts",           "crm"),
         ("/api/customer-eta",        "customer_portal"),
         ("/api/customer-visibility", "customer_portal"),
-        ("/api/reporting",           "reports"),
+        ("/api/reports",             "reports"),
         ("/api/compliance",          "compliance"),
     ];
     foreach (var (prefix, module) in map)
