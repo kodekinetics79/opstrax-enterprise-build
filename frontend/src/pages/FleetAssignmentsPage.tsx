@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowRight,
   Route,
+  Satellite,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Truck,
@@ -12,7 +14,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { dispatchApi } from "@/services/dispatchApi";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AssignmentSection = "overview" | "board" | "exceptions" | "owners";
@@ -175,15 +177,33 @@ export function FleetAssignmentsPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <PageHeader
-        eyebrow="Dispatch Pairing"
-        title="Assignments"
-        description="Elevated from a static history table into a live pairing command surface that exposes coverage, eligibility pressure, exceptions and partner capacity in one place."
-        actions={<>
-          <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="btn-ghost">Export live view</button>
-          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary">Open dispatch cockpit <ArrowRight className="h-4 w-4" /></button>
-        </>}
-      />
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Route className="h-3 w-3" /> Dispatch Pairing
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live pairing command surface</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Assignments
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Coverage, eligibility pressure, exceptions and partner capacity in one place
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="fh-btn-ghost">Export live view</button>
+              <button type="button" onClick={() => navigate("/dispatch")} className="fh-btn-primary">Open dispatch cockpit <ArrowRight className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-4">
@@ -274,7 +294,7 @@ export function FleetAssignmentsPage() {
                 <h2 className="text-lg font-semibold text-slate-900">Suggested pairings</h2>
                 <p className="text-sm text-slate-500">These are coming from the live dispatch recommendations endpoint, not seeded examples.</p>
               </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/assignments/board")}>Open board</button>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/assignments/board")}>Open board</button>
             </div>
             <div className="mt-4 grid gap-3 xl:grid-cols-3">
               {recommendations.slice(0, 3).map((row, index) => (
@@ -611,9 +631,9 @@ function AssignmentDetailPanel({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/proof-of-delivery")}>Open proof</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/vehicles/roster")}>Open vehicle</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/proof-of-delivery")}>Open proof</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/vehicles/roster")}>Open vehicle</button>
       </div>
     </aside>
   );

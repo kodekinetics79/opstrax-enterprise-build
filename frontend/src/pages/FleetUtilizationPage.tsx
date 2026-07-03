@@ -6,6 +6,7 @@ import {
   Clock3,
   Fuel,
   Gauge,
+  Satellite,
   ShieldAlert,
   Sparkles,
   Truck,
@@ -21,7 +22,7 @@ import {
   YAxis,
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type UtilSection = "overview" | "capacity" | "efficiency" | "opportunities";
@@ -282,15 +283,33 @@ export function FleetUtilizationPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <PageHeader
-        eyebrow="Capacity Intelligence"
-        title="Fleet Utilization"
-        description="Reframed as an operations command surface so dispatch, fleet and maintenance can see where capacity is stuck, leaking or ready to be redeployed."
-        actions={<>
-          <button type="button" onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])} className="btn-ghost">Export live view</button>
-          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary">Open dispatch coverage <ArrowRight className="h-4 w-4" /></button>
-        </>}
-      />
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Gauge className="h-3 w-3" /> Capacity Intelligence
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Utilization and deployability</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Fleet Utilization
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Operations command surface for capacity, idle leakage and redeployment readiness
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])} className="fh-btn-ghost">Export live view</button>
+              <button type="button" onClick={() => navigate("/dispatch")} className="fh-btn-primary">Open dispatch coverage <ArrowRight className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-4">
@@ -381,7 +400,7 @@ export function FleetUtilizationPage() {
                 <h2 className="text-lg font-semibold text-slate-900">Top action queue</h2>
                 <p className="text-sm text-slate-500">The highest-value changes operators can make now without waiting for more reporting.</p>
               </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
             </div>
             <div className="mt-4 grid gap-3 xl:grid-cols-3">
               {opportunities.slice(0, 3).map((item) => (
@@ -611,7 +630,7 @@ export function FleetUtilizationPage() {
                         </div>
                         <h3 className="mt-3 text-base font-semibold text-slate-900">{item.title}</h3>
                       </div>
-                      <button type="button" className="btn-ghost h-9" onClick={() => navigate(item.actionRoute)}>
+                      <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate(item.actionRoute)}>
                         {item.actionLabel}
                       </button>
                     </div>
@@ -727,9 +746,9 @@ function VehicleInsightPanel({
         {section === "opportunities" && `${String(g(row, "vehicleCode", "vehicle_code"))} is part of the current action queue because live backend metrics suggest it can either unlock capacity or reduce operating drag.`}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(routeForVehicle(section))}>Open vehicle module</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/maintenance")}>Open maintenance</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate(routeForVehicle(section))}>Open vehicle module</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/maintenance")}>Open maintenance</button>
       </div>
     </aside>
   );

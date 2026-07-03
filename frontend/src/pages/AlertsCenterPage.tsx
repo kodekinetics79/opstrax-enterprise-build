@@ -9,13 +9,15 @@ import {
   Clock3,
   RefreshCw,
   Search,
+  Shield,
   ShieldAlert,
   Sparkles,
   Wrench,
+  Zap,
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type Alert = {
@@ -201,26 +203,26 @@ function ActionModal({
     "bg-teal-600 hover:bg-teal-700";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="panel mx-4 w-full max-w-md" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+    <div className="ac-modal-overlay" onClick={onClose}>
+      <div className="ac-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <h3 className="ac-modal-title">{title}</h3>
           <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
-        <p className="mt-3 text-sm text-slate-600">
-          <span className="font-medium text-slate-900">{alert.title}</span> · {alert.severity} · {alert.category}
+        <p className="ac-modal-sub">
+          <span className="font-semibold text-slate-900">{alert.title}</span> · {alert.severity} · {alert.category}
         </p>
-        <div className="mt-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</label>
+        <div>
+          <label className="ac-modal-label">{label}</label>
           <textarea
-            className="min-h-[110px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+            className="ac-modal-textarea"
             value={note}
             onChange={(event) => setNote(event.target.value)}
             placeholder={type === "task" ? `Follow-up for ${alert.title}` : "Add context for the team"}
           />
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost h-10" onClick={onClose}>Cancel</button>
+          <button type="button" className="fh-btn-ghost h-10" onClick={onClose}>Cancel</button>
           <button
             type="button"
             className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition ${buttonClass}`}
@@ -255,37 +257,41 @@ function AlertCard({
   canClose: boolean;
   onAction: (type: ActionType, alert: Alert) => void;
 }) {
+  const sevKey = alert.severity.toLowerCase();
+  const toneClass =
+    sevKey === "critical" ? "ac-alert-card-critical" :
+    sevKey === "high" ? "ac-alert-card-high" :
+    sevKey === "warning" ? "ac-alert-card-warning" : "ac-alert-card-info";
+
   return (
-    <article
-      className={`rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-teal-300 bg-teal-50/60" : severityTone(alert.severity)}`}
-    >
+    <article className={`ac-alert-card ${toneClass} ${active ? "ac-alert-card-active" : ""}`}>
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={alert.severity} />
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.severity)}`}>{alert.severity}</span>
               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-slate-900">{alert.title}</h3>
+            <h3 className="ac-alert-title">{alert.title}</h3>
           </div>
           <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
         </div>
-        <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-2 line-clamp-2 text-sm text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+        <p className="ac-alert-entity">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
+        <p className="ac-alert-action">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
       </button>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="ac-alert-actions">
         {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", alert)}>
+          <button type="button" className="fh-btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", alert)}>
             Acknowledge
           </button>
         )}
         {canAcknowledge && (
-          <button type="button" className="btn-ghost h-9 border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("task", alert)}>
             Create task
           </button>
         )}
         {canClose && !/closed/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", alert)}>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("close", alert)}>
             Close
           </button>
         )}
@@ -319,7 +325,7 @@ function DetailPanel({
 
   if (!record) {
     return (
-      <div className="panel p-5">
+      <div className="ac-detail">
         <EmptyState title="No alert selected" subtitle="Choose an alert from the live queue to inspect it in context." />
       </div>
     );
@@ -336,18 +342,18 @@ function DetailPanel({
           : "Informational signals should still stay linked to operational context so they can be audited later.";
 
   return (
-    <aside className="panel p-5">
+    <aside className="ac-detail">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected alert</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">{record.title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{record.alertId} · {record.category}</p>
+          <p className="ac-detail-eyebrow">Selected alert</p>
+          <h2 className="ac-detail-title">{record.title}</h2>
+          <p className="ac-detail-sub">{record.alertId} · {record.category}</p>
         </div>
         {loading ? <RefreshCw className="h-4 w-4 animate-spin text-slate-400" /> : null}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <StatusBadge status={record.severity} />
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.severity)}`}>{record.severity}</span>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.status)}`}>{record.status}</span>
         {record.entity ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{record.entity}</span> : null}
       </div>
@@ -359,32 +365,32 @@ function DetailPanel({
         <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
-        <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
+      <div className="ac-info-block ac-info-block-teal">
+        <p className="ac-info-block-label ac-info-block-label-teal">Recommended action</p>
+        <p className="ac-info-block-body">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
-        <p className="mt-2 text-sm text-slate-600">{rationale}</p>
+      <div className="ac-info-block ac-info-block-violet">
+        <p className="ac-info-block-label ac-info-block-label-violet">Priority rationale</p>
+        <p className="ac-info-block-body">{rationale}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="ac-info-block" style={{ background: 'rgba(248,250,252,.6)' }}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
+          <p className="ac-info-block-label ac-info-block-label-slate">Follow-up tasks</p>
           <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
         </div>
         <div className="mt-3 space-y-3">
           {tasks.length ? tasks.map((task) => (
-            <div key={String(task.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <div key={String(task.id)} className="ac-task-entry">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
+                  <p className="ac-task-title">{task.title}</p>
+                  <p className="ac-task-meta">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
                 </div>
                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(task.status || "Open")}`}>{task.status || "Open"}</span>
               </div>
-              {task.description ? <p className="mt-2 text-sm text-slate-600">{task.description}</p> : null}
+              {task.description ? <p className="ac-task-desc">{task.description}</p> : null}
             </div>
           )) : (
             <p className="text-sm text-slate-500">No follow-up task has been created from this alert yet.</p>
@@ -392,16 +398,16 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="ac-info-block" style={{ background: 'rgba(248,250,252,.6)' }}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
+          <p className="ac-info-block-label ac-info-block-label-slate">Audit trail</p>
           <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
         </div>
         <div className="mt-3 space-y-3">
           {auditTrail.length ? auditTrail.map((entry) => (
-            <div key={String(entry.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <p className="text-sm font-semibold text-slate-900">{entry.actionName || "Alert event"}</p>
-              <p className="mt-1 text-xs text-slate-500">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
+            <div key={String(entry.id)} className="ac-task-entry">
+              <p className="ac-task-title">{entry.actionName || "Alert event"}</p>
+              <p className="ac-task-meta">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
             </div>
           )) : (
             <p className="text-sm text-slate-500">No audit entries are available for this alert yet.</p>
@@ -410,14 +416,14 @@ function DetailPanel({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
         {canAcknowledge && /open/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
+          <button type="button" className="fh-btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
             Acknowledge
           </button>
         )}
         {canClose && !/closed/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
         )}
       </div>
     </aside>
@@ -426,9 +432,9 @@ function DetailPanel({
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+    <div className="ac-meta-card">
+      <p className="ac-meta-label">{label}</p>
+      <p className="ac-meta-value">{value}</p>
     </div>
   );
 }
@@ -580,78 +586,141 @@ export function AlertsCenterPage() {
   return (
     <div className="space-y-6 pb-10">
       {toastMsg ? (
-        <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
-          {toastMsg}
-        </div>
+        <div className="ac-toast">{toastMsg}</div>
       ) : null}
 
-      <PageHeader
-        eyebrow="Exception Command"
-        title="Alerts Center"
-        description="Reworked as an action-first command surface so operations teams can triage, own and clear live alerts without bouncing between modules or relying on cosmetic severity chips."
-        actions={<>
-          <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost">Export live queue</button>
-          <button
-            type="button"
-            onClick={() => {
-              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-              void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
-            }}
-            className="btn-primary"
-          >
-            Refresh alerts <RefreshCw className="h-4 w-4" />
-          </button>
-        </>}
-      />
+      {/* ── Hero banner ──────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open queue" value={String(summary.open)} trend={`${summary.critical} critical`} />
-        <KpiCard label="Aging open alerts" value={String(agingOpen)} status="Review" trend="24h+ still active" />
-        <KpiCard label="Unowned alerts" value={String(unownedOpen)} status="Review" trend="Not yet acknowledged" />
-        <KpiCard label="Closed today posture" value={`${summary.closed}/${summary.total || 1}`} trend="Closed versus total visible" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ShieldAlert className="h-3 w-3" /> Exception Command
+                </span>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live · 15s refresh</span>
+              </div>
+
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Alerts Center
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {summary.total} alerts tracked · {summary.open} open · {summary.critical} critical — action-first triage surface
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("alerts", filtered)} className="fh-btn-ghost">
+                Export live queue
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+                  void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
+                }}
+                className="fh-btn-primary"
+              >
+                Refresh alerts <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── KPI strip ────────────────────────────────────────────── */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="ac-kpi-card ac-kpi-active">
+          <div className="flex items-start gap-3">
+            <div className="ac-kpi-icon ac-kpi-icon-teal"><BellRing className="h-5 w-5" /></div>
+            <div>
+              <p className="ac-kpi-count">{summary.open}</p>
+              <p className="ac-kpi-label">Open queue</p>
+              <p className="ac-kpi-trend">{summary.critical} critical</p>
+            </div>
+          </div>
+        </div>
+        <div className="ac-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="ac-kpi-icon ac-kpi-icon-amber"><Clock3 className="h-5 w-5" /></div>
+            <div>
+              <p className="ac-kpi-count">{agingOpen}</p>
+              <p className="ac-kpi-label">Aging open alerts</p>
+              <p className="ac-kpi-trend">24h+ still active</p>
+            </div>
+          </div>
+        </div>
+        <div className="ac-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="ac-kpi-icon ac-kpi-icon-rose"><AlertTriangle className="h-5 w-5" /></div>
+            <div>
+              <p className="ac-kpi-count">{unownedOpen}</p>
+              <p className="ac-kpi-label">Unowned alerts</p>
+              <p className="ac-kpi-trend">Not yet acknowledged</p>
+            </div>
+          </div>
+        </div>
+        <div className="ac-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="ac-kpi-icon ac-kpi-icon-slate"><BadgeCheck className="h-5 w-5" /></div>
+            <div>
+              <p className="ac-kpi-count">{summary.closed}/{summary.total || 1}</p>
+              <p className="ac-kpi-label">Closed today posture</p>
+              <p className="ac-kpi-trend">Closed versus total visible</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
-        <section className="panel p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <section className="ac-panel">
+          <div className="ac-panel-header">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Response lanes</h2>
-              <p className="text-sm text-slate-500">Where alert pressure is concentrating right now across operations domains.</p>
+              <h2 className="ac-panel-title">Response lanes</h2>
+              <p className="ac-panel-subtitle">Where alert pressure is concentrating right now across operations domains.</p>
             </div>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Live workload map
+            <span className="ac-panel-badge">
+              <Zap className="h-3 w-3" /> Live workload map
             </span>
           </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="ac-lane-grid">
             {categoryBuckets.slice(0, 6).map((bucket) => (
               <button
                 key={bucket.category}
                 type="button"
                 onClick={() => navigate(bucket.route)}
-                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                className="ac-lane-card"
               >
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-900">{bucket.category}</p>
+                  <p className="ac-lane-name">{bucket.category}</p>
                   <ArrowRight className="h-4 w-4 text-slate-300" />
                 </div>
-                <p className="mt-3 text-2xl font-bold tracking-tight text-slate-900">{bucket.count}</p>
-                <p className="mt-1 text-sm text-slate-500">Open alert{bucket.count === 1 ? "" : "s"} linked to this lane.</p>
+                <p className="ac-lane-count">{bucket.count}</p>
+                <p className="ac-lane-desc">Open alert{bucket.count === 1 ? "" : "s"} linked to this lane.</p>
               </button>
             ))}
             {!categoryBuckets.length && (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-800 md:col-span-2 xl:col-span-3">
+              <div className="ac-lane-empty md:col-span-2 xl:col-span-3">
                 No active alert pressure is being returned by the live backend at the moment.
               </div>
             )}
           </div>
         </section>
 
-        <section className="panel p-5">
+        <section className="ac-panel">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Triage guidance</h2>
-            <p className="text-sm text-slate-500">What a strong ops team should do next with the current queue shape.</p>
+            <h2 className="ac-panel-title">Triage guidance</h2>
+            <p className="ac-panel-subtitle">What a strong ops team should do next with the current queue shape.</p>
           </div>
-          <div className="mt-4 space-y-3">
+          <div className="ac-guidance-list">
             <GuidanceCard
               icon={<ShieldAlert className="h-4 w-4" />}
               title="Clear criticals first"
@@ -676,16 +745,16 @@ export function AlertsCenterPage() {
         </section>
       </div>
 
-      <section className="panel p-5">
+      <section className="ac-filter-panel">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="ac-search-wrap">
+            <Search className="ac-search-icon" />
             <input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search alerts, entities, categories…"
-              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+              placeholder="Search alerts, entities, categories\u2026"
+              className="ac-search-input"
             />
           </div>
           <div className="flex flex-wrap gap-2">
@@ -694,25 +763,21 @@ export function AlertsCenterPage() {
                 key={category}
                 type="button"
                 onClick={() => setCategoryFilter(category)}
-                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                  categoryFilter === category ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                }`}
+                className={`ac-chip ${categoryFilter === category ? "ac-chip-active" : ""}`}
               >
                 {category}
               </button>
             ))}
           </div>
         </div>
-
+      
         <div className="mt-4 flex flex-wrap gap-2">
           {SEVERITY_FILTERS.map((severity) => (
             <button
               key={severity}
               type="button"
               onClick={() => setSeverityFilter(severity)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
+              className={`ac-chip text-xs uppercase tracking-[0.16em] ${severityFilter === severity ? "ac-chip-sev-active" : ""}`}
             >
               {severity}
             </button>
@@ -722,9 +787,7 @@ export function AlertsCenterPage() {
               key={status}
               type="button"
               onClick={() => setStatusFilter(status)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-              }`}
+              className={`ac-chip text-xs uppercase tracking-[0.16em] ${statusFilter === status ? "ac-chip-status-active" : ""}`}
             >
               {status}
             </button>
@@ -762,7 +825,7 @@ export function AlertsCenterPage() {
         />
       </div>
 
-      <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+      <div className="ac-footer-strip">
         <Clock3 className="h-3.5 w-3.5" />
         Refreshed every 15 seconds from the live backend. No demo fallback is used here.
       </div>
@@ -782,12 +845,12 @@ export function AlertsCenterPage() {
 
 function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm">{icon}</div>
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
+    <div className="ac-guidance-card">
+      <div className="flex items-center gap-3">
+        <div className="ac-guidance-icon-wrap">{icon}</div>
+        <p className="ac-guidance-title">{title}</p>
       </div>
-      <p className="mt-3 text-sm text-slate-500">{body}</p>
+      <p className="ac-guidance-body">{body}</p>
     </div>
   );
 }

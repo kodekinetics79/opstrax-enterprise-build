@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, ShieldAlert, Sparkles, UserCheck, Users } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize, PageHeader } from "@/components/ui";
+import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, Satellite, ShieldAlert, Sparkles, UserCheck, Users } from "lucide-react";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
@@ -134,15 +134,33 @@ export function DriversModulePage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <PageHeader
-        eyebrow="Driver Module"
-        title="Drivers"
-        description="Organized around the real driver workflow so readiness, coaching, HOS, compliance and records are easier to find than in one oversized list view."
-        actions={<>
-          <button type="button" onClick={() => exportCsv("drivers", rows)} className="btn-ghost">Export drivers</button>
-          <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary">Open roster <ArrowRight className="h-4 w-4" /></button>
-        </>}
-      />
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Users className="h-3 w-3" /> Driver Module
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Readiness, workflow and compliance</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Drivers
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Organized around the real driver workflow — readiness, coaching, HOS, compliance and records
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("drivers", rows)} className="fh-btn-ghost">Export drivers</button>
+              <button type="button" onClick={() => navigate("/drivers/roster")} className="fh-btn-primary">Open roster <ArrowRight className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-5">
@@ -208,7 +226,7 @@ export function DriversModulePage() {
                 <h2 className="text-lg font-semibold text-slate-900">Live driver snapshot</h2>
                 <p className="text-sm text-slate-500">A fast, readable cross-section of the drivers currently feeding the module.</p>
               </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/drivers/roster")}>Go to roster</button>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/drivers/roster")}>Go to roster</button>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {rows.slice(0, 4).map((row) => (

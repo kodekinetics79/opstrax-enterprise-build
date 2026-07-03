@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ArrowRight, Boxes, ClipboardList, Gauge, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize, PageHeader } from "@/components/ui";
+import { ArrowRight, Boxes, ClipboardList, Gauge, Satellite, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
@@ -77,15 +77,33 @@ export function VehiclesModulePage() {
   const readiness = Math.round(num(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score) || avg(rows, "fleetReadinessScore"));
 
   const shellBanner = (
-    <PageHeader
-      eyebrow="Fleet"
-      title="Vehicles"
-      description="Split into focused subviews so users can get to the right fleet task without scrolling through one oversized page."
-      actions={<>
-        <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost">Export fleet</button>
-        <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary">Open roster <ArrowRight className="h-4 w-4" /></button>
-      </>}
-    />
+    <header className="fh-hero relative">
+      <span className="fh-hero-bar" />
+      <span className="fh-hero-glow-1" />
+      <span className="fh-hero-glow-2" />
+      <div className="relative px-7 py-6">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                <Satellite className="h-3 w-3" /> Fleet
+              </span>
+              <span className="text-[11px] font-semibold text-slate-500">Module subviews and quick links</span>
+            </div>
+            <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+              Vehicles
+            </h1>
+            <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+              Focused subviews so users get to the right fleet task without scrolling through one oversized page
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => exportCsv("vehicles", rows)} className="fh-btn-ghost">Export fleet</button>
+            <button type="button" onClick={() => navigate("/vehicles/roster")} className="fh-btn-primary">Open roster <ArrowRight className="h-3.5 w-3.5" /></button>
+          </div>
+        </div>
+      </div>
+    </header>
   );
 
   return (
@@ -156,7 +174,7 @@ export function VehiclesModulePage() {
                 <h2 className="text-lg font-semibold text-slate-900">Live fleet snapshot</h2>
                 <p className="text-sm text-slate-500">A compact summary of the live data now driving the module.</p>
               </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {rows.slice(0, 4).map((row) => (

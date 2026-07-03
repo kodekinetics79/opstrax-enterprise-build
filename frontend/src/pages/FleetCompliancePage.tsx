@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { ShieldAlert } from "lucide-react";
 import { marketPackApi } from "@/services/marketPackApi";
-import { PageHeader, KpiCard, DataTable, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { KpiCard, DataTable, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
 
 type AnyRecord = Record<string, any>;
 type Tab = "canada" | "saudi";
@@ -12,24 +13,62 @@ type Tab = "canada" | "saudi";
 export function FleetCompliancePage() {
   const [tab, setTab] = useState<Tab>("canada");
   return (
-    <div className="space-y-6">
-      <PageHeader title="Fleet Compliance" eyebrow="Market Packs" description="Market-pack readiness — Canada / North America and Saudi / GCC." />
-      <div className="flex gap-2">
-        <TabButton active={tab === "canada"} onClick={() => setTab("canada")}>Canada / North America</TabButton>
-        <TabButton active={tab === "saudi"} onClick={() => setTab("saudi")}>Saudi / GCC</TabButton>
-      </div>
+    <div className="space-y-6 pb-10">
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ShieldAlert className="h-3 w-3" /> Market Packs
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Regional compliance readiness</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Fleet Compliance
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Canada / North America and Saudi / GCC market-pack readiness
+              </p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+        <div className="grid gap-1 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setTab("canada")}
+            className={`rounded-xl px-3 py-2.5 text-left transition ${
+              tab === "canada" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+            }`}
+          >
+            <div className="text-xs font-bold uppercase tracking-[0.14em]">Canada / North America</div>
+            <div className={`mt-0.5 text-[11px] ${tab === "canada" ? "text-slate-300" : "text-slate-500"}`}>Regional compliance posture</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("saudi")}
+            className={`rounded-xl px-3 py-2.5 text-left transition ${
+              tab === "saudi" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+            }`}
+          >
+            <div className="text-xs font-bold uppercase tracking-[0.14em]">Saudi / GCC</div>
+            <div className={`mt-0.5 text-[11px] ${tab === "saudi" ? "text-slate-300" : "text-slate-500"}`}>Regional compliance posture</div>
+          </button>
+        </div>
+      </nav>
+
       {tab === "canada" ? <CanadaReadiness /> : <SaudiReadiness />}
     </div>
   );
 }
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${active ? "bg-teal-500 text-white" : "border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}>
-      {children}
-    </button>
-  );
-}
+
 
 function NotEntitled({ pack }: { pack: string }) {
   return <EmptyState title={`${pack} Market Pack not enabled`} subtitle="A Platform Admin must enable this market pack for your tenant before compliance data is available." />;
@@ -90,7 +129,7 @@ function CanadaReadiness() {
   const addMileage = async () => { await marketPackApi.createJurisdictionMileage({ provinceState: "QC", distance: "1200", taxPeriod: "2026-Q2" }); reload(); };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-4">
         <KpiCard label="Driver/Vehicle docs" value={docs.length} />
         <KpiCard label="Inspections" value={inspections.length} />
@@ -98,37 +137,69 @@ function CanadaReadiness() {
         <KpiCard label="ELD" value={(hos?.eldDevices ?? []).length ? "Registered" : "None"} />
       </div>
 
-      <Section title="Driver Qualification & Documents">
-        <div className="mb-3 flex flex-wrap gap-2">
-          <input className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" placeholder="Driver name" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
-          <select title="Document type" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.docKey} onChange={(e) => setForm({ ...form, docKey: e.target.value })}>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Driver Qualification & Documents</h2>
+            <p className="text-sm text-slate-500">Manage driver documentation and qualification records</p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100 sm:w-auto" placeholder="Driver name" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
+          <select title="Document type" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.docKey} onChange={(e) => setForm({ ...form, docKey: e.target.value })}>
             <option value="drivers_license">Driver's License</option>
             <option value="medical_certificate">Medical Certificate</option>
             <option value="endorsement">Endorsement</option>
           </select>
-          <input type="date" title="Expiry date" placeholder="Expiry date" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
-          <button onClick={addDoc} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white">Add document</button>
+          <input type="date" title="Expiry date" placeholder="Expiry date" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
+          <button onClick={addDoc} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add document</button>
         </div>
-        {docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "issuingRegion", "expiryDate", "documentStatus"]} />}
-      </Section>
+        <div className="mt-4">{docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "issuingRegion", "expiryDate", "documentStatus"]} />}</div>
+      </section>
 
-      <Section title="Vehicle Inspections / DVIR Readiness" action={<button onClick={addInspection} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white">Add inspection</button>}>
-        {inspections.length === 0 ? <EmptyState /> : <DataTable rows={inspections} columns={["vehicleLabel", "inspectionType", "status", "inspectorName", "inspectedAt"]} />}
-      </Section>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Vehicle Inspections / DVIR Readiness</h2>
+            <p className="text-sm text-slate-500">Track vehicle inspection status and DVIR compliance</p>
+          </div>
+          <button onClick={addInspection} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add inspection</button>
+        </div>
+        <div className="mt-4">{inspections.length === 0 ? <EmptyState /> : <DataTable rows={inspections} columns={["vehicleLabel", "inspectionType", "status", "inspectorName", "inspectedAt"]} />}</div>
+      </section>
 
-      <Section title="IFTA Fuel-Tax Readiness" action={<button onClick={addMileage} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white">Add mileage</button>}>
-        <p className="mb-2 text-xs text-slate-500">{ifta?.note}</p>
-        {(ifta?.mileageByJurisdiction ?? []).length === 0 ? <EmptyState title="No jurisdiction records" /> : <DataTable rows={ifta?.mileageByJurisdiction ?? []} columns={["provinceState", "country", "distance", "distanceUnit", "taxPeriod"]} />}
-      </Section>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">IFTA Fuel-Tax Readiness</h2>
+            <p className="text-sm text-slate-500">Monitor jurisdiction mileage and fuel tax compliance</p>
+          </div>
+          <button onClick={addMileage} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add mileage</button>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">{ifta?.note}</p>
+        <div className="mt-4">{(ifta?.mileageByJurisdiction ?? []).length === 0 ? <EmptyState title="No jurisdiction records" /> : <DataTable rows={ifta?.mileageByJurisdiction ?? []} columns={["provinceState", "country", "distance", "distanceUnit", "taxPeriod"]} />}</div>
+      </section>
 
-      <Section title="HOS / ELD Readiness Foundation">
-        <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{hos?.note}</p>
-        {(hos?.dutyStatusRecords ?? []).length === 0 ? <EmptyState title="No duty-status records" /> : <DataTable rows={hos?.dutyStatusRecords ?? []} columns={["driverName", "dutyStatus", "hosCycle", "logCertificationStatus", "recordedAt"]} />}
-      </Section>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">HOS / ELD Readiness Foundation</h2>
+            <p className="text-sm text-slate-500">Track hours of service and ELD device compliance</p>
+          </div>
+        </div>
+        <p className="mt-3 text-sm text-amber-600">{hos?.note}</p>
+        <div className="mt-4">{(hos?.dutyStatusRecords ?? []).length === 0 ? <EmptyState title="No duty-status records" /> : <DataTable rows={hos?.dutyStatusRecords ?? []} columns={["driverName", "dutyStatus", "hosCycle", "logCertificationStatus", "recordedAt"]} />}</div>
+      </section>
 
-      <Section title="Expiry Dashboard">
-        {expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "docKey", "severity", "message", "expiryDate"]} />}
-      </Section>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Expiry Dashboard</h2>
+            <p className="text-sm text-slate-500">Monitor upcoming document and certification expiries</p>
+          </div>
+        </div>
+        <div className="mt-4">{expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "docKey", "severity", "message", "expiryDate"]} />}</div>
+      </section>
     </div>
   );
 }
@@ -162,57 +233,71 @@ function SaudiReadiness() {
 
   const r = vat?.readiness ?? {};
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-3">
         <KpiCard label="Transport documents" value={docs.length} />
         <KpiCard label="Expiry alerts" value={expiries.length} />
         <KpiCard label="e-Invoice readiness" value={(r?.eInvoiceReadinessStatus ?? "not_ready").replace("_", " ")} />
       </div>
 
-      <Section title="VAT / e-Invoice Readiness">
-        <p className="mb-2 text-xs text-slate-500">{vat?.note}</p>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span>VAT: <b>{r?.vatNumber ?? "—"}</b></span>
-          <span>CR: <b>{r?.commercialRegistrationNo ?? "—"}</b></span>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">VAT / e-Invoice Readiness</h2>
+            <p className="text-sm text-slate-500">Monitor VAT registration and e-invoice compliance status</p>
+          </div>
+        </div>
+        <p className="mt-3 text-sm text-slate-500">{vat?.note}</p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">VAT Number</p>
+            <p className="mt-1 font-semibold text-slate-900">{r?.vatNumber ?? "—"}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Commercial Registration</p>
+            <p className="mt-1 font-semibold text-slate-900">{r?.commercialRegistrationNo ?? "—"}</p>
+          </div>
           <StatusBadge status={r?.eInvoiceReadinessStatus ?? "not_ready"} />
           <div className="flex gap-2">
             {["not_ready", "in_progress", "ready"].map((s) => (
-              <button key={s} onClick={() => setReadiness(s)} className="rounded-lg border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs">{s.replace("_", " ")}</button>
+              <button key={s} onClick={() => setReadiness(s)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50">{s.replace("_", " ")}</button>
             ))}
           </div>
         </div>
-      </Section>
+      </section>
 
-      <Section title="Transport / Compliance Documents (Hijri & Gregorian)">
-        <div className="mb-3 flex flex-wrap gap-2">
-          <input className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" placeholder="Subject / vehicle" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
-          <select title="Document type" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.documentType} onChange={(e) => setForm({ ...form, documentType: e.target.value })}>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Transport / Compliance Documents (Hijri & Gregorian)</h2>
+            <p className="text-sm text-slate-500">Manage transport permits and compliance documentation</p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100 sm:w-auto" placeholder="Subject / vehicle" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
+          <select title="Document type" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.documentType} onChange={(e) => setForm({ ...form, documentType: e.target.value })}>
             <option value="transport_permit">Transport Permit</option>
             <option value="operating_card">Operating Card</option>
             <option value="istimara">Istimara</option>
           </select>
-          <input type="date" title="Gregorian expiry" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.gregorianExpiryDate} onChange={(e) => setForm({ ...form, gregorianExpiryDate: e.target.value })} />
-          <input placeholder="Hijri expiry (1447-..)" className="rounded-lg border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-1.5 text-sm" value={form.hijriExpiryDate} onChange={(e) => setForm({ ...form, hijriExpiryDate: e.target.value })} />
-          <button onClick={addDoc} className="rounded-lg bg-teal-500 px-3 py-1.5 text-sm font-semibold text-white">Add document</button>
+          <input type="date" title="Gregorian expiry" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.gregorianExpiryDate} onChange={(e) => setForm({ ...form, gregorianExpiryDate: e.target.value })} />
+          <input placeholder="Hijri expiry (1447-..)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.hijriExpiryDate} onChange={(e) => setForm({ ...form, hijriExpiryDate: e.target.value })} />
+          <button onClick={addDoc} className="rounded-xl bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600">Add document</button>
         </div>
-        {docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "documentStatus", "hijriExpiryDate", "expiryDate"]} />}
-      </Section>
+        <div className="mt-4">{docs.length === 0 ? <EmptyState /> : <DataTable rows={docs} columns={["subjectName", "docKey", "documentNo", "documentStatus", "hijriExpiryDate", "expiryDate"]} />}</div>
+      </section>
 
-      <Section title="Expiry Dashboard">
-        {expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "docKey", "severity", "message", "expiryDate"]} />}
-      </Section>
+      <section className="panel p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Expiry Dashboard</h2>
+            <p className="text-sm text-slate-500">Monitor upcoming document and certification expiries</p>
+          </div>
+        </div>
+        <div className="mt-4">{expiries.length === 0 ? <EmptyState title="No upcoming expiries" /> : <DataTable rows={expiries} columns={["subjectName", "docKey", "severity", "message", "expiryDate"]} />}</div>
+      </section>
     </div>
   );
 }
 
-function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</h3>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
+
