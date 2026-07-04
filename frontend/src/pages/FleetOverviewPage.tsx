@@ -141,7 +141,7 @@ export function FleetOverviewPage() {
           label="Driving"
           count={counts.Driving}
           Icon={Truck}
-          accent="text-emerald-600"
+          accent="text-teal-600"
           dot="bg-emerald-500 animate-pulse"
           onClick={() => setTab("Driving")}
           active={tab === "Driving"}
@@ -150,7 +150,7 @@ export function FleetOverviewPage() {
           label="Idling"
           count={counts.Idling}
           Icon={Zap}
-          accent="text-amber-600"
+          accent="text-teal-600"
           dot="bg-amber-400"
           onClick={() => setTab("Idling")}
           active={tab === "Idling"}
@@ -159,7 +159,7 @@ export function FleetOverviewPage() {
           label="Parked"
           count={counts.Parked}
           Icon={Clock}
-          accent="text-slate-600"
+          accent="text-teal-600"
           dot="bg-slate-400"
           onClick={() => setTab("Parked")}
           active={tab === "Parked"}
@@ -168,7 +168,7 @@ export function FleetOverviewPage() {
           label="Out of Service"
           count={counts.OOS}
           Icon={ShieldAlert}
-          accent="text-red-600"
+          accent="text-teal-600"
           dot="bg-red-500 animate-pulse"
           onClick={() => setTab("OOS")}
           active={tab === "OOS"}
@@ -177,7 +177,7 @@ export function FleetOverviewPage() {
           label="Offline"
           count={counts.Offline}
           Icon={WifiOff}
-          accent="text-slate-500"
+          accent="text-teal-600"
           dot="bg-slate-300"
           onClick={() => setTab("Offline")}
           active={tab === "Offline"}
@@ -391,7 +391,7 @@ function KpiStrip({
       className={`fo-kpi-card ${active ? "fo-kpi-active" : ""}`}
     >
       <div className={`fo-kpi-icon ${active ? "fo-kpi-icon-active" : "fo-kpi-icon-inactive"}`}>
-        <Icon className={`h-5 w-5 ${active ? accent : "text-slate-400"}`} />
+        <Icon className="h-5 w-5 text-teal-600" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="fo-kpi-count">

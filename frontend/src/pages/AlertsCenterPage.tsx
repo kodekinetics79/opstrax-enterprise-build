@@ -638,43 +638,43 @@ export function AlertsCenterPage() {
 
       {/* ── KPI strip ────────────────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="ac-kpi-card ac-kpi-active">
+        <div className="fo-kpi-card fo-kpi-active">
           <div className="flex items-start gap-3">
-            <div className="ac-kpi-icon ac-kpi-icon-teal"><BellRing className="h-5 w-5" /></div>
-            <div>
-              <p className="ac-kpi-count">{summary.open}</p>
-              <p className="ac-kpi-label">Open queue</p>
-              <p className="ac-kpi-trend">{summary.critical} critical</p>
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><BellRing className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-teal-500" /><span>{summary.open}</span></div>
+              <p className="fo-kpi-label text-slate-500">Open queue</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">{summary.critical} critical</p>
             </div>
           </div>
         </div>
-        <div className="ac-kpi-card">
+        <div className="fo-kpi-card">
           <div className="flex items-start gap-3">
-            <div className="ac-kpi-icon ac-kpi-icon-amber"><Clock3 className="h-5 w-5" /></div>
-            <div>
-              <p className="ac-kpi-count">{agingOpen}</p>
-              <p className="ac-kpi-label">Aging open alerts</p>
-              <p className="ac-kpi-trend">24h+ still active</p>
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><Clock3 className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-amber-400" /><span>{agingOpen}</span></div>
+              <p className="fo-kpi-label text-slate-500">Aging open alerts</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">24h+ still active</p>
             </div>
           </div>
         </div>
-        <div className="ac-kpi-card">
+        <div className="fo-kpi-card">
           <div className="flex items-start gap-3">
-            <div className="ac-kpi-icon ac-kpi-icon-rose"><AlertTriangle className="h-5 w-5" /></div>
-            <div>
-              <p className="ac-kpi-count">{unownedOpen}</p>
-              <p className="ac-kpi-label">Unowned alerts</p>
-              <p className="ac-kpi-trend">Not yet acknowledged</p>
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><AlertTriangle className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-rose-500" /><span>{unownedOpen}</span></div>
+              <p className="fo-kpi-label text-slate-500">Unowned alerts</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">Not yet acknowledged</p>
             </div>
           </div>
         </div>
-        <div className="ac-kpi-card">
+        <div className="fo-kpi-card">
           <div className="flex items-start gap-3">
-            <div className="ac-kpi-icon ac-kpi-icon-slate"><BadgeCheck className="h-5 w-5" /></div>
-            <div>
-              <p className="ac-kpi-count">{summary.closed}/{summary.total || 1}</p>
-              <p className="ac-kpi-label">Closed today posture</p>
-              <p className="ac-kpi-trend">Closed versus total visible</p>
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><BadgeCheck className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-slate-400" /><span>{summary.closed}/{summary.total || 1}</span></div>
+              <p className="fo-kpi-label text-slate-500">Closed today posture</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">Closed versus total visible</p>
             </div>
           </div>
         </div>

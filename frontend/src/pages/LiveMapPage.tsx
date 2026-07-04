@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Camera,
   CheckCircle,
+  Clock,
   Gauge,
   Layers,
   MapPin,
@@ -333,30 +334,37 @@ export function LiveMapPage() {
   );
 }
 
-const BOARD_TONES: Record<string, { dot: string; activeBorder: string; activeBg: string; text: string }> = {
-  slate:  { dot: "bg-slate-400",   activeBorder: "border-slate-400",   activeBg: "bg-slate-50",   text: "text-slate-700" },
-  teal:   { dot: "bg-teal-500",    activeBorder: "border-teal-400",    activeBg: "bg-teal-50",    text: "text-teal-700" },
-  indigo: { dot: "bg-indigo-500",  activeBorder: "border-indigo-400",  activeBg: "bg-indigo-50",  text: "text-indigo-700" },
-  rose:   { dot: "bg-rose-500",    activeBorder: "border-rose-400",    activeBg: "bg-rose-50",    text: "text-rose-700" },
+const BOARD_TONES: Record<string, { dot: string; text: string }> = {
+  slate:  { dot: "bg-slate-400",   text: "text-slate-700" },
+  teal:   { dot: "bg-teal-500",    text: "text-teal-700" },
+  indigo: { dot: "bg-indigo-500",  text: "text-indigo-700" },
+  rose:   { dot: "bg-rose-500",    text: "text-rose-700" },
 };
 
 function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { label: string; count: number; tone: keyof typeof BOARD_TONES; meaning: string; active: boolean; onClick: () => void }) {
   const t = BOARD_TONES[tone];
+  const iconMap: Record<string, React.ElementType> = {
+    slate: Gauge, teal: Truck, indigo: Clock, rose: WifiOff,
+  };
+  const Icon = iconMap[tone] ?? Gauge;
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`lm-status-card ${active ? "lm-status-card-active" : ""}`}
+      className={`fo-kpi-card ${active ? "fo-kpi-active" : ""}`}
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={`lm-status-dot ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
-          <span className="lm-status-label">{label}</span>
-        </div>
-        <p className="mt-1 pl-[18px] lm-status-meaning">{meaning}</p>
+      <div className="fo-kpi-icon fo-kpi-icon-inactive">
+        <Icon className="h-5 w-5 text-teal-600" />
       </div>
-      <span className={`lm-status-count ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <div className="min-w-0 flex-1">
+        <div className="fo-kpi-count">
+          <span className={`fo-kpi-dot ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+          <span className={active ? t.text : "text-slate-900"}>{count}</span>
+        </div>
+        <p className={`fo-kpi-label ${active ? t.text : "text-slate-500"}`}>{label}</p>
+        <p className="mt-0.5 text-[11px] text-slate-400">{meaning}</p>
+      </div>
     </button>
   );
 }

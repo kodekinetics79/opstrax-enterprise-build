@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { cloneElement, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
-  Bot, ChevronUp, ChevronDown as ChevronDownIcon,
+  Bot, CheckCircle2, ChevronUp, ChevronDown as ChevronDownIcon,
   Loader2, Minus, Search, SlidersHorizontal,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
@@ -62,30 +62,35 @@ export function PageHeader({
    KPI CARD
    ============================================================ */
 export function KpiCard({
-  label, value, trend, status, delta,
+  label, value, trend, status, delta, icon,
 }: {
   label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string;
 }) {
-  const isCritical = /critical|overdue|breach|rejected/i.test(String(label) + String(status));
-  const isWarning  = !isCritical && /missing|anomal|unusual|pending|risk/i.test(String(label) + String(status));
+  const isReview = /review/i.test(String(status));
   const isUp   = delta?.startsWith("+") || /up|increase|improv/i.test(String(trend));
   const isDown = delta?.startsWith("-") || /down|decreas|drop/i.test(String(trend));
-  const valueColor = isCritical && Number(value) > 0
-    ? "text-red-600"
-    : isWarning && Number(value) > 0
-    ? "text-amber-700"
-    : "text-slate-900";
+  const DefaultIcon = isReview ? AlertTriangle : CheckCircle2;
 
   return (
-    <div className="panel p-6">
-      <p className="text-sm font-medium text-slate-500">{label}</p>
-      <p className={`mt-3 text-3xl font-bold tracking-tight ${valueColor}`}>{value}</p>
-      {(delta || trend) && (
-        <p className="mt-3 flex items-center gap-1 text-xs text-slate-400">
-          {isDown ? <ArrowDownRight className="h-3 w-3 text-red-400" /> : isUp ? <ArrowUpRight className="h-3 w-3 text-emerald-500" /> : null}
-          {delta ?? trend}
-        </p>
-      )}
+    <div className="fo-kpi-card">
+      <div className="fo-kpi-icon fo-kpi-icon-inactive">
+        {icon
+          ? cloneElement(icon as React.ReactElement<any>, { className: "h-5 w-5 text-teal-600" })
+          : <DefaultIcon className="h-5 w-5 text-teal-600" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="fo-kpi-count">
+          <span className={`fo-kpi-dot ${isReview ? "bg-amber-400" : "bg-teal-500"}`} />
+          <span className="text-slate-900">{value}</span>
+        </div>
+        <p className="fo-kpi-label text-slate-500">{label}</p>
+        {(trend || delta) && (
+          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
+            {isDown ? <ArrowDownRight className="h-3 w-3 text-red-400" /> : isUp ? <ArrowUpRight className="h-3 w-3 text-teal-500" /> : null}
+            {delta ?? trend}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

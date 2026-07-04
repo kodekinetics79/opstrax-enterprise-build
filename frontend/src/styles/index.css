@@ -1880,8 +1880,8 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
 }
 
 .fo-kpi-icon-inactive {
-  background: rgba(248,250,252,.8);
-  border: 1px solid rgba(226,232,240,.6);
+  background: rgba(45,212,191,.08);
+  border: 1px solid rgba(45,212,191,.15);
 }
 
 .fo-kpi-count {
