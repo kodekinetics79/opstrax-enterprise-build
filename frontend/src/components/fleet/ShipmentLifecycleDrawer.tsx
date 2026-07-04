@@ -17,6 +17,7 @@ import {
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { type Carrier, type CustomerTrackingLink, type DriverTask, type FleetShipment, fleetCommercialApi, fleetLifecycleApi, type ProofOfDelivery, type ShipmentEvent, type ShipmentStop } from '@/services/fleetTmsApi';
 import { SaudiAddressFields } from './SaudiAddressFields';
+import { Select } from '@/components/ui';
 
 interface ShipmentLifecycleDrawerProps {
   shipment: FleetShipment;
@@ -400,10 +401,10 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                     <div className="mt-4 space-y-3">
                       <label className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Stop</span>
-                        <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm text-slate-900 outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.stopId} onChange={(e) => setPodForm((current) => ({ ...current, stopId: e.target.value }))}>
+                        <Select className="w-full" value={podForm.stopId} onChange={(e) => setPodForm((current) => ({ ...current, stopId: e.target.value }))}>
                           <option value="">Select stop</option>
                           {stops.map((stop) => <option key={stop.id} value={stop.id}>{stop.sequenceNo} · {stop.locationName}</option>)}
-                        </select>
+                        </Select>
                       </label>
                       <div className="grid gap-3 md:grid-cols-2">
                         <label className="space-y-1">
@@ -412,13 +413,13 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                         </label>
                         <label className="space-y-1">
                           <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Condition</span>
-                          <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.deliveryCondition} onChange={(e) => setPodForm((current) => ({ ...current, deliveryCondition: e.target.value }))}>
+                          <Select className="w-full" value={podForm.deliveryCondition} onChange={(e) => setPodForm((current) => ({ ...current, deliveryCondition: e.target.value }))}>
                             <option>Good</option>
                             <option>Damaged</option>
                             <option>Short</option>
                             <option>Rejected</option>
                             <option>Other</option>
-                          </select>
+                          </Select>
                         </label>
                       </div>
                       <div className="grid gap-3 md:grid-cols-2">
@@ -552,12 +553,12 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="space-y-1">
                       <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Stop type</span>
-                      <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={stopForm.stopType} onChange={(e) => setStopForm((current) => ({ ...current, stopType: e.target.value }))}>
+                      <Select className="w-full" value={stopForm.stopType} onChange={(e) => setStopForm((current) => ({ ...current, stopType: e.target.value }))}>
                         <option>Pickup</option>
                         <option>Delivery</option>
                         <option>Transfer</option>
                         <option>Return</option>
-                      </select>
+                      </Select>
                     </label>
                     <label className="space-y-1">
                       <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Sequence</span>
@@ -676,12 +677,12 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                     <Link2 className="h-4 w-4 text-violet-500" />
                   </div>
                   <div className="mt-3 grid gap-3">
-                    <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={carrierId} onChange={(e) => setCarrierId(e.target.value)}>
+                    <Select className="w-full" value={carrierId} onChange={(e) => setCarrierId(e.target.value)}>
                       <option value="">Choose carrier</option>
                       {carriers.map((carrier) => (
                         <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.region}</option>
                       ))}
-                    </select>
+                    </Select>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Quoted amount</span>

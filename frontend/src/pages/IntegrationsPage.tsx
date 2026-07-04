@@ -20,7 +20,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { exportCsv, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { exportCsv, EmptyState, ErrorState, LoadingState, PageHeader, Select, StatusBadge } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   integrationsApi,
@@ -436,7 +436,7 @@ export function IntegrationsPage() {
         <>
           <div className="panel flex flex-wrap items-center gap-3">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
                 className="field w-56 pl-8 text-sm"
                 value={search}
@@ -462,9 +462,9 @@ export function IntegrationsPage() {
               ))}
             </div>
 
-            <select
+            <Select
               aria-label="Status filter"
-              className="field ml-auto w-40 text-sm"
+              className="ml-auto w-40 text-sm"
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value)}
             >
@@ -473,7 +473,7 @@ export function IntegrationsPage() {
               <option value="Pending">Pending</option>
               <option value="Error">Error</option>
               <option value="Disconnected">Disconnected</option>
-            </select>
+            </Select>
           </div>
 
           {summary.errors > 0 && (

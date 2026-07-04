@@ -5,7 +5,7 @@ import {
   Download, Fuel, Landmark,
   PenTool, Plus, TrendingDown, Truck, WalletCards, X, Zap,
 } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import {
   useCarrierDetail, useCarriers, useCarriersSummary,
   useContractDetail, useContracts, useContractsSummary,
@@ -238,9 +238,9 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           onChange={(e) => setSearch(e.target.value)}
           placeholder={`Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
         />
-        <select className="field xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <Select className="xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
-        </select>
+        </Select>
         <div className="ml-auto flex items-center gap-2">
           {kind === "fuel" && <span className="text-xs text-slate-400">Anomaly detection active</span>}
         </div>

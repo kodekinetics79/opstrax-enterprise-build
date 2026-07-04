@@ -4,7 +4,7 @@ import {
   Eye, EyeOff, Users, Clock, Filter, SortAsc, Save, Calendar,
   X, ChevronDown, ChevronRight,
 } from "lucide-react";
-import { LoadingState, EmptyState, PageHeader } from "@/components/ui";
+import { LoadingState, EmptyState, PageHeader, Select } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   useDatasets,
@@ -62,7 +62,7 @@ function FilterRow({
   const operators = field?.allowedOperators ?? [];
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <select
+      <Select
         title="Filter field"
         value={filter.field}
         onChange={(e) => onUpdate({ ...filter, field: e.target.value, operator: "equals", value: "" })}
@@ -72,8 +72,8 @@ function FilterRow({
         {dataset.fields.map((f) => (
           <option key={f.key} value={f.key}>{f.label}</option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         title="Filter operator"
         value={filter.operator}
         onChange={(e) => onUpdate({ ...filter, operator: e.target.value })}
@@ -83,7 +83,7 @@ function FilterRow({
         {operators.map((op) => (
           <option key={op} value={op}>{OPERATOR_LABELS[op] ?? op}</option>
         ))}
-      </select>
+      </Select>
       {filter.operator !== "is_empty" && filter.operator !== "is_not_empty" && (
         <input
           className="input-sm flex-1 min-w-24"
@@ -136,11 +136,11 @@ function SaveModal({
           </div>
           <div>
             <label className="label-xs">Visibility</label>
-            <select title="Visibility" className="input w-full" value={visibility} onChange={(e) => setVisibility(e.target.value as ReportVisibility)}>
+            <Select title="Visibility" className="w-full" value={visibility} onChange={(e) => setVisibility(e.target.value as ReportVisibility)}>
               <option value="private">Private — only me</option>
               <option value="role_shared">Role — users with same role</option>
               <option value="tenant_shared">Organization — all users with reports:view</option>
-            </select>
+            </Select>
           </div>
           {visibility === "role_shared" && (
             <div>
@@ -195,26 +195,26 @@ function ScheduleModal({ savedReportId, onClose }: { savedReportId: number; onCl
         <div className="space-y-3">
           <div>
             <label className="label-xs">Frequency</label>
-            <select title="Schedule frequency" className="input w-full" value={schedule} onChange={(e) => setSchedule(e.target.value as typeof schedule)}>
+            <Select title="Schedule frequency" className="w-full" value={schedule} onChange={(e) => setSchedule(e.target.value as typeof schedule)}>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="label-xs">Format</label>
-            <select title="Export format" className="input w-full" value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
+            <Select title="Export format" className="w-full" value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
               <option value="csv">CSV</option>
               <option value="xlsx">XLSX</option>
               <option value="pdf">PDF</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="label-xs">Recipient Type</label>
-            <select title="Recipient type" className="input w-full" value={recipientType} onChange={(e) => setRecipientType(e.target.value as typeof recipientType)}>
+            <Select title="Recipient type" className="w-full" value={recipientType} onChange={(e) => setRecipientType(e.target.value as typeof recipientType)}>
               <option value="roles">Roles</option>
               <option value="users">Users</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="label-xs">{recipientType === "roles" ? "Roles" : "Usernames"} (comma-separated)</label>
@@ -333,9 +333,9 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
       {/* Dataset selector */}
       <div className="panel p-4">
         <label className="label-xs mb-1">Dataset</label>
-        <select
+        <Select
           title="Select dataset"
-          className="input w-full max-w-sm"
+          className="w-full max-w-sm"
           value={selectedDataset}
           onChange={(e) => handleDatasetChange(e.target.value)}
         >
@@ -343,7 +343,7 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
           {datasets.map((d) => (
             <option key={d.key} value={d.key}>{d.label}</option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {dataset && (
@@ -408,7 +408,7 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
               <SortAsc className="h-3.5 w-3.5" />Sort
             </h3>
             <div className="flex gap-2 flex-wrap">
-              <select
+              <Select
                 title="Sort field"
                 className="input-sm"
                 value={sort?.field ?? ""}
@@ -418,12 +418,12 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
                 {dataset.fields.filter((f) => f.sortable !== false).map((f) => (
                   <option key={f.key} value={f.key}>{f.label}</option>
                 ))}
-              </select>
+              </Select>
               {sort && (
-                <select title="Sort direction" className="input-sm" value={sort.direction} onChange={(e) => setSort({ ...sort, direction: e.target.value as "asc" | "desc" })}>
+                <Select title="Sort direction" className="input-sm" value={sort.direction} onChange={(e) => setSort({ ...sort, direction: e.target.value as "asc" | "desc" })}>
                   <option value="asc">Ascending</option>
                   <option value="desc">Descending</option>
-                </select>
+                </Select>
               )}
             </div>
           </div>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { incidents as seedIncidents, drivers as seedDrivers, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -183,14 +183,14 @@ export function TrafficViolationsPage() {
               }`}>{f}</button>
           ))}
         </div>
-        <select title="Status filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400">
+        <Select title="Status filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          className="">
           <option value="All">All Statuses</option>
           <option value="Open">Open</option>
           <option value="Reviewed">Reviewed</option>
           <option value="Coaching Assigned">Coaching Assigned</option>
           <option value="Closed">Closed</option>
-        </select>
+        </Select>
         <input type="search" placeholder="Search driver, vehicle, type…" value={search} onChange={(e) => setSearch(e.target.value)}
           className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
       </div>

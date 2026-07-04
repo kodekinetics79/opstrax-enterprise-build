@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader, Select } from "@/components/ui";
 import { customers as seedCustomers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -114,14 +114,14 @@ function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">SLA Tier</label>
-            <select
+            <Select
               title="SLA Tier"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              className="w-full"
               value={form.slaTier}
               onChange={(e) => setForm((f) => ({ ...f, slaTier: e.target.value }))}
             >
               {["Standard", "Gold", "Platinum"].map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
@@ -228,17 +228,17 @@ export function CustomersPage() {
             </button>
           ))}
         </div>
-        <select
+        <Select
           title="SLA Tier filter"
           value={tierFilter}
           onChange={(e) => setTierFilter(e.target.value as typeof tierFilter)}
-          className="field w-auto py-1.5 text-sm"
+          className="w-auto py-1.5 text-sm"
         >
           <option value="All">All Tiers</option>
           <option value="Platinum">Platinum</option>
           <option value="Gold">Gold</option>
           <option value="Standard">Standard</option>
-        </select>
+        </Select>
         <input
           type="search"
           placeholder="Search by name, code, contact…"

@@ -7,7 +7,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState,
-  RiskBadge, StatusBadge, exportCsv, labelize,
+  RiskBadge, Select, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -217,20 +217,24 @@ export function JobsPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" className="fh-btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
-              <button type="button" className="fh-btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
+              <button type="button" className="fh-btn-primary cursor-pointer" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
+              <button type="button" className="fh-btn-ghost cursor-pointer" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
             </div>
           </div>
         </div>
       </header>
 
       {/* Ops intelligence bar — derived from live data, one-click triage */}
-      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 text-white sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10"><Sparkles className="h-5 w-5 text-teal-300" /></span>
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Live operations signal</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-100">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
               {slaRisk + proofPending + unassigned === 0
                 ? surface === "active-shipments"
                   ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
@@ -246,7 +250,7 @@ export function JobsPage() {
           </div>
         </div>
         {slaRisk > 0 && (
-          <button type="button" onClick={() => setStatus("SLA At Risk")} className="inline-flex items-center gap-1.5 self-start rounded-lg bg-teal-500 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-teal-400 sm:self-auto">
+          <button type="button" onClick={() => setStatus("SLA At Risk")} className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto">
             Triage at-risk jobs <ArrowRight className="h-3.5 w-3.5" />
           </button>
         )}
@@ -280,9 +284,9 @@ export function JobsPage() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 shrink-0 -translate-y-1/2 text-slate-400" />
           <input className="field h-10 pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
-        <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
+        <Select className="lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
-        </select>
+        </Select>
         <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} of {scopedRows.length} jobs</span>
       </div>
 
@@ -323,7 +327,7 @@ function Toaster({ toast, onClose }: { toast: Toast | null; onClose: () => void 
         <span className={`absolute left-0 top-0 h-full w-1 ${theme.bar}`} />
         {theme.icon}
         <p className="max-w-xs text-sm font-semibold text-slate-800">{toast.message}</p>
-        <button type="button" className="icon-btn ml-1" onClick={onClose} aria-label="Dismiss"><X className="h-4 w-4" /></button>
+        <button type="button" className="icon-btn ml-1 cursor-pointer" onClick={onClose} aria-label="Dismiss"><X className="h-4 w-4" /></button>
       </div>
     </div>
   );
@@ -335,7 +339,7 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${active ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
     >
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
       <span className={`mt-0.5 text-xl font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
@@ -364,14 +368,14 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-[3px] text-[10px] font-bold text-slate-600">Proof {String(record.proofStatus ?? "--")}</span>
               </div>
             </div>
-            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
+            <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="fh-btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
-            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
-            <button type="button" className="fh-btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
-            <button type="button" className="fh-btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
+            <button type="button" className="fh-btn-primary h-9 py-0 cursor-pointer" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 text-red-600 cursor-pointer" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
           </div>
         </div>
 
@@ -388,7 +392,7 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
                   <button
                     key={next}
                     type="button"
-                    className="fh-btn-ghost h-9 py-0"
+                    className="fh-btn-ghost h-9 py-0 cursor-pointer"
                     disabled={!canDispatch || statusPending}
                     title={!canDispatch ? "You do not have permission to perform this action." : `Move job to ${next}`}
                     onClick={() => canDispatch && onStatus(String(record.id), next)}
@@ -434,7 +438,7 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
       <form className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl" onSubmit={submit}>
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <h2 className="text-2xl font-bold text-slate-900">{form.id ? "Edit Job" : "Create Job"}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {fields.map(([key, label]) => (
@@ -445,8 +449,8 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
           ))}
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
-          <button type="button" className="fh-btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="fh-btn-primary" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
+          <button type="submit" className="fh-btn-primary cursor-pointer" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
         </div>
       </form>
     </div>

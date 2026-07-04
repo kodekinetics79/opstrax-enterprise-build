@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { campaigns as seedCampaigns } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -99,10 +99,10 @@ function CreateCampaignModal({ onClose, onSaved }: { onClose: () => void; onSave
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Channel</label>
-            <select title="Channel" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Channel" className="w-full"
               value={form.channel} onChange={(e) => setForm((f) => ({ ...f, channel: e.target.value }))}>
               {["Email", "SMS", "WhatsApp", "LinkedIn", "Multi-channel"].map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Start Date</label>

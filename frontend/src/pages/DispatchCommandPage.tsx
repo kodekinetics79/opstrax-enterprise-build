@@ -4,7 +4,7 @@ import {
   AlertTriangle, CheckCircle, ChevronRight, Clock, Compass,
   MapPin, ShieldAlert, Truck, User, XCircle, Zap,
 } from "lucide-react";
-import { DataTable, KpiCard, LoadingState, RiskBadge, StatusBadge } from "@/components/ui";
+import { DataTable, KpiCard, LoadingState, RiskBadge, Select, StatusBadge } from "@/components/ui";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -887,15 +887,15 @@ function ExceptionModal({
         <p className="text-xs text-slate-500 mb-4">Assignment #{assignmentId}</p>
         <label className="block mb-3">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Exception Type</span>
-          <select
-            className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
+          <Select
+            className="w-full"
             value={exceptionType}
             onChange={(e) => onTypeChange(e.target.value)}
           >
             {EXCEPTION_TYPES.map((t) => (
               <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="block mb-4">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Notes</span>

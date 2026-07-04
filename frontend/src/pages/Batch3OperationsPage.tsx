@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, Download, FilePlus2, Hammer, PenTool, Plus, Sparkles, Wrench, X } from "lucide-react";
-import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 import {
   useDocumentDetail,
@@ -248,9 +248,9 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       </div>
       <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
         <input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by entity, status, country, vendor, risk...`} />
-        <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <Select className="xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option>All</option><option>Open</option><option>Active</option><option>Scheduled</option><option>In Progress</option><option>Pending</option><option>Overdue</option><option>Expired</option><option>Completed</option>
-        </select>
+        </Select>
         <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
       </div>
       {!rows.length ? (

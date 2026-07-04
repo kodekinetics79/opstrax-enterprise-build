@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, MessageCircle, MessageSquare, Radio, Send, Users, X } from "lucide-react";
-import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
+import { ErrorState, KpiCard, LoadingState, PageHeader, Select, StatusBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { apiClient } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
@@ -161,16 +161,16 @@ export function DriverMessagingPage() {
             <h2 className="text-lg font-semibold text-slate-900">Compose Message</h2>
             <label>
               <span className="field-label">Recipient Driver</span>
-              <select className="field mt-1" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required>
+              <Select className="mt-1 w-full" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required>
                 <option value="">Select driver…</option>
                 {MOCK_DRIVERS.map((d) => <option key={d}>{d}</option>)}
-              </select>
+              </Select>
             </label>
             <label>
               <span className="field-label">Channel</span>
-              <select className="field mt-1" value={composeForm.channel} onChange={(e) => setComposeForm((f) => ({ ...f, channel: e.target.value }))}>
+              <Select className="mt-1 w-full" value={composeForm.channel} onChange={(e) => setComposeForm((f) => ({ ...f, channel: e.target.value }))}>
                 <option>In-App</option><option>SMS</option>
-              </select>
+              </Select>
             </label>
             <label>
               <span className="field-label">Subject</span>
@@ -304,14 +304,14 @@ export function DriverMessagingPage() {
             <h3 className="section-title">Send Broadcast</h3>
             <label>
               <span className="field-label">Recipient Group</span>
-              <select className="field mt-1" value={broadcastForm.group} onChange={(e) => setBroadcastForm((f) => ({ ...f, group: e.target.value }))}>
+              <Select className="mt-1 w-full" value={broadcastForm.group} onChange={(e) => setBroadcastForm((f) => ({ ...f, group: e.target.value }))}>
                 <option>All Active Drivers</option>
                 <option>All Drivers</option>
                 <option>Depot — Morning Shift</option>
                 <option>Depot — Afternoon Shift</option>
                 <option>Long-Haul Drivers</option>
                 <option>Local Delivery Drivers</option>
-              </select>
+              </Select>
             </label>
             <label>
               <span className="field-label">Subject</span>

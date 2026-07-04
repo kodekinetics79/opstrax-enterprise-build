@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Bell, Building2, Check, Code2, ExternalLink, Globe, Key, Languages, Lock, Mail, Phone, Settings, Shield, Webhook } from "lucide-react";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, Select } from "@/components/ui";
 import { useLocalizationSettings, useUpdateLocaleSettings, useUpdateUserPreferences } from "@/hooks/useBatch6";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -199,9 +199,9 @@ export function SettingsPage() {
     return (
       <div className="grid grid-cols-[1fr_1.5fr] items-center gap-4 border-b border-slate-100 pb-3">
         <label className="text-sm text-slate-600">{label}</label>
-        <select aria-label={label} className="field w-full" value={value} onChange={(e) => onChange(e.target.value)} disabled={!canUpdateSettings}>
+        <Select aria-label={label} className="w-full" value={value} onChange={(e) => onChange(e.target.value)} disabled={!canUpdateSettings}>
           {options.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        </Select>
       </div>
     );
   }
@@ -257,9 +257,9 @@ export function SettingsPage() {
                 </div>
                 <div>
                   <label className="text-xs text-slate-500">Country</label>
-                  <select aria-label="Country" className="field mt-1 w-full" value={companyForm.country} onChange={(e) => setCompanyForm((f) => ({ ...f, country: e.target.value }))} disabled={!canUpdateSettings}>
+                  <Select aria-label="Country" className="mt-1 w-full" value={companyForm.country} onChange={(e) => setCompanyForm((f) => ({ ...f, country: e.target.value }))} disabled={!canUpdateSettings}>
                     {["US","CA","SA","AE","PK","GB"].map((c) => <option key={c}>{c}</option>)}
-                  </select>
+                  </Select>
                 </div>
               </div>
               <TextField label="Phone"    value={companyForm.phone}        onChange={(v) => setCompanyForm((f) => ({ ...f, phone: v }))}        type="tel" />

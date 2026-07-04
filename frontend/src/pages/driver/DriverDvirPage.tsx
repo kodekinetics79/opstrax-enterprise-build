@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ClipboardList, XCircle } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { Select } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type ChecklistResult = "pass" | "fail" | "na";
@@ -139,15 +140,15 @@ export function DriverDvirPage() {
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Inspection Type</label>
-            <select
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+            <Select
+              className="w-full"
               value={inspectionType}
               onChange={e => setInspectionType(e.target.value)}
             >
               <option value="pre_trip">Pre-trip</option>
               <option value="post_trip">Post-trip</option>
               <option value="en_route">En Route</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Odometer (mi)</label>
@@ -218,8 +219,8 @@ export function DriverDvirPage() {
                     </div>
                     {item.result === "fail" && (
                       <div className="space-y-2">
-                        <select
-                          className="w-full rounded-xl border border-red-200 px-3 py-2 text-sm"
+                        <Select
+                          className="w-full"
                           value={item.severity}
                           onChange={e => setItemSeverity(globalIdx, e.target.value)}
                         >
@@ -227,7 +228,7 @@ export function DriverDvirPage() {
                           <option value="Medium">Medium — monitor closely</option>
                           <option value="High">High — fix at next stop</option>
                           <option value="Critical">Critical — out of service immediately</option>
-                        </select>
+                        </Select>
                         <textarea
                           className="w-full rounded-xl border border-red-200 px-3 py-2 text-sm"
                           rows={2}

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bot, Send, Sparkles, User } from "lucide-react";
-import { AiInsightCard, LoadingState, exportCsv } from "@/components/ui";
+import { AiInsightCard, LoadingState, Select, exportCsv } from "@/components/ui";
 import { aiApi } from "@/services/aiApi";
 import type { AnyRecord } from "@/types";
 
@@ -319,16 +319,16 @@ export function AiCopilotPage() {
         <div className="panel p-4 shrink-0">
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs text-slate-500">Category:</span>
-            <select
+            <Select
               title="Prompt category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="text-xs border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400"
+              className="text-xs"
             >
               {STARTERS.map((s) => (
                 <option key={s.category} value={s.category}>{s.category}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="flex gap-3">
             <textarea

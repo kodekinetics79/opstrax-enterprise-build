@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   AiInsightCard, EmptyState, ErrorState, exportCsv, KpiCard,
-  LoadingState, PageHeader, StatusBadge,
+  LoadingState, PageHeader, Select, StatusBadge,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { customerVisibilityApi } from "@/services/customerVisibilityApi";
@@ -299,8 +299,8 @@ export function CustomerVisibilityPage() {
           {rows.length > 0 && (
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-slate-700">Select shipment:</label>
-              <select
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              <Select
+                className=""
                 value={selectedId ?? ""}
                 onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : null)}
               >
@@ -310,7 +310,7 @@ export function CustomerVisibilityPage() {
                     {String(r["shipmentNumber"] ?? r["shipmentId"])} — {String(r["customerName"] ?? "")}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
 
@@ -497,8 +497,8 @@ export function CustomerVisibilityPage() {
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-medium text-slate-600 block mb-1">Expiry (days)</label>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  <Select
+                    className="w-full"
                     value={expiryDays}
                     onChange={(e) => setExpiryDays(Number(e.target.value))}
                   >
@@ -507,7 +507,7 @@ export function CustomerVisibilityPage() {
                     <option value={30}>30 days (default)</option>
                     <option value={60}>60 days</option>
                     <option value={90}>90 days</option>
-                  </select>
+                  </Select>
                 </div>
                 <p className="text-xs text-slate-500">
                   A unique, expiring, revocable tracking token will be generated for this shipment. The customer sees shipment status, ETA, timeline, and proof — no internal operational data is exposed.

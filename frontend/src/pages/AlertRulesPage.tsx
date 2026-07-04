@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCircle2, Download, Edit3, Pause, Play, Plus, ShieldAlert, Trash2, X, Zap } from "lucide-react";
-import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
+import { ErrorState, KpiCard, LoadingState, PageHeader, Select, StatusBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
@@ -119,9 +119,9 @@ export function AlertRulesPage() {
             </button>
           ))}
         </div>
-        <select aria-label="Filter by status" className="field ml-auto w-36 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <Select aria-label="Filter by status" className="ml-auto w-36 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option>All</option><option>Active</option><option>Paused</option>
-        </select>
+        </Select>
         <input className="field w-52 text-sm" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search rules…" />
       </div>
 
@@ -230,13 +230,13 @@ function RuleModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; s
             <label key={key} className={key === "name" || key === "recipients" ? "md:col-span-2" : ""}>
               <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}{note ? <span className="ml-1 normal-case text-slate-400">({note})</span> : ""}</span>
               {key === "category" ? (
-                <select className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))}>
+                <Select className="w-full" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))}>
                   {CATEGORIES.filter((c) => c !== "All").map((c) => <option key={c}>{c}</option>)}
-                </select>
+                </Select>
               ) : key === "priority" ? (
-                <select className="field" value={String(form[key] ?? "Medium")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))}>
+                <Select className="w-full" value={String(form[key] ?? "Medium")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))}>
                   {["Critical","High","Medium","Low"].map((p) => <option key={p}>{p}</option>)}
-                </select>
+                </Select>
               ) : (
                 <input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} required={key !== "recipients"} />
               )}

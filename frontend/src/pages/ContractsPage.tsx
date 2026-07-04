@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { contracts as seedContracts } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -102,14 +102,14 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Rate Type</label>
-            <select
+            <Select
               title="Rate Type"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              className="w-full"
               value={form.rateType}
               onChange={(e) => setForm((f) => ({ ...f, rateType: e.target.value }))}
             >
               {["FTL", "LTL", "Per KM", "Fixed Trip", "Zone Based", "Cold Chain"].map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
@@ -221,17 +221,17 @@ export function ContractsPage() {
             </button>
           ))}
         </div>
-        <select
+        <Select
           title="Risk filter"
           value={riskFilter}
           onChange={(e) => setRiskFilter(e.target.value as typeof riskFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+          className=""
         >
           <option value="All">All Risk</option>
           <option value="High">High Risk</option>
           <option value="Medium">Medium Risk</option>
           <option value="Low">Low Risk</option>
-        </select>
+        </Select>
         <input
           type="search"
           placeholder="Search contracts, customers…"

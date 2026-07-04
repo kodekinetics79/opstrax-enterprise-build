@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BadgeCheck, ChevronRight, CloudLightning, FileText, Globe, RefreshCw, ShieldCheck, Sparkles, Truck } from 'lucide-react';
 import { fleetReadinessApi, type FleetReadinessDocument, type FleetReadinessDocumentRequest, type FleetReadinessExpiry, type FleetInvoiceReadySummary, type SaudiRegionReference } from '@/services/fleetTmsApi';
 import { notifyApiError } from '@/services/fleetTmsApi';
+import { Select } from '@/components/ui';
 
 const initialForm: FleetReadinessDocumentRequest = {
   kind: 'Compliance',
@@ -288,14 +289,14 @@ export function FleetSaudiReadinessPage() {
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="Kind" required>
-                <select className="input w-full" value={form.kind} onChange={(e) => setForm((x) => ({ ...x, kind: e.target.value }))}>
+                <Select className="w-full" value={form.kind} onChange={(e) => setForm((x) => ({ ...x, kind: e.target.value }))}>
                   <option>Compliance</option>
                   <option>Transport</option>
                   <option>Driver</option>
-                </select>
+                </Select>
               </Field>
               <Field label="Subject Type" required>
-                <select className="input w-full" value={form.subjectType} onChange={(e) => setForm((x) => ({ ...x, subjectType: e.target.value }))}>
+                <Select className="w-full" value={form.subjectType} onChange={(e) => setForm((x) => ({ ...x, subjectType: e.target.value }))}>
                   <option>Branch</option>
                   <option>Carrier</option>
                   <option>Shipment</option>
@@ -303,7 +304,7 @@ export function FleetSaudiReadinessPage() {
                   <option>Vehicle</option>
                   <option>Customer</option>
                   <option>Location</option>
-                </select>
+                </Select>
               </Field>
               <Field label="Subject Name" required>
                 <input className="input w-full" value={form.subjectName} onChange={(e) => setForm((x) => ({ ...x, subjectName: e.target.value }))} placeholder="Riyadh HQ" />

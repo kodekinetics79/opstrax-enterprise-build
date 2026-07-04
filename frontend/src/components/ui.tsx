@@ -2,7 +2,7 @@ import { cloneElement, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
-  Bot, CheckCircle2, ChevronUp, ChevronDown as ChevronDownIcon,
+  Bot, CheckCircle2, ChevronDown, ChevronUp,
   Loader2, Minus, Search, SlidersHorizontal,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
@@ -91,6 +91,27 @@ export function KpiCard({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SELECT  (premium dropdown)
+   ============================================================ */
+export function Select({
+  children,
+  className = "",
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
+  return (
+    <div className="relative inline-flex">
+      <select
+        {...props}
+        className={`w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm transition cursor-pointer focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      >
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
     </div>
   );
 }
@@ -295,7 +316,7 @@ export function DataTable({
                         {isActive
                           ? sortDir === "asc"
                             ? <ChevronUp className="h-3 w-3" />
-                            : <ChevronDownIcon className="h-3 w-3" />
+                            : <ChevronDown className="h-3 w-3" />
                           : <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-40" />}
                       </span>
                     </span>

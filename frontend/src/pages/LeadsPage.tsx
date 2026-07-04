@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { leads as seedLeads } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -107,17 +107,17 @@ function CreateLeadModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Source</label>
-            <select title="Lead source" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Lead source" className="w-full"
               value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}>
               {["Referral", "LinkedIn", "Campaign", "Inbound", "Cold Call", "Conference"].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Required Service</label>
-            <select title="Required service" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Required service" className="w-full"
               value={form.requiredService} onChange={(e) => setForm((f) => ({ ...f, requiredService: e.target.value }))}>
               {["FTL", "LTL", "Last Mile", "Reefer FTL", "Flatbed", "Temperature Controlled", "Cross Dock"].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}

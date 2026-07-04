@@ -17,7 +17,7 @@ import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBat
 import { adminApi } from "@/services/adminApi";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, LoadingState, PageHeader, Select, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "settings" | "audit";
@@ -380,17 +380,17 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
-            <select className="field" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <Select className="w-36" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
               <option value="">All roles</option>
               {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
-            </select>
-            <select className="field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            </Select>
+            <Select className="w-36" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
-            </select>
+            </Select>
             <button className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
               <X className="h-4 w-4" />
               Clear
@@ -625,15 +625,15 @@ export function AdminPage() {
               <div><label className="label">Email</label><input className="field w-full" value={String(userForm.email ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, email: e.target.value }))} /></div>
               <div>
                 <label className="label">Role</label>
-                <select className="field w-full" value={String(userForm.roleName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, roleName: e.target.value, roleId: "" }))}>
+                <Select className="w-full" value={String(userForm.roleName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, roleName: e.target.value, roleId: "" }))}>
                   {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="label">Status</label>
-                <select className="field w-full" value={String(userForm.status ?? "Active")} onChange={(e) => setUserForm((f) => ({ ...f, status: e.target.value }))}>
+                <Select className="w-full" value={String(userForm.status ?? "Active")} onChange={(e) => setUserForm((f) => ({ ...f, status: e.target.value }))}>
                   {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="label">Password</label>
@@ -665,9 +665,9 @@ export function AdminPage() {
               <div><label className="label">Role Name</label><input className="field w-full" value={String(roleForm.name ?? "")} onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} /></div>
               <div>
                 <label className="label">Scope</label>
-                <select className="field w-full" value={String(roleForm.scope ?? "Tenant")} onChange={(e) => setRoleForm((f) => ({ ...f, scope: e.target.value }))}>
+                <Select className="w-full" value={String(roleForm.scope ?? "Tenant")} onChange={(e) => setRoleForm((f) => ({ ...f, scope: e.target.value }))}>
                   {["Platform", "Tenant", "Customer", "Partner"].map((scope) => <option key={scope} value={scope}>{scope}</option>)}
-                </select>
+                </Select>
               </div>
             </div>
             <div className="max-h-[48vh] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/50 p-4">

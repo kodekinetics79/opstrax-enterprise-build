@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, MapPin, Plus, Route, Sparkles, X } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, KpiCard, LoadingState, RiskBadge, Select, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { useRouteDetail, useRoutes, useRouteSummary } from "@/hooks/useBatch2";
 import { routesApi } from "@/services/routesApi";
 import type { AnyRecord } from "@/types";
@@ -66,7 +66,7 @@ export function RoutePlanningPage() {
     <div className="grid gap-4 md:grid-cols-5">
       {[["Total Routes Today","totalRoutesToday"],["Active Routes","activeRoutes"],["Planned Routes","plannedRoutes"],["Completed Routes","completedRoutes"],["Delayed Routes","delayedRoutes"],["Avg Stops","averageStopsPerRoute"],["Avg Route ETA","averageRouteEta"],["Efficiency","routeEfficiencyScore"],["High-Risk","highRiskRoutes"],["Cost Estimate","routeCostEstimate"]].map(([label,key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={<Route />} status={/Risk|Delayed/.test(label) ? "Review" : "Active"} />)}
     </div>
-    <div className="panel flex flex-col gap-3 p-4 lg:flex-row"><input className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." /><select className="field lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option></select><span className="badge">Route replay available</span><span className="badge">Cost leakage by route</span></div>
+    <div className="panel flex flex-col gap-3 p-4 lg:flex-row"><input className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." /><Select className="lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option></Select><span className="badge">Route replay available</span><span className="badge">Cost leakage by route</span></div>
     <DataTable rows={rows} columns={["routeCode", "routeName", "region", "driverName", "vehicleCode", "stops", "plannedStart", "plannedEnd", "status", "estimatedDurationMinutes", "estimatedDistance", "efficiencyScore", "slaRisk", "recommendedAction"]} onSelect={setSelected} />
     <RouteDrawer detail={detail.data} onClose={() => setSelected(null)} onEdit={(r) => setEditing(r)} onAddStop={() => setStopEditing({ stopType: "Drop-off", status: "Pending", proofStatus: "Pending" })} onOptimize={(id) => optimize.mutate(id)} optimizeResult={optimize.data} />
     {editing ? <Modal title={editing.id ? "Edit Route" : "Create Route"} fields={routeFields} initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(p) => save.mutate(p)} /> : null}

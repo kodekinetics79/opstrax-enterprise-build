@@ -31,6 +31,7 @@ import {
   KpiCard,
   PageHeader,
   RiskBadge,
+  Select,
   StatusBadge,
   LoadingState,
 } from "@/components/ui";
@@ -498,7 +499,7 @@ function ModuleToolbar({ search, setSearch, filter, setFilter }: { search: strin
   return (
     <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center lg:justify-between">
       <div className="relative min-w-0 flex-1 lg:max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input className="field pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search accounts, loads, routes, IDs..." />
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -1178,19 +1179,19 @@ function PriceSimulationPage() {
             ))}
             <label className="text-sm font-semibold text-slate-700">
               Vehicle Type
-              <select className="field mt-1.5" value={vehicleType} onChange={(event) => setVehicleType(event.target.value)}>
+              <Select className="mt-1.5 w-full" value={vehicleType} onChange={(event) => setVehicleType(event.target.value)}>
                 <option>Reefer</option>
                 <option>Dry Van</option>
                 <option>Flatbed</option>
                 <option>Last-mile Van</option>
-              </select>
+              </Select>
             </label>
             <label className="text-sm font-semibold text-slate-700">
               Urgency
-              <select className="field mt-1.5" value={urgency} onChange={(event) => setUrgency(event.target.value)}>
+              <Select className="mt-1.5 w-full" value={urgency} onChange={(event) => setUrgency(event.target.value)}>
                 <option>Standard</option>
                 <option>Express</option>
-              </select>
+              </Select>
             </label>
           </div>
         </div>

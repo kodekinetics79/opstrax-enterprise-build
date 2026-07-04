@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { LoadingState } from "@/components/ui";
+import { LoadingState, Select } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Seed ─────────────────────────────────────────────────────────────────────
@@ -183,12 +183,12 @@ export function FeatureFlagsPage() {
               }`}>{cat}</button>
           ))}
         </div>
-        <select title="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "All" | "Enabled" | "Disabled")}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400">
+        <Select title="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "All" | "Enabled" | "Disabled")}
+          className="">
           <option value="All">All Statuses</option>
           <option value="Enabled">Enabled</option>
           <option value="Disabled">Disabled</option>
-        </select>
+        </Select>
         <input type="search" placeholder="Search flag name or key…" value={search} onChange={(e) => setSearch(e.target.value)}
           className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56" />
       </div>

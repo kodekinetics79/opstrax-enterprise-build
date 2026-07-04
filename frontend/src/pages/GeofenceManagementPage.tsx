@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
@@ -168,10 +168,10 @@ function GeofenceModal({
         {isEdit && (
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-700">Status</label>
-            <select className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <Select className="w-32" value={status} onChange={(e) => setStatus(e.target.value)}>
               <option>Active</option>
               <option>Inactive</option>
-            </select>
+            </Select>
           </div>
         )}
         <div className="flex justify-end gap-2 pt-1">

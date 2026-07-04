@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
@@ -388,7 +388,7 @@ export function IotDevicesPage() {
       <div className="panel space-y-4 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="relative xl:min-w-[360px]">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
               className="field w-full pl-9"
               value={search}
@@ -599,14 +599,14 @@ export function IotDevicesPage() {
           busy={assignMut.isPending}
         >
           <FormField label="Vehicle">
-            <select className="field w-full" value={assignVehicleCode} onChange={(event) => setAssignVehicleCode(event.target.value)} required>
+            <Select className="w-full" value={assignVehicleCode} onChange={(event) => setAssignVehicleCode(event.target.value)} required>
               <option value="">Select a vehicle</option>
               {developmentFleetSeedData.vehicles.map((vehicle) => (
                 <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.vehicleCode ?? vehicle.vehicleId)}>
                   {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
                 </option>
               ))}
-            </select>
+            </Select>
           </FormField>
         </ModalForm>
       ) : null}

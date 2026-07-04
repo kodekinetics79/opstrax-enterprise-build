@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { marketPackApi } from "@/services/marketPackApi";
-import { KpiCard, DataTable, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { KpiCard, DataTable, LoadingState, ErrorState, EmptyState, Select, StatusBadge } from "@/components/ui";
 
 type AnyRecord = Record<string, any>;
 type Tab = "canada" | "saudi";
@@ -146,11 +146,11 @@ function CanadaReadiness() {
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
           <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100 sm:w-auto" placeholder="Driver name" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
-          <select title="Document type" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.docKey} onChange={(e) => setForm({ ...form, docKey: e.target.value })}>
+          <Select title="Document type" className="sm:w-auto" value={form.docKey} onChange={(e) => setForm({ ...form, docKey: e.target.value })}>
             <option value="drivers_license">Driver's License</option>
             <option value="medical_certificate">Medical Certificate</option>
             <option value="endorsement">Endorsement</option>
-          </select>
+          </Select>
           <input type="date" title="Expiry date" placeholder="Expiry date" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
           <button onClick={addDoc} className="fh-btn-primary">Add document</button>
         </div>
@@ -275,11 +275,11 @@ function SaudiReadiness() {
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
           <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100 sm:w-auto" placeholder="Subject / vehicle" value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} />
-          <select title="Document type" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.documentType} onChange={(e) => setForm({ ...form, documentType: e.target.value })}>
+          <Select title="Document type" className="sm:w-auto" value={form.documentType} onChange={(e) => setForm({ ...form, documentType: e.target.value })}>
             <option value="transport_permit">Transport Permit</option>
             <option value="operating_card">Operating Card</option>
             <option value="istimara">Istimara</option>
-          </select>
+          </Select>
           <input type="date" title="Gregorian expiry" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.gregorianExpiryDate} onChange={(e) => setForm({ ...form, gregorianExpiryDate: e.target.value })} />
           <input placeholder="Hijri expiry (1447-..)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100" value={form.hijriExpiryDate} onChange={(e) => setForm({ ...form, hijriExpiryDate: e.target.value })} />
           <button onClick={addDoc} className="fh-btn-primary">Add document</button>

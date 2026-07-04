@@ -10,7 +10,7 @@ import { driversApi } from "@/services/driversApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
-import { exportCsv, labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, labelize, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 /* ------------------------------------------------------------------ helpers */
@@ -487,11 +487,11 @@ function VehicleFormModal({ title, initial, saving, onClose, onSave }: { title: 
             <label key={f.key} className="block">
               <span className="mb-1.5 block text-xs font-semibold text-slate-600">{f.label}{("required" in f && f.required) ? <span className="text-rose-500"> *</span> : null}</span>
               {"options" in f && f.options ? (
-                <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+                <Select className="w-full"
                   required={"required" in f && f.required} value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))}>
                   <option value="">Select</option>
                   {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
+                </Select>
               ) : (
                 <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
                   type={"type" in f && f.type === "number" ? "number" : "text"} required={"required" in f && f.required}

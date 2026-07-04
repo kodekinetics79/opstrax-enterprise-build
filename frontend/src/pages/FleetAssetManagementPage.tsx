@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Archive, Barcode, Boxes, CheckCheck, Layers3, SquareStack, Truck } from 'lucide-react';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, fleetCommercialApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
+import { Select } from '@/components/ui';
 
 type AssetDetail = {
   asset: Asset;
@@ -287,9 +288,9 @@ export function FleetAssetManagementPage() {
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Create asset</p>
                 <h2 className="mt-2 text-2xl font-black text-slate-950">Inventory intake</h2>
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                  <select value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400 sm:col-span-2">
+                  <Select value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400 sm:col-span-2">
                     {assetTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
-                  </select>
+                  </Select>
                   <input value={forms.assetTag} onChange={(e) => setForms((current) => ({ ...current, assetTag: e.target.value }))} placeholder="Asset tag" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                   <input value={forms.assetName} onChange={(e) => setForms((current) => ({ ...current, assetName: e.target.value }))} placeholder="Asset name" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                   <input value={forms.assetLocation} onChange={(e) => setForms((current) => ({ ...current, assetLocation: e.target.value }))} placeholder="Location" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
@@ -355,13 +356,13 @@ export function FleetAssetManagementPage() {
                 <input value={forms.assignName} onChange={(e) => setForms((current) => ({ ...current, assignName: e.target.value }))} placeholder="Assignee name" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <input value={forms.assignLocation} onChange={(e) => setForms((current) => ({ ...current, assignLocation: e.target.value }))} placeholder="Current location" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
+                  <Select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
                     {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
-                  </select>
-                  <select value={selectedCarrierId} onChange={(e) => setSelectedCarrierId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
+                  </Select>
+                  <Select value={selectedCarrierId} onChange={(e) => setSelectedCarrierId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
                     <option value="">No carrier</option>
                     {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button onClick={() => assign('checkOut')} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500">

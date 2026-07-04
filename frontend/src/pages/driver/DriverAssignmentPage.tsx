@@ -5,6 +5,7 @@ import {
   MapPin, Package, X, XCircle,
 } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { Select } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -250,15 +251,15 @@ export function DriverAssignmentPage() {
             </div>
             <div>
               <label className="text-xs font-bold text-slate-500 block mb-1">Type</label>
-              <select
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+              <Select
+                className="w-full"
                 value={exceptionType}
                 onChange={(e) => setExceptionType(e.target.value)}
               >
                 {EXCEPTION_TYPES.map(t => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs font-bold text-slate-500 block mb-1">Notes</label>

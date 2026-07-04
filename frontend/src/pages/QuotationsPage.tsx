@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { quotations as seedQuotations } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -105,10 +105,10 @@ function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
-            <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Currency" className="w-full"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
               {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}

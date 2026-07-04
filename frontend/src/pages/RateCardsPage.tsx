@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
 import { rateCards as seedRateCards } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -103,17 +103,17 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Vehicle Type</label>
-            <select title="Vehicle Type" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Vehicle Type" className="w-full"
               value={form.vehicleType} onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}>
               {["Dry Van", "Reefer", "Last-mile Van", "Flatbed", "Box Truck"].map((t) => <option key={t}>{t}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Pricing Method</label>
-            <select title="Pricing Method" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Pricing Method" className="w-full"
               value={form.pricingMethod} onChange={(e) => setForm((f) => ({ ...f, pricingMethod: e.target.value }))}>
               {["Per KM", "Fixed Trip", "Zone Based", "Per Pallet", "Weight Based"].map((m) => <option key={m}>{m}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Fuel Surcharge</label>
@@ -122,10 +122,10 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
-            <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Currency" className="w-full"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
               {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}

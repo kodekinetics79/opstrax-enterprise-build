@@ -4,6 +4,7 @@ import {
 } from "lucide-react";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
+import { Select } from "@/components/ui";
 import {
   useAuditLogs, useAuditExportRequests, useCreateAuditExport, useAuditAiRecs,
 } from "@/hooks/useBatch7";
@@ -116,7 +117,7 @@ export function AuditLogsPage() {
           {/* Filters */}
           <div className="flex flex-wrap gap-2">
             <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input
                 className="field w-full pl-9 text-sm"
                 placeholder="Search actor, entity, action…"
@@ -126,15 +127,15 @@ export function AuditLogsPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <Filter className="h-3.5 w-3.5 text-slate-500" />
-              <select className="field text-sm" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
+              <Select className="text-sm w-44" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
                 <option value="">All modules</option>
                 {MODULE_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              </Select>
             </div>
-            <select className="field text-sm" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
+            <Select className="text-sm w-44" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
               <option value="">All severities</option>
               {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
             {(search || filterModule || filterSev) && (
               <button className="icon-btn" onClick={() => { setSearch(""); setFilterModule(""); setFilterSev(""); }}>
                 <X className="h-3.5 w-3.5" />
@@ -284,9 +285,9 @@ export function AuditLogsPage() {
                 <div><label className="label">To</label><input name="end" type="date" className="field w-full" /></div>
               </div>
               <div><label className="label">Format</label>
-                <select name="format" className="field w-full">
+                <Select name="format" className="w-full">
                   {["CSV", "PDF", "Excel", "JSON"].map((f) => <option key={f}>{f}</option>)}
-                </select>
+                </Select>
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" className="btn-ghost flex-1" onClick={() => setExportOpen(false)}>Cancel</button>
