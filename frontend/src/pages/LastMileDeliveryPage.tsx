@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MapPin } from "lucide-react";
+import { MapPin, Search, Truck } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
@@ -88,35 +88,37 @@ function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
     "bg-slate-300";
 
   return (
-    <div className={`flex gap-3 relative ${index === 0 ? "" : ""}`}>
+    <div className={`flex gap-4 relative ${isDone ? "opacity-60" : ""}`}>
       {/* Timeline spine */}
-      <div className="flex flex-col items-center">
-        <div className={`w-3 h-3 rounded-full shrink-0 mt-0.5 ${dotColor}`} />
+      <div className="flex flex-col items-center pt-4">
+        <div className={`w-3 h-3 rounded-full shrink-0 ring-4 ring-white ${dotColor}`} />
         <div className="w-px flex-1 bg-slate-200 mt-1" />
       </div>
 
-      <div className={`pb-4 flex-1 min-w-0 ${isDone ? "opacity-60" : ""}`}>
-        <div className="flex items-start justify-between gap-2 flex-wrap">
-          <div>
-            <span className="text-xs font-semibold text-slate-500">#{String(stop.stopSequence)} · {String(stop.stopType ?? "Delivery")}</span>
-            <p className="text-sm font-medium text-slate-900 mt-0.5">{String(stop.customerName ?? "Customer")}</p>
-            <p className="text-xs text-slate-500 mt-0.5">{String(stop.address ?? "Address")}</p>
+      <div className="pb-4 flex-1 min-w-0">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm cursor-pointer transition hover:shadow-md hover:border-slate-300">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div>
+              <span className="text-xs font-semibold text-slate-500">#{String(stop.stopSequence)} · {String(stop.stopType ?? "Delivery")}</span>
+              <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(stop.customerName ?? "Customer")}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{String(stop.address ?? "Address")}</p>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <StatusBadge status={stop.status} />
+              {proof === "Captured" && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 border border-teal-200 text-teal-700 font-medium">POD ✓</span>
+              )}
+              {proof === "Pending" && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">POD pending</span>
+              )}
+            </div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <StatusBadge status={stop.status} />
-            {proof === "Captured" && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 border border-teal-200 text-teal-700 font-medium">POD ✓</span>
-            )}
-            {proof === "Pending" && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">POD pending</span>
-            )}
+          <div className="flex gap-4 mt-2 text-xs text-slate-400">
+            {stop.eta ? <span>ETA {String(stop.eta)}</span> : null}
+            {stop.timeWindowStart ? <span>Window {String(stop.timeWindowStart)}–{String(stop.timeWindowEnd ?? "")}</span> : null}
           </div>
+          {stop.notes ? <p className="text-xs text-slate-500 mt-1 italic">{String(stop.notes)}</p> : null}
         </div>
-        <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
-          {stop.eta ? <span>ETA {String(stop.eta)}</span> : null}
-          {stop.timeWindowStart ? <span>Window {String(stop.timeWindowStart)}–{String(stop.timeWindowEnd ?? "")}</span> : null}
-        </div>
-        {stop.notes ? <p className="text-xs text-slate-500 mt-1 italic">{String(stop.notes)}</p> : null}
       </div>
     </div>
   );
@@ -145,8 +147,8 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
   return (
     <button
       type="button"
-      className={`w-full text-left rounded-2xl border p-4 transition-colors hover:bg-slate-50 ${
-        selected ? "border-teal-400 bg-teal-50" : "border-slate-200 bg-white"
+      className={`cursor-pointer w-full text-left rounded-2xl border p-4 transition-all hover:shadow-md ${
+        selected ? "border-teal-400 bg-teal-50 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white shadow-sm hover:border-slate-300"
       }`}
       onClick={onSelect}
     >
@@ -299,16 +301,16 @@ export function LastMileDeliveryPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="panel flex flex-wrap gap-3 items-center">
+      <div className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur flex flex-wrap gap-3 items-center">
         <div className="flex gap-1.5">
           {(["All", "Active", "Planned", "Delayed", "Completed"] as const).map((f) => (
             <button
               key={f}
               type="button"
               onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-xl text-sm font-medium border transition-colors ${
+              className={`cursor-pointer px-3 py-1.5 rounded-xl text-sm font-medium border transition-colors ${
                 statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  ? "bg-teal-50 border-teal-300 text-teal-700 shadow-sm"
                   : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}
             >
@@ -316,21 +318,30 @@ export function LastMileDeliveryPage() {
             </button>
           ))}
         </div>
-        <input
-          type="search"
-          placeholder="Search routes, drivers…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 w-52"
-        />
+        <div className="ml-auto relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+          <input
+            type="search"
+            placeholder="Search routes, drivers…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm text-slate-900 placeholder-slate-400 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 w-56"
+          />
+        </div>
       </div>
 
       {/* Split: route list + stop detail */}
-      <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+      <div className="grid gap-5 xl:grid-cols-[440px_1fr]">
         {/* Route list */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2.5">
           {filtered.length === 0 ? (
-            <EmptyState title="No routes match your filters" />
+            <div className="panel p-10 flex flex-col items-center justify-center text-center">
+              <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
+                <Truck className="h-6 w-6 text-slate-400" />
+              </div>
+              <p className="text-sm font-medium text-slate-500">No routes match your filters</p>
+              <p className="text-xs text-slate-400 mt-1">Try adjusting the status filter or search term</p>
+            </div>
           ) : (
             filtered.map((route) => (
               <RouteCard
@@ -345,25 +356,47 @@ export function LastMileDeliveryPage() {
 
         {/* Stop detail panel */}
         {selectedRoute ? (
-          <div className="panel p-5 flex flex-col gap-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">{String(selectedRoute.routeName)}</h2>
-                <p className="text-sm text-slate-500 mt-0.5">
-                  {String(selectedRoute.driverName ?? "--")} · {String(selectedRoute.vehicleCode ?? "--")} · {stops.length} stops
+          <div className="panel p-6 flex flex-col gap-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <h2 className="text-lg font-bold text-slate-900">{String(selectedRoute.routeName)}</h2>
+                  <StatusBadge status={String(selectedRoute.status)} />
+                </div>
+                <p className="text-sm text-slate-500">
+                  {String(selectedRoute.driverName ?? "--")} · {String(selectedRoute.vehicleCode ?? "--")}
                 </p>
+                <div className="flex items-center gap-4 mt-2.5">
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">{String(selectedRoute.completedStops ?? 0)}</span>
+                    <span>/ {stops.length} stops</span>
+                  </div>
+                  <div className="flex-1 max-w-50">
+                    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          stops.length > 0 && Number(selectedRoute.completedStops ?? 0) === stops.length ? "bg-teal-500" : "bg-teal-400"
+                        }`}
+                        style={{ width: `${stops.length > 0 ? Math.round(((Number(selectedRoute.completedStops ?? 0)) / stops.length) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold text-teal-600">
+                    {stops.length > 0 ? Math.round(((Number(selectedRoute.completedStops ?? 0)) / stops.length) * 100) : 0}%
+                  </span>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={etaMutation.isPending}
-                  onClick={() => etaMutation.mutate(selectedRoute.id as string | number)}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-50"
-                >
-                  {etaMutation.isPending ? "Sending…" : "Send ETA Update"}
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={etaMutation.isPending}
+                onClick={() => etaMutation.mutate(selectedRoute.id as string | number)}
+                className="cursor-pointer shrink-0 text-sm px-4 py-2 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 font-medium hover:bg-teal-100 transition-colors disabled:opacity-50 shadow-sm"
+              >
+                {etaMutation.isPending ? "Sending…" : "Send ETA Update"}
+              </button>
             </div>
+
+            <div className="h-px bg-slate-100" />
 
             {stops.length === 0 ? (
               <EmptyState title="No stops loaded for this route" />
@@ -376,8 +409,12 @@ export function LastMileDeliveryPage() {
             )}
           </div>
         ) : (
-          <div className="panel p-10 flex items-center justify-center">
-            <p className="text-slate-400 text-sm">Select a route to view stop-by-stop progress</p>
+          <div className="panel p-12 flex flex-col items-center justify-center text-center">
+            <div className="h-14 w-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
+              <MapPin className="h-7 w-7 text-slate-400" />
+            </div>
+            <p className="text-sm font-medium text-slate-500">Select a route to view stops</p>
+            <p className="text-xs text-slate-400 mt-1">Stop-by-stop progress will appear here</p>
           </div>
         )}
       </div>

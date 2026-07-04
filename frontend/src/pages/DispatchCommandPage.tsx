@@ -224,8 +224,8 @@ export function DispatchCommandPage() {
             <button
               key={tab}
               type="button"
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                tab === activeTab ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+              className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+                tab === activeTab ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
               }`}
               onClick={() => setActiveTab(tab)}
             >
@@ -341,7 +341,7 @@ function BoardTab({
         {STATUS_ORDER.map((stage) => {
           const rows = stageMap[stage] ?? [];
           return (
-            <div key={stage} className="w-52 flex-shrink-0">
+            <div key={stage} className="w-64 flex-shrink-0 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
                   {stage}
@@ -443,7 +443,7 @@ function BoardCard({
               <button
                 key={s}
                 type="button"
-                className="rounded bg-teal-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-teal-700"
+                className="cursor-pointer rounded bg-teal-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-teal-700"
                 onClick={() => onStatusChange(s)}
               >
                 → {s.replace("_", " ")}
@@ -451,7 +451,7 @@ function BoardCard({
             ))}
           <button
             type="button"
-            className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 hover:bg-amber-200"
+            className="cursor-pointer rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 hover:bg-amber-200"
             onClick={onException}
           >
             Exception
@@ -462,7 +462,7 @@ function BoardCard({
         <div className="mt-1" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
-            className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 hover:bg-blue-200"
+            className="cursor-pointer rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 hover:bg-blue-200"
             onClick={() => onProof("pickup")}
           >
             Record Pickup
@@ -473,7 +473,7 @@ function BoardCard({
         <div className="mt-1" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
-            className="rounded bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-800 hover:bg-teal-200"
+            className="cursor-pointer rounded bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-800 hover:bg-teal-200"
             onClick={() => onProof("delivery")}
           >
             Confirm Delivery
@@ -764,7 +764,7 @@ function AssignmentDrawer({
     <div className="fixed inset-y-0 right-0 w-96 shadow-2xl bg-white border-l border-slate-200 z-50 overflow-y-auto">
       <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex items-center justify-between">
         <h2 className="font-bold text-slate-900">Assignment Detail</h2>
-        <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700">
+        <button type="button" onClick={onClose} className="cursor-pointer text-slate-400 hover:text-slate-700">
           <XCircle className="h-5 w-5" />
         </button>
       </div>
@@ -801,7 +801,7 @@ function AssignmentDrawer({
                 <button
                   key={s}
                   type="button"
-                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700"
+                  className="cursor-pointer rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700"
                   onClick={() => onStatusChange(id, s)}
                 >
                   → {s.replace(/_/g, " ")}
@@ -817,7 +817,7 @@ function AssignmentDrawer({
             {(status === "arrived_pickup" || status === "loaded") && (
               <button
                 type="button"
-                className="rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
+                className="cursor-pointer rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
                 onClick={() => onProof(id, "pickup")}
               >
                 Record Pickup
@@ -826,7 +826,7 @@ function AssignmentDrawer({
             {(status === "arrived_delivery" || status === "in_transit") && (
               <button
                 type="button"
-                className="rounded-lg bg-teal-100 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-200"
+                className="cursor-pointer rounded-lg bg-teal-100 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-200"
                 onClick={() => onProof(id, "delivery")}
               >
                 Confirm Delivery
@@ -840,7 +840,7 @@ function AssignmentDrawer({
           {canUpdate && !["delivered", "cancelled"].includes(status) && (
             <button
               type="button"
-              className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-semibold text-amber-800 hover:bg-amber-200"
+              className="cursor-pointer rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-semibold text-amber-800 hover:bg-amber-200"
               onClick={() => onException(id)}
             >
               Flag Exception
@@ -849,7 +849,7 @@ function AssignmentDrawer({
           {canCancel && !["delivered", "cancelled"].includes(status) && (
             <button
               type="button"
-              className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
+              className="cursor-pointer rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
               onClick={() => { onCancel(id); onClose(); }}
             >
               Cancel Assignment
@@ -911,7 +911,7 @@ function ExceptionModal({
           <button type="button" className="fh-btn-ghost" onClick={onClose}>Cancel</button>
           <button
             type="button"
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            className="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
             disabled={isLoading}
             onClick={onSubmit}
           >

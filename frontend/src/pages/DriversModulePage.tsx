@@ -169,12 +169,12 @@ export function DriversModulePage() {
               key={item.key}
               type="button"
               onClick={() => navigate(`/drivers/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+              className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+                section === item.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
               }`}
             >
               <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
-              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-slate-300" : "text-slate-500"}`}>{item.description}</div>
+              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-teal-500" : "text-slate-500"}`}>{item.description}</div>
             </button>
           ))}
         </div>
@@ -209,7 +209,7 @@ export function DriversModulePage() {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
+                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
@@ -255,7 +255,7 @@ export function DriversModulePage() {
 
 function ModuleCard({ title, body, action, onClick, icon }: { title: string; body: string; action: string; onClick: () => void; icon: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
+    <button type="button" onClick={onClick} className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
       <div className="flex items-center justify-between">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>
         <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5" />
@@ -411,7 +411,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                 key={rowId(row)}
                 type="button"
                 onClick={() => setSelectedId(rowId(row))}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                className={`cursor-pointer w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</span>
@@ -424,7 +424,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
         </div>
         <div className="space-y-4">
           {record ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-1 xl:grid-cols-2">
               <KpiCard label="Driver" value={String(g(record, "fullName", "driverName", "full_name") ?? `Driver ${record.id}`)} />
               <KpiCard label="Status" value={String(g(record, "status") ?? "--")} />
               <KpiCard label="Vehicle" value={String(g(record, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")} />
@@ -456,7 +456,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                     <p className="text-xs text-slate-500">License, medical and insurance evidence surfaced from live documents and certifications.</p>
                   </div>
                 </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <CredentialCard
                     title="Driver license / CDL"
                     status={String(g(licenseDoc || record, "status") ?? "Missing")}
@@ -610,7 +610,7 @@ function RelatedJumpRow({ onNavigate }: { onNavigate: (route: string) => void })
           key={item.label}
           type="button"
           onClick={() => onNavigate(item.route)}
-          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-teal-200 hover:bg-teal-50/50"
+          className="cursor-pointer rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-teal-200 hover:bg-teal-50/50"
         >
           <div className="font-semibold text-slate-900">{item.label}</div>
           <div className="mt-1 text-xs text-slate-500">{item.note}</div>
@@ -625,7 +625,7 @@ function RelatedChip({ label, onClick }: { label: string; onClick: () => void })
     <button
       type="button"
       onClick={onClick}
-      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-teal-200 hover:bg-white"
+      className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-teal-200 hover:bg-white"
     >
       {label}
     </button>

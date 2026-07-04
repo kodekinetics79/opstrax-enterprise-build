@@ -212,12 +212,12 @@ export function FleetAssignmentsPage() {
               key={item.key}
               type="button"
               onClick={() => navigate(`/assignments/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+              className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+                section === item.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
               }`}
             >
               <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
-              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-slate-300" : "text-slate-500"}`}>{item.description}</div>
+              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-teal-500" : "text-slate-500"}`}>{item.description}</div>
             </button>
           ))}
         </div>
@@ -332,7 +332,7 @@ export function FleetAssignmentsPage() {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
+                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
@@ -361,7 +361,7 @@ export function FleetAssignmentsPage() {
                       key={String(row.id)}
                       type="button"
                       onClick={() => setSelectedId(String(row.id))}
-                      className={`w-full rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
+                      className={`cursor-pointer w-full rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
                         selectedId === String(row.id) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:border-slate-300"
                       }`}
                     >
@@ -518,7 +518,7 @@ function ModuleCard({
     <button
       type="button"
       onClick={onClick}
-      className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+      className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
     >
       <div className="flex items-center justify-between">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>

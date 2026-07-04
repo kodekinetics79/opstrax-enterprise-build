@@ -43,22 +43,22 @@ export function FleetCompliancePage() {
           <button
             type="button"
             onClick={() => setTab("canada")}
-            className={`rounded-xl px-3 py-2.5 text-left transition ${
-              tab === "canada" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+            className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+              tab === "canada" ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
             }`}
           >
             <div className="text-xs font-bold uppercase tracking-[0.14em]">Canada / North America</div>
-            <div className={`mt-0.5 text-[11px] ${tab === "canada" ? "text-slate-300" : "text-slate-500"}`}>Regional compliance posture</div>
+            <div className={`mt-0.5 text-[11px] ${tab === "canada" ? "text-teal-500" : "text-slate-500"}`}>Regional compliance posture</div>
           </button>
           <button
             type="button"
             onClick={() => setTab("saudi")}
-            className={`rounded-xl px-3 py-2.5 text-left transition ${
-              tab === "saudi" ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+            className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+              tab === "saudi" ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
             }`}
           >
             <div className="text-xs font-bold uppercase tracking-[0.14em]">Saudi / GCC</div>
-            <div className={`mt-0.5 text-[11px] ${tab === "saudi" ? "text-slate-300" : "text-slate-500"}`}>Regional compliance posture</div>
+            <div className={`mt-0.5 text-[11px] ${tab === "saudi" ? "text-teal-500" : "text-slate-500"}`}>Regional compliance posture</div>
           </button>
         </div>
       </nav>
@@ -260,7 +260,7 @@ function SaudiReadiness() {
           <StatusBadge status={r?.eInvoiceReadinessStatus ?? "not_ready"} />
           <div className="flex gap-2">
             {["not_ready", "in_progress", "ready"].map((s) => (
-              <button key={s} onClick={() => setReadiness(s)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50">{s.replace("_", " ")}</button>
+              <button key={s} onClick={() => setReadiness(s)} className="cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50">{s.replace("_", " ")}</button>
             ))}
           </div>
         </div>
