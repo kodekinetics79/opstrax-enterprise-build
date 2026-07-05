@@ -92,7 +92,7 @@ export function MaintenanceCommandPage() {
         actions={
           <button
             type="button"
-            className="btn-ghost"
+            className="btn-ghost cursor-pointer"
             onClick={() => exportCsv("maintenance-defects", defects.data ?? [])}
           >
             Export Defects
@@ -136,7 +136,7 @@ export function MaintenanceCommandPage() {
 
       {/* System Maintenance Insights */}
       {insights.length > 0 && (
-        <section className="panel p-5">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="section-title">System Maintenance Insights</h2>
           <div className="mt-4 space-y-3">
             {insights.map((ins, i) => (
@@ -147,13 +147,17 @@ export function MaintenanceCommandPage() {
       )}
 
       {/* Tabs */}
-      <section className="panel p-5">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
-              className={tab === activeTab ? "control-tab control-tab-active" : "control-tab"}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${
+                tab === activeTab
+                  ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              }`}
               onClick={() => setActiveTab(tab)}
             >
               {tab}
@@ -378,7 +382,7 @@ function InspectionsTab({
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => (
-            <tr key={String(r["id"])} className="hover:bg-slate-50">
+            <tr key={String(r["id"])} className="hover:bg-slate-50 cursor-pointer transition-colors">
               <td className="px-3 py-2 font-mono text-xs">{String(r["reportNumber"] ?? "--")}</td>
               <td className="px-3 py-2 font-medium">{String(r["vehicleCode"] ?? "--")}</td>
               <td className="px-3 py-2">{String(r["driverName"] ?? "--")}</td>
@@ -395,7 +399,7 @@ function InspectionsTab({
                 {canManage && String(r["inspectionStatus"]) !== "reviewed" && (
                   <button
                     type="button"
-                    className="btn-ghost text-xs py-1 px-2"
+                    className="btn-ghost text-xs py-1 px-2 cursor-pointer"
                     onClick={() => onReview(Number(r["id"]))}
                   >
                     Review
@@ -497,10 +501,10 @@ function DefectCard({
       {status !== "resolved" && (
         <div className="mt-3 flex gap-2">
           {canManage && status === "Open" && (
-            <button type="button" className="btn-ghost text-xs py-1 px-2" onClick={onAck}>Acknowledge</button>
+            <button type="button" className="btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onAck}>Acknowledge</button>
           )}
           {canClose && status !== "rejected" && (
-            <button type="button" className="btn-ghost text-xs py-1 px-2 text-teal-700" onClick={onResolve}>Resolve</button>
+            <button type="button" className="btn-ghost text-xs py-1 px-2 text-teal-700 cursor-pointer" onClick={onResolve}>Resolve</button>
           )}
         </div>
       )}
@@ -536,7 +540,7 @@ function WorkOrderCard({
           </p>
         </div>
         {canClose && isOpen && (
-          <button type="button" className="btn-ghost text-xs py-1 px-2" onClick={onComplete}>Complete</button>
+          <button type="button" className="btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onComplete}>Complete</button>
         )}
       </div>
     </div>

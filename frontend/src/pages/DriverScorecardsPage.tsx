@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  AlertTriangle, Award, BarChart3, Brain, ClipboardCheck, Download,
+  Search, Shield, Sparkles, TrendingDown, TrendingUp, Users, X,
+} from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
@@ -127,14 +131,15 @@ function DriverDrawer({
   const maxCount = 15;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end anim-fade-in" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
-        className="bg-white w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
+        className="anim-slide-left relative z-10 bg-white w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <span className="text-sm font-semibold text-slate-900">Driver Scorecard</span>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+          <button type="button" className="text-slate-400 hover:text-slate-600 cursor-pointer" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
 
         <div className="px-5 pt-5 pb-4 flex items-center gap-4 border-b border-slate-100">
@@ -172,7 +177,9 @@ function DriverDrawer({
         </div>
 
         <div className="px-5 py-4 border-b border-slate-100">
-          <p className="text-xs font-semibold text-teal-600 uppercase tracking-wide mb-1.5">AI Recommendation</p>
+          <p className="text-xs font-semibold text-teal-600 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+            <Brain className="h-3 w-3" /> AI Recommendation
+          </p>
           <p className="text-sm text-slate-600 leading-relaxed">
             {risk >= 60
               ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
@@ -186,10 +193,10 @@ function DriverDrawer({
           <div className="px-5 py-4">
             <button
               type="button"
-              className="btn-primary w-full justify-center text-sm"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-violet-200 transition hover:shadow-lg hover:from-violet-500 hover:to-violet-400 cursor-pointer"
               onClick={() => onCoach(driver)}
             >
-              Create Coaching Task
+              <ClipboardCheck className="h-4 w-4" /> Create Coaching Task
             </button>
           </div>
         )}
@@ -214,11 +221,11 @@ function CoachingModal({
   const [notes, setNotes] = useState("");
   if (!driver) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="panel w-full max-w-md mx-4 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm anim-fade-in" onClick={onClose}>
+      <div className="w-full max-w-md mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-slate-900">Create Coaching Task</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+          <button type="button" className="text-slate-400 hover:text-slate-600 cursor-pointer" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <p className="text-sm text-slate-600">
           Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{String(driver.safetyScore)}</span>
@@ -226,7 +233,7 @@ function CoachingModal({
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-slate-700">Coaching notes</label>
           <textarea
-            className="field resize-none"
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 resize-none"
             rows={3}
             placeholder="Focus areas, session goals..."
             value={notes}
@@ -234,11 +241,11 @@ function CoachingModal({
           />
         </div>
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
+          <button type="button" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition cursor-pointer" onClick={onClose}>Cancel</button>
           <button
             type="button"
             disabled={pending}
-            className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            className="rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-violet-200 transition hover:shadow-lg disabled:opacity-50 cursor-pointer"
             onClick={() => onConfirm({ notes, priority: Number(driver.riskScore ?? 0) >= 50 ? "High" : "Normal" })}
           >
             {pending ? "Creating…" : "Create Task"}
@@ -318,72 +325,117 @@ export function DriverScorecardsPage() {
   return (
     <div className="flex flex-col gap-6 py-6">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 panel border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium px-4 py-2.5 shadow-lg">
-          {toast}
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-lg">
+          <Shield className="h-4 w-4 text-emerald-500" /> {toast}
         </div>
       )}
 
-      <PageHeader
-        eyebrow="Safety"
-        title="Driver Safety Scorecards"
-        description="Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events & coaching"
-        actions={
-          <button type="button" className="btn-primary text-sm" onClick={() => exportCsv("driver-scorecards", drivers)}>
-            Export CSV
-          </button>
-        }
-      />
+      {/* Hero header */}
+      <div className="fh-hero flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-300/80">Safety</p>
+          <h1 className="mt-1 text-2xl font-extrabold text-white">Driver Safety Scorecards</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-300">
+            Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events & coaching
+          </p>
+        </div>
+        <button
+          type="button"
+          className="fh-btn-primary flex items-center gap-2 cursor-pointer"
+          onClick={() => exportCsv("driver-scorecards", drivers)}
+        >
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
+      </div>
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
+      {/* KPI cards */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {[
-          { label: "Fleet Safety Score", val: `${fleetScore}`, accent: fleetScore >= 85 ? "text-teal-600" : fleetScore >= 70 ? "text-amber-600" : "text-red-600" },
-          { label: "Critical Events", val: s.criticalEvents ?? 0, accent: "text-red-600" },
-          { label: "Harsh Braking", val: s.harshBraking ?? 0 },
-          { label: "Speeding Events", val: s.speedingEvents ?? 0, accent: "text-amber-600" },
-          { label: "Coaching Needed", val: s.coachingNeeded ?? 0, accent: "text-violet-600" },
-          { label: "Open Incidents", val: s.openIncidents ?? 0, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+          { label: "Fleet Safety Score", val: `${fleetScore}`, icon: <Award className="h-5 w-5" />, accent: fleetScore >= 85 ? "text-teal-600" : fleetScore >= 70 ? "text-amber-600" : "text-red-600", iconBg: "bg-teal-50 text-teal-500" },
+          { label: "Critical Events", val: s.criticalEvents ?? 0, icon: <AlertTriangle className="h-5 w-5" />, accent: "text-red-600", iconBg: "bg-red-50 text-red-500" },
+          { label: "Harsh Braking", val: s.harshBraking ?? 0, icon: <TrendingDown className="h-5 w-5" />, accent: "text-slate-900", iconBg: "bg-amber-50 text-amber-500" },
+          { label: "Speeding Events", val: s.speedingEvents ?? 0, icon: <TrendingUp className="h-5 w-5" />, accent: "text-amber-600", iconBg: "bg-orange-50 text-orange-500" },
+          { label: "Coaching Needed", val: s.coachingNeeded ?? 0, icon: <Users className="h-5 w-5" />, accent: "text-violet-600", iconBg: "bg-violet-50 text-violet-500" },
+          { label: "Open Incidents", val: s.openIncidents ?? 0, icon: <ClipboardCheck className="h-5 w-5" />, accent: "text-red-600", iconBg: "bg-rose-50 text-rose-500" },
+        ].map(({ label, val, icon, accent, iconBg }) => (
+          <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <span className={`grid h-9 w-9 place-items-center rounded-xl ${iconBg}`}>{icon}</span>
+            </div>
+            <p className={`text-2xl font-bold ${accent}`}>{String(val)}</p>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">{label}</p>
           </div>
         ))}
       </div>
 
+      {/* Ops intelligence bar */}
+      <div className="relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-violet-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Safety intelligence</p>
+            <p className="mt-0.5 text-sm font-medium text-slate-200">
+              {Number(s.criticalEvents ?? 0) + Number(s.openIncidents ?? 0) === 0
+                ? "Fleet safety is stable — no critical events or open incidents requiring attention."
+                : `${s.criticalEvents ?? 0} critical events${Number(s.openIncidents ?? 0) > 0 ? ` · ${s.openIncidents} open incidents` : ""} require review`}
+            </p>
+          </div>
+        </div>
+        {Number(s.coachingNeeded ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => setTab("drivers")}
+            className="inline-flex items-center gap-1.5 self-start rounded-lg bg-gradient-to-r from-violet-500 to-violet-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-violet-500/20 transition hover:shadow-lg cursor-pointer sm:self-auto"
+          >
+            Review coaching queue <TrendingUp className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
       {/* Tab bar */}
-      <div className="panel flex gap-1.5 p-2">
+      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         {(["drivers", "vehicles", "trends"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={tab === t ? "control-tab control-tab-active capitalize" : "control-tab capitalize"}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${
+              tab === t
+                ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+            }`}
           >
             {t === "trends" ? "Fleet Trends" : `${t.charAt(0).toUpperCase() + t.slice(1)} Scorecards`}
           </button>
         ))}
         {tab === "drivers" && (
-          <input
-            type="search"
-            placeholder="Search drivers…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="field ml-auto w-48 py-1.5 text-sm"
-          />
+          <div className="ml-auto relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              placeholder="Search drivers…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-56 rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
+            />
+          </div>
         )}
       </div>
 
       {/* Driver scorecards table */}
       {tab === "drivers" && (
-        <div className="panel overflow-hidden p-0">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {filteredDrivers.length === 0 ? (
             <EmptyState title="No drivers found" />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
+                  <tr className="border-b border-slate-200 bg-slate-50/80">
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rank</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Driver</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Score</th>
@@ -391,7 +443,7 @@ export function DriverScorecardsPage() {
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Harsh Accel.</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Speeding</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Dashcam</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coaching Open</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coaching</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Incidents</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                   </tr>
@@ -402,7 +454,7 @@ export function DriverScorecardsPage() {
                     return (
                       <tr
                         key={String(driver.id ?? i)}
-                        className="hover:bg-slate-50 cursor-pointer"
+                        className="hover:bg-slate-50 cursor-pointer transition-colors"
                         onClick={() => setSelected(driver)}
                       >
                         <td className="px-4 py-3 text-slate-500 text-xs font-medium">#{i + 1}</td>
@@ -434,7 +486,7 @@ export function DriverScorecardsPage() {
                           {canCoach && (
                             <button
                               type="button"
-                              className="text-xs px-2.5 py-1 rounded-md bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 transition-colors"
+                              className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 cursor-pointer"
                               onClick={() => setCoachTarget(driver)}
                             >
                               Coach
@@ -453,14 +505,14 @@ export function DriverScorecardsPage() {
 
       {/* Vehicle scorecards */}
       {tab === "vehicles" && (
-        <div className="panel overflow-hidden p-0">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {vehicles.length === 0 ? (
             <EmptyState title="No vehicle scorecard data" subtitle="Scorecards are generated from safety events linked to vehicles" />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
+                  <tr className="border-b border-slate-200 bg-slate-50/80">
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Vehicle</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Score</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Events</th>
@@ -472,7 +524,7 @@ export function DriverScorecardsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {vehicles.map((v, i) => (
-                    <tr key={String(v.id ?? i)} className="hover:bg-slate-50">
+                    <tr key={String(v.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-medium text-slate-900">{String(v.vehicleCode ?? "--")}</p>
                         <p className="text-xs text-slate-400">{String(v.type ?? "")}</p>
@@ -495,30 +547,34 @@ export function DriverScorecardsPage() {
       {/* Fleet trends chart */}
       {tab === "trends" && (
         <div className="grid gap-6 xl:grid-cols-2">
-          <div className="panel p-5">
-            <h2 className="text-sm font-semibold text-slate-900 mb-4">Fleet Safety Score Trend</h2>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-teal-500" /> Fleet Safety Score Trend
+            </h2>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={trends}>
                 <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="3 3" />
                 <XAxis dataKey="trendDate" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v.slice(5)} />
                 <YAxis domain={[60, 100]} tick={{ fontSize: 11 }} />
                 <Tooltip
-                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, fontSize: 12 }}
                   labelStyle={{ color: "#475569" }}
                 />
                 <Line type="monotone" dataKey="fleetSafetyScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Safety Score" />
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div className="panel p-5">
-            <h2 className="text-sm font-semibold text-slate-900 mb-4">Behavior Events by Week</h2>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-violet-500" /> Behavior Events by Week
+            </h2>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={trends}>
                 <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="3 3" />
                 <XAxis dataKey="trendDate" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v.slice(5)} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip
-                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, fontSize: 12 }}
                   labelStyle={{ color: "#475569" }}
                 />
                 <Bar dataKey="harshBrakingCount" fill="#ef4444" name="Harsh Braking" radius={[2, 2, 0, 0]} />
