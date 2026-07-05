@@ -3,6 +3,7 @@ import {
   Activity, AlertTriangle, CheckCircle, Clock, Cpu, FileText,
   Radio, Shield, Sparkles, WifiOff, X, Zap,
 } from "lucide-react";
+import { KpiCard } from "@/components/ui";
 import {
   useCertifyHosLog,
   useEldDevices,
@@ -97,42 +98,44 @@ export function HosEldPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 py-6">
-      {/* Hero header */}
-      <div className="fh-hero flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-300/80">Compliance</p>
-          <h1 className="mt-1 text-2xl font-extrabold text-white flex items-center gap-2">
-            <Clock className="h-6 w-6 text-amber-300" />{t("hos_eld")}
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-300">
-            Hours of service monitoring, driver clocks, ELD device tracking and AI-powered compliance recommendations
-          </p>
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Clock className="h-3 w-3" /> Compliance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Hours of service and ELD compliance</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {t("hos_eld")}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Hours of service monitoring, driver clocks, ELD device tracking and AI-powered compliance recommendations
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      </header>
 
       <Disclaimer />
 
-      {/* KPI cards */}
+      {/* ── KPI cards ─────────────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "HOS OK",          value: okCount,        color: "text-emerald-600", icon: <CheckCircle className="h-5 w-5" />, iconBg: "bg-emerald-50 text-emerald-500" },
-          { label: "HOS Warning",     value: warningCount,   color: "text-amber-600",   icon: <AlertTriangle className="h-5 w-5" />, iconBg: "bg-amber-50 text-amber-500" },
-          { label: "HOS Violation",   value: violationCount, color: violationCount > 0 ? "text-red-600" : "text-slate-500",   icon: <AlertTriangle className="h-5 w-5" />, iconBg: violationCount > 0 ? "bg-red-50 text-red-500" : "bg-slate-50 text-slate-400" },
-          { label: "ELD Malfunction", value: eldMalfCount,   color: eldMalfCount   > 0 ? "text-red-600" : "text-slate-500",   icon: <WifiOff className="h-5 w-5" />, iconBg: eldMalfCount > 0 ? "bg-red-50 text-red-500" : "bg-slate-50 text-slate-400" },
-        ].map(kpi => (
-          <div key={kpi.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className={`grid h-9 w-9 place-items-center rounded-xl ${kpi.iconBg}`}>{kpi.icon}</span>
-            </div>
-            <p className={`text-2xl font-bold ${kpi.color}`}>{driversQ.isLoading ? "—" : kpi.value}</p>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">{kpi.label}</p>
-          </div>
-        ))}
+        <KpiCard label="HOS OK" value={driversQ.isLoading ? "—" : String(okCount)} status="Active" />
+        <KpiCard label="HOS Warning" value={driversQ.isLoading ? "—" : String(warningCount)} status={warningCount > 0 ? "Warning" : "Active"} />
+        <KpiCard label="HOS Violation" value={driversQ.isLoading ? "—" : String(violationCount)} status={violationCount > 0 ? "Critical" : "Active"} />
+        <KpiCard label="ELD Malfunction" value={driversQ.isLoading ? "—" : String(eldMalfCount)} status={eldMalfCount > 0 ? "Critical" : "Active"} />
       </div>
 
-      {/* Compliance signal bar */}
-      <div className="relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+      {/* ── Compliance signal bar ────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
         <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-amber-500/10 blur-2xl" />
         <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-teal-500/8 blur-2xl" />
         <div className="relative flex items-center gap-4">
@@ -141,7 +144,7 @@ export function HosEldPage() {
           </span>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-300/80">Compliance status</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-200">
+            <p className="mt-0.5 text-sm font-medium text-slate-600">
               {violationCount === 0 && eldMalfCount === 0
                 ? "All drivers within HOS limits — no ELD malfunctions detected."
                 : `${violationCount > 0 ? `${violationCount} HOS violation${violationCount > 1 ? "s" : ""}` : ""}${violationCount > 0 && eldMalfCount > 0 ? " · " : ""}${eldMalfCount > 0 ? `${eldMalfCount} ELD malfunction${eldMalfCount > 1 ? "s" : ""}` : ""} need attention`}
@@ -159,8 +162,9 @@ export function HosEldPage() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="flex flex-wrap items-center gap-2">
         {TABS.map((t2) => {
           const Icon = t2.icon;
           return (
@@ -178,9 +182,10 @@ export function HosEldPage() {
             </button>
           );
         })}
+        </div>
       </div>
 
-      {/* Driver Clocks */}
+      {/* ── Driver Clocks ────────────────────────────────────── */}
       {tab === "drivers" && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {drivers.map(d => {
@@ -228,21 +233,20 @@ export function HosEldPage() {
         </div>
       )}
 
-      {/* HOS Logs */}
+      {/* ── HOS Logs ─────────────────────────────────────────── */}
       {tab === "logs" && (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/80">
-                  {["Driver","Date","Status","Start","End","Duration","Location","Certified"].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Driver","Date","Status","Start","End","Duration","Location","Certified"].map(h => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
                 {logs.map(l => (
-                  <tr key={String(l.id)} className="hover:bg-slate-50 transition-colors">
+                  <tr key={String(l.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <p className="font-semibold text-slate-900 text-xs">{String(l.driver_name)}</p>
                       <p className="text-[10px] text-slate-500">{String(l.driver_code)}</p>
@@ -274,12 +278,11 @@ export function HosEldPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+          </table>
         </div>
       )}
 
-      {/* ELD Devices */}
+      {/* ── ELD Devices ──────────────────────────────────────── */}
       {tab === "eld" && (
         <div className="space-y-4">
           <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -289,19 +292,18 @@ export function HosEldPage() {
               OpsTrax is not a certified ELD. This table shows third-party ELD device status as reported by the connected provider. FMCSA-registered ELD certification is the responsibility of the ELD provider.
             </p>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80">
-                    {["Serial","Model","Provider","Vehicle","Driver","Status","Last Sync","Firmware","Actions"].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  {["Serial","Model","Provider","Vehicle","Driver","Status","Last Sync","Firmware","Actions"].map(h => (
+                    <th key={h} className="px-4 py-2.5">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
                   {elds.map(e => (
-                    <tr key={String(e.id)} className="hover:bg-slate-50 transition-colors">
+                    <tr key={String(e.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                       <td className="px-4 py-3 font-mono text-xs text-teal-700 font-semibold">{String(e.device_serial)}</td>
                       <td className="px-4 py-3 text-xs text-slate-700">{String(e.device_model ?? "—")}</td>
                       <td className="px-4 py-3 text-xs text-slate-700">{String(e.provider ?? "—")}</td>
@@ -337,13 +339,12 @@ export function HosEldPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+            </table>
           </div>
         </div>
       )}
 
-      {/* AI Recommendations */}
+      {/* ── AI Recommendations ───────────────────────────────── */}
       {tab === "ai" && (
         <div className="space-y-4">
           <div className="relative flex items-center gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl">
@@ -388,35 +389,41 @@ export function HosEldPage() {
         </div>
       )}
 
-      {/* Driver clock drawer */}
+      {/* ── Driver clock drawer ──────────────────────────────── */}
       {drawer && tab === "drivers" && (
-        <div className="fixed inset-0 z-50 flex justify-end anim-fade-in" onClick={() => setDrawer(null)}>
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-          <aside className="anim-slide-left relative z-10 w-full max-w-sm overflow-y-auto bg-slate-900 border-l border-white/[0.09] p-5 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <p className="font-semibold text-white flex items-center gap-2"><Clock className="h-4 w-4 text-amber-400" />HOS Clock</p>
-              <button type="button" aria-label="Close" className="text-slate-400 hover:text-white cursor-pointer" onClick={() => setDrawer(null)}><X className="h-4 w-4" /></button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <p className="text-base font-bold text-white">{String(drawer.driver_name)}</p>
-                <p className="text-xs text-slate-500">{String(drawer.driver_code)} · {String(drawer.cycle_type)}</p>
-              </div>
-              <CountryBadge code={String(drawer.country_code)} />
-              {[
-                { label: "Drive Remaining", value: formatMinutesAsClock(Number(drawer.drive_time_remaining_minutes ?? 0)) },
-                { label: "Shift Remaining", value: formatMinutesAsClock(Number(drawer.shift_time_remaining_minutes ?? 0)) },
-                { label: "Cycle Remaining", value: formatMinutesAsClock(Number(drawer.cycle_time_remaining_minutes ?? 0)) },
-                { label: "Profile",         value: drawer.profile_name },
-                { label: "Status",          value: drawer.status },
-              ].map(r => (
-                <div key={r.label} className="flex justify-between border-b border-white/[0.05] pb-2">
-                  <span className="text-slate-500">{r.label}</span>
-                  <span className={`font-semibold ${String(drawer.status) === "Violation" ? "text-red-400" : String(drawer.status) === "Warning" ? "text-amber-400" : "text-white"}`}>{String(r.value ?? "—")}</span>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setDrawer(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="section-title text-teal-700">HOS Clock</p>
+                  <h2 className="mt-1 text-2xl font-bold text-slate-900">{String(drawer.driver_name)}</h2>
+                  <p className="mt-1 text-xs text-slate-500">{String(drawer.driver_code)} · {String(drawer.cycle_type)}</p>
                 </div>
-              ))}
+                <button type="button" className="icon-btn cursor-pointer" onClick={() => setDrawer(null)} aria-label="Close"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+            <div className="space-y-6 px-6 py-6">
+              <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="section-title">Clock Details</h3>
+                <div className="mt-3 space-y-2.5">
+                  {[
+                    { label: "Drive Remaining", value: formatMinutesAsClock(Number(drawer.drive_time_remaining_minutes ?? 0)) },
+                    { label: "Shift Remaining", value: formatMinutesAsClock(Number(drawer.shift_time_remaining_minutes ?? 0)) },
+                    { label: "Cycle Remaining", value: formatMinutesAsClock(Number(drawer.cycle_time_remaining_minutes ?? 0)) },
+                    { label: "Profile",         value: drawer.profile_name },
+                    { label: "Status",          value: drawer.status },
+                  ].map(r => (
+                    <div key={r.label} className="flex items-start justify-between gap-3">
+                      <span className="text-xs font-medium text-slate-500">{r.label}</span>
+                      <span className={`text-right text-sm font-medium ${String(r.label) === "Status" && String(drawer.status) === "Violation" ? "text-red-600" : String(r.label) === "Status" && String(drawer.status) === "Warning" ? "text-amber-600" : "text-slate-800"}`}>{String(r.value ?? "—")}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <CountryBadge code={String(drawer.country_code)} />
               {!!drawer.hos_warning && (
-                <div className="flex items-center gap-2 rounded-lg bg-amber-400/10 border border-amber-400/20 px-3 py-2 text-xs text-amber-300">
+                <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
                   <AlertTriangle className="h-3 w-3 shrink-0" />{String(drawer.hos_warning)}
                 </div>
               )}
@@ -425,34 +432,33 @@ export function HosEldPage() {
         </div>
       )}
 
-      {/* ELD malfunction modal */}
+      {/* ── ELD malfunction modal ────────────────────────────── */}
       {malfForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in" onClick={() => setMalfForm(null)}>
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <p className="font-semibold text-white flex items-center gap-2"><Cpu className="h-4 w-4 text-red-400" />Mark ELD Malfunction</p>
-              <button type="button" aria-label="Close" className="text-slate-400 hover:text-white cursor-pointer" onClick={() => setMalfForm(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in" onClick={() => setMalfForm(null)}>
+          <form className="panel max-h-[90vh] w-full max-w-lg overflow-y-auto p-6 shadow-2xl space-y-4" onClick={e => e.stopPropagation()} onSubmit={(e) => e.preventDefault()}>
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Cpu className="h-5 w-5 text-red-500" />Mark ELD Malfunction</h2>
+              <button type="button" className="icon-btn cursor-pointer" onClick={() => setMalfForm(null)} aria-label="Close"><X className="h-5 w-5" /></button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Malfunction Code</label>
-                <input className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20" placeholder="e.g. P1, S1, E1" value={malfForm.code} onChange={e => setMalfForm(f => f ? { ...f, code: e.target.value } : f)} />
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Malfunction Code</label>
+                <input className="field" placeholder="e.g. P1, S1, E1" value={malfForm.code} onChange={e => setMalfForm(f => f ? { ...f, code: e.target.value } : f)} />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Description</label>
-                <textarea className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-400/20 h-20 resize-none" placeholder="Describe the malfunction..." value={malfForm.desc} onChange={e => setMalfForm(f => f ? { ...f, desc: e.target.value } : f)} />
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Description</label>
+                <textarea className="field h-20 resize-none" placeholder="Describe the malfunction..." value={malfForm.desc} onChange={e => setMalfForm(f => f ? { ...f, desc: e.target.value } : f)} />
               </div>
-              <div className="flex items-start gap-2 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-[11px] text-amber-200/70">
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-700">
                 <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
                 <span>Per FMCSA regulations, when an ELD malfunctions, the driver must note the malfunction and revert to paper records until the device is repaired or replaced.</span>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button type="button" className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/10 cursor-pointer" onClick={() => setMalfForm(null)}>Cancel</button>
+            <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setMalfForm(null)}>Cancel</button>
               <button
                 type="button"
-                className="flex-1 rounded-xl bg-red-500/80 hover:bg-red-500 px-4 py-2 text-sm font-semibold text-white transition cursor-pointer"
+                className="fh-btn-primary cursor-pointer"
                 onClick={() => {
                   markMalfMut.mutate({ id: malfForm.id, body: { malfunctionCode: malfForm.code, malfunctionDescription: malfForm.desc } });
                   setMalfForm(null);
@@ -461,7 +467,7 @@ export function HosEldPage() {
                 <Activity className="h-3.5 w-3.5 inline-block mr-1" />Confirm Malfunction
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

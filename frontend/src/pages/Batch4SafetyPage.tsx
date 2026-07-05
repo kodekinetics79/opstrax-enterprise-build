@@ -192,7 +192,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         </span>
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
-          <p className="mt-1 text-sm font-medium leading-relaxed text-slate-300">
+          <p className="mt-1 text-sm font-medium leading-relaxed text-slate-60">
             {rows.length === 0
               ? `No ${config.eyebrow.toLowerCase()} records match your current filters.`
               : `${rows.length} ${config.eyebrow.toLowerCase()} records loaded — AI-powered risk detection and coaching recommendations enabled.`}

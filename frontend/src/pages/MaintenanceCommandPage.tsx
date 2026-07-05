@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CheckCircle, Clock, ClipboardList,
-  Settings, ShieldAlert, Truck, Wrench, XCircle, Zap,
+  AlertTriangle, CheckCircle, Clock, ClipboardList, Download,
+  Settings, ShieldAlert, Sparkles, Truck, Wrench, XCircle, Zap,
 } from "lucide-react";
-import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
+import { DataTable, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -84,24 +84,68 @@ export function MaintenanceCommandPage() {
   const insights         = (d?.insights     as AnyRecord[]) ?? [];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Fleet Maintenance"
-        title="Maintenance Command Center"
-        description="DVIR inspections, defect management, work orders, fault codes, and preventive maintenance — all persisted and RBAC-enforced."
-        actions={
-          <button
-            type="button"
-            className="btn-ghost cursor-pointer"
-            onClick={() => exportCsv("maintenance-defects", defects.data ?? [])}
-          >
-            Export Defects
-          </button>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Wrench className="h-3 w-3" /> Fleet Maintenance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">DVIR inspections, defects and work order management</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Maintenance Command Center
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                DVIR inspections, defect management, work orders, fault codes, and preventive maintenance — all persisted and RBAC-enforced.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => exportCsv("maintenance-defects", defects.data ?? [])}>
+                <Download className="h-4 w-4" /> Export Defects
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      {/* KPI Strip */}
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {Number(kpis["criticalOpenDefects"] ?? 0) + Number(kpis["overduePm"] ?? 0) === 0
+                ? "Fleet maintenance is stable — no critical defects or overdue PM items."
+                : `${Number(kpis["criticalOpenDefects"] ?? 0)} critical defects${Number(kpis["overduePm"] ?? 0) > 0 ? ` · ${Number(kpis["overduePm"])} PM overdue` : ""} need attention`}
+            </p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-6 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-slate-300">{openDefectsList.length} open defects</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Wrench className="h-3.5 w-3.5 text-teal-400" />
+            <span className="text-slate-300">{recentWos.length} work orders</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── KPI cards ─────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           label="Fleet Available"
           value={`${String(kpis["fleetAvailabilityPct"] ?? "--")}%`}
@@ -134,9 +178,9 @@ export function MaintenanceCommandPage() {
         />
       </div>
 
-      {/* System Maintenance Insights */}
+      {/* ── System Maintenance Insights ──────────────────────── */}
       {insights.length > 0 && (
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
           <h2 className="section-title">System Maintenance Insights</h2>
           <div className="mt-4 space-y-3">
             {insights.map((ins, i) => (
@@ -146,8 +190,8 @@ export function MaintenanceCommandPage() {
         </section>
       )}
 
-      {/* Tabs */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* ── Tabs panel ───────────────────────────────────────── */}
+      <section className="panel p-5">
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
           {TABS.map((tab) => (
             <button
@@ -399,7 +443,7 @@ function InspectionsTab({
                 {canManage && String(r["inspectionStatus"]) !== "reviewed" && (
                   <button
                     type="button"
-                    className="btn-ghost text-xs py-1 px-2 cursor-pointer"
+                    className="fh-btn-ghost text-xs py-1 px-2 cursor-pointer"
                     onClick={() => onReview(Number(r["id"]))}
                   >
                     Review
@@ -501,10 +545,10 @@ function DefectCard({
       {status !== "resolved" && (
         <div className="mt-3 flex gap-2">
           {canManage && status === "Open" && (
-            <button type="button" className="btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onAck}>Acknowledge</button>
+            <button type="button" className="fh-btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onAck}>Acknowledge</button>
           )}
           {canClose && status !== "rejected" && (
-            <button type="button" className="btn-ghost text-xs py-1 px-2 text-teal-700 cursor-pointer" onClick={onResolve}>Resolve</button>
+            <button type="button" className="fh-btn-ghost text-xs py-1 px-2 text-teal-700 cursor-pointer" onClick={onResolve}>Resolve</button>
           )}
         </div>
       )}
@@ -540,7 +584,7 @@ function WorkOrderCard({
           </p>
         </div>
         {canClose && isOpen && (
-          <button type="button" className="btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onComplete}>Complete</button>
+          <button type="button" className="fh-btn-ghost text-xs py-1 px-2 cursor-pointer" onClick={onComplete}>Complete</button>
         )}
       </div>
     </div>

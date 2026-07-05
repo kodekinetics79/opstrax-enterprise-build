@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, KpiCard, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
@@ -131,76 +131,79 @@ function DriverDrawer({
   const maxCount = 15;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end anim-fade-in" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div
-        className="anim-slide-left relative z-10 bg-white w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-          <span className="text-sm font-semibold text-slate-900">Driver Scorecard</span>
-          <button type="button" className="text-slate-400 hover:text-slate-600 cursor-pointer" onClick={onClose}><X className="h-4 w-4" /></button>
-        </div>
-
-        <div className="px-5 pt-5 pb-4 flex items-center gap-4 border-b border-slate-100">
-          <ScoreRing score={score} size={64} />
-          <div>
-            <p className="text-base font-semibold text-slate-900">{String(driver.driverName ?? "Driver")}</p>
-            <p className="text-xs text-slate-500 mt-0.5">{String(driver.driverCode ?? "")}</p>
-            <p className={`text-xs mt-1 font-medium ${score >= 85 ? "text-teal-600" : score >= 70 ? "text-amber-600" : "text-red-600"}`}>
-              {scoreLabel}
-            </p>
-          </div>
-        </div>
-
-        <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-slate-100">
-          {[
-            ["Safety Score", `${score}/100`],
-            ["Risk Score", `${risk}`],
-            ["Coaching Open", driver.coachingOpenCount],
-            ["Incidents", driver.incidentCount],
-          ].map(([k, v]) => (
-            <div key={String(k)}>
-              <p className="text-xs text-slate-500">{String(k)}</p>
-              <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(v ?? "--")}</p>
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={onClose}>
+      <aside className="anim-slide-right flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* Sticky header */}
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="section-title text-teal-700">Driver Scorecard</p>
+              <h2 className="mt-1 text-2xl font-bold text-slate-900">{String(driver.driverName ?? "Driver")}</h2>
+              <p className="mt-1 text-xs text-slate-500">{String(driver.driverCode ?? "")}</p>
             </div>
-          ))}
-        </div>
-
-        <div className="px-5 py-4 flex flex-col gap-2.5 border-b border-slate-100">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Behavior Breakdown</p>
-          <BehaviorBar label="Harsh Braking" count={Number(driver.harshBrakingCount ?? 0)} max={maxCount} color="bg-red-400" />
-          <BehaviorBar label="Harsh Accel." count={Number(driver.harshAccelerationCount ?? 0)} max={maxCount} color="bg-orange-400" />
-          <BehaviorBar label="Speeding" count={Number(driver.speedingCount ?? 0)} max={maxCount} color="bg-amber-400" />
-          <BehaviorBar label="Dashcam Events" count={Number(driver.dashcamEventCount ?? 0)} max={maxCount} color="bg-violet-400" />
-          <BehaviorBar label="Coaching Completed" count={Number(driver.coachingCompletedCount ?? 0)} max={maxCount} color="bg-teal-400" />
-        </div>
-
-        <div className="px-5 py-4 border-b border-slate-100">
-          <p className="text-xs font-semibold text-teal-600 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
-            <Brain className="h-3 w-3" /> AI Recommendation
-          </p>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            {risk >= 60
-              ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
-              : risk >= 35
-              ? "Monitor closely over the next 14 days. Assign a targeted coaching task for the highest-frequency behavior category."
-              : "Driver is performing well. Maintain positive reinforcement — no corrective action required at this time."}
-          </p>
-        </div>
-
-        {canCoach && (
-          <div className="px-5 py-4">
-            <button
-              type="button"
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-violet-200 transition hover:shadow-lg hover:from-violet-500 hover:to-violet-400 cursor-pointer"
-              onClick={() => onCoach(driver)}
-            >
-              <ClipboardCheck className="h-4 w-4" /> Create Coaching Task
-            </button>
+            <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
-        )}
-      </div>
+          {canCoach && (
+            <div className="mt-4">
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={() => onCoach(driver)}>
+                <ClipboardCheck className="h-4 w-4" /> Create Coaching Task
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-6 px-6 py-6">
+          {/* Score overview */}
+          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <h3 className="section-title">Score Overview</h3>
+            <div className="mt-3 flex items-center gap-4">
+              <ScoreRing score={score} size={64} />
+              <div>
+                <p className={`text-sm font-bold ${score >= 85 ? "text-teal-600" : score >= 70 ? "text-amber-600" : "text-red-600"}`}>{scoreLabel}</p>
+                <div className="mt-2 grid grid-cols-2 gap-3">
+                  {[
+                    ["Safety Score", `${score}/100`],
+                    ["Risk Score", `${risk}`],
+                    ["Coaching Open", driver.coachingOpenCount],
+                    ["Incidents", driver.incidentCount],
+                  ].map(([k, v]) => (
+                    <div key={String(k)}>
+                      <p className="text-xs text-slate-500">{String(k)}</p>
+                      <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(v ?? "--")}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Behavior breakdown */}
+          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <h3 className="section-title">Behavior Breakdown</h3>
+            <div className="mt-3 flex flex-col gap-2.5">
+              <BehaviorBar label="Harsh Braking" count={Number(driver.harshBrakingCount ?? 0)} max={maxCount} color="bg-red-400" />
+              <BehaviorBar label="Harsh Accel." count={Number(driver.harshAccelerationCount ?? 0)} max={maxCount} color="bg-orange-400" />
+              <BehaviorBar label="Speeding" count={Number(driver.speedingCount ?? 0)} max={maxCount} color="bg-amber-400" />
+              <BehaviorBar label="Dashcam Events" count={Number(driver.dashcamEventCount ?? 0)} max={maxCount} color="bg-violet-400" />
+              <BehaviorBar label="Coaching Completed" count={Number(driver.coachingCompletedCount ?? 0)} max={maxCount} color="bg-teal-400" />
+            </div>
+          </section>
+
+          {/* AI Recommendation */}
+          <section className="rounded-2xl border border-teal-100 bg-teal-50/50 p-4">
+            <h3 className="section-title text-teal-800 flex items-center gap-1.5">
+              <Brain className="h-4 w-4" /> AI Recommendation
+            </h3>
+            <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+              {risk >= 60
+                ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
+                : risk >= 35
+                ? "Monitor closely over the next 14 days. Assign a targeted coaching task for the highest-frequency behavior category."
+                : "Driver is performing well. Maintain positive reinforcement — no corrective action required at this time."}
+            </p>
+          </section>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -221,37 +224,38 @@ function CoachingModal({
   const [notes, setNotes] = useState("");
   if (!driver) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm anim-fade-in" onClick={onClose}>
-      <div className="w-full max-w-md mx-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">Create Coaching Task</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600 cursor-pointer" onClick={onClose}><X className="h-4 w-4" /></button>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in" onClick={onClose}>
+      <form className="panel max-h-[90vh] w-full max-w-lg overflow-y-auto p-6 shadow-2xl" onClick={(e) => e.stopPropagation()} onSubmit={(e) => e.preventDefault()}>
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+          <h2 className="text-2xl font-bold text-slate-900">Create Coaching Task</h2>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
-        <p className="text-sm text-slate-600">
-          Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{String(driver.safetyScore)}</span>
-        </p>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-700">Coaching notes</label>
-          <textarea
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 resize-none"
-            rows={3}
-            placeholder="Focus areas, session goals..."
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
+        <div className="mt-6 space-y-4">
+          <p className="text-sm text-slate-600">
+            Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{String(driver.safetyScore)}</span>
+          </p>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Coaching Notes</span>
+            <textarea
+              className="field h-20 resize-none"
+              placeholder="Focus areas, session goals..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
         </div>
-        <div className="flex justify-end gap-2">
-          <button type="button" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition cursor-pointer" onClick={onClose}>Cancel</button>
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
           <button
             type="button"
             disabled={pending}
-            className="rounded-xl bg-gradient-to-r from-violet-600 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-violet-200 transition hover:shadow-lg disabled:opacity-50 cursor-pointer"
+            className="fh-btn-primary cursor-pointer"
             onClick={() => onConfirm({ notes, priority: Number(driver.riskScore ?? 0) >= 50 ? "High" : "Normal" })}
           >
             {pending ? "Creating…" : "Create Task"}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
@@ -323,53 +327,60 @@ export function DriverScorecardsPage() {
   if (driversQ.isError) return <ErrorState message={(driversQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="space-y-6 pb-10">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800 shadow-lg">
-          <Shield className="h-4 w-4 text-emerald-500" /> {toast}
+        <div className="fixed right-5 top-5 z-[80] anim-slide-right">
+          <div className="relative flex items-center gap-3 overflow-hidden rounded-xl border border-emerald-200 bg-white/95 py-3 pl-5 pr-3 shadow-2xl backdrop-blur">
+            <span className="absolute left-0 top-0 h-full w-1 bg-emerald-500" />
+            <Shield className="h-5 w-5 text-emerald-600" />
+            <p className="max-w-xs text-sm font-semibold text-slate-800">{toast}</p>
+            <button type="button" className="icon-btn ml-1 cursor-pointer" onClick={() => setToast(null)} aria-label="Dismiss"><X className="h-4 w-4" /></button>
+          </div>
         </div>
       )}
 
-      {/* Hero header */}
-      <div className="fh-hero flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-300/80">Safety</p>
-          <h1 className="mt-1 text-2xl font-extrabold text-white">Driver Safety Scorecards</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-300">
-            Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events & coaching
-          </p>
-        </div>
-        <button
-          type="button"
-          className="fh-btn-primary flex items-center gap-2 cursor-pointer"
-          onClick={() => exportCsv("driver-scorecards", drivers)}
-        >
-          <Download className="h-4 w-4" /> Export CSV
-        </button>
-      </div>
-
-      {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        {[
-          { label: "Fleet Safety Score", val: `${fleetScore}`, icon: <Award className="h-5 w-5" />, accent: fleetScore >= 85 ? "text-teal-600" : fleetScore >= 70 ? "text-amber-600" : "text-red-600", iconBg: "bg-teal-50 text-teal-500" },
-          { label: "Critical Events", val: s.criticalEvents ?? 0, icon: <AlertTriangle className="h-5 w-5" />, accent: "text-red-600", iconBg: "bg-red-50 text-red-500" },
-          { label: "Harsh Braking", val: s.harshBraking ?? 0, icon: <TrendingDown className="h-5 w-5" />, accent: "text-slate-900", iconBg: "bg-amber-50 text-amber-500" },
-          { label: "Speeding Events", val: s.speedingEvents ?? 0, icon: <TrendingUp className="h-5 w-5" />, accent: "text-amber-600", iconBg: "bg-orange-50 text-orange-500" },
-          { label: "Coaching Needed", val: s.coachingNeeded ?? 0, icon: <Users className="h-5 w-5" />, accent: "text-violet-600", iconBg: "bg-violet-50 text-violet-500" },
-          { label: "Open Incidents", val: s.openIncidents ?? 0, icon: <ClipboardCheck className="h-5 w-5" />, accent: "text-red-600", iconBg: "bg-rose-50 text-rose-500" },
-        ].map(({ label, val, icon, accent, iconBg }) => (
-          <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className={`grid h-9 w-9 place-items-center rounded-xl ${iconBg}`}>{icon}</span>
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Shield className="h-3 w-3" /> Safety
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Fleet-wide driver behavior scoring</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Driver Safety Scorecards
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events & coaching
+              </p>
             </div>
-            <p className={`text-2xl font-bold ${accent}`}>{String(val)}</p>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">{label}</p>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={() => exportCsv("driver-scorecards", drivers)}>
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
           </div>
-        ))}
+        </div>
+      </header>
+
+      {/* ── KPI cards ─────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <KpiCard label="Fleet Safety Score" value={String(fleetScore)} status={fleetScore >= 85 ? "Active" : fleetScore >= 70 ? "Warning" : "Critical"} />
+        <KpiCard label="Critical Events" value={String(s.criticalEvents ?? 0)} status={Number(s.criticalEvents ?? 0) > 0 ? "Critical" : "Active"} />
+        <KpiCard label="Harsh Braking" value={String(s.harshBraking ?? 0)} status={Number(s.harshBraking ?? 0) > 5 ? "Warning" : "Active"} />
+        <KpiCard label="Speeding Events" value={String(s.speedingEvents ?? 0)} status={Number(s.speedingEvents ?? 0) > 5 ? "Warning" : "Active"} />
+        <KpiCard label="Coaching Needed" value={String(s.coachingNeeded ?? 0)} status="Review" />
+        <KpiCard label="Open Incidents" value={String(s.openIncidents ?? 0)} status={Number(s.openIncidents ?? 0) > 0 ? "Critical" : "Active"} />
       </div>
 
-      {/* Ops intelligence bar */}
-      <div className="relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
         <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
         <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-violet-500/8 blur-2xl" />
         <div className="relative flex items-center gap-4">
@@ -378,7 +389,7 @@ export function DriverScorecardsPage() {
           </span>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Safety intelligence</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-200">
+            <p className="mt-0.5 text-sm font-medium text-slate-600">
               {Number(s.criticalEvents ?? 0) + Number(s.openIncidents ?? 0) === 0
                 ? "Fleet safety is stable — no critical events or open incidents requiring attention."
                 : `${s.criticalEvents ?? 0} critical events${Number(s.openIncidents ?? 0) > 0 ? ` · ${s.openIncidents} open incidents` : ""} require review`}
@@ -396,8 +407,9 @@ export function DriverScorecardsPage() {
         )}
       </div>
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
+        <div className="flex items-center gap-2">
         {(["drivers", "vehicles", "trends"] as Tab[]).map((t) => (
           <button
             key={t}
@@ -412,40 +424,40 @@ export function DriverScorecardsPage() {
             {t === "trends" ? "Fleet Trends" : `${t.charAt(0).toUpperCase() + t.slice(1)} Scorecards`}
           </button>
         ))}
+        </div>
         {tab === "drivers" && (
-          <div className="ml-auto relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <div className="relative min-w-[220px] flex-1 lg:max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 shrink-0 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               placeholder="Search drivers…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-56 rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm transition focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
+              className="field h-10 pl-9"
             />
           </div>
         )}
       </div>
 
-      {/* Driver scorecards table */}
+      {/* ── Driver scorecards table ──────────────────────────── */}
       {tab === "drivers" && (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
           {filteredDrivers.length === 0 ? (
             <EmptyState title="No drivers found" />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rank</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Driver</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Score</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Harsh Braking</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Harsh Accel.</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Speeding</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Dashcam</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coaching</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Incidents</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+              <table className="w-full min-w-[620px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2.5">Rank</th>
+                    <th className="px-4 py-2.5">Driver</th>
+                    <th className="px-4 py-2.5">Safety Score</th>
+                    <th className="px-4 py-2.5">Harsh Braking</th>
+                    <th className="px-4 py-2.5">Harsh Accel.</th>
+                    <th className="px-4 py-2.5">Speeding</th>
+                    <th className="px-4 py-2.5">Dashcam</th>
+                    <th className="px-4 py-2.5">Coaching</th>
+                    <th className="px-4 py-2.5">Incidents</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -498,28 +510,26 @@ export function DriverScorecardsPage() {
                   })}
                 </tbody>
               </table>
-            </div>
           )}
         </div>
       )}
 
-      {/* Vehicle scorecards */}
+      {/* ── Vehicle scorecards ───────────────────────────────── */}
       {tab === "vehicles" && (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
           {vehicles.length === 0 ? (
             <EmptyState title="No vehicle scorecard data" subtitle="Scorecards are generated from safety events linked to vehicles" />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Vehicle</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Score</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Safety Events</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Dashcam Events</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Incidents</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Route Deviations</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Risk Score</th>
+              <table className="w-full min-w-[620px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2.5">Vehicle</th>
+                    <th className="px-4 py-2.5">Safety Score</th>
+                    <th className="px-4 py-2.5">Safety Events</th>
+                    <th className="px-4 py-2.5">Dashcam Events</th>
+                    <th className="px-4 py-2.5">Incidents</th>
+                    <th className="px-4 py-2.5">Route Deviations</th>
+                    <th className="px-4 py-2.5">Risk Score</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -539,16 +549,15 @@ export function DriverScorecardsPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
           )}
         </div>
       )}
 
-      {/* Fleet trends chart */}
+      {/* ── Fleet trends chart ───────────────────────────────── */}
       {tab === "trends" && (
         <div className="grid gap-6 xl:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <h2 className="section-title mb-4 flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-teal-500" /> Fleet Safety Score Trend
             </h2>
             <ResponsiveContainer width="100%" height={220}>
@@ -564,8 +573,8 @@ export function DriverScorecardsPage() {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <h2 className="section-title mb-4 flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-violet-500" /> Behavior Events by Week
             </h2>
             <ResponsiveContainer width="100%" height={220}>
