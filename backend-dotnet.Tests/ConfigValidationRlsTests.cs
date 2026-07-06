@@ -26,6 +26,27 @@ public sealed class ConfigValidationRlsTests
         Assert.Equal("pass", issue.Level);
     }
 
+    [Fact]
+    public void Validate_RenderPgConnection_PassesDatabaseCheck()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = "Production",
+            ["Jwt:Key"] = new string('j', 64),
+            ["PG_CONNECTION"] = "postgresql://app:secret@db.example.test/opstrax?sslmode=require",
+            ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
+            ["Cors:AllowedOrigins"] = "https://app.example.test",
+            ["Rls:EnforceTenantContext"] = "true",
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+        var result = new ConfigValidationService(config).Validate();
+
+        var issue = Assert.Single(result.Issues, i => i.Check == "database_connection");
+        Assert.Equal("pass", issue.Level);
+        Assert.Equal(0, result.FailCount);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("false")]

@@ -28,7 +28,12 @@ public sealed class ConfigValidationService(IConfiguration config)
             issues.Add(new("jwt_key", "pass",   "JWT signing key present and meets minimum length"));
 
         // Database connection
-        var dbConn = config.GetConnectionString("DefaultConnection") ?? config["Database:ConnectionString"];
+        var dbConn = config.GetConnectionString("DefaultConnection")
+            ?? config["Database:ConnectionString"]
+            ?? config["PG_CONNECTION_APP"]
+            ?? config["PG_CONNECTION"]
+            ?? Environment.GetEnvironmentVariable("PG_CONNECTION_APP")
+            ?? Environment.GetEnvironmentVariable("PG_CONNECTION");
         if (string.IsNullOrWhiteSpace(dbConn))
             issues.Add(new("database_connection", "fail", "Database connection string is not configured"));
         else
