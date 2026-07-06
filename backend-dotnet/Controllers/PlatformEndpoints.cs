@@ -580,6 +580,7 @@ public static class PlatformEndpoints
 
     private const string TenantSelect =
         @"SELECT c.id, c.name, c.company_code, c.industry, c.status company_status, c.created_at,
+                 c.country, c.currency,
                  ts.status, ts.seat_limit, ts.billing_currency, ts.mrr_cents, ts.trial_ends_at,
                  ts.contract_start, ts.contract_end, ts.account_owner, ts.support_owner,
                  p.name package_name, p.package_code,
@@ -715,7 +716,7 @@ public static class PlatformEndpoints
         }, "Tenant created"));
     }
 
-    internal static async Task<IResult> TenantUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -723,6 +724,17 @@ public static class PlatformEndpoints
         var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", id), ct);
         if (exists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        // Operating region (optional): validate against country_profiles BEFORE any
+        // writes, then run the same cascade as tenant creation so region-gated
+        // modules and country-default entitlements follow the reassignment.
+        var countryCode = Str(body, "countryCode") ?? Str(body, "country_code");
+        if (!string.IsNullOrWhiteSpace(countryCode))
+        {
+            var countryProfile = await countries.GetAsync(countryCode!, ct);
+            if (countryProfile is null)
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown country_code: {countryCode}"), statusCode: StatusCodes.Status400BadRequest);
+        }
 
         await db.ExecuteAsync(
             @"UPDATE tenant_subscriptions SET
@@ -753,8 +765,19 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@id", id);
             }, ct);
 
-        await AuditAsync(db, principal!, http, "tenant.updated", "Tenant", id, id, body.Keys, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Tenant updated"));
+        CountryProfileService.CascadeResult? cascade = null;
+        if (!string.IsNullOrWhiteSpace(countryCode))
+            cascade = await countries.ApplyToTenantAsync(id, countryCode!, principal!.Email, ct);
+
+        await AuditAsync(db, principal!, http, "tenant.updated", "Tenant", id, id,
+            new { fields = body.Keys, countryCode = cascade?.CountryCode, autoEnabled = cascade?.EnabledFeatures }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            country = cascade?.CountryCode,
+            currency = cascade?.Currency,
+            autoEnabledFeatures = cascade?.EnabledFeatures,
+        }, "Tenant updated"));
     }
 
     internal static async Task<IResult> TenantStatus(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)

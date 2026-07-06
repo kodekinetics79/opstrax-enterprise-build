@@ -250,8 +250,15 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
   const [assignPkg, setAssignPkg] = useState("");
   const [confirm, setConfirm] = useState<"suspend" | "cancel" | "revoke" | null>(null);
   const [seatEdit, setSeatEdit] = useState("");
+  const [regionEdit, setRegionEdit] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Server-driven country list (shared cache with the create drawer). Changing a
+  // tenant's region re-runs the country cascade: currency/timezone defaults plus
+  // country-gated modules (e.g. Saudi Readiness) follow the reassignment.
+  const { data: countryProfiles } = useQuery({ queryKey: ["platform", "country-profiles"], queryFn: platformApi.countryProfiles });
+  const countryOptions = (countryProfiles ?? []) as AnyRecord[];
 
   const reload = () => { qc.invalidateQueries({ queryKey: ["platform", "tenant", id] }); onChanged(); };
 
@@ -281,6 +288,7 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
             <Info label="MRR" value={formatMoney(Number(tenant.mrrCents))} />
             <Info label="Seat limit" value={String(tenant.seatLimit ?? "—")} />
             <Info label="Users" value={String(tenant.userCount ?? 0)} />
+            <Info label="Operating region" value={tenant.country ? `${String(tenant.country)} · ${String(tenant.currency ?? "")}` : "Not set"} />
             <Info label="Account owner" value={String(tenant.accountOwner ?? "—")} />
             <Info label="Support owner" value={String(tenant.supportOwner ?? "—")} />
             <Info label="Trial ends" value={String(tenant.trialEndsAt ?? "—").slice(0, 10) || "—"} />
@@ -322,6 +330,32 @@ function TenantDetailDrawer({ id, packages, canManage, canEntitlements, gatedMod
                   Save
                 </PButton>
               </div>
+            </section>
+          )}
+
+          {canManage && (
+            <section>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Operating region</h3>
+              <div className="flex gap-2">
+                <PSelect value={regionEdit || String(tenant.country ?? "")} onChange={(e) => setRegionEdit(e.target.value)} aria-label="Operating region">
+                  <option value="">— Not set —</option>
+                  {countryOptions.map((c) => (
+                    <option key={String(c.countryCode)} value={String(c.countryCode)}>
+                      {String(c.countryName)} ({String(c.countryCode)})
+                    </option>
+                  ))}
+                </PSelect>
+                <PButton
+                  disabled={busy || !regionEdit || regionEdit === String(tenant.country ?? "")}
+                  onClick={() => act(() => platformApi.updateTenant(id, { countryCode: regionEdit }), "Operating region updated — tenant users see region modules after next login")}
+                >
+                  Save
+                </PButton>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Applies the country profile cascade: default currency, timezone and country
+                features. Region-scoped modules (e.g. Saudi Readiness) follow this setting.
+              </p>
             </section>
           )}
 
