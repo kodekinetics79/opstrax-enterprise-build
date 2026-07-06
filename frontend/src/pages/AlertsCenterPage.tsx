@@ -642,31 +642,32 @@ export function AlertsCenterPage() {
             <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
           </div>
         </div>
-      </header>
 
-      <section className="panel p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
+        <div className="relative mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
           <div>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Live lanes</h2>
-                <p className="text-sm text-slate-500">Directly driven by the current queue, not static demo cards.</p>
+                <h2 className="text-sm font-semibold text-slate-900">Live lanes</h2>
+                <p className="text-xs text-slate-500">Directly driven by the current queue, not static demo cards.</p>
               </div>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 {filtered.length} visible
               </span>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {categoryBuckets.slice(0, 4).map((bucket) => (
                 <button
                   key={bucket.category}
                   type="button"
                   onClick={() => navigate(bucket.route)}
-                  className="rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                  className="rounded-2xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
                 >
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
-                  <p className="mt-2 text-2xl font-black tracking-tight text-slate-900">{bucket.count}</p>
-                  <p className="mt-1 text-xs text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
+                    <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+                  </div>
+                  <p className="mt-1.5 text-xl font-black tracking-tight text-slate-900">{bucket.count}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
                 </button>
               ))}
             </div>
@@ -675,19 +676,19 @@ export function AlertsCenterPage() {
           <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_8px_18px_rgba(15,23,42,.05)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Queue health</h2>
-                <p className="text-sm text-slate-500">Live operating pressure from the current alert feed.</p>
+                <h2 className="text-sm font-semibold text-slate-900">Queue health</h2>
+                <p className="text-xs text-slate-500">Live operating pressure from the current alert feed.</p>
               </div>
               <ShieldAlert className="h-4 w-4 text-sky-500" />
             </div>
-            <div className="mt-3 space-y-3">
+            <div className="mt-2 space-y-2.5">
               <HealthLine label="Critical open" value={summary.critical} total={Math.max(summary.open, 1)} tone="red" />
               <HealthLine label="Aging 24h+" value={agingOpen} total={Math.max(summary.open, 1)} tone="amber" />
               <HealthLine label="Unowned" value={unownedOpen} total={Math.max(summary.open, 1)} tone="sky" />
             </div>
           </div>
         </div>
-      </section>
+      </header>
 
       <section className="panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">

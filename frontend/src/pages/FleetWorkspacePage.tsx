@@ -333,10 +333,10 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     mode === 'carriers' ? carriers.length : shipments.length;
 
   return (
-    <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
+    <div className="fleet-console flex h-full min-h-0 flex-col gap-2.5">
 
       {/* ── Console rail ─────────────────────────────────────────────────── */}
-      <header className="fc-rail relative shrink-0 px-6 py-3.5">
+      <header className="fc-rail relative shrink-0 px-5 py-3">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="min-w-0">
             <span className="section-title inline-flex items-center gap-2">
@@ -383,7 +383,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       )}
 
       {/* ── Clay overview tiles — pressable mode shortcuts ────────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-2.5 xl:grid-cols-4">
         <ClayStat Icon={Package} tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active shipments" value={summary?.activeShipments ?? (loading ? '…' : 0)} caption="Booked + moving"      active={mode === 'shipments'}   onClick={() => setMode(mode === 'shipments' ? 'command' : 'shipments')} />
         <ClayStat Icon={Truck}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Fleet available"  value={summary?.activeVehicles ?? (loading ? '…' : 0)}  caption="Ready for assignment" active={mode === 'vehicles'}    onClick={() => setMode(mode === 'vehicles' ? 'command' : 'vehicles')} />
         <ClayStat Icon={Wrench}  tone="fc-clay-amber"   iconCls="text-amber-700"   label="Open maintenance" value={summary?.openMaintenance ?? (loading ? '…' : 0)} caption="Work orders open"     active={mode === 'maintenance'} onClick={() => setMode(mode === 'maintenance' ? 'command' : 'maintenance')} alert={Boolean(summary?.openMaintenance)} />
@@ -391,11 +391,11 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       </div>
 
       {/* ── Main deck ─────────────────────────────────────────────────────── */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_312px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 xl:grid-cols-[minmax(0,1fr)_280px]">
 
         {/* Operational board */}
-        <section className="fc-neumo flex min-h-[460px] flex-col overflow-hidden xl:min-h-0">
-          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-2.5 pt-3.5">
+        <section className="fc-neumo flex min-h-[420px] flex-col overflow-hidden xl:min-h-0">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-2 pt-3">
             <div>
               <p className="section-title">Operational board</p>
               <p className="mt-0.5 text-[15px] font-black tracking-tight text-slate-950">
@@ -410,13 +410,13 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           <div className="fc-bezel mx-3 flex min-h-0 flex-1 flex-col">
-            <div className="fc-screen min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="fc-screen min-h-0 flex-1 overflow-y-auto p-2.5">
               {loading ? (
-                <div className="grid gap-2.5 md:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
+                <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}
                 </div>
               ) : (
-                <div className="grid gap-2.5 md:grid-cols-2">
+                <div className="grid auto-rows-fr gap-2.5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {mode === 'vehicles' && vehicles.map((vehicle) => (
                     <VehicleCard key={vehicle.id} vehicle={vehicle} saving={savingId === vehicle.id} onService={() => handleService(vehicle)} />
                   ))}
@@ -458,7 +458,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
             </div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[11.5px] font-semibold text-slate-500">
             <span className="inline-flex items-center gap-2">
               <span className="deck-led deck-led-emerald" />
               <span className="tabular-nums">{summary?.enRoute ?? 0} en route</span>
@@ -478,9 +478,9 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
         </section>
 
         {/* Instrument rail */}
-        <aside className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto">
+        <aside className="flex min-h-0 flex-col gap-2.5 xl:overflow-y-auto">
           {/* Mode instruments */}
-          <div className="fc-neumo shrink-0 p-4">
+          <div className="fc-neumo shrink-0 p-3.5">
             <span className="section-title inline-flex items-center gap-2">
               <Gauge className="h-3.5 w-3.5 text-teal-700" /> {config.label} signals
             </span>
@@ -495,7 +495,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Load plan — real route aggregation from the overview */}
-          <div className="fc-neumo shrink-0 p-4">
+          <div className="fc-neumo shrink-0 p-3.5">
             <div className="flex items-center justify-between">
               <span className="section-title inline-flex items-center gap-2">
                 <MapPinned className="h-3.5 w-3.5 text-teal-700" /> Load plan
@@ -523,7 +523,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Exceptions */}
-          <div className="fc-neumo shrink-0 p-4">
+          <div className="fc-neumo shrink-0 p-3.5">
             <span className="section-title inline-flex items-center gap-2">
               <AlertTriangle className="h-3.5 w-3.5 text-teal-700" /> Exceptions
             </span>
@@ -546,7 +546,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Signal summary */}
-          <div className="fc-neumo flex-1 p-4">
+          <div className="fc-neumo flex-1 p-3.5">
             <span className="section-title inline-flex items-center gap-2">
               <CheckCircle2 className="h-3.5 w-3.5 text-teal-700" /> Today
             </span>
@@ -583,13 +583,13 @@ function ClayStat({ Icon, tone, iconCls, label, value, caption, active, onClick,
   const valueColor = alert && Number.isFinite(n) && n > 0 ? (tone.includes('red') ? 'text-rose-600' : 'text-amber-600') : 'text-slate-900';
   return (
     <button type="button" onClick={onClick} aria-pressed={active}
-      className={`fc-clay ${tone} ${active ? 'deck-clay-pressed' : ''} p-4 text-left`}>
+      className={`fc-clay ${tone} ${active ? 'deck-clay-pressed' : ''} p-3.5 text-left`}>
       <div className="flex items-center justify-between">
         <span className="text-[12px] font-bold text-slate-600">{label}</span>
         <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
       </div>
-      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
-      <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p>
+      <div className={`mt-2 text-[27px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
+      <p className="mt-1.5 text-[10.5px] font-medium text-slate-500">{caption}</p>
     </button>
   );
 }
@@ -597,11 +597,11 @@ function ClayStat({ Icon, tone, iconCls, label, value, caption, active, onClick,
 function RailMeter({ label, value, pct, fill }: { label: string; value: string; pct: number; fill: string }) {
   return (
     <div>
-      <div className="flex items-center justify-between text-[11px] font-bold">
+      <div className="flex items-center justify-between text-[10.5px] font-bold">
         <span className="text-slate-600">{label}</span>
         <span className="tabular-nums text-slate-800">{value}</span>
       </div>
-      <div className="deck-track mt-1.5">
+      <div className="deck-track mt-1.25">
         <div className={`deck-fill ${fill}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
       </div>
     </div>
@@ -609,7 +609,7 @@ function RailMeter({ label, value, pct, fill }: { label: string; value: string; 
 }
 
 function BoardCard({ children }: { children: React.ReactNode }) {
-  return <div className="fc-card flex flex-col gap-2.5 p-3.5">{children}</div>;
+  return <div className="fc-card flex h-full flex-col gap-2 p-3">{children}</div>;
 }
 
 function CardHead({ title, subtitle, chip }: { title: string; subtitle: string; chip: React.ReactNode }) {
