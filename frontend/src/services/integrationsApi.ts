@@ -83,7 +83,29 @@ export const integrationsApi = {
   sync: (id: number | string) =>
     unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/sync`, {})),
   disconnect: (id: number | string) =>
-    unwrap<IntegrationDetailPayload>(apiClient.delete(`/api/integrations/${id}`)),
+    unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/disconnect`, {})),
+  // Full CRUD (control-tower). create adds a custom connector; update edits any field on
+  // any integration (built-in or custom); remove hard-deletes a custom one or resets a
+  // built-in to catalog defaults.
+  create: (payload: IntegrationWriteInput) =>
+    unwrap<IntegrationDetailPayload>(apiClient.post("/api/integrations", payload)),
+  update: (id: number | string, payload: IntegrationWriteInput) =>
+    unwrap<IntegrationDetailPayload>(apiClient.put(`/api/integrations/${id}`, payload)),
+  remove: (id: number | string) =>
+    unwrap<IntegrationDetailPayload & { removed?: boolean; reset?: boolean }>(apiClient.delete(`/api/integrations/${id}`)),
+};
+
+export type IntegrationWriteInput = {
+  name?: string;
+  category?: IntegrationCategory | string;
+  description?: string;
+  logo?: string;
+  status?: IntegrationStatus;
+  scope?: "tenant" | "platform";
+  managedBy?: string;
+  relatedSystems?: string[];
+  connectedTo?: string[];
+  config?: IntegrationConfig;
 };
 
 export function isIntegrationConfig(value: AnyRecord): value is IntegrationConfig {

@@ -36,6 +36,9 @@ public sealed class Batch7SchemaService(Database db)
         new("integrations", "scope",                  "VARCHAR(40) NOT NULL DEFAULT 'tenant'"),
         new("integrations", "config_json",            "JSONB NULL"),
         new("integrations", "updated_at",             "TIMESTAMPTZ NULL"),
+        // is_custom distinguishes tenant-created connectors (fully deletable) from
+        // built-in catalog connectors (reset-to-default on delete). Drives CRUD.
+        new("integrations", "is_custom",              "BOOLEAN NOT NULL DEFAULT false"),
         // Enrich audit_logs with severity + module context
         new("audit_logs", "severity",     "VARCHAR(40) NOT NULL DEFAULT 'Info'"),
         new("audit_logs", "module_key",   "VARCHAR(100) NULL"),

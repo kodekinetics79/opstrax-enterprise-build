@@ -600,12 +600,20 @@ public static partial class EndpointMappings
         });
 
         // ── Integrations ──
-        app.MapGet("/api/integrations", (HttpContext http, Database db, CancellationToken ct) =>
-            RequirePermission(http, "telematics:providers:manage") is { } denied ? Task.FromResult(denied) : OkRows(db,
-            @"SELECT id, provider_name, category, status,
-                     NOW() last_sync_at
-              FROM integrations WHERE company_id=@cid ORDER BY category, provider_name",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        // ── Integrations control-tower (full CRUD) ────────────────────────────────
+        // The connectivity/config utility room. Every connector — built-in or custom —
+        // is editable and CRUD-able. Reads return the full record shape the UI needs
+        // (records + summary + activity). Permission: integrations:view / :manage, with
+        // telematics:providers:manage accepted as a legacy alias for manage.
+        app.MapGet("/api/integrations", IntegrationsList);
+        app.MapGet("/api/integrations/{id:long}", IntegrationDetail);
+        app.MapPost("/api/integrations", CreateIntegration);
+        app.MapPut("/api/integrations/{id:long}", UpdateIntegration);
+        app.MapDelete("/api/integrations/{id:long}", RemoveIntegration);
+        app.MapPost("/api/integrations/{id:long}/connect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Connected", "integration.connected", db, audit, ct));
+        app.MapPost("/api/integrations/{id:long}/disconnect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Disconnected", "integration.disconnected", db, audit, ct));
+        app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
+        app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
 
         // ── Vehicle Assignments / Owners ──
         app.MapGet("/api/vehicle-assignments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
@@ -5951,6 +5959,209 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static object AsId(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString()) ? DBNull.Value : value;
     private static object AsDecimal(object? value) { if (value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString())) return DBNull.Value; return decimal.TryParse(value.ToString(), out var d) ? d : DBNull.Value; }
+
+    // ===== INTEGRATIONS CONTROL-TOWER (full CRUD) ==================================
+
+    private static IResult? IntegrationsManageGuard(HttpContext http) =>
+        RequirePermission(http, "integrations:manage") is { } d1 &&
+        RequirePermission(http, "telematics:providers:manage") is { } d2 ? d2 : null;
+
+    private static IResult? IntegrationsViewGuard(HttpContext http) =>
+        RequirePermission(http, "integrations:view") is { } d1 &&
+        RequirePermission(http, "integrations:manage") is not null &&
+        RequirePermission(http, "telematics:providers:manage") is { } d3 ? d3 : null;
+
+    private const string IntegrationCols =
+        @"id, provider_name, category, status, integration_key,
+          description, logo, sync_label, last_sync_at, related_systems_json,
+          connected_to_json, managed_by, scope, config_json,
+          COALESCE(is_custom,false) is_custom, updated_at";
+
+    private static async Task<IResult> IntegrationsList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (IntegrationsViewGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var records = await db.QueryAsync(
+            $"SELECT {IntegrationCols} FROM integrations WHERE company_id=@cid ORDER BY category, provider_name",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        var summary = await db.QuerySingleAsync(
+            @"SELECT COUNT(*) total,
+                     SUM(CASE WHEN status='Connected' THEN 1 ELSE 0 END) connected,
+                     SUM(CASE WHEN status='Pending' THEN 1 ELSE 0 END) pending,
+                     SUM(CASE WHEN status='Error' THEN 1 ELSE 0 END) error,
+                     SUM(CASE WHEN status NOT IN ('Connected') THEN 1 ELSE 0 END) risk_items
+              FROM integrations WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        var activity = await db.QueryAsync(
+            @"SELECT id, action_name, action_type, severity, actor_name, created_at, details_json
+              FROM audit_logs WHERE company_id=@cid AND module_key='integrations'
+              ORDER BY created_at DESC LIMIT 20",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            moduleKey = "integrations",
+            tenantId = companyId,
+            summary = summary ?? new Dictionary<string, object?>(),
+            records,
+            activity,
+        }));
+    }
+
+    private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (IntegrationsViewGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var record = await db.QuerySingleAsync(
+            $"SELECT {IntegrationCols} FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var activity = await db.QueryAsync(
+            @"SELECT id, action_name, action_type, severity, actor_name, created_at, details_json
+              FROM audit_logs WHERE company_id=@cid AND module_key='integrations'
+              ORDER BY created_at DESC LIMIT 20",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { record, activity }));
+    }
+
+    private static string IntegrationSlug(string name) =>
+        System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant().Trim(), "[^a-z0-9]+", "-").Trim('-') is { Length: > 0 } s ? s : "custom";
+
+    private static async Task<IResult> CreateIntegration(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var name = Get(body, "name")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Integration name is required"));
+        var key = IntegrationSlug(name);
+        if (await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND integration_key=@k",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@k", key); }, ct) > 0)
+            return Results.Conflict(ApiResponse<object>.Fail($"An integration with key '{key}' already exists"));
+
+        var id = await db.InsertAsync(
+            @"INSERT INTO integrations
+                  (company_id, provider_name, category, status, integration_key, description, logo,
+                   sync_label, last_sync_at, related_systems_json, connected_to_json, managed_by,
+                   scope, config_json, is_custom, updated_at)
+              VALUES (@cid, @name, @cat, COALESCE(@status,'Disconnected'), @key, @desc, @logo,
+                   'Never', NULL, @related::jsonb, @connected::jsonb, COALESCE(@managed,'Operations'),
+                   COALESCE(@scope,'tenant'), COALESCE(@config,'{}')::jsonb, true, NOW())",
+            c => { c.Parameters.AddWithValue("@cid", companyId); BindIntegration(c, body, name, key); }, ct);
+        await audit.LogAsync(http, "integration.created", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { key, name }), ct: ct);
+        return await IntegrationDetail(http, id, db, ct);
+    }
+
+    private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (exists == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+
+        // COALESCE keeps any field the caller omits; JSON columns replace when provided.
+        await db.ExecuteAsync(
+            @"UPDATE integrations SET
+                  provider_name = COALESCE(@name, provider_name),
+                  category      = COALESCE(@cat, category),
+                  status        = COALESCE(@status, status),
+                  description   = COALESCE(@desc, description),
+                  logo          = COALESCE(@logo, logo),
+                  managed_by    = COALESCE(@managed, managed_by),
+                  scope         = COALESCE(@scope, scope),
+                  related_systems_json = COALESCE(@related::jsonb, related_systems_json),
+                  connected_to_json    = COALESCE(@connected::jsonb, connected_to_json),
+                  config_json          = COALESCE(@config::jsonb, config_json),
+                  updated_at = NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null); }, ct);
+        await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
+        return await IntegrationDetail(http, id, db, ct);
+    }
+
+    private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var row = await db.QuerySingleAsync(
+            "SELECT COALESCE(is_custom,false) is_custom, integration_key FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var isCustom = row.TryGetValue("isCustom", out var cRaw) && cRaw is bool b && b;
+
+        if (isCustom)
+        {
+            await db.ExecuteAsync("DELETE FROM integrations WHERE company_id=@cid AND id=@id",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+            await audit.LogAsync(http, "integration.removed", "Integration", id, ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { removed = true, reset = false }));
+        }
+        // Built-in: reset to a clean disconnected state rather than delete (stays discoverable).
+        await db.ExecuteAsync(
+            @"UPDATE integrations SET status='Disconnected', config_json='{}'::jsonb,
+                  connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never', updated_at=NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        await audit.LogAsync(http, "integration.reset", "Integration", id, ct: ct);
+        return await IntegrationDetail(http, id, db, ct);
+    }
+
+    private static async Task<IResult> SetIntegrationStatus(HttpContext http, long id, string status, string action, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var affected = await db.ExecuteAsync(
+            @"UPDATE integrations SET status=@status,
+                  last_sync_at = CASE WHEN @status='Connected' THEN NOW() ELSE last_sync_at END,
+                  sync_label   = CASE WHEN @status='Connected' THEN 'Just now' ELSE sync_label END,
+                  updated_at = NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@status", status); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        await audit.LogAsync(http, action, "Integration", id, ct: ct);
+        return await IntegrationDetail(http, id, db, ct);
+    }
+
+    private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+        => await SetIntegrationStatus(http, id, "Connected", "integration.synced", db, audit, ct);
+
+    private static async Task<IResult> ConfigureIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        // Merge the posted config object over the stored config; move a disconnected
+        // connector to Pending once it has been configured.
+        var configJson = System.Text.Json.JsonSerializer.Serialize(body ?? new Dictionary<string, object?>());
+        var affected = await db.ExecuteAsync(
+            @"UPDATE integrations SET
+                  config_json = COALESCE(config_json,'{}'::jsonb) || @config::jsonb,
+                  status = CASE WHEN status='Disconnected' THEN 'Pending' ELSE status END,
+                  updated_at = NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@config", configJson); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
+        return await IntegrationDetail(http, id, db, ct);
+    }
+
+    private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)
+    {
+        object? Str(string k) => Get(body, k) is { } v && v is not DBNull ? v : DBNull.Value;
+        object? Json(string k) => Get(body, k) is { } v && v is not DBNull
+            ? System.Text.Json.JsonSerializer.Serialize(v) : (object)DBNull.Value;
+        c.Parameters.AddWithValue("@name", (object?)nameOverride ?? Str("name"));
+        c.Parameters.AddWithValue("@key", (object?)keyOverride ?? DBNull.Value);
+        c.Parameters.AddWithValue("@cat", Str("category"));
+        c.Parameters.AddWithValue("@status", Str("status"));
+        c.Parameters.AddWithValue("@desc", Str("description"));
+        c.Parameters.AddWithValue("@logo", Str("logo"));
+        c.Parameters.AddWithValue("@managed", Str("managedBy"));
+        c.Parameters.AddWithValue("@scope", Str("scope"));
+        c.Parameters.AddWithValue("@related", Json("relatedSystems"));
+        c.Parameters.AddWithValue("@connected", Json("connectedTo"));
+        c.Parameters.AddWithValue("@config", Json("config"));
+    }
 
     // ===== ENTITY CSV IMPORT — vehicles + drivers ==================================
 
