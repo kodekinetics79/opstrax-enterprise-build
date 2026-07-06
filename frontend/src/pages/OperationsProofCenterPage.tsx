@@ -102,16 +102,16 @@ function JSONSummary({ value }: { value: unknown }) {
 export function OperationsProofCenterPage() {
   const hasPermission = useHasPermission();
   const qc = useQueryClient();
-  const [jobInput, setJobInput] = useState("1201");
-  const [jobId, setJobId] = useState<number | null>(1201);
+  const [jobInput, setJobInput] = useState("");
+  const [jobId, setJobId] = useState<number | null>(null);
   const [forms, setForms] = useState<Record<string, FormState>>({
-    siteAccess: { requirementType: "gate_pass", instructions: "Verify access with the site desk." },
-    accessDocument: { documentType: "noc", documentNo: "NOC-1001" },
-    pickupAuthorization: { authorizationNo: "PICK-1001", thirdPartyName: "Alpha Logistics" },
-    warehouseHandover: { handoverType: "warehouse_handover", warehouseName: "Main Warehouse" },
-    proofPackage: { proofType: "proof_of_delivery", receiverName: "Receiver Name", receiverPhone: "" },
-    proofArtifact: { artifactType: "photo", notes: "Captured in the field" },
-    smartAssignment: { recommendedDriverId: "", recommendedVehicleId: "", score: "0.78", confidenceScore: "0.72", riskLevel: "medium" },
+    siteAccess: { requirementType: "gate_pass", instructions: "" },
+    accessDocument: { documentType: "noc", documentNo: "" },
+    pickupAuthorization: { authorizationNo: "", thirdPartyName: "" },
+    warehouseHandover: { handoverType: "warehouse_handover", warehouseName: "" },
+    proofPackage: { proofType: "proof_of_delivery", receiverName: "", receiverPhone: "" },
+    proofArtifact: { artifactType: "photo", notes: "" },
+    smartAssignment: { recommendedDriverId: "", recommendedVehicleId: "", score: "", confidenceScore: "", riskLevel: "medium" },
   });
 
   const summaryQuery = useQuery({
@@ -239,11 +239,11 @@ export function OperationsProofCenterPage() {
   };
 
   return (
-    <div className="control-tower flex h-full flex-col gap-8 overflow-y-auto">
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
       <PageHeader
         eyebrow="Operational Proof"
         title="Operational Proof Center"
-        description="A live read-model view of assignment, access, handover, proof, and billing confidence using Stage 9 persistence. This is a read-model first surface, not a mobile app."
+        description="Assignment, site access, handover, proof and billing confidence for a job — evidence from capture through validation."
         actions={
           <>
             <form className="flex items-center gap-2" onSubmit={loadJob}>
@@ -271,7 +271,7 @@ export function OperationsProofCenterPage() {
         </div>
       ) : !summary ? (
         <section className="panel p-6">
-          <p className="text-sm text-slate-500">Enter a job id to view execution data. No synthetic data is being injected here.</p>
+          <p className="text-sm text-slate-500">Enter a job ID to load its execution and proof evidence.</p>
         </section>
       ) : (
         <>
@@ -334,7 +334,7 @@ export function OperationsProofCenterPage() {
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Mobile-safe action posture</p>
                 <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 text-sm text-slate-600">
-                  AI content is recommendation-only. Acceptance is gated by backend permission and cannot directly mutate business tables outside the approved workflow.
+                  Recommendations require an authorized acceptance before anything changes.
                 </div>
               </div>
             </div>
@@ -518,7 +518,7 @@ export function OperationsProofCenterPage() {
               <h2 className="text-lg font-bold text-slate-900">Mobile Readiness Preview</h2>
             </div>
             <p className="mt-2 text-sm text-slate-500">
-              This is a preview of the future mobile contract, not a native app. It points to the same backend contract surface this stage hardens.
+              Preview of the field-capture flow drivers will use on mobile.
             </p>
             <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
               <table className="w-full text-left text-sm">

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { MapPin } from "lucide-react";
+import { ConsoleRail } from "@/components/console";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { type LogisticsOverview, type LogisticsRoute, type LogisticsStop } from "@/services/logisticsApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
@@ -11,7 +14,6 @@ const lastMileApi = {
   overview: () => unwrap<LogisticsOverview>(apiClient.get("/api/fleet-tms/logistics/overview")),
   routes: () => unwrap<{ items: LogisticsRoute[] }>(apiClient.get("/api/fleet-tms/logistics/routes", { params: { status: "Active" } })),
   routeStops: (id: string | number) => unwrap<{ items: LogisticsStop[] }>(apiClient.get(`/api/fleet-tms/logistics/routes/${id}/stops`)),
-  sendEta: (jobId: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/${jobId}/send`, {})),
 };
 
 // ── Stop row ──────────────────────────────────────────────────────────────────
@@ -129,7 +131,6 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function LastMileDeliveryPage() {
-  const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
@@ -137,14 +138,6 @@ export function LastMileDeliveryPage() {
 
   const overviewQ = useQuery({ queryKey: ["last-mile", "overview"], queryFn: lastMileApi.overview });
   const routesQ = useQuery({ queryKey: ["last-mile", "routes"], queryFn: lastMileApi.routes, refetchInterval: 20_000 });
-
-  const etaMutation = useMutation({
-    mutationFn: (jobId: string | number) => lastMileApi.sendEta(jobId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["last-mile"] });
-      showToast("ETA notification sent to customer");
-    },
-  });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -198,26 +191,28 @@ export function LastMileDeliveryPage() {
   if (overviewQ.isError) return <ErrorState message={(overviewQ.error as Error)?.message} />;
 
   return (
-    <div className="control-tower flex flex-col gap-6 py-6">
+    <div className="fleet-console flex flex-col gap-3">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
           {toast}
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Last Mile Delivery</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Real-time stop sequencing, ETA management, proof of delivery and customer notification</p>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => exportCsv("last-mile-delivery", flatStops)}
-        >
-          Export CSV
-        </button>
-      </div>
+      <ConsoleRail
+        eyebrow="Dispatch · Last Mile"
+        icon={<MapPin className="h-3.5 w-3.5 text-teal-700" />}
+        title="Last Mile Delivery"
+        meta={<>
+          <span className="font-bold text-slate-700 tabular-nums">{routes.length}</span> delivery routes ·{" "}
+          <span className="font-bold text-emerald-600 tabular-nums">{String(s.activeRoutes ?? routes.filter((r) => r.status === "Active").length)}</span> active ·{" "}
+          <span className="font-bold text-rose-600 tabular-nums">{String(s.highRiskRoutes ?? 0)}</span> high risk
+        </>}
+        actions={
+          <button type="button" className="btn-ghost h-10" onClick={() => exportCsv("last-mile-delivery", flatStops)}>
+            Export CSV
+          </button>
+        }
+      />
 
       {/* KPI strip */}
       <div className="flex flex-wrap gap-3">
@@ -230,9 +225,9 @@ export function LastMileDeliveryPage() {
           { label: "Route Efficiency", val: s.routeEfficiencyScore ? `${s.routeEfficiencyScore}%` : "--", accent: "text-violet-600" },
           { label: "High Risk Routes", val: s.highRiskRoutes ?? 0, accent: "text-red-600" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+          <div key={label} className="deck-inset min-w-30 flex-1 rounded-xl px-3 py-2.5">
+            <span className={`block text-2xl font-black tabular-nums ${accent ?? "text-slate-900"}`}>{String(val)}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
           </div>
         ))}
       </div>
@@ -293,14 +288,8 @@ export function LastMileDeliveryPage() {
                 </p>
               </div>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={etaMutation.isPending}
-                  onClick={() => etaMutation.mutate(selectedRoute.id as string | number)}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-50"
-                >
-                  {etaMutation.isPending ? "Sending…" : "Send ETA Update"}
-                </button>
+                <Link to="/logistics-workspace" className="btn-ghost h-9 px-3 text-xs">Logistics workspace</Link>
+                <Link to="/dispatch" className="btn-ghost h-9 px-3 text-xs">Dispatch board</Link>
               </div>
             </div>
 

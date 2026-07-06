@@ -288,7 +288,7 @@ export function ProofOfDeliveryPage() {
   if (isError) return <ErrorState message={(error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="fleet-console flex flex-col gap-3">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
           {toast}
@@ -318,19 +318,14 @@ export function ProofOfDeliveryPage() {
           { label: "Digital Signatures", val: s.digitalSignatures ?? rows.filter((r) => r.proofType === "Digital Signature").length, accent: "text-violet-600" },
           { label: "Jobs Pending POD", val: s.jobsPendingProof ?? 0, accent: "text-red-600" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+          <div key={label} className="deck-inset min-w-30 flex-1 rounded-xl px-3 py-2.5">
+            <span className={`block text-2xl font-black tabular-nums ${accent ?? "text-slate-900"}`}>{String(val)}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
           </div>
         ))}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-4 py-3 text-white">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Lifecycle assurance</p>
-        <p className="mt-1 text-sm text-slate-100">
-          Every POD row is now anchored to a real shipment job. Pending proof, captured evidence, and job delivery status are evaluated together so dispatch, customer updates, and invoice readiness stay in sync.
-        </p>
-      </div>
+
 
       {/* Filters */}
       <div className="panel flex flex-wrap gap-3 items-center">

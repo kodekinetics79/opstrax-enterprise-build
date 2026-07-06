@@ -53,8 +53,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
 }> = {
   jobs: {
     eyebrow: "Jobs & Orders",
-    title: "Order execution cockpit",
-    description: "Create, assign, track, prove and audit every job with live SLA, proof, customer update, and assignment logic in one operational surface.",
+    title: "Jobs & Orders",
+    description: "Create, assign, track, prove and audit every job with live SLA, proof and customer updates.",
     exportName: "jobs",
     createLabel: "Create Job",
     tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "priority", "proofStatus", "recommendedAction"],
@@ -62,8 +62,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
   },
   "active-shipments": {
     eyebrow: "Active Shipments",
-    title: "Execution in motion",
-    description: "Live shipment execution board for in-flight work only: dispatch state, ETA confidence, proof readiness, and customer promise exposure.",
+    title: "Active Shipments",
+    description: "In-flight shipments only: dispatch state, ETA, proof readiness and customer updates.",
     exportName: "active-shipments",
     createLabel: "Create Shipment Job",
     tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
@@ -71,8 +71,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
   },
   shipments: {
     eyebrow: "Shipments",
-    title: "Shipment lifecycle register",
-    description: "Full shipment entity register from assignment through delivered proof, with stops, customer communication, and audit continuity tied to the underlying job.",
+    title: "Shipments",
+    description: "Every shipment from assignment through delivered proof, with stops, communication and audit history.",
     exportName: "shipments",
     createLabel: "Create Shipment Job",
     tableColumns: ["jobNumber", "customerName", "trackingCode", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
@@ -201,7 +201,7 @@ export function JobsPage() {
   const unassigned = Number(visibleSummary.unassignedJobs ?? 0);
 
   return (
-    <div className="space-y-6">
+    <div className="fleet-console space-y-3">
       <Toaster toast={toast} onClose={() => setToast(null)} />
 
       <PageHeader
