@@ -7490,16 +7490,23 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> Carriers(Database db, CancellationToken ct)
-        => OkRows(db,
+    private static Task<IResult> Carriers(HttpContext http, Database db, CancellationToken ct)
+    {
+        // Carriers are consumed by both fleet (TMS workspace) and finance (carrier
+        // management) audiences — allow either permission, deny only when both fail.
+        if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
+            return Task.FromResult(fleetDenied);
+        return OkRows(db,
             @"SELECT c.*,
                      CASE WHEN c.compliance_status='Non-Compliant' OR c.risk_score >= 70 THEN 'High'
                           WHEN c.compliance_status='At Risk' OR c.risk_score >= 40 THEN 'Medium'
                           ELSE 'Low' END risk_heat_score,
                      COALESCE(c.recommended_action, CASE WHEN c.compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN c.insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END) recommended_action
               FROM carriers c
-              WHERE c.deleted_at IS NULL
-              ORDER BY ARRAY_POSITION(ARRAY['Non-Compliant','At Risk','Compliant'], c.compliance_status), c.performance_score DESC", ct: ct);
+              WHERE c.deleted_at IS NULL AND c.company_id=@cid
+              ORDER BY ARRAY_POSITION(ARRAY['Non-Compliant','At Risk','Compliant'], c.compliance_status), c.performance_score DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> CarrierDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {

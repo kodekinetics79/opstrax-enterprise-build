@@ -1906,3 +1906,14 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
     border-radius: 20px;
   }
 }
+
+/* Raised board card for the Fleet TMS operational board — same relief as
+   .deck-alert but static (no pointer/hover lift); inner buttons act instead. */
+.fc-card {
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .09),
+    inset 0 1px 0 #ffffff;
+}
