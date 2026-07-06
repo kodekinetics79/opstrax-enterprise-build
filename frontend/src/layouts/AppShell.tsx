@@ -9,6 +9,7 @@ import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
+import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import type { AnyRecord, UserSession } from "@/types";
 
@@ -275,7 +276,7 @@ function getExperienceProfile(pathname: string, title: string): ExperienceProfil
       shortcuts: [
         { label: "Fleet Workspace", route: "/fleet-workspace" },
         { label: "Cold Chain", route: "/fleet-cold-chain" },
-        { label: "Saudi Readiness", route: "/fleet-saudi-readiness" },
+        { label: "Fleet Compliance", route: "/fleet-compliance" },
       ],
     };
   }
@@ -290,6 +291,7 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
+  const tenantCountry = useTenantCountry();
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
   const [sectionOpen, setSectionOpen] = useState<NavState | null>(null);
@@ -332,14 +334,18 @@ export function AppShell() {
     () => NAV_SECTIONS.map((section) => {
       const accessibleItems = section.items
         .map((key) => modules.find((module) => module.key === key || module.route === key || module.route === `/${key}`))
-        .filter((module): module is (typeof modules)[number] => Boolean(module && (!module.requiredPermission || hasPermission(module.requiredPermission))));
+        .filter((module): module is (typeof modules)[number] => Boolean(
+          module
+          && (!module.requiredPermission || hasPermission(module.requiredPermission))
+          && moduleAvailableForCountry(module, tenantCountry),
+        ));
 
       return {
         ...section,
         items: accessibleItems,
       };
     }).filter((section) => section.items.length > 0),
-    [hasPermission, session?.permissions],
+    [hasPermission, session?.permissions, tenantCountry],
   );
 
   const normalizedSidebarQuery = sidebarQuery.trim().toLowerCase();

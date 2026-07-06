@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { RequirePermission } from "@/hooks/usePermission";
+import { GCC_COUNTRIES, RequireRegion } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { modules } from "@/modules/moduleConfig";
 import { LoginPage } from "@/pages/LoginPage";
@@ -209,7 +210,7 @@ export default function App() {
         <Route path="/fleet-workspace" element={<RequirePermission permission="fleet:view"><FleetWorkspacePage mode="command" /></RequirePermission>} />
         <Route path="/fleet-cold-chain" element={<RequirePermission permission="fleet:view"><FleetColdChainPage /></RequirePermission>} />
         <Route path="/fleet-assets" element={<RequirePermission permission="fleet:view"><FleetAssetManagementPage /></RequirePermission>} />
-        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><FleetSaudiReadinessPage /></RequirePermission>} />
+        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><RequireRegion countries={GCC_COUNTRIES} moduleTitle="Saudi Readiness"><FleetSaudiReadinessPage /></RequireRegion></RequirePermission>} />
         <Route path="/fleet-compliance" element={<RequirePermission permission="compliance:view"><FleetCompliancePage /></RequirePermission>} />
         <Route path="/logistics-workspace" element={<RequirePermission permission="dispatch:view"><DispatchWorkspacePage mode="dispatch" /></RequirePermission>} />
 

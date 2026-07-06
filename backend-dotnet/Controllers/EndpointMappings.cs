@@ -2185,7 +2185,7 @@ public static partial class EndpointMappings
     {
         var user = await db.QuerySingleAsync(
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.status user_status,
-                     c.id company_id, c.name company_name, c.company_code, c.status company_status
+                     c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.email=@email LIMIT 1",
             cmd =>
@@ -2277,7 +2277,13 @@ public static partial class EndpointMappings
                 name  = user["fullName"],
             },
             role,
-            company = new { name = user["companyName"], code = user["companyCode"] },
+            company = new
+            {
+                name = user["companyName"],
+                code = user["companyCode"],
+                country = user.GetValueOrDefault("companyCountry"),
+                currency = user.GetValueOrDefault("companyCurrency"),
+            },
             permissions,
         }, "Login successful"));
     }
@@ -2314,7 +2320,7 @@ public static partial class EndpointMappings
         var userId = GetUserId(http);
         var user = await db.QuerySingleAsync(
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json,
-                     c.id company_id, c.name company_name, c.company_code
+                     c.id company_id, c.name company_name, c.company_code, c.country company_country, c.currency company_currency
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.id=@id AND u.status='Active' LIMIT 1",
             c => c.Parameters.AddWithValue("@id", userId), ct);
@@ -2328,7 +2334,13 @@ public static partial class EndpointMappings
             csrfToken = http.Request.Cookies["__CSRF_Token__"] ?? string.Empty,
             user = new { id = user["id"], email = user["email"], name = user["fullName"] },
             role,
-            company = new { name = user["companyName"], code = user["companyCode"] },
+            company = new
+            {
+                name = user["companyName"],
+                code = user["companyCode"],
+                country = user.GetValueOrDefault("companyCountry"),
+                currency = user.GetValueOrDefault("companyCurrency"),
+            },
             permissions,
         }, "Session active"));
     }

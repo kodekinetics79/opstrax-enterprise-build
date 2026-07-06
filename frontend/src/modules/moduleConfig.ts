@@ -49,6 +49,9 @@ import {
 } from "lucide-react";
 import type { ModuleConfig } from "@/types";
 
+/** Saudi Arabia plus the GCC states served by the Saudi/GCC compliance pack. */
+export const GCC_COUNTRIES = ["SA", "AE", "QA", "KW", "BH", "OM"];
+
 export const modules: ModuleConfig[] = [
   { key: "command-center",    title: "Dashboard",            route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one dashboard.", accent: "teal",   requiredPermission: "dashboard.view" },
   { key: "fleet-health",     title: "Fleet Health",         route: "/fleet-health",      group: "Operations", description: "Priority-ranked vehicles and drivers by risk — OOS status, critical defects, safety score and action queue.", accent: "red",    requiredPermission: "dashboard:view" },
@@ -89,7 +92,7 @@ export const modules: ModuleConfig[] = [
   { key: "fleet-workspace", title: "Fleet TMS Workspace", route: "/fleet-workspace", group: "Fleet", description: "Shipment lifecycle, POD verification, public tracking links, vehicles, tracking, maintenance and fuel in one operations cockpit.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "fleet-cold-chain", title: "Cold Chain Monitor", route: "/fleet-cold-chain", group: "Fleet", description: "Temperature zones, sensor devices, live readings, breach alerts and per-shipment cold-chain compliance reports.", accent: "blue", requiredPermission: "fleet:view" },
   { key: "fleet-assets", title: "Returnable Assets", route: "/fleet-assets", group: "Fleet", description: "Pallets, roll cages and crates with check-in/out, assignments, barcode/RFID scans and asset event history.", accent: "green", requiredPermission: "fleet:view" },
-  { key: "fleet-saudi-readiness", title: "Saudi Readiness", route: "/fleet-saudi-readiness", group: "Fleet", description: "Saudi/GCC region reference, ZATCA VAT invoice-readiness and compliance document expiry tracking.", accent: "amber", requiredPermission: "fleet:view" },
+  { key: "fleet-saudi-readiness", title: "Saudi Readiness", route: "/fleet-saudi-readiness", group: "Fleet", description: "Saudi/GCC region reference, ZATCA VAT invoice-readiness and compliance document expiry tracking. Visible only to tenants whose operating region is Saudi/GCC.", accent: "amber", requiredPermission: "fleet:view", requiredCountries: GCC_COUNTRIES },
   { key: "fleet-compliance", title: "Fleet Compliance", route: "/fleet-compliance", group: "Fleet", description: "Market-pack readiness — Canada/NA driver qualification, DVIR, IFTA & HOS/ELD foundation; Saudi/GCC transport documents, VAT & Hijri expiry.", accent: "blue", requiredPermission: "compliance:view" },
   { key: "vehicles",    title: "Vehicles",    route: "/vehicles",    group: "Fleet", description: "Fleet registry, age, readiness, documents, device visibility and lifecycle planning.", accent: "blue",   requiredPermission: "vehicles:view" },
   { key: "drivers",     title: "Drivers",     route: "/drivers",     group: "Fleet", description: "Driver availability, HOS, safety, documents, assignment and coaching state.", accent: "green",  requiredPermission: "drivers.view" },
