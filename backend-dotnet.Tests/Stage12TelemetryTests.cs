@@ -51,7 +51,7 @@ public class Stage12TelemetryTests
             Assert.NotNull(summary["riskRules"]);
             Assert.NotNull(summary["alerts"]);
             Assert.NotNull(summary["recommendations"]);
-            Assert.NotEmpty((IReadOnlyList<Dictionary<string, object?>>)summary["mobileReadiness"]!);
+            Assert.False(summary.ContainsKey("mobileReadiness"));
             Assert.True(entities.Count >= 0);
 
             var kpis = (Dictionary<string, object?>)summary["kpis"]!;

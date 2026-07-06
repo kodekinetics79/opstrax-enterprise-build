@@ -29,9 +29,15 @@ const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "F
 type LayerKey = "vehicles" | "geofences";
 type StatusBucket = "Moving" | "Idle" | "Offline";
 
+function hasValidPosition(entity: AnyRecord): boolean {
+  const lat = Number(entity.lat ?? entity.latitude);
+  const lng = Number(entity.lng ?? entity.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
+}
+
 /** Classify a vehicle into a single live-status bucket — the heart of the status board. */
 function statusBucket(entity: AnyRecord): StatusBucket {
-  if (entity.isStale) return "Offline";
+  if (!hasValidPosition(entity) || entity.isStale) return "Offline";
   const status = String(entity.status ?? "").toLowerCase();
   const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
   if (speed > 3 || /active|on route|moving|driving|en route/.test(status)) return "Moving";
@@ -172,10 +178,8 @@ export function LiveMapPage() {
   const geofences = layers.geofences ? ((data.geofences as AnyRecord[]) ?? []) : [];
   const mapEntities = layers.vehicles ? visibleEntities : [];
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
-  const deviceRegistry = (data.deviceRegistry as AnyRecord[]) ?? [];
-  const riskRules = (data.riskRules as AnyRecord[]) ?? [];
-  const mobileReadiness = (data.mobileReadiness as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
+  const locatedEntityCount = liveEntities.filter(hasValidPosition).length;
 
   return (
     <div className="control-tower live-map-workbench flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
@@ -203,88 +207,6 @@ export function LiveMapPage() {
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
-      </div>
-
-      <div className="live-map-support-grid order-3 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
-        <section className="panel live-map-tactile-card min-w-0 p-4">
-          <h3 className="section-title">Telemetry Backbone</h3>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <TelemetryMiniStat label="Live units" value={String(kpis.liveUnits ?? 0)} tone="teal" />
-            <TelemetryMiniStat label="Devices" value={String(kpis.registeredDevices ?? 0)} tone="blue" />
-            <TelemetryMiniStat label="Open alerts" value={String(kpis.openAlerts ?? 0)} tone="rose" />
-            <TelemetryMiniStat label="Coverage" value={`${String(kpis.liveCoverage ?? 0)}%`} tone="indigo" />
-          </div>
-          <div className="mt-3 grid min-w-0 gap-2 lg:grid-cols-2">
-            <div className="live-map-inset min-w-0 overflow-hidden rounded-2xl p-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Live State</h4>
-                <span className="text-xs font-semibold text-slate-400">{String(kpis.healthyUnits ?? 0)} healthy</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {deviceRegistry.slice(0, 4).map((device) => (
-                  <div key={String(device.id)} className="live-map-raised flex min-w-0 items-center justify-between gap-2 rounded-xl px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">{String(device.device_serial ?? device.deviceSerial ?? "Unknown device")}</p>
-                      <p className="truncate text-[11px] text-slate-500">{String(device.vehicle_code ?? device.vehicleCode ?? "Unassigned")} · {String(device.telemetry_status ?? device.telemetryStatus ?? "healthy")}</p>
-                    </div>
-                    <span className="shrink-0 text-xs font-semibold text-slate-500">{String(device.risk_level ?? device.riskLevel ?? "low")}</span>
-                  </div>
-                ))}
-                {deviceRegistry.length === 0 ? <p className="text-sm text-slate-500">No device registry rows yet.</p> : null}
-              </div>
-            </div>
-            <div className="live-map-inset min-w-0 overflow-hidden rounded-2xl p-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Risk Rules</h4>
-                <span className="text-xs font-semibold text-slate-400">{String(riskRules.length)} rules</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {riskRules.slice(0, 4).map((rule) => (
-                  <div key={String(rule.id)} className="live-map-raised min-w-0 overflow-hidden rounded-xl px-3 py-2">
-                    <div className="flex min-w-0 items-center justify-between gap-2">
-                      <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800" title={String(rule.rule_type ?? rule.ruleType ?? "Rule")}>{String(rule.rule_type ?? rule.ruleType ?? "Rule")}</p>
-                      <span className="shrink-0"><StatusBadge status={String(rule.severity ?? "Watch")} /></span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Threshold {String(rule.threshold_value ?? rule.thresholdValue ?? "—")} · {Boolean(rule.enabled ?? true) ? "Enabled" : "Disabled"}
-                    </p>
-                  </div>
-                ))}
-                {riskRules.length === 0 ? <p className="text-sm text-slate-500">No risk rules configured.</p> : null}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel live-map-tactile-card min-w-0 p-4">
-          <h3 className="section-title">Billing / Risk Signal</h3>
-          <div className="mt-3 space-y-2">
-            <div className="live-map-raised rounded-2xl p-3">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Open telemetry alerts</p>
-              <p className="mt-2 text-3xl font-black text-slate-900">{String(kpis.openAlerts ?? 0)}</p>
-              <p className="mt-2 text-sm text-slate-500">Telemetry is real-time and does not fabricate empty confidence.</p>
-            </div>
-            <div className="live-map-raised rounded-2xl p-3">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Next action</p>
-              <p className="mt-2 text-sm font-semibold text-slate-800">{String((deviceRegistry.find((row) => String(row.next_action ?? "") !== "")?.next_action ?? deviceRegistry[0]?.next_action) ?? "Not configured yet")}</p>
-              <p className="mt-2 text-xs text-slate-500">Alerts, live state and device registry are all tenant scoped.</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel live-map-tactile-card min-w-0 p-4">
-          <h3 className="section-title">Mobile Readiness</h3>
-          <div className="mt-3 space-y-2">
-            {mobileReadiness.slice(0, 4).map((row) => (
-              <div key={String(row.role)} className="live-map-raised min-w-0 overflow-hidden rounded-2xl p-3">
-                <p className="text-sm font-semibold text-slate-800">{String(row.role ?? "Role")}</p>
-                <p className="mt-1 break-words text-xs text-slate-500">{Array.isArray(row.routeFamilies) ? row.routeFamilies.join(" · ") : "No route families"}</p>
-                <p className="mt-2 break-words text-[11px] text-slate-500">{String(row.offlineIdempotency ?? "Not configured")}</p>
-              </div>
-            ))}
-            {mobileReadiness.length === 0 ? <p className="text-sm text-slate-500">Mobile readiness preview is not configured yet.</p> : null}
-          </div>
-        </section>
       </div>
 
       <div className="live-map-primary order-1 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
@@ -323,8 +245,21 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface live-map-canvas mt-2 min-h-[400px] flex-1 sm:min-h-[500px] xl:min-h-[560px]">
+          <div className="map-surface live-map-canvas relative mt-2 min-h-[400px] flex-1 overflow-hidden sm:min-h-[500px] xl:min-h-[560px]">
             <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
+            {locatedEntityCount === 0 ? (
+              <div className="pointer-events-none absolute inset-x-4 top-4 z-[500] rounded-2xl border border-amber-300 bg-amber-50/95 p-4 shadow-lg backdrop-blur">
+                <div className="flex items-start gap-3">
+                  <Satellite className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+                  <div>
+                    <p className="font-bold text-amber-950">No current GPS positions</p>
+                    <p className="mt-1 text-sm leading-relaxed text-amber-900">
+                      {String(kpis.registeredDevices ?? liveEntities.length)} devices are registered, but none has reported a valid location. The map will populate after an authenticated device telemetry ping.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -421,22 +356,6 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       </div>
       <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
-  );
-}
-
-function TelemetryMiniStat({ label, value, tone }: { label: string; value: string; tone: "teal" | "blue" | "rose" | "indigo" }) {
-  const styles = {
-    teal: "border-teal-200 bg-teal-50 text-teal-700",
-    blue: "border-blue-200 bg-blue-50 text-blue-700",
-    rose: "border-rose-200 bg-rose-50 text-rose-700",
-    indigo: "border-indigo-200 bg-indigo-50 text-indigo-700",
-  }[tone];
-
-  return (
-    <div className={`live-map-mini-stat rounded-2xl border px-3 py-2.5 ${styles}`}>
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-80">{label}</p>
-      <p className="mt-2 text-2xl font-black tracking-tight">{value}</p>
-    </div>
   );
 }
 

@@ -294,7 +294,6 @@ public sealed class TelemetryLiveStateService(Database db)
                 ["riskRules"] = rules,
                 ["geofences"] = geofences,
                 ["recommendations"] = recommendations,
-                ["mobileReadiness"] = BuildMobileReadiness(),
                 ["source"] = "telemetry.live-state",
                 ["asOf"] = DateTimeOffset.UtcNow,
             };
@@ -310,7 +309,6 @@ public sealed class TelemetryLiveStateService(Database db)
                 ["riskRules"] = new List<Dictionary<string, object?>>(),
                 ["geofences"] = new List<Dictionary<string, object?>>(),
                 ["recommendations"] = new List<Dictionary<string, object?>>(),
-                ["mobileReadiness"] = BuildMobileReadiness(),
                 ["source"] = "telemetry.live-state",
                 ["asOf"] = DateTimeOffset.UtcNow,
                 ["error"] = "Telemetry live-map summary unavailable",
@@ -425,67 +423,6 @@ public sealed class TelemetryLiveStateService(Database db)
             ["liveCoverage"] = states.Count == 0 ? 0 : Math.Round((decimal)healthy / states.Count * 100m, 1),
             ["asOf"] = DateTimeOffset.UtcNow,
         };
-    }
-
-    private static List<Dictionary<string, object?>> BuildMobileReadiness()
-    {
-        return
-        [
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Driver / Operator",
-                ["routeFamilies"] = new[] { "/driver/*", "/proof-of-delivery", "/last-mile-delivery" },
-                ["permissions"] = new[] { "driver:self", "operations.proof.read", "operations.proof.submit" },
-                ["offlineIdempotency"] = "Supported via existing session + client-generated IDs",
-                ["metadataReadiness"] = "Evidence/location/device metadata can be carried in telemetry and proof payloads",
-                ["futureNotificationEvents"] = new[] { "telemetry.alert.created", "proof.submitted", "assignment.updated" },
-            },
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Field Worker / Cleaner / Technician / Guard",
-                ["routeFamilies"] = new[] { "/operations/proof-center", "/iot-devices", "/alerts" },
-                ["permissions"] = new[] { "operations.execution_summary.read", "telemetry.devices.read", "alerts:view" },
-                ["offlineIdempotency"] = "Supported through existing idempotent API patterns",
-                ["metadataReadiness"] = "Location, device and evidence metadata are retained in the telemetry projection",
-                ["futureNotificationEvents"] = new[] { "telemetry.device.status.changed", "telemetry.alert.created" },
-            },
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Dispatcher / Supervisor",
-                ["routeFamilies"] = new[] { "/map-view", "/dispatch", "/alerts" },
-                ["permissions"] = new[] { "telemetry.live_state.read", "dispatch:view", "alerts:view" },
-                ["offlineIdempotency"] = "Supported for retry-safe reads and ack/resolve actions",
-                ["metadataReadiness"] = "Live state exposes device, driver, route and risk metadata",
-                ["futureNotificationEvents"] = new[] { "telemetry.live_state.changed", "telemetry.alert.created" },
-            },
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Warehouse User",
-                ["routeFamilies"] = new[] { "/operations/proof-center" },
-                ["permissions"] = new[] { "operations.execution_summary.read", "operations.warehouse_handover.read" },
-                ["offlineIdempotency"] = "Supported for read-heavy mobile scanning flows",
-                ["metadataReadiness"] = "Handover and proof metadata already flow through the operational foundation",
-                ["futureNotificationEvents"] = new[] { "warehouse.handover.completed", "proof.validation.changed" },
-            },
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Third-Party Pickup User",
-                ["routeFamilies"] = new[] { "/operations/proof-center" },
-                ["permissions"] = new[] { "operations.pickup_authorization.read", "operations.pickup_authorization.verify" },
-                ["offlineIdempotency"] = "Supported for verification retries",
-                ["metadataReadiness"] = "Pickup authorizations keep issuer, validity and verification metadata",
-                ["futureNotificationEvents"] = new[] { "pickup.authorization.created", "pickup.authorization.verified" },
-            },
-            new Dictionary<string, object?>
-            {
-                ["role"] = "Customer / Client User",
-                ["routeFamilies"] = new[] { "/customer-portal", "/customer-eta", "/customer-visibility" },
-                ["permissions"] = new[] { "customer_portal:view", "operations.proof.read" },
-                ["offlineIdempotency"] = "Read-only mobile/web flows are safe under retry",
-                ["metadataReadiness"] = "Customer-safe views stay scoped and hide internal-only fields",
-                ["futureNotificationEvents"] = new[] { "customer.eta.updated", "proof.shared" },
-            },
-        ];
     }
 
     private static object? Value(Dictionary<string, object?> row, params string[] keys)
