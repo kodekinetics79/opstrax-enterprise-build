@@ -48,6 +48,8 @@ interface CarrierRow {
 }
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const fmt0 = (v: unknown) => num(v).toFixed(0);
+const fmt1 = (v: unknown) => num(v).toFixed(1);
 
 function toCarrierRow(raw: AnyRecord): CarrierRow {
   return {
@@ -194,31 +196,31 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
         return [
           { label: 'Moving', value: String(tracking.filter((p) => p.status === 'In Transit').length) },
           { label: 'With alerts', value: String(tracking.filter((p) => p.alertType).length) },
-          { label: 'Top speed', value: tracking.length ? `${Math.max(0, ...tracking.map((p) => p.speedKph)).toFixed(0)} km/h` : '—' },
+          { label: 'Top speed', value: tracking.length ? `${fmt0(Math.max(0, ...tracking.map((p) => num(p.speedKph))))} km/h` : '—' },
         ];
       case 'maintenance':
         return [
           { label: 'Open orders', value: String(maintenance.filter((t) => t.status !== 'Closed').length) },
           { label: 'High priority', value: String(maintenance.filter((t) => t.priority === 'High' || t.priority === 'Critical').length) },
-          { label: 'Downtime hrs', value: maintenance.reduce((s, t) => s + t.downtimeHours, 0).toFixed(0) },
+          { label: 'Downtime hrs', value: fmt0(maintenance.reduce((s, t) => s + num(t.downtimeHours), 0)) },
         ];
       case 'fuel':
         return [
           { label: 'Events', value: String(fuel.length) },
           { label: 'Flagged', value: String(fuel.filter((e) => e.anomalyFlag).length) },
-          { label: 'Spend listed', value: fuel.reduce((s, e) => s + e.cost, 0).toFixed(0) },
+          { label: 'Spend listed', value: fmt0(fuel.reduce((s, e) => s + num(e.cost), 0)) },
         ];
       case 'carriers':
         return [
           { label: 'On record', value: String(carriers.length) },
           { label: 'Compliance risk', value: String(carriers.filter((c) => !/^compliant$/i.test(c.compliance)).length) },
-          { label: 'Avg on-time', value: carriers.length ? `${(carriers.reduce((s, c) => s + c.onTime, 0) / carriers.length).toFixed(0)}%` : '—' },
+          { label: 'Avg on-time', value: carriers.length ? `${fmt0(carriers.reduce((s, c) => s + num(c.onTime), 0) / carriers.length)}%` : '—' },
         ];
       default:
         return [
           { label: 'On trip', value: String(summary?.onTripVehicles ?? 0) },
           { label: 'Delivered today', value: String(summary?.deliveredToday ?? 0) },
-          { label: 'Delivery rate', value: summary ? `${summary.deliveredRate.toFixed(1)}%` : '—' },
+          { label: 'Delivery rate', value: summary ? `${fmt1(summary.deliveredRate)}%` : '—' },
         ];
     }
   }, [carriers, fuel, maintenance, mode, shipments, summary, tracking, vehicles]);
@@ -512,7 +514,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
                     <div className="deck-fill deck-fill-teal" style={{ width: `${Math.min(100, plan.shipmentCount * 22)}%` }} />
                   </div>
                   <span className="w-20 shrink-0 text-right text-[10.5px] font-semibold tabular-nums text-slate-500">
-                    {plan.shipmentCount} · {plan.totalWeightKg.toFixed(0)} kg
+                    {plan.shipmentCount} · {fmt0(plan.totalWeightKg)} kg
                   </span>
                 </div>
               ))}
@@ -551,8 +553,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
               <CheckCircle2 className="h-3.5 w-3.5 text-teal-700" /> Today
             </span>
             <div className="mt-3 space-y-3">
-              <RailMeter label="Delivery rate" value={summary ? `${summary.deliveredRate.toFixed(1)}%` : '—'} pct={summary?.deliveredRate ?? 0} fill="deck-fill-emerald" />
-              <RailMeter label="Avg fuel level" value={summary ? `${summary.avgFuelLevel.toFixed(1)}%` : '—'} pct={summary?.avgFuelLevel ?? 0} fill="deck-fill-teal" />
+              <RailMeter label="Delivery rate" value={summary ? `${fmt1(summary.deliveredRate)}%` : '—'} pct={summary?.deliveredRate ?? 0} fill="deck-fill-emerald" />
+              <RailMeter label="Avg fuel level" value={summary ? `${fmt1(summary.avgFuelLevel)}%` : '—'} pct={summary?.avgFuelLevel ?? 0} fill="deck-fill-teal" />
               <div className="grid grid-cols-2 gap-2">
                 <div className="deck-inset rounded-xl px-3 py-2.5 text-center">
                   <div className="text-[18px] font-black leading-none tabular-nums text-slate-900">{summary?.onTripVehicles ?? 0}</div>
@@ -678,9 +680,9 @@ function VehicleCard({ vehicle, onService, saving }: { vehicle: FleetVehicle; on
     <BoardCard>
       <CardHead title={vehicle.vehicleNumber} subtitle={`${vehicle.type} · ${vehicle.driverName || 'Unassigned'}`}
         chip={<CardChip text={vehicle.status} tone={statusTone(vehicle.status)} />} />
-      <CardMeta items={[`${vehicle.currentLoadKg.toFixed(0)} kg`, `${vehicle.fuelLevelPercent.toFixed(0)}% fuel`, vehicle.healthStatus]} />
+      <CardMeta items={[`${fmt0(vehicle.currentLoadKg)} kg`, `${fmt0(vehicle.fuelLevelPercent)}% fuel`, vehicle.healthStatus]} />
       <div className="deck-track">
-        <div className={`deck-fill ${vehicle.fuelLevelPercent >= 50 ? 'deck-fill-emerald' : vehicle.fuelLevelPercent >= 25 ? 'deck-fill-amber' : 'deck-fill-red'}`} style={{ width: `${Math.min(100, vehicle.fuelLevelPercent)}%` }} />
+        <div className={`deck-fill ${num(vehicle.fuelLevelPercent) >= 50 ? 'deck-fill-emerald' : num(vehicle.fuelLevelPercent) >= 25 ? 'deck-fill-amber' : 'deck-fill-red'}`} style={{ width: `${Math.min(100, num(vehicle.fuelLevelPercent))}%` }} />
       </div>
       <button type="button" onClick={onService} disabled={saving} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Updating…' : 'Send to service'} <Wrench className="h-3.5 w-3.5" />
@@ -694,7 +696,7 @@ function TrackingCard({ point, onOpen, canOpen }: { point: FleetTrackingPoint; o
     <BoardCard>
       <CardHead title={point.shipmentNumber} subtitle={`${point.locationLabel} · ${point.geofenceName}`}
         chip={<CardChip text={point.status} tone={statusTone(point.status)} />} />
-      <CardMeta items={[point.vehicleNumber, `${point.speedKph.toFixed(0)} km/h`, point.alertType || 'No alert']} />
+      <CardMeta items={[point.vehicleNumber, `${fmt0(point.speedKph)} km/h`, point.alertType || 'No alert']} />
       {point.alertType && (
         <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
           <AlertTriangle className="h-3 w-3 shrink-0" /> {point.alertType}
@@ -714,7 +716,7 @@ function MaintenanceCard({ ticket, onClose, saving }: { ticket: FleetMaintenance
     <BoardCard>
       <CardHead title={ticket.workOrderNumber} subtitle={`${ticket.vehicleNumber} · ${ticket.vendorName}`}
         chip={<CardChip text={ticket.status} tone={statusTone(ticket.status)} />} />
-      <CardMeta items={[ticket.priority, `${ticket.downtimeHours.toFixed(1)} hrs down`, `est ${ticket.estimatedCost.toFixed(0)}`]} />
+      <CardMeta items={[ticket.priority, `${fmt1(ticket.downtimeHours)} hrs down`, `est ${fmt0(ticket.estimatedCost)}`]} />
       <button type="button" onClick={onClose} disabled={saving || ticket.status === 'Closed'} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Closing…' : ticket.status === 'Closed' ? 'Closed' : 'Close work order'} <CheckCircle2 className="h-3.5 w-3.5" />
       </button>
@@ -727,7 +729,7 @@ function FuelCard({ eventRow, onFlag, saving }: { eventRow: FleetFuelEvent; onFl
     <BoardCard>
       <CardHead title={eventRow.vehicleNumber} subtitle={`${eventRow.stationName} · ${eventRow.city}`}
         chip={<CardChip text={eventRow.anomalyFlag ? 'Review' : eventRow.eventType} tone={eventRow.anomalyFlag ? 'amber' : 'slate'} />} />
-      <CardMeta items={[`${eventRow.liters.toFixed(0)} L`, `cost ${eventRow.cost.toFixed(0)}`, eventRow.fuelCardNumber]} />
+      <CardMeta items={[`${fmt0(eventRow.liters)} L`, `cost ${fmt0(eventRow.cost)}`, eventRow.fuelCardNumber]} />
       <button type="button" onClick={onFlag} disabled={saving || eventRow.anomalyFlag} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Flagging…' : eventRow.anomalyFlag ? 'Flagged for review' : 'Flag anomaly'} <Fuel className="h-3.5 w-3.5" />
       </button>
@@ -741,8 +743,8 @@ function CarrierCard({ carrier, onManage }: { carrier: CarrierRow; onManage: () 
       <CardHead title={carrier.name} subtitle={[carrier.number, carrier.region].filter(Boolean).join(' · ') || '—'}
         chip={<CardChip text={carrier.compliance} tone={statusTone(carrier.compliance)} />} />
       <div className="space-y-1.5">
-        <RailMeter label="On-time" value={`${carrier.onTime.toFixed(0)}%`} pct={carrier.onTime} fill="deck-fill-emerald" />
-        <RailMeter label="Performance" value={carrier.performance.toFixed(0)} pct={carrier.performance} fill="deck-fill-sky" />
+        <RailMeter label="On-time" value={`${fmt0(carrier.onTime)}%`} pct={carrier.onTime} fill="deck-fill-emerald" />
+        <RailMeter label="Performance" value={fmt0(carrier.performance)} pct={carrier.performance} fill="deck-fill-sky" />
       </div>
       {carrier.action && <p className="text-[11px] font-semibold text-slate-500">{carrier.action}</p>}
       <button type="button" onClick={onManage} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
