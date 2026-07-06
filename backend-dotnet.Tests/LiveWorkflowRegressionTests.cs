@@ -36,6 +36,20 @@ public sealed class LiveWorkflowRegressionTests
         Assert.DoesNotContain("demo123", seed, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void SafetyFleetHealth_UsesCanonicalCompanyScopeAndReconcilesLegacyAiSchema()
+    {
+        var service = ReadSource("backend-dotnet", "Services", "SafetyMaintenanceFoundationService.cs");
+        var schema = ReadSource("backend-dotnet", "Services", "FoundationSchemaService.cs");
+
+        Assert.Contains("FROM ai_recommendations", service, StringComparison.Ordinal);
+        Assert.Contains("WHERE company_id=@companyId", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("WHERE tenant_id=@companyId", service, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS company_id BIGINT NULL", schema, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS tenant_id BIGINT NULL", schema, StringComparison.Ordinal);
+        Assert.Contains("company_id=COALESCE(company_id, tenant_id)", schema, StringComparison.Ordinal);
+    }
+
     private static string ReadSource(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

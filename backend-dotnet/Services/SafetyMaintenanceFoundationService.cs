@@ -46,7 +46,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
         var recommendations = await db.QueryAsync(
             @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score, risk_level, status, source_event_id, created_at
               FROM ai_recommendations
-              WHERE tenant_id=@companyId
+              WHERE company_id=@companyId
                 AND (
                     recommendation_type LIKE 'safety.%'
                     OR recommendation_type LIKE 'maintenance.%'
@@ -125,7 +125,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
         {
             var sourceEventId = $"fleet-health:{companyId}:{snapshotDate:yyyy-MM-dd}";
             var existingRecommendationCount = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@companyId AND recommendation_type='fleet.health.review' AND source_event_id=@sourceEventId",
+                "SELECT COUNT(*) FROM ai_recommendations WHERE company_id=@companyId AND recommendation_type='fleet.health.review' AND source_event_id=@sourceEventId",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
