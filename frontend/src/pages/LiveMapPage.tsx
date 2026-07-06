@@ -198,14 +198,14 @@ export function LiveMapPage() {
       />
 
       {/* Status segmentation — the single primary metric row. */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="order-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
       </div>
 
-      <div className="order-2 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
+      <div className="order-3 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
         <section className="panel min-w-0 p-5">
           <h3 className="section-title">Telemetry Backbone</h3>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -384,7 +384,7 @@ export function LiveMapPage() {
       </div>
 
       {recommendations.length > 0 && (
-        <div className="order-3 grid min-w-0 gap-5 lg:grid-cols-2">
+        <div className="order-4 grid min-w-0 gap-5 lg:grid-cols-2">
           {recommendations.slice(0, 2).map((item) => <AiInsightCard key={String(item.id)} insight={item} />)}
         </div>
       )}
