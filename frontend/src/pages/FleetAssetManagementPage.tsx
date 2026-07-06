@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Archive, Barcode, Boxes, CheckCheck, Layers3, SquareStack, Truck } from 'lucide-react';
+import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
-import { fleetApi, fleetAssetApi, fleetCommercialApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
+import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
 
 type AssetDetail = {
   asset: Asset;
@@ -13,13 +14,11 @@ type AssetDetail = {
 export function FleetAssetManagementPage() {
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [carriers, setCarriers] = useState<Array<{ id: string; name: string }>>([]);
   const [shipments, setShipments] = useState<Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>>([]);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState('');
   const [selectedTypeId, setSelectedTypeId] = useState('');
   const [selectedShipmentId, setSelectedShipmentId] = useState('');
-  const [selectedCarrierId, setSelectedCarrierId] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -43,11 +42,10 @@ export function FleetAssetManagementPage() {
     if (showLoading) setLoading(true);
 
     const warnings: string[] = [];
-    const [typesRes, assetsRes, shipmentsRes, carriersRes] = await Promise.allSettled([
+    const [typesRes, assetsRes, shipmentsRes] = await Promise.allSettled([
       fleetAssetApi.assetTypes(),
       fleetAssetApi.assets(),
       fleetApi.shipments({ pageSize: 8 }),
-      fleetCommercialApi.carriers().catch(() => ({ items: [] as Array<{ id: string; name: string }> })),
     ]);
 
     const apply = <T,>(result: PromiseSettledResult<T>, label: string, setter: (value: T) => void) => {
@@ -61,16 +59,12 @@ export function FleetAssetManagementPage() {
     apply(typesRes, 'Asset types', (value) => setAssetTypes(value.items));
     apply(assetsRes, 'Assets', (value) => setAssets(value.items));
     apply(shipmentsRes, 'Shipments', (value) => setShipments(value.items as Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>));
-    apply(carriersRes, 'Carriers', (value) => setCarriers(value.items));
 
     if (typesRes.status === 'fulfilled' && typesRes.value.items.length && !selectedTypeId) {
       setSelectedTypeId(typesRes.value.items[0].id ?? '');
     }
     if (shipmentsRes.status === 'fulfilled' && shipmentsRes.value.items.length && !selectedShipmentId) {
       setSelectedShipmentId(shipmentsRes.value.items[0].id ?? '');
-    }
-    if (carriersRes.status === 'fulfilled' && carriersRes.value.items.length && !selectedCarrierId) {
-      setSelectedCarrierId(carriersRes.value.items[0].id ?? '');
     }
 
     const currentSelectedAssetId = selectedAssetId || (assetsRes.status === 'fulfilled' ? assetsRes.value.items[0]?.id : '') || '';
@@ -209,7 +203,6 @@ export function FleetAssetManagementPage() {
           condition: forms.assetCondition,
           notes: forms.movementNotes,
           shipmentId: selectedShipmentId || undefined,
-          carrierId: selectedCarrierId || undefined,
           assigneeName: forms.assignName || 'Warehouse',
         });
       } else {
@@ -218,7 +211,6 @@ export function FleetAssetManagementPage() {
           condition: forms.assetCondition,
           notes: forms.movementNotes,
           shipmentId: selectedShipmentId || undefined,
-          carrierId: selectedCarrierId || undefined,
           assigneeName: forms.assignName || (shipments.find((s) => s.id === selectedShipmentId)?.shipmentNumber ?? 'Dispatch'),
         });
       }
@@ -231,60 +223,42 @@ export function FleetAssetManagementPage() {
   if (loading) return <div className="min-h-screen bg-slate-950" />;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_right,_rgba(96,165,250,0.22),_transparent_34%),radial-gradient(circle_at_15%_10%,_rgba(16,185,129,0.16),_transparent_26%),linear-gradient(135deg,_#f9fbff_0%,_#eef6ff_48%,_#e8f0ff_100%)] text-slate-900">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute right-[-4rem] top-24 h-72 w-72 rounded-full bg-blue-300/30 blur-3xl animate-pulse" />
-        <div className="absolute left-10 top-10 h-64 w-64 rounded-full bg-emerald-300/20 blur-3xl animate-pulse [animation-delay:1.5s]" />
-        <div className="absolute bottom-0 right-1/3 h-80 w-80 rounded-full bg-cyan-300/25 blur-3xl animate-pulse [animation-delay:2.8s]" />
-      </div>
+    <main className="fleet-console text-slate-900">
+      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
+        <ConsoleRail
+          eyebrow="Fleet · Returnable Assets"
+          icon={<Boxes className="h-3.5 w-3.5 text-teal-700" />}
+          title="Returnable Assets"
+          meta={<>
+            <span className="font-bold text-slate-700 tabular-nums">{assets.length}</span> assets in custody ·{" "}
+            <span className="font-bold text-emerald-600 tabular-nums">{assets.filter((asset) => asset.status === 'Available').length}</span> available ·{" "}
+            <span className="font-bold text-amber-600 tabular-nums">{assets.filter((asset) => asset.condition !== 'Good').length}</span> need review
+          </>}
+          actions={
+            <Link to="/fleet-workspace" className="btn-ghost h-10">
+              Fleet Workspace
+            </Link>
+          }
+        />
 
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 lg:px-10">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <span className="text-sm font-black tracking-tight text-white">OpsTrax</span>
-          <Link to="/fleet-workspace" className="rounded-full border border-slate-200/80 bg-white/70 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm backdrop-blur">
-            Open Fleet Workspace
-          </Link>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="space-y-6">
+        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="space-y-3">
             {loadWarnings.length ? (
-              <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 <p className="font-semibold">Some asset workspace sections were not available.</p>
                 <ul className="mt-2 space-y-1 text-xs text-amber-800">
                   {loadWarnings.slice(0, 3).map((warning) => <li key={warning}>• {warning}</li>)}
                 </ul>
               </div>
             ) : null}
-            <div className="rounded-[30px] border border-white/70 bg-white/60 p-7 shadow-[0_30px_80px_rgba(37,99,235,0.12)] backdrop-blur-xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.26em] text-sky-700">
-                <Boxes className="h-3.5 w-3.5" />
-                Asset control centre
-              </div>
-              <h1 className="mt-5 max-w-3xl text-4xl font-black tracking-tight text-slate-950 md:text-6xl">
-                Inventory that behaves like an operational system, not a spreadsheet.
-              </h1>
-              <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
-                Manage asset types, custody, scan history, and assignment state from a single tenant-aware workspace. Every button here talks to the backend and updates the actual records.
-              </p>
-              <div className="mt-6 flex flex-wrap gap-3 text-xs font-semibold text-slate-600">
-                {['Check-in/out', 'Barcode + RFID', 'Shipment custody', 'Audit friendly'].map((tag) => (
-                  <span key={tag} className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 shadow-sm">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {metrics.map((metric) => (
-                <article key={metric.label} className="rounded-3xl border border-white/80 bg-white/75 p-5 shadow-lg backdrop-blur">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">{metric.label}</p>
-                    <SquareStack className={`h-4 w-4 ${metric.tone}`} />
-                  </div>
-                  <p className="mt-4 text-3xl font-black tracking-tight text-slate-950">{metric.value}</p>
-                </article>
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              {metrics.map((metric, i) => (
+                <ClayStat key={metric.label} Icon={SquareStack}
+                  tone={["fc-clay-sky", "fc-clay-teal", "fc-clay-emerald", "fc-clay-amber"][i % 4]}
+                  iconCls={metric.tone}
+                  label={metric.label} value={metric.value}
+                  alert={metric.label === "Needs review"} />
               ))}
             </div>
 
@@ -378,15 +352,9 @@ export function FleetAssetManagementPage() {
               <div className="mt-5 space-y-3">
                 <input value={forms.assignName} onChange={(e) => setForms((current) => ({ ...current, assignName: e.target.value }))} placeholder="Assignee name" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <input value={forms.assignLocation} onChange={(e) => setForms((current) => ({ ...current, assignLocation: e.target.value }))} placeholder="Current location" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
-                    {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
-                  </select>
-                  <select value={selectedCarrierId} onChange={(e) => setSelectedCarrierId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
-                    <option value="">No carrier</option>
-                    {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name}</option>)}
-                  </select>
-                </div>
+                <select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} aria-label="Shipment" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
+                  {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
+                </select>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button onClick={() => assign('checkOut')} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500">
                     <CheckCheck className="h-4 w-4" />

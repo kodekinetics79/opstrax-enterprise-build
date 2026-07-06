@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
+  Gauge,
+  Link2,
   Route,
   ShieldCheck,
   Sparkles,
@@ -13,6 +15,7 @@ import {
 import { apiClient, unwrap } from "@/services/apiClient";
 import { dispatchApi } from "@/services/dispatchApi";
 import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
 import type { AnyRecord } from "@/types";
 
 type AssignmentSection = "overview" | "board" | "exceptions" | "owners";
@@ -55,7 +58,7 @@ function normalizeOwner(row: AnyRecord): AnyRecord {
     revenueSharePct: num(row.revenueSharePct ?? row.revenue_share_pct ?? row.secondaryValue ?? row.secondary_value),
     totalLoads: num(row.totalLoads ?? row.total_loads ?? row.metricValue ?? row.metric_value),
     contractExpiry: row.contractExpiry ?? row.contract_expiry ?? row.dueDate ?? row.due_date ?? "",
-    status: row.status ?? "Active",
+    status: row.status ?? "Unknown",
   };
 }
 
@@ -174,62 +177,34 @@ export function FleetAssignmentsPage() {
     assignments;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-10">
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(99,102,241,0.12),rgba(20,184,166,0.12),rgba(245,158,11,0.10))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-violet-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700 shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-violet-500" /> Dispatch pairing intelligence
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Assignments</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Elevated from a static history table into a live pairing command surface that exposes coverage, eligibility pressure, exceptions and partner capacity in one place.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => exportCsv("assignments", exportRows as AnyRecord[])}
-              className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
-            >
-              Export live view
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/dispatch")}
-              className="btn-primary h-10 bg-gradient-to-r from-violet-600 to-teal-600 shadow-md shadow-violet-200/60 hover:from-violet-500 hover:to-teal-500"
-            >
-              Open dispatch cockpit <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
+      <ConsoleRail
+        eyebrow="Dispatch · Pairing"
+        icon={<Link2 className="h-3.5 w-3.5 text-teal-700" />}
+        title="Assignments"
+        meta={<>
+          <span className="font-bold text-slate-700 tabular-nums">{activeAssignments}</span> active pairings ·{" "}
+          <span className="font-bold text-emerald-600 tabular-nums">{inTransit}</span> in motion ·{" "}
+          <span className="font-bold text-rose-600 tabular-nums">{exceptionCount}</span> exceptions ·{" "}
+          <span className="font-bold text-sky-600 tabular-nums">{owners.length}</span> partner operators
+        </>}
+        actions={<>
+          <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="btn-ghost h-10">
+            Export live view
+          </button>
+          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary h-10">
+            Open dispatch board <ArrowRight className="h-4 w-4" />
+          </button>
+        </>}
+      />
 
-      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
-        <div className="grid gap-1 sm:grid-cols-4">
-          {SECTIONS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => navigate(`/assignments/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
-              }`}
-            >
-              <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
-              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-slate-300" : "text-slate-500"}`}>{item.description}</div>
-            </button>
-          ))}
-        </div>
-      </nav>
+      <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/assignments/${key}`)} />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Active assignments" value={String(activeAssignments)} trend={`${inTransit} in motion`} />
-        <KpiCard label="Exception pressure" value={String(exceptionCount)} status="Review" trend={exceptionCount ? "Needs dispatcher attention" : "No open dispatch issues"} />
-        <KpiCard label="Average match score" value={`${avgMatch}%`} trend={`${readyDrivers} ready drivers / ${readyVehicles} ready units`} />
-        <KpiCard label="Partner capacity" value={String(owners.length)} trend={owners.length ? "Owner-operator records connected" : "No owner records connected"} />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <ClayStat Icon={Link2}         tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active assignments" value={activeAssignments} caption={`${inTransit} in motion`} />
+        <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open exceptions" value={exceptionCount} caption={exceptionCount ? "Needs dispatcher attention" : "No open dispatch issues"} alert={exceptionCount > 0} />
+        <ClayStat Icon={Gauge}         tone="fc-clay-emerald" iconCls="text-emerald-700" label="Average match score" value={`${avgMatch}%`} caption={`${readyDrivers} ready drivers / ${readyVehicles} ready units`} />
+        <ClayStat Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Partner capacity" value={owners.length} caption={owners.length ? "Owner-operator records" : "No owner records yet"} />
       </div>
 
       {section === "overview" && (
@@ -251,7 +226,7 @@ export function FleetAssignmentsPage() {
             />
             <ModuleCard
               title="Owner ops"
-              body="Treat owner-operators as strategic reserve capacity, not a hidden table in the back office."
+              body="Reserve capacity from partner owner-operators."
               action="Open owner ops"
               onClick={() => navigate("/assignments/owners")}
               icon={<Users className="h-5 w-5" />}
@@ -262,7 +237,7 @@ export function FleetAssignmentsPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Coverage posture</h2>
-                <p className="text-sm text-slate-500">A buyer should be able to understand assignment health in seconds, not dig through tabs and exports.</p>
+                <p className="text-sm text-slate-500">Coverage, match quality and exception pressure across current pairings.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 Live command summary
@@ -279,7 +254,7 @@ export function FleetAssignmentsPage() {
                 icon={<AlertTriangle className="h-4 w-4" />}
                 label="Open exceptions"
                 value={String(exceptionCount)}
-                body={exceptionCount ? "Assignment issues are active and should stay visible in the dispatch heartbeat." : "No open dispatch exceptions in the current tenant data."}
+                body={exceptionCount ? "Assignment issues are active and should stay visible in the dispatch heartbeat." : "No open dispatch exceptions."}
               />
               <InsightTile
                 icon={<Sparkles className="h-4 w-4" />}
@@ -294,7 +269,7 @@ export function FleetAssignmentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Suggested pairings</h2>
-                <p className="text-sm text-slate-500">These are coming from the live dispatch recommendations endpoint, not seeded examples.</p>
+                <p className="text-sm text-slate-500">Suggested driver-vehicle pairings ranked by match score.</p>
               </div>
               <button type="button" className="btn-ghost h-9" onClick={() => navigate("/assignments/board")}>Open board</button>
             </div>
@@ -313,7 +288,7 @@ export function FleetAssignmentsPage() {
                 </div>
               ))}
               {!recommendations.length && (
-                <EmptyState title="No live recommendations" subtitle="The recommendation table is connected, but this tenant is not returning rows right now." />
+                <EmptyState title="No live recommendations" subtitle="No pairing recommendations right now — they appear as soon as dispatch generates matches." />
               )}
             </div>
           </section>
@@ -404,7 +379,7 @@ export function FleetAssignmentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Live exception queue</h2>
-                <p className="text-sm text-slate-500">The queue is only as good as the backend links behind it, so this view is connected directly to dispatch exceptions.</p>
+                <p className="text-sm text-slate-500">Open dispatch exceptions with the bench available to recover them.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 {exceptionCount} open
@@ -426,7 +401,7 @@ export function FleetAssignmentsPage() {
                   <p className="mt-3 text-sm text-slate-500">{String(g(row, "notes") ?? "No exception notes recorded.")}</p>
                 </div>
               )) : (
-                <EmptyState title="No dispatch exceptions" subtitle="This tenant currently has no exception records." />
+                <EmptyState title="No dispatch exceptions" subtitle="No exception records." />
               )}
             </div>
           </section>
@@ -450,7 +425,7 @@ export function FleetAssignmentsPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Owner-operator reserve network</h2>
-                <p className="text-sm text-slate-500">If partner capacity is part of the business model, it should feel integrated with dispatch readiness, not orphaned in a side table.</p>
+                <p className="text-sm text-slate-500">Owner-operator capacity, revenue share and contract expiry.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <StatusBadge status={`${owners.filter((row) => String(g(row, "status") ?? "").toLowerCase() === "active").length} active`} />
@@ -495,7 +470,7 @@ export function FleetAssignmentsPage() {
               </table>
             </div>
           ) : (
-            <EmptyState title="No owner-operator records connected" subtitle="The owner registry route is live, but this tenant is not returning rows yet." />
+            <EmptyState title="No owner-operator records connected" subtitle="No owner-operator records yet — add partners to track their capacity here." />
           )}
         </div>
       )}

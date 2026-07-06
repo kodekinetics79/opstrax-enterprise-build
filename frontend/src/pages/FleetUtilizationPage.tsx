@@ -23,6 +23,7 @@ import {
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
 import type { AnyRecord } from "@/types";
 
 type UtilSection = "overview" | "capacity" | "efficiency" | "opportunities";
@@ -282,62 +283,34 @@ export function FleetUtilizationPage() {
     rows;
 
   return (
-    <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto pb-10">
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.14),rgba(14,165,233,0.12),rgba(249,115,22,0.12))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-sky-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 shadow-sm">
-              <span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Capacity intelligence
-            </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Fleet Utilization</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Reframed as an operations command surface so dispatch, fleet and maintenance can see where capacity is stuck, leaking or ready to be redeployed.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])}
-              className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
-            >
-              Export live view
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/dispatch")}
-              className="btn-primary h-10 bg-gradient-to-r from-teal-600 to-sky-600 shadow-md shadow-sky-200/60 hover:from-teal-500 hover:to-sky-500"
-            >
-              Open dispatch coverage <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
+      <ConsoleRail
+        eyebrow="Fleet · Capacity"
+        icon={<Gauge className="h-3.5 w-3.5 text-teal-700" />}
+        title="Fleet Utilization"
+        meta={<>
+          <span className="font-bold text-slate-700 tabular-nums">{total}</span> units tracked ·{" "}
+          <span className="font-bold text-emerald-600 tabular-nums">{active}</span> active ·{" "}
+          <span className="font-bold text-sky-600 tabular-nums">{available}</span> in reserve ·{" "}
+          <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> at risk
+        </>}
+        actions={<>
+          <button type="button" onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])} className="btn-ghost h-10">
+            Export live view
+          </button>
+          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary h-10">
+            Open dispatch coverage <ArrowRight className="h-4 w-4" />
+          </button>
+        </>}
+      />
 
-      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
-        <div className="grid gap-1 sm:grid-cols-4">
-          {SECTIONS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => navigate(`/fleet-utilization/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
-              }`}
-            >
-              <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
-              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-slate-300" : "text-slate-500"}`}>{item.description}</div>
-            </button>
-          ))}
-        </div>
-      </nav>
+      <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/fleet-utilization/${key}`)} />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Average utilization" value={`${utilization}%`} trend={`${active}/${Math.max(total, 1)} active now`} />
-        <KpiCard label="Ready reserve" value={String(available)} trend={`${readiness}% average readiness`} />
-        <KpiCard label="At risk units" value={String(atRisk)} status="Review" trend={`${maintenance} blocked by maintenance`} />
-        <KpiCard label="Idle drag today" value={idleCost ? `$${idleCost.toLocaleString()}` : `${idleHours}h`} status="Review" trend={idleHours ? `${idleHours} idle hours logged` : "No idle drag detected"} />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="Average utilization" value={`${utilization}%`} caption={`${active}/${Math.max(total, 1)} active now`} />
+        <ClayStat Icon={Truck}  tone="fc-clay-emerald" iconCls="text-emerald-700" label="Ready reserve" value={available} caption={`${readiness}% average readiness`} />
+        <ClayStat Icon={Wrench} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk units" value={atRisk} caption={`${maintenance} blocked by maintenance`} alert={atRisk > 0} />
+        <ClayStat Icon={Clock3} tone="fc-clay-amber"   iconCls="text-amber-700"   label="Idle drag today" value={idleCost ? `$${idleCost.toLocaleString()}` : `${idleHours}h`} caption={idleHours ? `${idleHours} idle hours logged` : "No idle drag detected"} alert={idleHours > 0} />
       </div>
 
       {section === "overview" && (
@@ -359,7 +332,7 @@ export function FleetUtilizationPage() {
             />
             <ModuleCard
               title="Action queue"
-              body="Prioritized recommendations built from real utilization, readiness, maintenance and risk signals."
+              body="Rule-based cues computed from current utilization, readiness, maintenance and risk fields."
               action="Open action queue"
               onClick={() => navigate("/fleet-utilization/opportunities")}
               icon={<Sparkles className="h-5 w-5" />}
@@ -370,7 +343,7 @@ export function FleetUtilizationPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Where capacity is getting trapped</h2>
-                <p className="text-sm text-slate-500">These cues are derived from live status, readiness, utilization, idle time and maintenance posture.</p>
+                <p className="text-sm text-slate-500">Coverage, idle and maintenance pressure across the current fleet.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 Operations pressure radar
@@ -387,7 +360,7 @@ export function FleetUtilizationPage() {
                 icon={<Clock3 className="h-4 w-4" />}
                 label="Idle leakage"
                 value={idleHours ? `${idleHours}h` : "0h"}
-                body={idleCost ? `$${idleCost.toLocaleString()} of today’s idle drag is visible right now.` : "No major idle drag recorded in the current data set."}
+                body={idleCost ? `$${idleCost.toLocaleString()} of today’s idle drag is visible right now.` : "No idle drag recorded today."}
               />
               <InsightTile
                 icon={<Wrench className="h-4 w-4" />}
@@ -402,7 +375,7 @@ export function FleetUtilizationPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Top action queue</h2>
-                <p className="text-sm text-slate-500">The highest-value changes operators can make now without waiting for more reporting.</p>
+                <p className="text-sm text-slate-500">The largest capacity or cost items open right now.</p>
               </div>
               <button type="button" className="btn-ghost h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
             </div>
@@ -425,7 +398,7 @@ export function FleetUtilizationPage() {
               ))}
               {!opportunities.length && (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-800 xl:col-span-3">
-                  Live data is not surfacing a major utilization intervention right now. That is a good sign and should remain visible, not hidden.
+                  No open utilization actions — capacity, readiness and idle time are all within range.
                 </div>
               )}
             </div>
@@ -641,7 +614,7 @@ export function FleetUtilizationPage() {
                     <p className="mt-3 text-sm text-slate-600">{item.detail}</p>
                   </div>
                 )) : (
-                  <EmptyState title="No intervention queue right now" subtitle="The live dataset is not surfacing an obvious utilization issue at the moment." />
+                  <EmptyState title="No intervention queue right now" subtitle="No open utilization actions right now." />
                 )}
               </div>
               <VehicleInsightPanel row={selected} section={section} onNavigate={navigate} />
@@ -747,7 +720,7 @@ function VehicleInsightPanel({
       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
         {section === "capacity" && `${String(g(row, "vehicleCode", "vehicle_code"))} is currently carrying ${num(g(row, "activeJobs"))} active job(s) with ${idle} idle minutes today. Use the roster to rebalance it or open dispatch to cover available demand.`}
         {section === "efficiency" && `${String(g(row, "vehicleCode", "vehicle_code"))} is showing ${idle} idle minutes and $${fuelCost.toLocaleString()} fuel spend this month. This is where operators decide whether the issue is routing, dispatch timing or asset health.`}
-        {section === "opportunities" && `${String(g(row, "vehicleCode", "vehicle_code"))} is part of the current action queue because live backend metrics suggest it can either unlock capacity or reduce operating drag.`}
+        {section === "opportunities" && `${String(g(row, "vehicleCode", "vehicle_code"))} is in the action queue — its current utilization, readiness or cost figures leave capacity on the table.`}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(routeForVehicle(section))}>Open vehicle module</button>

@@ -1,10 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle, CheckCircle, ChevronRight, Clock,
-  MapPin, ShieldAlert, Truck, User, XCircle, Zap,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle, ChevronRight, Clock, MapPin, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
 import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
+import { ClayStat, ConsoleRail } from "@/components/console";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -147,15 +145,21 @@ export function DispatchCommandPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="fleet-console space-y-3">
+      <ConsoleRail
         eyebrow="Dispatch Operations"
-        title="Dispatch Command Center"
-        description="Backend-authoritative assignment, eligibility gates, status execution, and exception management."
+        icon={<Radio className="h-3.5 w-3.5 text-teal-700" />}
+        title="Dispatch Board"
+        meta={<>
+          <span className="font-bold text-slate-700 tabular-nums">{summary.unassigned}</span> unassigned ·{" "}
+          <span className="font-bold text-emerald-600 tabular-nums">{summary.active}</span> active assignments ·{" "}
+          <span className="font-bold text-rose-600 tabular-nums">{summary.exceptions}</span> exceptions ·{" "}
+          <span className="font-bold text-sky-600 tabular-nums">{availDrivers.data?.length ?? "—"}</span> drivers ready
+        </>}
         actions={
           <button
             type="button"
-            className="btn-ghost"
+            className="btn-ghost h-10"
             onClick={() => exportDispatchCsv(assignments.data ?? [])}
           >
             Export Assignments
@@ -164,31 +168,11 @@ export function DispatchCommandPage() {
       />
 
       {/* KPI Strip */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard
-          label="Unassigned Loads"
-          value={String(summary.unassigned)}
-          icon={<Truck />}
-          status={summary.unassigned > 0 ? "Warning" : "Active"}
-        />
-        <KpiCard
-          label="Active Assignments"
-          value={String(summary.active)}
-          icon={<MapPin />}
-          status="Active"
-        />
-        <KpiCard
-          label="Open Exceptions"
-          value={String(summary.exceptions)}
-          icon={<AlertTriangle />}
-          status={summary.exceptions > 0 ? "Critical" : "Active"}
-        />
-        <KpiCard
-          label="Available Drivers"
-          value={String(availDrivers.data?.length ?? "--")}
-          icon={<User />}
-          status="Review"
-        />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <ClayStat Icon={Truck}         tone="fc-clay-amber"   iconCls="text-amber-700"   label="Unassigned Loads" value={summary.unassigned} caption="Waiting for a pairing" alert={summary.unassigned > 0} />
+        <ClayStat Icon={MapPin}        tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active Assignments" value={summary.active} caption="Assigned through delivery" />
+        <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open Exceptions" value={summary.exceptions} caption={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} alert={summary.exceptions > 0} />
+        <ClayStat Icon={User}          tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available Drivers" value={availDrivers.data?.length ?? "—"} caption="Cleared for assignment" />
       </div>
 
       {/* System Dispatch Insights */}
@@ -204,13 +188,13 @@ export function DispatchCommandPage() {
       )}
 
       {/* Tabs */}
-      <section className="panel p-5">
-        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+      <section className="fc-neumo p-5">
+        <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
-              className={tab === activeTab ? "control-tab control-tab-active" : "control-tab"}
+              className={`fc-seg-btn ${tab === activeTab ? "fc-seg-btn-active" : ""}`}
               onClick={() => setActiveTab(tab)}
             >
               {tab}
