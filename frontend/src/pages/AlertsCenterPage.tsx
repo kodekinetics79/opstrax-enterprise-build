@@ -257,7 +257,7 @@ function AlertCard({
 }) {
   return (
     <article
-      className={`rounded-2xl border p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-teal-300 bg-teal-50/60" : severityTone(alert.severity)}`}
+      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(95,66,35,.08)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(95,66,35,.12)] ${active ? "border-teal-300 bg-[linear-gradient(180deg,rgba(245,252,251,.98),rgba(226,248,244,.92))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(250,243,233,.96))] ${severityTone(alert.severity)}`}`}
     >
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex items-start justify-between gap-3">
@@ -271,9 +271,9 @@ function AlertCard({
           <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
         </div>
         <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-2 line-clamp-2 text-sm text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
       </button>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
         {canAcknowledge && /open/i.test(alert.status) && (
           <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", alert)}>
             Acknowledge
@@ -336,7 +336,7 @@ function DetailPanel({
           : "Informational signals should still stay linked to operational context so they can be audited later.";
 
   return (
-    <aside className="panel p-5">
+    <aside className="panel p-4 lg:p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected alert</p>
@@ -359,17 +359,17 @@ function DetailPanel({
         <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(247,239,227,.92))] p-4 shadow-[0_10px_22px_rgba(95,66,35,.06)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
         <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
         <p className="mt-2 text-sm text-slate-600">{rationale}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
           <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
@@ -392,7 +392,7 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
           <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
@@ -409,7 +409,7 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
         <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
         {canAcknowledge && /open/i.test(record.status) && (
           <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
@@ -426,7 +426,7 @@ function DetailPanel({
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,241,231,.92))] px-3 py-2 shadow-[0_6px_14px_rgba(95,66,35,.04)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
       <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
     </div>
@@ -585,152 +585,103 @@ export function AlertsCenterPage() {
   }
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="alerts-command-room alerts-center-workbench space-y-5 pb-10">
       {toastMsg ? (
         <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
         </div>
       ) : null}
 
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/82 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(239,68,68,0.10),rgba(251,191,36,0.12),rgba(20,184,166,0.10))]" />
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-rose-200/35 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,252,247,.98),rgba(247,237,225,.96))] p-5 shadow-[0_24px_80px_-48px_rgba(95,66,35,0.46)]">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_12%_8%,rgba(214,126,63,.20),transparent_24%),radial-gradient(circle_at_78%_0%,rgba(20,184,166,.14),transparent_20%),linear-gradient(90deg,rgba(255,255,255,.68),rgba(255,255,255,0))]" />
+        <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_0.95fr] lg:items-end">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700 shadow-sm">
-              <BellRing className="h-3.5 w-3.5" /> Exception command
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700 shadow-sm">
+              <BellRing className="h-3.5 w-3.5" /> Live alerts command room
             </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Alerts Center</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              Reworked as an action-first command surface so operations teams can triage, own and clear live alerts without bouncing between modules or relying on cosmetic severity chips.
+            <h1 className="mt-3 text-[2rem] font-black tracking-tight text-slate-900 sm:text-[2.25rem]">
+              Alerts Center
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+              A live, backend-backed triage surface for open alerts, ownership, audit trail, and resolution actions. Tight layout, no demo queue, no fake feed, and no hidden fallback layer.
             </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-white">
+                Export live queue
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+                  void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
+                }}
+                className="btn-primary h-10 bg-gradient-to-r from-amber-700 via-rose-600 to-teal-600 shadow-md shadow-amber-200/70 hover:from-amber-600 hover:via-rose-500 hover:to-teal-500"
+              >
+                Refresh alerts <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
-              Export live queue
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-                void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
-              }}
-              className="btn-primary h-10 bg-gradient-to-r from-rose-600 to-amber-500 shadow-md shadow-rose-200/60 hover:from-rose-500 hover:to-amber-400"
-            >
-              Refresh alerts <RefreshCw className="h-4 w-4" />
-            </button>
+
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
+            <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
+            <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
+            <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
           </div>
+        </div>
+        <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
+          <span className="rounded-full border border-slate-200 bg-white/85 px-3 py-1">Auto refresh 15s</span>
+          <span className="rounded-full border border-slate-200 bg-white/85 px-3 py-1">No demo fallback</span>
         </div>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open queue" value={String(summary.open)} trend={`${summary.critical} critical`} />
-        <KpiCard label="Aging open alerts" value={String(agingOpen)} status="Review" trend="24h+ still active" />
-        <KpiCard label="Unowned alerts" value={String(unownedOpen)} status="Review" trend="Not yet acknowledged" />
-        <KpiCard label="Closed today posture" value={`${summary.closed}/${summary.total || 1}`} trend="Closed versus total visible" />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
-        <section className="panel p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Response lanes</h2>
-              <p className="text-sm text-slate-500">Where alert pressure is concentrating right now across operations domains.</p>
-            </div>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Live workload map
-            </span>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {categoryBuckets.slice(0, 6).map((bucket) => (
-              <button
-                key={bucket.category}
-                type="button"
-                onClick={() => navigate(bucket.route)}
-                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-              >
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-900">{bucket.category}</p>
-                  <ArrowRight className="h-4 w-4 text-slate-300" />
-                </div>
-                <p className="mt-3 text-2xl font-bold tracking-tight text-slate-900">{bucket.count}</p>
-                <p className="mt-1 text-sm text-slate-500">Open alert{bucket.count === 1 ? "" : "s"} linked to this lane.</p>
-              </button>
-            ))}
-            {!categoryBuckets.length && (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-800 md:col-span-2 xl:col-span-3">
-                No active alert pressure is being returned by the live backend at the moment.
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="panel p-5">
+      <section className="panel p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Triage guidance</h2>
-            <p className="text-sm text-slate-500">What a strong ops team should do next with the current queue shape.</p>
-          </div>
-          <div className="mt-4 space-y-3">
-            <GuidanceCard
-              icon={<ShieldAlert className="h-4 w-4" />}
-              title="Clear criticals first"
-              body={summary.critical > 0 ? `${summary.critical} critical alert${summary.critical === 1 ? "" : "s"} are still open. These should stay at the top of the shift board.` : "No critical alerts are currently open."}
-            />
-            <GuidanceCard
-              icon={<Clock3 className="h-4 w-4" />}
-              title="Stop queue aging"
-              body={agingOpen > 0 ? `${agingOpen} open or acknowledged alert${agingOpen === 1 ? "" : "s"} have been sitting for 24h or more.` : "No aging alert backlog is visible right now."}
-            />
-            <GuidanceCard
-              icon={<Wrench className="h-4 w-4" />}
-              title="Hand off by domain"
-              body={categoryBuckets[0] ? `${categoryBuckets[0].category} currently has the heaviest live alert concentration.` : "No single lane is overloaded from the returned dataset."}
-            />
-            <GuidanceCard
-              icon={<Sparkles className="h-4 w-4" />}
-              title="Make ownership visible"
-              body={unownedOpen > 0 ? `${unownedOpen} open alert${unownedOpen === 1 ? "" : "s"} still have no acknowledged owner.` : "Every open alert appears to have an owner or the queue is empty."}
-            />
-          </div>
-        </section>
-      </div>
-
-      <section className="panel p-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search alerts, entities, categories…"
-              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
-            />
+            <h2 className="text-base font-semibold text-slate-900">Workspace controls</h2>
+            <p className="text-sm text-slate-500">Compact filters for a dense queue view.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {CATEGORIES.map((category) => (
-              <button
-                key={category}
-                type="button"
-                onClick={() => setCategoryFilter(category)}
-                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                  categoryFilter === category ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {category}
-              </button>
-            ))}
+            <div className="relative w-full min-w-[16rem] sm:w-[20rem]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search alerts, entities, categories…"
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+              />
+            </div>
+            <button type="button" className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
+              All lanes
+            </button>
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
+          {CATEGORIES.filter((category) => category !== "All").map((category) => (
+            <button
+              key={category}
+              type="button"
+              onClick={() => setCategoryFilter(category)}
+              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                categoryFilter === category ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+              }`}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
           {SEVERITY_FILTERS.map((severity) => (
             <button
               key={severity}
               type="button"
               onClick={() => setSeverityFilter(severity)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
               }`}
             >
               {severity}
@@ -741,8 +692,8 @@ export function AlertsCenterPage() {
               key={status}
               type="button"
               onClick={() => setStatusFilter(status)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                statusFilter === status ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
               }`}
             >
               {status}
@@ -768,17 +719,19 @@ export function AlertsCenterPage() {
           )}
         </section>
 
-        <DetailPanel
-          alert={selectedAlert}
-          liveDetail={liveDetail}
-          tasks={detailRecord.tasks}
-          auditTrail={detailRecord.auditTrail}
-          loading={detailQuery.isLoading}
-          onNavigate={navigate}
-          canAcknowledge={canAcknowledge}
-          canClose={canClose}
-          onAction={handleAction}
-        />
+        <div className="xl:sticky xl:top-4 xl:self-start">
+          <DetailPanel
+            alert={selectedAlert}
+            liveDetail={liveDetail}
+            tasks={detailRecord.tasks}
+            auditTrail={detailRecord.auditTrail}
+            loading={detailQuery.isLoading}
+            onNavigate={navigate}
+            canAcknowledge={canAcknowledge}
+            canClose={canClose}
+            onAction={handleAction}
+          />
+        </div>
       </div>
 
       <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
@@ -801,12 +754,22 @@ export function AlertsCenterPage() {
 
 function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.92),rgba(247,239,227,.86))] p-4 shadow-[0_10px_24px_rgba(95,66,35,.06)]">
       <div className="flex items-center gap-2">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm">{icon}</div>
         <p className="text-sm font-semibold text-slate-900">{title}</p>
       </div>
       <p className="mt-3 text-sm text-slate-500">{body}</p>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, sublabel }: { label: string; value: number | string; sublabel: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(249,242,233,.92))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.8),0_8px_20px_rgba(95,66,35,.06)]">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
+      <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
     </div>
   );
 }

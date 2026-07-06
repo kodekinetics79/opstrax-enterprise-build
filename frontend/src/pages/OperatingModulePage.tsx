@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -87,9 +87,14 @@ type ModuleDefinition = {
 
 type AlertRecord = AnyRecord & {
   alertId: string;
+  title?: string;
+  body?: string;
   category?: string;
   type?: string;
+  alertType?: string;
   entity?: string;
+  entityType?: string;
+  entityRoute?: string;
   customer?: string;
   severity?: string;
   owner?: string;
@@ -97,7 +102,44 @@ type AlertRecord = AnyRecord & {
   age?: string;
   recommendedAction?: string;
   status?: string;
+  createdAt?: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  closedAt?: string;
 };
+
+function normalizeAlert(raw: AnyRecord): AlertRecord {
+  return {
+    ...raw,
+    alertId: String(raw.alertId ?? raw.id ?? ""),
+    title: String(raw.title ?? raw.type ?? "Alert"),
+    body: String(raw.body ?? ""),
+    category: String(raw.category ?? "Operations"),
+    type: raw.type != null ? String(raw.type) : undefined,
+    alertType: raw.alertType != null ? String(raw.alertType) : raw.alert_type != null ? String(raw.alert_type) : undefined,
+    entity: raw.entity != null ? String(raw.entity) : undefined,
+    entityType: raw.entityType != null ? String(raw.entityType) : raw.entity_type != null ? String(raw.entity_type) : undefined,
+    entityRoute: raw.entityRoute != null ? String(raw.entityRoute) : raw.entity_route != null ? String(raw.entity_route) : undefined,
+    customer: raw.customer != null ? String(raw.customer) : undefined,
+    severity: String(raw.severity ?? "Info"),
+    owner: raw.owner != null ? String(raw.owner) : undefined,
+    location: raw.location != null ? String(raw.location) : undefined,
+    age: raw.age != null ? String(raw.age) : undefined,
+    recommendedAction: raw.recommendedAction != null ? String(raw.recommendedAction) : raw.recommended_action != null ? String(raw.recommended_action) : undefined,
+    status: String(raw.status ?? "Open"),
+    createdAt: raw.createdAt != null ? String(raw.createdAt) : raw.created_at != null ? String(raw.created_at) : undefined,
+    acknowledgedAt: raw.acknowledgedAt != null ? String(raw.acknowledgedAt) : raw.acknowledged_at != null ? String(raw.acknowledged_at) : undefined,
+    acknowledgedBy: raw.acknowledgedBy != null ? String(raw.acknowledgedBy) : raw.acknowledged_by != null ? String(raw.acknowledged_by) : undefined,
+    closedAt: raw.closedAt != null ? String(raw.closedAt) : raw.closed_at != null ? String(raw.closed_at) : undefined,
+  };
+}
+
+function ageHours(createdAt?: string) {
+  if (!createdAt) return 0;
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return 0;
+  return Math.max(0, (Date.now() - created) / 3_600_000);
+}
 
 const routePlans = [
   { routeId: "RTE-KSA-018", origin: "Riyadh", destination: "Dammam", distance: "414 km", estimatedDuration: "4h 50m", tollEstimate: "SAR 86", preferredVehicleType: "Dry Van", riskLevel: "Low", active: "Yes", status: "Active" },
@@ -621,7 +663,7 @@ function Fleet360MapPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="alerts-command-room space-y-5">
       <PageHeader
         eyebrow="Control Tower"
         title="Map View"
@@ -733,12 +775,12 @@ function Fleet360MapPage() {
           })}
           <div className="absolute bottom-5 left-5 right-5 grid gap-3 lg:grid-cols-3">
             {alerts.slice(0, 3).map((alert) => (
-              <div key={alert.alertId} className="rounded-xl border border-white/80 bg-white/95 p-3 shadow-sm">
+              <div key={String(alert.alertId)} className="rounded-xl border border-white/80 bg-white/95 p-3 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm font-bold text-slate-900">{alert.type}</p>
                   <RiskBadge risk={alert.severity} />
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{alert.entity} · {alert.location}</p>
+                <p className="mt-1 text-xs text-slate-500">{alert.entity ?? "Unmapped entity"} · {alert.location ?? "Live backend"}</p>
               </div>
             ))}
           </div>
@@ -843,6 +885,18 @@ function Fleet360MapPage() {
 function LiveDashboardPage() {
   const activeShipments = shipments.filter((s) => s.currentStatus !== "Delivered");
   const delayed = shipments.filter((s) => calculateShipmentDelay(s).risk === "High");
+  const alertsQuery = useQuery({
+    queryKey: ["alerts"],
+    queryFn: () => alertsApi.list(),
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+  });
+  const liveAlerts = useMemo(
+    () => (Array.isArray(alertsQuery.data) ? (alertsQuery.data as AnyRecord[]).map((alert) => normalizeAlert(alert)) : []),
+    [alertsQuery.data],
+  );
+  const criticalAlerts = liveAlerts.filter((alert) => alert.severity === "Critical");
+  const topAlerts = liveAlerts.slice(0, 4);
   return (
     <div className="space-y-6">
       <PageHeader
@@ -868,7 +922,7 @@ function LiveDashboardPage() {
           ["Available Vehicles", vehicles.filter((v) => /Active|Idle/.test(String(v.status))).length, "Healthy"],
           ["Available Drivers", drivers.filter((d) => /Available|Idle/.test(String(d.availability))).length, "Healthy"],
           ["Delayed Shipments", delayed.length, "Risk"],
-          ["Critical Alerts", alerts.filter((a) => a.severity === "Critical").length, "Critical"],
+          ["Critical Alerts", criticalAlerts.length, "Critical"],
           ["Temperature Breaches", incidents.filter((i) => String(i.incidentType).includes("Temperature")).length, "Critical"],
           ["Safety Events", incidents.length, "Review"],
           ["Revenue This Month", formatCurrency(valueSum(customers, "revenueMtd"), "SAR"), "Healthy"],
@@ -882,18 +936,22 @@ function LiveDashboardPage() {
           <div className="panel p-5">
             <p className="section-title">Critical Alerts</p>
             <div className="mt-4 space-y-3">
-              {alerts.map((alert) => (
-                <div key={alert.alertId} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              {topAlerts.length ? topAlerts.map((alert) => (
+                <div key={String(alert.id)} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-slate-900">{alert.type}</p>
-                      <p className="mt-1 text-xs text-slate-500">{alert.entity} · {alert.customer}</p>
+                      <p className="font-semibold text-slate-900">{alert.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
                     </div>
                     <RiskBadge risk={alert.severity} />
                   </div>
-                  <p className="mt-2 text-xs text-slate-600">{alert.recommendedAction}</p>
+                  <p className="mt-2 text-xs text-slate-600">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
                 </div>
-              ))}
+              )) : (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+                  No open alerts are currently returned by the live backend.
+                </div>
+              )}
             </div>
           </div>
           <div className="panel p-5">
@@ -926,14 +984,21 @@ function AlertsPage() {
     queryKey: ["alerts"],
     queryFn: () => alertsApi.list() as Promise<AlertRecord[]>,
     staleTime: 15_000,
+    refetchInterval: 15_000,
+  });
+  const { data: summaryRaw } = useQuery<AnyRecord>({
+    queryKey: ["alerts", "summary"],
+    queryFn: () => alertsApi.summary(),
+    staleTime: 15_000,
+    refetchInterval: 15_000,
   });
   const alertRows = alertRowsRaw as AlertRecord[];
   const qc = useQueryClient();
   const [selected, setSelected] = useState<AlertRecord | null>(null);
   const [activeTab, setActiveTab] = useState("All");
-  const [triageRunAt, setTriageRunAt] = useState<string | null>(null);
   const [taskFor, setTaskFor] = useState<AlertRecord | null>(null);
-  const tabs = ["All", "Critical", "SLA", "Telematics", "Cold Chain", "Maintenance", "Safety", "Finance"];
+  const [search, setSearch] = useState("");
+  const tabs = ["All", "Critical", "High", "Warning", "Info", "Safety", "Maintenance", "Telematics", "Customer", "Compliance", "Operations"];
 
   const updateCachedAlert = (updated: AlertRecord) => {
     qc.setQueryData<AlertRecord[]>(["alerts"], (current = []) =>
@@ -959,19 +1024,64 @@ function AlertsPage() {
     },
   });
 
+  const summary = useMemo(() => {
+    const live = summaryRaw ?? {};
+    return {
+      total: Number(live.total ?? alertRows.length),
+      critical: Number(live.critical ?? alertRows.filter((alert) => alert.severity === "Critical").length),
+      high: Number(live.high ?? alertRows.filter((alert) => alert.severity === "High").length),
+      open: Number(live.open ?? alertRows.filter((alert) => /open/i.test(String(alert.status))).length),
+      acknowledged: Number(live.acknowledged ?? alertRows.filter((alert) => /ack/i.test(String(alert.status))).length),
+      closed: Number(live.closed ?? alertRows.filter((alert) => /closed/i.test(String(alert.status))).length),
+    };
+  }, [alertRows, summaryRaw]);
+
   const visibleAlerts = useMemo<AlertRecord[]>(() => {
-    const triageSorted: AlertRecord[] = [...alertRows].map((alert): AlertRecord => ({
-      ...alert,
-      status: String(alert.status ?? "").toLowerCase() === "closed" ? "Closed" : String(alert.status ?? ""),
-    }));
-    const severityRank = (severity: string) => ({ Critical: 4, High: 3, Medium: 2, Low: 1 }[severity] ?? 0);
-    const filtered: AlertRecord[] = triageRunAt
-      ? triageSorted
-          .filter((alert) => !["Closed", "Resolved"].includes(String(alert.status)))
-          .sort((a, b) => severityRank(String(b.severity)) - severityRank(String(a.severity)))
-      : triageSorted;
-    return filtered.filter((alert) => activeTab === "All" || String(alert.severity) === activeTab || String(alert.category) === activeTab);
-  }, [alertRows, activeTab, triageRunAt]);
+    const severityRank = (severity: string) => ({ Critical: 4, High: 3, Warning: 2, Medium: 2, Low: 1, Info: 0 }[severity] ?? 0);
+    const query = search.trim().toLowerCase();
+    return [...alertRows]
+      .map((alert): AlertRecord => ({
+        ...alert,
+        status: String(alert.status ?? "").toLowerCase() === "closed" ? "Closed" : String(alert.status ?? ""),
+      }))
+      .filter((alert) => activeTab === "All" || String(alert.severity) === activeTab || String(alert.category) === activeTab || String(alert.status) === activeTab)
+      .filter((alert) => {
+        if (!query) return true;
+        return [
+          alert.title,
+          alert.alertId,
+          alert.entity,
+          alert.entityType,
+          alert.category,
+          alert.recommendedAction,
+          alert.owner,
+          alert.location,
+        ].some((value) => String(value ?? "").toLowerCase().includes(query));
+      })
+      .sort((a, b) => severityRank(String(b.severity)) - severityRank(String(a.severity)) || ageHours(b.createdAt) - ageHours(a.createdAt));
+  }, [alertRows, activeTab, search]);
+
+  const categoryLanes = useMemo(() => {
+    const laneOrder = ["Safety", "Maintenance", "Telematics", "Customer", "Compliance", "Operations"];
+    return laneOrder.map((category) => {
+      const laneAlerts = alertRows.filter((alert) => String(alert.category) === category);
+      return {
+        category,
+        count: laneAlerts.length,
+        openCount: laneAlerts.filter((alert) => !/closed/i.test(String(alert.status))).length,
+        criticalCount: laneAlerts.filter((alert) => String(alert.severity) === "Critical").length,
+        topAction: laneAlerts[0]?.recommendedAction || laneAlerts[0]?.body || "Waiting for live data",
+      };
+    }).filter((lane) => lane.count > 0 || lane.openCount > 0);
+  }, [alertRows]);
+
+  const recentSignals = useMemo(() => visibleAlerts.slice(0, 4), [visibleAlerts]);
+
+  useEffect(() => {
+    if (!selected && visibleAlerts.length) {
+      setSelected(visibleAlerts[0]);
+    }
+  }, [selected, visibleAlerts]);
 
   if (isLoading) return <LoadingState />;
   if (isError) return <EmptyState title="Alerts unavailable" subtitle="Unable to load the alert register right now. Refresh to try again." />;
@@ -981,7 +1091,7 @@ function AlertsPage() {
       <PageHeader
         eyebrow="Control Tower"
         title="Alerts"
-        description="A live operations alert center for temperature, telematics, late freight, maintenance, safety, customer SLA and margin leakage."
+        description="A live alert register backed by the backend ai_insights table. The queue, details, and actions all come from tenant data rather than a fixed demo feed."
         actions={
           <>
             <button
@@ -994,65 +1104,77 @@ function AlertsPage() {
             </button>
             <button
               className="btn-primary"
-              onClick={() => setTriageRunAt(new Date().toISOString())}
+              onClick={() => {
+                void qc.invalidateQueries({ queryKey: ["alerts"] });
+                void qc.invalidateQueries({ queryKey: ["alerts", "summary"] });
+              }}
             >
-              <Sparkles className="h-4 w-4" /> Run AI Triage
+              <Sparkles className="h-4 w-4" /> Refresh Live Queue
             </button>
           </>
         }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open Alerts" value={visibleAlerts.filter((alert) => !/closed|resolved/i.test(String(alert.status))).length} status="Open" />
-        <KpiCard label="Critical Alerts" value={visibleAlerts.filter((alert) => alert.severity === "Critical").length} status="Critical" />
-        <KpiCard label="Customer Impact" value={`${new Set(visibleAlerts.map((alert) => alert.customer)).size} accounts`} status="Risk" />
-        <KpiCard label="Triage Confidence" value="92%" status="AI" />
+        <KpiCard label="Open Alerts" value={summary.open} status="Open" />
+        <KpiCard label="Critical Alerts" value={summary.critical} status="Critical" />
+        <KpiCard label="Acknowledged" value={summary.acknowledged} status="Review" />
+        <KpiCard label="Closed" value={summary.closed} status="Healthy" />
       </div>
-      {triageRunAt && (
-        <div className="panel border-teal-400/20 bg-teal-400/5 px-4 py-3 text-sm text-teal-100">
-          Triage run at {new Date(triageRunAt).toLocaleString()} and alerts are now sorted by severity and urgency.
+
+      <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full lg:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search alert, entity, owner or action…"
+            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+          />
         </div>
-      )}
-
-      <div className="panel flex flex-wrap gap-2 p-3">
-        {tabs.map((tab) => (
-          <button key={tab} className={activeTab === tab ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setActiveTab(tab)}>
-            {tab}
-          </button>
-        ))}
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <button key={tab} className={activeTab === tab ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setActiveTab(tab)}>
+              {tab}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
+      <div className="grid gap-4 xl:grid-cols-[1.18fr_0.82fr]">
         <div className="space-y-3">
           {visibleAlerts.map((alert: AlertRecord) => (
-            <div key={alert.alertId} className="panel p-4 transition hover:border-blue-200 hover:shadow-md">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div key={alert.alertId} className="panel p-3.5 transition hover:border-amber-300 hover:shadow-lg">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <RiskBadge risk={alert.severity} />
                     <StatusBadge status={alert.status} />
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">{alert.category}</span>
-                    <span className="text-xs font-semibold text-slate-400">{alert.age} ago</span>
+                    <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
                   </div>
-                  <h2 className="mt-3 text-lg font-bold text-slate-900">{alert.type}</h2>
-                  <p className="mt-1 text-sm text-slate-600">{alert.entity} · {alert.customer} · {alert.location}</p>
-                  <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                    <span className="font-bold">Recommended action:</span> {alert.recommendedAction}
+                  <h2 className="mt-2 text-[1.02rem] font-bold text-slate-900">{alert.title}</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.customer ?? "Tenant scoped"} · {alert.location ?? "Live backend"}
+                  </p>
+                  <div className="mt-2 rounded-xl border border-amber-100 bg-[#fff6ea] px-3 py-2 text-sm text-amber-900">
+                    <span className="font-bold">Recommended action:</span> {alert.recommendedAction || alert.body || "No recommended action recorded."}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 lg:justify-end">
+                <div className="flex flex-wrap gap-2 lg:justify-end lg:max-w-[240px]">
                   <button
-                    className="btn-primary py-2 text-xs"
+                    className="btn-primary h-9 px-3 text-[11px]"
                     disabled={!canAct}
                     title={!canAct ? "You do not have permission to perform this action." : "Acknowledge this alert."}
                     onClick={() => ackMut.mutate(alert.alertId)}
                   >
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Acknowledge
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Ack
                   </button>
-                  <button className="btn-ghost py-2 text-xs" onClick={() => setSelected(alert)}>View Details</button>
-                  <button className="btn-ghost py-2 text-xs" onClick={() => setTaskFor(alert)}>Create Task</button>
+                  <button className="btn-ghost h-9 px-3 text-[11px]" onClick={() => setSelected(alert)}>Details</button>
+                  <button className="btn-ghost h-9 px-3 text-[11px]" onClick={() => setTaskFor(alert)}>Task</button>
                   <button
-                    className="btn-ghost py-2 text-xs"
+                    className="btn-ghost h-9 px-3 text-[11px]"
                     disabled={!canClose}
                     title={!canClose ? "You do not have permission to perform this action." : "Close this alert."}
                     onClick={() => closeMut.mutate(alert.alertId)}
@@ -1063,37 +1185,56 @@ function AlertsPage() {
               </div>
             </div>
           ))}
-          {!visibleAlerts.length && <EmptyState title="No alerts in this lane" subtitle="Try another tab or clear acknowledgement filters." />}
+          {!visibleAlerts.length && <EmptyState title="No alerts in this lane" subtitle="Try another tab, clear the search, or wait for the live backend to surface new rows." />}
         </div>
 
-        <div className="space-y-5">
-          <AiInsightCard insight={{ title: "Alert triage recommendation", body: "Handle the temperature breach first because it touches compliance, renewal risk and customer SLA. Then clear device visibility gaps before dispatching BOX-106 again.", score: 92, moduleKey: "alerts" }} />
-          <div className="panel p-5">
-            <p className="section-title">Live Event Feed</p>
-            <div className="mt-4 space-y-3">
-              {[
-                ["04:01", "eta.sent", "Customer update sent for SHP-6204"],
-                ["03:58", "vehicle.idle", "BOX-106 still blocked at Manassas yard"],
-                ["03:51", "maintenance.warning", "Brake system risk remains critical"],
-                ["03:44", "geofence.entered", "KSA-REEFER-119 entered pharma pickup zone"],
-              ].map(([time, type, body]) => (
-                <div key={`${time}-${type}`} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{type}</p>
-                    <span className="text-xs text-slate-400">{time}</span>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-700">{body}</p>
-                </div>
-              ))}
+        <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          <div className="panel p-4">
+            <p className="section-title">Live triage guidance</p>
+            <div className="mt-3 space-y-2.5">
+              <div className="rounded-xl border border-red-100 bg-gradient-to-br from-red-50 to-rose-50 px-3 py-2 text-sm text-red-800 shadow-inner">
+                <span className="font-bold">Criticals:</span> {summary.critical} open alert{summary.critical === 1 ? "" : "s"} need immediate review.
+              </div>
+              <div className="rounded-xl border border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50 px-3 py-2 text-sm text-amber-800 shadow-inner">
+                <span className="font-bold">Queue depth:</span> {summary.total} total live alert{summary.total === 1 ? "" : "s"} are visible for this tenant.
+              </div>
+              <div className="rounded-xl border border-slate-100 bg-gradient-to-br from-white to-stone-50 px-3 py-2 text-sm text-slate-700 shadow-inner">
+                <span className="font-bold">Next move:</span> clear the top critical item, then work down by age and category.
+              </div>
             </div>
           </div>
-          <div className="panel p-5">
-            <p className="section-title">Ownership</p>
-            <div className="mt-4 space-y-2">
-              {["Dispatch", "Telematics", "Cold Chain Support", "Maintenance", "Safety", "Finance Ops"].map((owner) => (
-                <div key={owner} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white px-3 py-2">
-                  <span className="text-sm font-semibold text-slate-700">{owner}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-500">{visibleAlerts.filter((alert) => alert.owner === owner).length}</span>
+
+          <div className="panel p-4">
+            <p className="section-title">Recent Live Signals</p>
+            <div className="mt-3 space-y-2.5">
+              {recentSignals.length ? recentSignals.map((alert) => (
+                <div key={String(alert.id)} className="rounded-xl border border-slate-100 bg-gradient-to-br from-[#fffdf8] to-[#f7efe2] p-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                      {String(alert.category)} · {String(alert.severity)}
+                    </p>
+                    <span className="text-xs text-slate-400">{alert.age ?? "Live"}</span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{alert.title}</p>
+                  <p className="mt-1 text-sm text-slate-700">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+                </div>
+              )) : (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  No live alert activity is available yet.
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="panel p-4">
+            <p className="section-title">Operational Lanes</p>
+            <div className="mt-3 space-y-2">
+              {categoryLanes.map((lane) => (
+                <div key={lane.category} className="rounded-xl border border-slate-100 bg-gradient-to-br from-white to-stone-50 px-3 py-2 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-700">{lane.category}</span>
+                    <span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{lane.openCount} open</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{lane.criticalCount} critical · {lane.topAction}</p>
                 </div>
               ))}
             </div>
@@ -1114,7 +1255,7 @@ function AlertsPage() {
 }
 
 function AlertTaskModal({ alertRecord, saving, onClose, onSave }: { alertRecord: AlertRecord; saving: boolean; onClose: () => void; onSave: (payload: { title: string; owner: string }) => void }) {
-  const [title, setTitle] = useState(`Task for ${String(alertRecord.type ?? alertRecord.alertId)}`);
+  const [title, setTitle] = useState(`Task for ${String(alertRecord.title ?? alertRecord.type ?? alertRecord.alertId)}`);
   const [owner, setOwner] = useState(String(alertRecord.owner ?? "Dispatch"));
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
@@ -1129,7 +1270,7 @@ function AlertTaskModal({ alertRecord, saving, onClose, onSave }: { alertRecord:
           <h2 className="text-xl font-semibold text-white">Create Alert Task</h2>
           <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
-        <p className="mt-2 text-sm text-slate-400">{String(alertRecord.type ?? alertRecord.alertId)} · {String(alertRecord.entity ?? "")}</p>
+        <p className="mt-2 text-sm text-slate-400">{String(alertRecord.title ?? alertRecord.type ?? alertRecord.alertId)} · {String(alertRecord.entity ?? "")}</p>
         <div className="mt-5 space-y-4">
           <label className="block">
             <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Task Title</span>

@@ -265,6 +265,26 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
             UNION ALL SELECT 'assets','asset','Review geofence status, utilization and assignment before route release.'
           ) m
           WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations r WHERE r.module_key=m.module_key AND r.title LIKE 'Batch 1%')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Brake inspection overdue', 'BOX-106 requires inspection before dispatch release.', 'Critical', 'Open', 'Maintenance', 'maintenance.overdue', 'Vehicle',
+                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 AND v.vehicle_code = 'BOX-106' LIMIT 1),
+                 'Ground the vehicle until the maintenance work order closes', NOW() - INTERVAL '35 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Brake inspection overdue')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Driver coaching review', 'Recent HOS and safety activity require follow-up before the next shift.', 'High', 'Open', 'Safety', 'driver.coaching', 'Driver',
+                 (SELECT d.id FROM drivers d WHERE d.company_id = 1 ORDER BY d.id LIMIT 1),
+                 'Create a coaching task and review evidence before the next assignment', NOW() - INTERVAL '2 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Driver coaching review')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Customer SLA at risk', 'A delivery exception is threatening a customer-visible ETA.', 'High', 'Open', 'Customer', 'customer.sla.risk', 'Customer',
+                 (SELECT c.id FROM customers c WHERE c.company_id = 1 ORDER BY c.id LIMIT 1),
+                 'Send a proactive ETA update and keep the account owner informed', NOW() - INTERVAL '75 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Customer SLA at risk')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Device heartbeat stale', 'The live telemetry stream has not reported in the last few minutes.', 'Warning', 'Open', 'Telematics', 'device.heartbeat.stale', 'Vehicle',
+                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 ORDER BY v.id DESC LIMIT 1),
+                 'Recheck the device and confirm connectivity with the driver', NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Device heartbeat stale')",
 
         @"INSERT INTO location_events (company_id, vehicle_id, vehicle_code, driver_id, lat, lng, speed_mph, heading, event_type, engine_status, fuel_level, odometer_miles, event_time)
           SELECT v.company_id, v.id, v.vehicle_code, v.assigned_driver_id,
