@@ -47,6 +47,18 @@ public sealed class ConfigValidationRlsTests
         Assert.Equal(0, result.FailCount);
     }
 
+    [Fact]
+    public void ProductionContainer_EnablesTenantRlsByDefault()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "backend-dotnet")))
+            dir = dir.Parent;
+
+        Assert.NotNull(dir);
+        var dockerfile = File.ReadAllText(Path.Combine(dir!.FullName, "backend-dotnet", "Dockerfile"));
+        Assert.Contains("ENV Rls__EnforceTenantContext=true", dockerfile, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("false")]
