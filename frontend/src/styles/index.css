@@ -1215,3 +1215,91 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/* Live map: warm, compact, tactile operations workbench. */
+.live-map-workbench {
+  --map-cream: #f5efe4;
+  --map-paper: #fffdf8;
+  --map-edge: #d8cdbd;
+  --map-ink: #26322f;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(231, 170, 98, .13), transparent 27%),
+    radial-gradient(circle at 88% 18%, rgba(68, 133, 119, .12), transparent 30%),
+    repeating-linear-gradient(0deg, rgba(92, 71, 46, .022) 0, rgba(92, 71, 46, .022) 1px, transparent 1px, transparent 5px),
+    var(--map-cream);
+  border: 1px solid rgba(151, 126, 96, .22);
+  border-radius: 24px;
+  padding: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.9),
+    inset 0 -10px 28px rgba(109, 82, 50, .045);
+}
+
+.live-map-workbench .panel.live-map-stage,
+.live-map-workbench .panel.live-map-tactile-card {
+  border-color: var(--map-edge);
+  background: linear-gradient(145deg, #fffefa, #f7f0e6);
+  box-shadow:
+    0 9px 18px rgba(75, 55, 35, .11),
+    0 2px 4px rgba(75, 55, 35, .10),
+    inset 0 1px 0 #fff;
+}
+
+.live-map-workbench .section-title {
+  color: #695b49;
+  letter-spacing: .13em;
+}
+
+.live-map-canvas {
+  border: 8px solid #e7ddcf;
+  border-radius: 20px;
+  box-shadow:
+    inset 0 3px 12px rgba(49, 39, 27, .24),
+    0 2px 0 #fff,
+    0 8px 16px rgba(70, 50, 30, .12);
+}
+
+.live-map-inset {
+  border: 1px solid #d7cbbb;
+  background: #eee5d8;
+  box-shadow:
+    inset 0 2px 7px rgba(83, 63, 42, .12),
+    0 1px 0 rgba(255,255,255,.9);
+}
+
+.live-map-raised,
+.live-map-mini-stat,
+.live-map-status-card {
+  border-color: rgba(176, 153, 124, .42);
+  box-shadow:
+    0 3px 6px rgba(76, 56, 35, .10),
+    inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+.live-map-raised {
+  background: linear-gradient(145deg, #fffefa, #f8f2e9);
+}
+
+.live-map-status-card:active,
+.live-map-workbench .btn-primary:active,
+.live-map-workbench .btn-ghost:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 5px rgba(74, 54, 34, .14);
+}
+
+.live-map-workbench .btn-primary,
+.live-map-workbench .btn-ghost {
+  border-color: #cdbda8;
+  box-shadow: 0 2px 4px rgba(71, 52, 32, .10), inset 0 1px 0 rgba(255,255,255,.9);
+}
+
+@media (max-width: 639px) {
+  .live-map-workbench {
+    border-radius: 18px;
+    padding: 8px;
+  }
+
+  .live-map-canvas {
+    border-width: 5px;
+  }
+}

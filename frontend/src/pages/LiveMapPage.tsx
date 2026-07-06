@@ -178,7 +178,7 @@ export function LiveMapPage() {
   const openAlerts = alerts.data ?? [];
 
   return (
-    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-6 overflow-x-hidden overflow-y-auto">
+    <div className="control-tower live-map-workbench flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
         title="Live Fleet Map"
@@ -198,52 +198,52 @@ export function LiveMapPage() {
       />
 
       {/* Status segmentation — the single primary metric row. */}
-      <div className="order-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
       </div>
 
-      <div className="order-3 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
-        <section className="panel min-w-0 p-5">
+      <div className="live-map-support-grid order-3 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
+        <section className="panel live-map-tactile-card min-w-0 p-4">
           <h3 className="section-title">Telemetry Backbone</h3>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <TelemetryMiniStat label="Live units" value={String(kpis.liveUnits ?? 0)} tone="teal" />
             <TelemetryMiniStat label="Devices" value={String(kpis.registeredDevices ?? 0)} tone="blue" />
             <TelemetryMiniStat label="Open alerts" value={String(kpis.openAlerts ?? 0)} tone="rose" />
             <TelemetryMiniStat label="Coverage" value={`${String(kpis.liveCoverage ?? 0)}%`} tone="indigo" />
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+          <div className="mt-3 grid min-w-0 gap-2 lg:grid-cols-2">
+            <div className="live-map-inset min-w-0 overflow-hidden rounded-2xl p-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Live State</h4>
                 <span className="text-xs font-semibold text-slate-400">{String(kpis.healthyUnits ?? 0)} healthy</span>
               </div>
               <div className="mt-3 space-y-2">
                 {deviceRegistry.slice(0, 4).map((device) => (
-                  <div key={String(device.id)} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-800">{String(device.device_serial ?? device.deviceSerial ?? "Unknown device")}</p>
-                      <p className="text-[11px] text-slate-500">{String(device.vehicle_code ?? device.vehicleCode ?? "Unassigned")} · {String(device.telemetry_status ?? device.telemetryStatus ?? "healthy")}</p>
+                  <div key={String(device.id)} className="live-map-raised flex min-w-0 items-center justify-between gap-2 rounded-xl px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{String(device.device_serial ?? device.deviceSerial ?? "Unknown device")}</p>
+                      <p className="truncate text-[11px] text-slate-500">{String(device.vehicle_code ?? device.vehicleCode ?? "Unassigned")} · {String(device.telemetry_status ?? device.telemetryStatus ?? "healthy")}</p>
                     </div>
-                    <span className="text-xs font-semibold text-slate-500">{String(device.risk_level ?? device.riskLevel ?? "low")}</span>
+                    <span className="shrink-0 text-xs font-semibold text-slate-500">{String(device.risk_level ?? device.riskLevel ?? "low")}</span>
                   </div>
                 ))}
                 {deviceRegistry.length === 0 ? <p className="text-sm text-slate-500">No device registry rows yet.</p> : null}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="live-map-inset min-w-0 overflow-hidden rounded-2xl p-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Risk Rules</h4>
                 <span className="text-xs font-semibold text-slate-400">{String(riskRules.length)} rules</span>
               </div>
               <div className="mt-3 space-y-2">
                 {riskRules.slice(0, 4).map((rule) => (
-                  <div key={String(rule.id)} className="rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-800">{String(rule.rule_type ?? rule.ruleType ?? "Rule")}</p>
-                      <StatusBadge status={String(rule.severity ?? "Watch")} />
+                  <div key={String(rule.id)} className="live-map-raised min-w-0 overflow-hidden rounded-xl px-3 py-2">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800" title={String(rule.rule_type ?? rule.ruleType ?? "Rule")}>{String(rule.rule_type ?? rule.ruleType ?? "Rule")}</p>
+                      <span className="shrink-0"><StatusBadge status={String(rule.severity ?? "Watch")} /></span>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">
                       Threshold {String(rule.threshold_value ?? rule.thresholdValue ?? "—")} · {Boolean(rule.enabled ?? true) ? "Enabled" : "Disabled"}
@@ -256,15 +256,15 @@ export function LiveMapPage() {
           </div>
         </section>
 
-        <section className="panel min-w-0 p-5">
+        <section className="panel live-map-tactile-card min-w-0 p-4">
           <h3 className="section-title">Billing / Risk Signal</h3>
-          <div className="mt-4 space-y-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mt-3 space-y-2">
+            <div className="live-map-raised rounded-2xl p-3">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Open telemetry alerts</p>
               <p className="mt-2 text-3xl font-black text-slate-900">{String(kpis.openAlerts ?? 0)}</p>
               <p className="mt-2 text-sm text-slate-500">Telemetry is real-time and does not fabricate empty confidence.</p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="live-map-raised rounded-2xl p-3">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Next action</p>
               <p className="mt-2 text-sm font-semibold text-slate-800">{String((deviceRegistry.find((row) => String(row.next_action ?? "") !== "")?.next_action ?? deviceRegistry[0]?.next_action) ?? "Not configured yet")}</p>
               <p className="mt-2 text-xs text-slate-500">Alerts, live state and device registry are all tenant scoped.</p>
@@ -272,14 +272,14 @@ export function LiveMapPage() {
           </div>
         </section>
 
-        <section className="panel min-w-0 p-5">
+        <section className="panel live-map-tactile-card min-w-0 p-4">
           <h3 className="section-title">Mobile Readiness</h3>
-          <div className="mt-4 space-y-2">
+          <div className="mt-3 space-y-2">
             {mobileReadiness.slice(0, 4).map((row) => (
-              <div key={String(row.role)} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+              <div key={String(row.role)} className="live-map-raised min-w-0 overflow-hidden rounded-2xl p-3">
                 <p className="text-sm font-semibold text-slate-800">{String(row.role ?? "Role")}</p>
-                <p className="mt-1 text-xs text-slate-500">{Array.isArray(row.routeFamilies) ? row.routeFamilies.join(" · ") : "No route families"}</p>
-                <p className="mt-2 text-[11px] text-slate-500">{String(row.offlineIdempotency ?? "Not configured")}</p>
+                <p className="mt-1 break-words text-xs text-slate-500">{Array.isArray(row.routeFamilies) ? row.routeFamilies.join(" · ") : "No route families"}</p>
+                <p className="mt-2 break-words text-[11px] text-slate-500">{String(row.offlineIdempotency ?? "Not configured")}</p>
               </div>
             ))}
             {mobileReadiness.length === 0 ? <p className="text-sm text-slate-500">Mobile readiness preview is not configured yet.</p> : null}
@@ -287,9 +287,9 @@ export function LiveMapPage() {
         </section>
       </div>
 
-      <div className="order-1 grid min-w-0 items-stretch gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
+      <div className="live-map-primary order-1 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
-        <section className="panel flex min-w-0 flex-col overflow-hidden p-4 sm:p-5">
+        <section className="panel live-map-stage flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Live Operations Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
@@ -323,13 +323,13 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface mt-3 min-h-[420px] flex-1 sm:min-h-[520px] xl:min-h-[600px]">
+          <div className="map-surface live-map-canvas mt-2 min-h-[400px] flex-1 sm:min-h-[500px] xl:min-h-[560px]">
             <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
           </div>
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel flex min-w-0 max-h-[760px] flex-col overflow-hidden p-0">
+        <aside className="panel live-map-tactile-card flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Live Roster</h2>
@@ -408,7 +408,7 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
+      className={`live-map-status-card flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
         active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >
@@ -433,7 +433,7 @@ function TelemetryMiniStat({ label, value, tone }: { label: string; value: strin
   }[tone];
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 ${styles}`}>
+    <div className={`live-map-mini-stat rounded-2xl border px-3 py-2.5 ${styles}`}>
       <p className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-80">{label}</p>
       <p className="mt-2 text-2xl font-black tracking-tight">{value}</p>
     </div>
