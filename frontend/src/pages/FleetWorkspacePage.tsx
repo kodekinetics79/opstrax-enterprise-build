@@ -93,6 +93,14 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
 
   const loadWorkspaceData = async () => {
     const warnings: string[] = [];
+    const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? value : []);
+    const asItems = <T,>(value: unknown): T[] => {
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === 'object' && Array.isArray((value as AnyRecord).items)) {
+        return (value as AnyRecord).items as T[];
+      }
+      return [];
+    };
     const isUnauthorized = (reason: unknown) => {
       const status = typeof reason === 'object' && reason && 'response' in reason
         ? Number((reason as { response?: { status?: number } }).response?.status ?? 0)
@@ -123,12 +131,12 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     };
 
     apply(ov, 'Fleet overview', setOverview);
-    apply(shipmentRes, 'Shipments', (value) => setShipments(value.items));
-    apply(vehicleRes, 'Vehicles', (value) => setVehicles(value.items));
-    apply(trackingRes, 'Tracking', (value) => setTracking(value.items));
-    apply(maintenanceRes, 'Maintenance', (value) => setMaintenance(value.items));
-    apply(fuelRes, 'Fuel', (value) => setFuel(value.items));
-    apply(carrierRes, 'Carriers', (value) => setCarriers(((value as AnyRecord[]) || []).map(toCarrierRow)));
+    apply(shipmentRes, 'Shipments', (value) => setShipments(asItems(value)));
+    apply(vehicleRes, 'Vehicles', (value) => setVehicles(asItems(value)));
+    apply(trackingRes, 'Tracking', (value) => setTracking(asItems(value)));
+    apply(maintenanceRes, 'Maintenance', (value) => setMaintenance(asItems(value)));
+    apply(fuelRes, 'Fuel', (value) => setFuel(asItems(value)));
+    apply(carrierRes, 'Carriers', (value) => setCarriers(asArray<AnyRecord>(value).map(toCarrierRow)));
 
     setLoadWarnings(warnings);
   };
