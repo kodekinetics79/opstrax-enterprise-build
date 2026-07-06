@@ -6,6 +6,7 @@ using System.Text.Json;
 
 namespace Opstrax.Tests;
 
+[Trait("Category", "Integration")]
 public class PlatformCommercialOpsTests
 {
     private const string LocalConnectionString =

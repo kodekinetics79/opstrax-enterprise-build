@@ -16,6 +16,7 @@ namespace Opstrax.Tests;
 // by tools/platform-admin-smoke-test.sh against a running API.
 // ─────────────────────────────────────────────────────────────────────────────
 [Collection("platform-control-plane")]
+[Trait("Category", "Integration")]
 public class PlatformControlPlaneTests
 {
     private const string LocalConnectionString =

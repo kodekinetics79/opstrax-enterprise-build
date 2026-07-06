@@ -20,6 +20,7 @@ public class PlatformControlPlaneCollection;
 // following the PlatformControlPlaneTests pattern.
 // ─────────────────────────────────────────────────────────────────────────────
 [Collection("platform-control-plane")]
+[Trait("Category", "Integration")]
 public class PlatformOperatorManagementTests
 {
     private const string LocalConnectionString =

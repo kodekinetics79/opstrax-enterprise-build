@@ -6,6 +6,7 @@ using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
+[Trait("Category", "Integration")]
 public class Stage12TelemetryTests
 {
     private const string LocalConnectionString =

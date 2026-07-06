@@ -5,6 +5,7 @@ using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
+[Trait("Category", "Integration")]
 public class Stage13BSafetyMaintenanceTests
 {
     private const string LocalConnectionString =

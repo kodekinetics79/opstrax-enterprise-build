@@ -51,7 +51,7 @@ jobs:
       - run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore
       - run: dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj
       - run: dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore
-      # DB-backed *PostgresTests run in the dedicated SIT environment (isolated Neon branch),
-      # not in CI — they require a live connection and write tenant data.
+      # DB-backed suites run in the dedicated SIT environment (isolated Neon branch),
+      # not in unit CI — they require a live connection and write tenant data.
       - name: Run unit/source/regression tests
-        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName!~Postgres"
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName!~Postgres&Category!=Integration"

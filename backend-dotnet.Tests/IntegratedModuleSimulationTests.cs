@@ -6,6 +6,7 @@ using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
+[Trait("Category", "Integration")]
 public class IntegratedModuleSimulationTests
 {
     private const string LocalConnectionString =
