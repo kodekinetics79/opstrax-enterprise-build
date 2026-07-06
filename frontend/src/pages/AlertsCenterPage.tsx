@@ -257,7 +257,7 @@ function AlertCard({
 }) {
   return (
     <article
-      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(95,66,35,.08)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(95,66,35,.12)] ${active ? "border-teal-300 bg-[linear-gradient(180deg,rgba(245,252,251,.98),rgba(226,248,244,.92))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(250,243,233,.96))] ${severityTone(alert.severity)}`}`}
+      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,.07)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,.10)] ${active ? "border-sky-300 bg-[linear-gradient(180deg,rgba(248,252,255,.98),rgba(235,243,255,.94))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] ${severityTone(alert.severity)}`}`}
     >
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex items-start justify-between gap-3">
@@ -275,7 +275,7 @@ function AlertCard({
       </button>
       <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
         {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", alert)}>
+          <button type="button" className="btn-ghost h-9 border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
             Acknowledge
           </button>
         )}
@@ -359,17 +359,17 @@ function DetailPanel({
         <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(247,239,227,.92))] p-4 shadow-[0_10px_22px_rgba(95,66,35,.06)]">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_22px_rgba(15,23,42,.05)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
         <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
         <p className="mt-2 text-sm text-slate-600">{rationale}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
           <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
@@ -392,7 +392,7 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(95,66,35,.04)]">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
           <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
@@ -426,7 +426,7 @@ function DetailPanel({
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(248,241,231,.92))] px-3 py-2 shadow-[0_6px_14px_rgba(95,66,35,.04)]">
+    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-3 py-2 shadow-[0_6px_14px_rgba(15,23,42,.04)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
       <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
     </div>
@@ -585,27 +585,28 @@ export function AlertsCenterPage() {
   }
 
   return (
-    <div className="alerts-command-room alerts-center-workbench space-y-5 pb-10">
+    <div className="alerts-command-room alerts-center-workbench space-y-4 pb-8">
       {toastMsg ? (
         <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
         </div>
       ) : null}
 
-      <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,252,247,.98),rgba(247,237,225,.96))] p-5 shadow-[0_24px_80px_-48px_rgba(95,66,35,0.46)]">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_12%_8%,rgba(214,126,63,.20),transparent_24%),radial-gradient(circle_at_78%_0%,rgba(20,184,166,.14),transparent_20%),linear-gradient(90deg,rgba(255,255,255,.68),rgba(255,255,255,0))]" />
-        <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_0.95fr] lg:items-end">
+      <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,253,.96))] p-4 shadow-sm">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
+        <div className="pointer-events-none absolute -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
+        <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_0.95fr] lg:items-center">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700 shadow-sm">
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
               <BellRing className="h-3.5 w-3.5" /> Live alerts command room
             </div>
-            <h1 className="mt-3 text-[2rem] font-black tracking-tight text-slate-900 sm:text-[2.25rem]">
+            <h1 className="mt-3 text-[1.9rem] font-black tracking-tight text-slate-900 sm:text-[2.2rem]">
               Alerts Center
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
               A live, backend-backed triage surface for open alerts, ownership, audit trail, and resolution actions. Tight layout, no demo queue, no fake feed, and no hidden fallback layer.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-white">
                 Export live queue
               </button>
@@ -615,24 +616,24 @@ export function AlertsCenterPage() {
                   void queryClient.invalidateQueries({ queryKey: ["alerts"] });
                   void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
                 }}
-                className="btn-primary h-10 bg-gradient-to-r from-amber-700 via-rose-600 to-teal-600 shadow-md shadow-amber-200/70 hover:from-amber-600 hover:via-rose-500 hover:to-teal-500"
+                className="btn-primary h-10 bg-gradient-to-r from-sky-600 via-teal-600 to-indigo-600 shadow-md shadow-sky-200/70 hover:from-sky-500 hover:via-teal-500 hover:to-indigo-500"
               >
                 Refresh alerts <RefreshCw className="h-4 w-4" />
               </button>
             </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Auto refresh 15s</span>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">No demo fallback</span>
+            </div>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="grid gap-2 sm:grid-cols-2">
             <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
             <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
             <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
             <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
           </div>
-        </div>
-        <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
-          <span className="rounded-full border border-slate-200 bg-white/85 px-3 py-1">Auto refresh 15s</span>
-          <span className="rounded-full border border-slate-200 bg-white/85 px-3 py-1">No demo fallback</span>
         </div>
       </header>
 
@@ -653,7 +654,7 @@ export function AlertsCenterPage() {
                 className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
               />
             </div>
-            <button type="button" className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
+            <button type="button" className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
               All lanes
             </button>
           </div>
@@ -666,7 +667,7 @@ export function AlertsCenterPage() {
               type="button"
               onClick={() => setCategoryFilter(category)}
               className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                categoryFilter === category ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+                categoryFilter === category ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
               }`}
             >
               {category}
@@ -693,7 +694,7 @@ export function AlertsCenterPage() {
               type="button"
               onClick={() => setStatusFilter(status)}
               className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+                statusFilter === status ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
               }`}
             >
               {status}
@@ -703,7 +704,7 @@ export function AlertsCenterPage() {
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
-        <section className="space-y-3">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
           {openAlerts.length ? openAlerts.map((alert) => (
             <AlertCard
               key={String(alert.id)}
@@ -715,7 +716,9 @@ export function AlertsCenterPage() {
               onAction={handleAction}
             />
           )) : (
-            <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
+            <div className="md:col-span-2">
+              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
+            </div>
           )}
         </section>
 
@@ -754,9 +757,9 @@ export function AlertsCenterPage() {
 
 function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.92),rgba(247,239,227,.86))] p-4 shadow-[0_10px_24px_rgba(95,66,35,.06)]">
+    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_24px_rgba(15,23,42,.05)]">
       <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm">{icon}</div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600 shadow-sm">{icon}</div>
         <p className="text-sm font-semibold text-slate-900">{title}</p>
       </div>
       <p className="mt-3 text-sm text-slate-500">{body}</p>
@@ -766,7 +769,7 @@ function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: str
 
 function MiniStat({ label, value, sublabel }: { label: string; value: number | string; sublabel: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.96),rgba(249,242,233,.92))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.8),0_8px_20px_rgba(95,66,35,.06)]">
+    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_8px_20px_rgba(15,23,42,.06)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
       <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
