@@ -25,3 +25,4 @@ frontend/tsconfig.tsbuildinfo
 tsconfig.tsbuildinfo
 /package-lock.json
 DEMO_CREDENTIALS.md
+.render-secrets.generated

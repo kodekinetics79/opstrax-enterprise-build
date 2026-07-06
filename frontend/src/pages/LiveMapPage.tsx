@@ -178,7 +178,7 @@ export function LiveMapPage() {
   const openAlerts = alerts.data ?? [];
 
   return (
-    <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-6 overflow-x-hidden overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
         title="Live Fleet Map"
@@ -205,8 +205,8 @@ export function LiveMapPage() {
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_.85fr_.9fr]">
-        <section className="panel p-5">
+      <div className="order-2 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,.85fr)_minmax(0,.9fr)]">
+        <section className="panel min-w-0 p-5">
           <h3 className="section-title">Telemetry Backbone</h3>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <TelemetryMiniStat label="Live units" value={String(kpis.liveUnits ?? 0)} tone="teal" />
@@ -256,7 +256,7 @@ export function LiveMapPage() {
           </div>
         </section>
 
-        <section className="panel p-5">
+        <section className="panel min-w-0 p-5">
           <h3 className="section-title">Billing / Risk Signal</h3>
           <div className="mt-4 space-y-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -272,7 +272,7 @@ export function LiveMapPage() {
           </div>
         </section>
 
-        <section className="panel p-5">
+        <section className="panel min-w-0 p-5">
           <h3 className="section-title">Mobile Readiness</h3>
           <div className="mt-4 space-y-2">
             {mobileReadiness.slice(0, 4).map((row) => (
@@ -287,9 +287,9 @@ export function LiveMapPage() {
         </section>
       </div>
 
-      <div className="grid items-stretch gap-5 xl:grid-cols-[1.55fr_.45fr]">
+      <div className="order-1 grid min-w-0 items-stretch gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
-        <section className="panel flex flex-col p-5">
+        <section className="panel flex min-w-0 flex-col overflow-hidden p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Live Operations Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
@@ -300,32 +300,36 @@ export function LiveMapPage() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {QUICK_FILTERS.map((filter) => (
-              <button
-                type="button"
-                key={filter}
-                className={filter === activeFilter ? "btn-primary py-1.5 text-xs" : "btn-ghost py-1.5 text-xs"}
-                onClick={() => setActiveFilter(activeFilter === filter ? "All" : filter)}
-              >
-                {filter}
-              </button>
-            ))}
-            <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
-            <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
-            <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
-            <span className="ml-auto text-xs font-semibold text-slate-400">
+          <div className="-mx-1 mt-3 overflow-x-auto px-1 pb-1">
+            <div className="flex min-w-max items-center gap-2">
+              {QUICK_FILTERS.map((filter) => (
+                <button
+                  type="button"
+                  key={filter}
+                  className={filter === activeFilter ? "btn-primary whitespace-nowrap py-1.5 text-xs" : "btn-ghost whitespace-nowrap py-1.5 text-xs"}
+                  onClick={() => setActiveFilter(activeFilter === filter ? "All" : filter)}
+                >
+                  {filter}
+                </button>
+              ))}
+              <span className="mx-1 h-5 w-px bg-slate-200" />
+              <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
+              <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
+            </div>
+          </div>
+          <div className="mt-1 flex justify-end">
+            <span className="text-xs font-semibold text-slate-400">
               {matchedEntities.length > ROSTER_CAP ? `first ${ROSTER_CAP} of ${matchedEntities.length} — refine filters` : `${matchedEntities.length} of ${liveEntities.length} shown`}
             </span>
           </div>
 
-          <div className="map-surface mt-4 min-h-[560px] flex-1">
+          <div className="map-surface mt-3 min-h-[420px] flex-1 sm:min-h-[520px] xl:min-h-[600px]">
             <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
           </div>
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel flex max-h-[760px] flex-col overflow-hidden p-0">
+        <aside className="panel flex min-w-0 max-h-[760px] flex-col overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Live Roster</h2>
@@ -380,7 +384,7 @@ export function LiveMapPage() {
       </div>
 
       {recommendations.length > 0 && (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="order-3 grid min-w-0 gap-5 lg:grid-cols-2">
           {recommendations.slice(0, 2).map((item) => <AiInsightCard key={String(item.id)} insight={item} />)}
         </div>
       )}
