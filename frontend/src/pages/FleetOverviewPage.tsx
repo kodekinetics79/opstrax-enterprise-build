@@ -1,13 +1,15 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity, AlertTriangle, MapPin, Radio, ShieldAlert,
-  Truck, Wifi, WifiOff, Zap, Wrench, ChevronRight, Clock,
+  Activity, AlertTriangle, BellRing, ChevronRight, Clock, Gauge as GaugeIcon,
+  MapPin, Package, Radio, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { PageHeader, LoadingState } from "@/components/ui";
+import { LoadingState } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
+import { alertsApi } from "@/services/alertsApi";
+import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
@@ -91,12 +93,33 @@ function deriveFlag(v: AnyRecord): string | null {
   return null;
 }
 
+function timeAgo(iso?: string): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, warning: 2, info: 3 };
+const SEVERITY_LED: Record<string, string> = {
+  critical: "deck-led-red", high: "deck-led-amber", warning: "deck-led-amber", info: "deck-led-sky",
+};
+const SEVERITY_TEXT: Record<string, string> = {
+  critical: "text-red-700", high: "text-orange-700", warning: "text-amber-700", info: "text-sky-700",
+};
+
 export function FleetOverviewPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("All");
 
   const vehiclesQ = useQuery({ queryKey: ["fleet-overview-vehicles"], queryFn: () => vehiclesApi.list(), refetchInterval: 30_000 });
   const driversQ  = useQuery({ queryKey: ["fleet-overview-drivers"],  queryFn: () => driversApi.list() });
+  const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000 });
+  const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000 });
 
   const driverById = useMemo(() => {
     const map = new Map<string, string>();
@@ -137,216 +160,548 @@ export function FleetOverviewPage() {
 
   const flagged = fleet.filter((v) => v.flag).length;
 
+  // Readiness instrumentation — only from vehicles that actually report a score.
+  const readiness = useMemo(() => {
+    const scored = fleet.filter((v) => v.readiness > 0);
+    if (scored.length === 0) return null;
+    const avg = scored.reduce((s, v) => s + v.readiness, 0) / scored.length;
+    const lowest = scored.reduce((min, v) => (v.readiness < min.readiness ? v : min), scored[0]);
+    return { avg, lowest, scoredCount: scored.length };
+  }, [fleet]);
+
+  const deviceCounts = useMemo(() => ({
+    Online:   fleet.filter((v) => v.signal === "Online").length,
+    Degraded: fleet.filter((v) => v.signal === "Degraded").length,
+    Offline:  fleet.filter((v) => v.signal === "Offline").length,
+  }), [fleet]);
+
+  const alerts = useMemo(() => {
+    const rows = (alertsQ.data ?? []) as AnyRecord[];
+    return rows
+      .map((r, i) => ({
+        id:        String(r.id ?? i),
+        title:     String(r.title ?? r.type ?? "Alert"),
+        severity:  String(r.severity ?? "Info"),
+        status:    String(r.status ?? "Open"),
+        createdAt: r.createdAt != null ? String(r.createdAt) : undefined,
+      }))
+      .filter((a) => !/closed|resolved/i.test(a.status))
+      .sort((a, b) =>
+        (SEVERITY_RANK[a.severity.toLowerCase()] ?? 9) - (SEVERITY_RANK[b.severity.toLowerCase()] ?? 9)
+        || (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0))
+      .slice(0, 8);
+  }, [alertsQ.data]);
+
+  const toggleTab = (next: Tab) => setTab((cur) => (cur === next ? "All" : next));
+
   if (vehiclesQ.isLoading) return <LoadingState />;
 
   if (vehiclesQ.isError) {
     return (
-      <div className="space-y-6">
-        <PageHeader eyebrow="Fleet Overview" title="Live Vehicle Status" description="Real-time status across your fleet." />
-        <div className="panel py-12 text-center">
-          <AlertTriangle className="mx-auto h-8 w-8 text-red-400" />
-          <p className="mt-2 text-sm font-semibold text-slate-600">Unable to load fleet data</p>
-          <p className="mt-1 text-xs text-slate-400">The vehicles service did not respond. Retry in a moment.</p>
+      <div className="ops-deck flex h-full flex-col gap-3">
+        <div className="deck-neumo m-auto max-w-md p-10 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-red-500" />
+          <p className="mt-3 text-sm font-bold text-slate-700">Unable to load fleet data</p>
+          <p className="mt-1 text-xs text-slate-500">The vehicles service did not respond. Retry in a moment.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col gap-4">
-      <div className="shrink-0">
-        <PageHeader
-          eyebrow="Fleet Overview"
-          title="Live Vehicle Status"
-          description={`${fleet.length} vehicles tracked · ${counts.Active} active · ${flagged} flagged for review`}
-          actions={
+    <div className="ops-deck flex h-full min-h-0 flex-col gap-3">
+
+      {/* ── Console rail: title, live meta, clock, primary action ─────────── */}
+      <header className="deck-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
+        <Screw className="left-2.5 top-2.5"   slot="18deg" />
+        <Screw className="right-2.5 top-2.5"  slot="-42deg" />
+        <Screw className="bottom-2.5 left-2.5" slot="66deg" />
+        <Screw className="bottom-2.5 right-2.5" slot="-12deg" />
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <span className="section-title inline-flex items-center gap-2">
+              <span className="live-dot h-1.5 w-1.5" />
+              Live Operations Deck
+            </span>
+            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
+            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
+              {fleet.length} vehicles tracked · {counts.Active} active · {flagged} flagged for review
+            </p>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            <DeckClock />
             <button type="button" className="btn-primary" onClick={() => navigate("/vehicles")}>
               Full Fleet Registry
               <ChevronRight className="h-4 w-4" />
             </button>
-          }
-        />
-      </div>
-
-      {/* Status KPI strip — pinned, always visible */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiStrip label="Active"     count={counts.Active}    Icon={Truck}      accent="text-emerald-600" bg="bg-emerald-50" border="border-emerald-200" dot="bg-emerald-500 animate-pulse" onClick={() => setTab("Active")}    active={tab === "Active"} />
-        <KpiStrip label="Idle"       count={counts.Idle}      Icon={Zap}        accent="text-amber-600"   bg="bg-amber-50"   border="border-amber-200"   dot="bg-amber-400"                 onClick={() => setTab("Idle")}      active={tab === "Idle"} />
-        <KpiStrip label="Available"  count={counts.Available} Icon={Clock}      accent="text-slate-600"   bg="bg-slate-50"   border="border-slate-200"   dot="bg-slate-400"                 onClick={() => setTab("Available")} active={tab === "Available"} />
-        <KpiStrip label="Out of Service" count={counts.OOS}   Icon={ShieldAlert} accent="text-red-600"    bg="bg-red-50"     border="border-red-200"     dot="bg-red-500 animate-pulse"     onClick={() => setTab("OOS")}       active={tab === "OOS"} />
-        <KpiStrip label="Offline"    count={counts.Offline}   Icon={WifiOff}    accent="text-slate-500"   bg="bg-slate-50"   border="border-slate-200"   dot="bg-slate-300"                 onClick={() => setTab("Offline")}   active={tab === "Offline"} />
-      </div>
-
-      {/* Filter tabs + roster table — flexes to fill remaining height; table scrolls inside */}
-      <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-4 pt-3 pb-0">
-          {STATUS_TABS.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`relative px-3 py-2 text-sm font-medium transition-colors ${
-                tab === t
-                  ? "text-slate-950 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-teal-500"
-                  : "text-slate-400 hover:text-slate-700"
-              }`}
-            >
-              {t}
-              {t !== "All" && (
-                <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-semibold ${
-                  tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500"
-                }`}>
-                  {counts[t as Exclude<Tab, "All">] ?? 0}
-                </span>
-              )}
-            </button>
-          ))}
-          <span className="ml-auto text-xs text-slate-400 pb-2">
-            <Activity className="inline h-3 w-3 mr-1 text-teal-500" />
-            Live · refreshes every 30 s
-          </span>
+          </div>
         </div>
+      </header>
 
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-white">
-              <tr className="border-b border-slate-100">
-                <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Vehicle</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Driver</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Status</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Location</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Readiness</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Maint.</th>
-                <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-400">Device</th>
-                <th className="px-3 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filtered.map((v) => {
-                const sc = STATUS_CFG[v.status];
-                const mc = MAINT_CFG[v.maintenance];
-                return (
-                  <tr key={v.id} className={`group transition-colors hover:bg-slate-50/60 ${v.flag ? "bg-red-50/30" : ""}`}>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${sc.dot}`} />
-                        <div>
-                          <p className="font-semibold text-slate-900">{v.id}</p>
-                          <p className="text-[11px] text-slate-400">{v.type}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      {v.driver ? <p className="text-slate-700">{v.driver}</p> : <p className="text-slate-400 italic">Unassigned</p>}
-                    </td>
-                    <td className="px-3 py-3"><span className={sc.badge}>{sc.label}</span></td>
-                    <td className="px-3 py-3">
-                      {v.location ? (
-                        <div className="flex items-center gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                          <span className="text-slate-600">{v.location}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 italic text-xs">No live GPS</span>
-                      )}
-                      {v.flag && (
-                        <div className="mt-0.5 flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
-                          <span className="text-[11px] text-amber-700">{v.flag}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`font-medium ${v.readiness >= 80 ? "text-emerald-600" : v.readiness >= 60 ? "text-amber-600" : "text-red-600"}`}>
-                        {v.readiness > 0 ? `${Math.round(v.readiness)}%` : "—"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-1">
-                        <Wrench className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                        <span className={mc.cls}>{v.maintenance}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-1.5">
-                        {SIGNAL_ICON[v.signal]}
-                        <span className="text-[11px] text-slate-500">{v.signal}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <button type="button" className="btn-ghost invisible h-7 gap-1 px-3 text-xs group-hover:visible" onClick={() => navigate("/vehicles")}>
-                        Detail
-                        <ChevronRight className="h-3 w-3" />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <ClayKpi label="Active"         count={counts.Active}    total={fleet.length} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
+        <ClayKpi label="Idle"           count={counts.Idle}      total={fleet.length} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"                 active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
+        <ClayKpi label="Available"      count={counts.Available} total={fleet.length} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"                   active={tab === "Available"} onClick={() => toggleTab("Available")} />
+        <ClayKpi label="Out of Service" count={counts.OOS}       total={fleet.length} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse"     active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
+        <ClayKpi label="Offline"        count={counts.Offline}   total={fleet.length} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
+      </div>
 
-          {filtered.length === 0 && (
-            <div className="py-12 text-center">
-              <Radio className="mx-auto h-8 w-8 text-slate-300" />
-              <p className="mt-2 text-sm font-semibold text-slate-500">
-                {fleet.length === 0 ? "No vehicles in your fleet yet" : "No vehicles match this filter"}
-              </p>
+      {/* ── Main deck: roster console + instrument rail ───────────────────── */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_324px]">
+
+        {/* Roster console — neumorphic chassis with an inset bezel screen */}
+        <section className="deck-neumo flex min-h-[480px] flex-col overflow-hidden xl:min-h-0">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3.5">
+            <div className="deck-seg flex flex-wrap items-center gap-1 p-1">
+              {STATUS_TABS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTab(t)}
+                  className={`deck-seg-btn ${tab === t ? "deck-seg-btn-active" : ""}`}
+                >
+                  {t}
+                  {t !== "All" && (
+                    <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${
+                      tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-200/70 text-slate-500"
+                    }`}>
+                      {counts[t as Exclude<Tab, "All">] ?? 0}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+              <Activity className="h-3 w-3 text-teal-600" />
+              Live · refreshes every 30 s
+            </span>
+          </div>
 
-        <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
-          <span>{filtered.length} of {fleet.length} vehicles shown</span>
-          <div className="flex items-center gap-4">
-            <span>
-              <Wifi className="mr-1 inline h-3 w-3 text-emerald-500" />
-              {fleet.filter((v) => v.signal === "Online").length} devices online
+          <div className="deck-bezel mx-3 flex min-h-0 flex-1 flex-col">
+            <div className="deck-screen min-h-0 flex-1 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-[#fcfdff]">
+                  <tr className="border-b border-slate-200/80">
+                    <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Driver</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Location</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Readiness</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Maint.</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Device</th>
+                    <th className="px-3 py-3"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100/90">
+                  {filtered.map((v) => {
+                    const sc = STATUS_CFG[v.status];
+                    const mc = MAINT_CFG[v.maintenance];
+                    return (
+                      <tr key={v.id} className={`group transition-colors hover:bg-sky-50/50 ${v.flag ? "bg-red-50/40" : ""}`}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${sc.dot}`} />
+                            <div>
+                              <p className="font-semibold text-slate-900">{v.id}</p>
+                              <p className="text-[11px] text-slate-400">{v.type}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {v.driver ? <p className="text-slate-700">{v.driver}</p> : <p className="text-slate-400 italic">Unassigned</p>}
+                        </td>
+                        <td className="px-3 py-3"><span className={sc.badge}>{sc.label}</span></td>
+                        <td className="px-3 py-3">
+                          {v.location ? (
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                              <span className="text-slate-600">{v.location}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic text-xs">No live GPS</span>
+                          )}
+                          {v.flag && (
+                            <div className="mt-0.5 flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
+                              <span className="text-[11px] text-amber-700">{v.flag}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`font-medium tabular-nums ${v.readiness >= 80 ? "text-emerald-600" : v.readiness >= 60 ? "text-amber-600" : "text-red-600"}`}>
+                            {v.readiness > 0 ? `${Math.round(v.readiness)}%` : "—"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1">
+                            <Wrench className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                            <span className={mc.cls}>{v.maintenance}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5">
+                            {SIGNAL_ICON[v.signal]}
+                            <span className="text-[11px] text-slate-500">{v.signal}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <button type="button" className="btn-ghost invisible h-7 gap-1 px-3 text-xs group-hover:visible" onClick={() => navigate("/vehicles")}>
+                            Detail
+                            <ChevronRight className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {filtered.length === 0 && (
+                <div className="py-12 text-center">
+                  <Radio className="mx-auto h-8 w-8 text-slate-300" />
+                  <p className="mt-2 text-sm font-semibold text-slate-500">
+                    {fleet.length === 0 ? "No vehicles in your fleet yet" : "No vehicles match this filter"}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Instrument strip */}
+          <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
+            <span className="tabular-nums">{filtered.length} of {fleet.length} vehicles shown</span>
+            <span className="inline-flex items-center gap-2">
+              <span className="deck-led deck-led-emerald" />
+              <span className="tabular-nums">{deviceCounts.Online} devices online</span>
             </span>
-            <span>
-              <ShieldAlert className="mr-1 inline h-3 w-3 text-amber-500" />
-              {flagged} flagged
+            <span className="inline-flex items-center gap-2">
+              <span className={`deck-led ${flagged > 0 ? "deck-led-amber" : "deck-led-slate"}`} />
+              <span className="tabular-nums">{flagged} flagged</span>
             </span>
-            <button type="button" className="text-teal-600 hover:underline" onClick={() => navigate("/iot-devices")}>
-              Device Health →
+            <button type="button" className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline" onClick={() => navigate("/iot-devices")}>
+              Device Health
+              <ChevronRight className="h-3 w-3" />
             </button>
           </div>
+        </section>
+
+        {/* Instrument rail — gauge, signal bay, jobs pulse, alert feed */}
+        <aside className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto">
+          <ReadinessGauge readiness={readiness} flagged={flagged} />
+          <SignalBay counts={deviceCounts} total={fleet.length} onOpen={() => navigate("/iot-devices")} />
+          <JobsPulse query={jobsQ} onOpen={() => navigate("/jobs")} />
+          <AlertsFeed query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ── Skeuomorphic corner screw ─────────────────────────────────────────── */
+function Screw({ className, slot }: { className: string; slot: string }) {
+  return <span aria-hidden className={`deck-screw absolute ${className}`} style={{ "--slot": slot } as React.CSSProperties} />;
+}
+
+/* ── LCD console clock ─────────────────────────────────────────────────── */
+function DeckClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return (
+    <div className="deck-lcd px-3.5 py-2 text-right" role="timer" aria-label="Current time">
+      <p className="font-mono text-[17px] font-bold leading-none tracking-[0.14em] tabular-nums">
+        {hh}:{mm}<span className="opacity-60">:{ss}</span>
+      </p>
+      <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.22em] opacity-60">
+        {now.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short" })}
+      </p>
+    </div>
+  );
+}
+
+/* ── Clay KPI tile — puffy pressable filter ────────────────────────────── */
+function ClayKpi({
+  label, count, total, Icon, tone, fill, icon, dot, active, onClick,
+}: {
+  label: string;
+  count: number;
+  total: number;
+  Icon: React.ElementType;
+  tone: string;
+  fill: string;
+  icon: string;
+  dot: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} flex flex-col gap-2.5 p-4 text-left`}
+    >
+      <div className="flex items-center gap-3">
+        <span className="deck-blob">
+          <Icon className={`h-4.5 w-4.5 ${icon}`} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[22px] font-black leading-none tabular-nums text-slate-900">{count}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+            <span className="truncate">{label}</span>
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="deck-track flex-1">
+          <div className={`deck-fill ${fill}`} style={{ width: `${pct}%` }} />
+        </div>
+        <span className="w-7 text-right text-[10px] font-bold tabular-nums text-slate-500">{total > 0 ? `${pct}%` : "—"}</span>
+      </div>
+    </button>
+  );
+}
+
+/* ── Analog readiness gauge — real instrument, honest when unmetered ──── */
+function polarPoint(cx: number, cy: number, r: number, fraction: number) {
+  const theta = Math.PI * (1 - fraction);
+  return { x: cx + r * Math.cos(theta), y: cy - r * Math.sin(theta) };
+}
+
+function arcPath(cx: number, cy: number, r: number, from: number, to: number) {
+  const a = polarPoint(cx, cy, r, from);
+  const b = polarPoint(cx, cy, r, to);
+  return `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} A ${r} ${r} 0 0 1 ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
+}
+
+function ReadinessGauge({
+  readiness, flagged,
+}: {
+  readiness: { avg: number; lowest: FleetRow; scoredCount: number } | null;
+  flagged: number;
+}) {
+  const value = readiness ? Math.round(readiness.avg) : 0;
+  const needleDeg = (readiness ? Math.min(100, Math.max(0, readiness.avg)) : 0) * 1.8;
+  const ticks = [0, 0.2, 0.4, 0.6, 0.8, 1];
+  return (
+    <div className="deck-neumo shrink-0 p-4">
+      <div className="flex items-center justify-between">
+        <span className="section-title inline-flex items-center gap-2">
+          <GaugeIcon className="h-3.5 w-3.5 text-teal-700" />
+          Fleet Readiness
+        </span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 tabular-nums">
+          {readiness ? `${readiness.scoredCount} metered` : "no telemetry"}
+        </span>
+      </div>
+
+      <svg viewBox="0 0 200 118" className="mx-auto mt-2 block w-full max-w-[230px]" role="img"
+        aria-label={readiness ? `Average fleet readiness ${value} percent` : "Fleet readiness unavailable"}>
+        <defs>
+          <linearGradient id="deckNeedle" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#64748b" />
+            <stop offset="100%" stopColor="#1e293b" />
+          </linearGradient>
+          <radialGradient id="deckCap" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stopColor="#ffffff" />
+            <stop offset="45%" stopColor="#cbd5e1" />
+            <stop offset="100%" stopColor="#64748b" />
+          </radialGradient>
+        </defs>
+        {/* recessed dial track */}
+        <path d={arcPath(100, 100, 78, 0, 1)} fill="none" stroke="#d3dcea" strokeWidth="13" strokeLinecap="round" />
+        {/* colored zones */}
+        <path d={arcPath(100, 100, 78, 0, 0.6)}   fill="none" stroke="#f87171" strokeWidth="9" strokeLinecap="round" opacity=".85" />
+        <path d={arcPath(100, 100, 78, 0.6, 0.8)} fill="none" stroke="#fbbf24" strokeWidth="9" opacity=".9" />
+        <path d={arcPath(100, 100, 78, 0.8, 1)}   fill="none" stroke="#34d399" strokeWidth="9" strokeLinecap="round" opacity=".95" />
+        {/* ticks */}
+        {ticks.map((f) => {
+          const o = polarPoint(100, 100, 66, f);
+          const i = polarPoint(100, 100, 58, f);
+          return <line key={f} x1={i.x} y1={i.y} x2={o.x} y2={o.y} stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round" />;
+        })}
+        {/* needle */}
+        <g className="deck-needle" style={{ "--needle": `${needleDeg}deg` } as React.CSSProperties}>
+          <line x1="100" y1="100" x2="48" y2="100" stroke="url(#deckNeedle)" strokeWidth="3.4" strokeLinecap="round" />
+        </g>
+        <circle cx="100" cy="100" r="7.5" fill="url(#deckCap)" stroke="#94a3b8" strokeWidth=".8" />
+        <text x="100" y="88" textAnchor="middle" fill="#0f172a" fontSize="24" fontWeight="800" className="tabular-nums">
+          {readiness ? `${value}%` : "—"}
+        </text>
+      </svg>
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="deck-inset rounded-xl px-3 py-2">
+          <p className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Lowest unit</p>
+          <p className="mt-0.5 truncate text-[12px] font-bold text-slate-800 tabular-nums">
+            {readiness ? `${readiness.lowest.id} · ${Math.round(readiness.lowest.readiness)}%` : "No readiness data"}
+          </p>
+        </div>
+        <div className="deck-inset rounded-xl px-3 py-2">
+          <p className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Flagged units</p>
+          <p className={`mt-0.5 text-[12px] font-bold tabular-nums ${flagged > 0 ? "text-amber-700" : "text-slate-800"}`}>
+            {flagged} of fleet
+          </p>
         </div>
       </div>
     </div>
   );
 }
 
-function KpiStrip({
-  label, count, Icon, accent, bg, border, dot, onClick, active,
+/* ── Device signal bay — LED board ─────────────────────────────────────── */
+function SignalBay({
+  counts, total, onOpen,
 }: {
-  label: string;
-  count: number;
-  Icon: React.ElementType;
-  accent: string;
-  bg: string;
-  border: string;
-  dot: string;
-  onClick: () => void;
-  active: boolean;
+  counts: { Online: number; Degraded: number; Offline: number };
+  total: number;
+  onOpen: () => void;
+}) {
+  const rows: Array<{ label: string; value: number; led: string; fill: string }> = [
+    { label: "Online",   value: counts.Online,   led: "deck-led-emerald", fill: "deck-fill-emerald" },
+    { label: "Degraded", value: counts.Degraded, led: "deck-led-amber",   fill: "deck-fill-amber" },
+    { label: "Offline",  value: counts.Offline,  led: "deck-led-red",     fill: "deck-fill-red" },
+  ];
+  return (
+    <div className="deck-neumo shrink-0 p-4">
+      <div className="flex items-center justify-between">
+        <span className="section-title inline-flex items-center gap-2">
+          <Radio className="h-3.5 w-3.5 text-teal-700" />
+          Signal Bay
+        </span>
+        <button type="button" onClick={onOpen} className="text-[10.5px] font-bold text-teal-700 hover:underline">
+          Devices →
+        </button>
+      </div>
+      <div className="mt-3 space-y-2.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-2.5">
+            <span className={`deck-led ${r.value > 0 ? r.led : "deck-led-slate"}`} />
+            <span className="w-16 text-[11.5px] font-bold text-slate-600">{r.label}</span>
+            <div className="deck-track flex-1">
+              <div className={`deck-fill ${r.fill}`} style={{ width: total > 0 ? `${(r.value / total) * 100}%` : 0 }} />
+            </div>
+            <span className="w-6 text-right text-[12px] font-black tabular-nums text-slate-800">{r.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Jobs pulse — today's pipeline from the live jobs summary ─────────── */
+const PULSE_ROWS: Array<{ key: string; label: string; fill: string }> = [
+  { key: "unassignedJobs", label: "Unassigned",  fill: "deck-fill-slate" },
+  { key: "assignedJobs",   label: "Assigned",    fill: "deck-fill-teal" },
+  { key: "enRoute",        label: "En route",    fill: "deck-fill-sky" },
+  { key: "slaAtRisk",      label: "SLA at risk", fill: "deck-fill-red" },
+  { key: "completed",      label: "Completed",   fill: "deck-fill-emerald" },
+];
+
+function JobsPulse({ query, onOpen }: { query: { data?: AnyRecord; isLoading: boolean; isError: boolean }; onOpen: () => void }) {
+  const summary = (query.data ?? {}) as AnyRecord;
+  const total = Number(summary.totalJobsToday ?? 0);
+  return (
+    <div className="deck-neumo shrink-0 p-4">
+      <div className="flex items-center justify-between">
+        <span className="section-title inline-flex items-center gap-2">
+          <Package className="h-3.5 w-3.5 text-teal-700" />
+          Jobs Pulse
+        </span>
+        <button type="button" onClick={onOpen} className="text-[10.5px] font-bold text-teal-700 hover:underline">
+          {query.isError ? "Board →" : `${total} today →`}
+        </button>
+      </div>
+
+      {query.isLoading && (
+        <div className="mt-3 space-y-2.5">
+          {[...Array(3)].map((_, i) => <div key={i} className="skeleton h-3.5 w-full" />)}
+        </div>
+      )}
+
+      {query.isError && (
+        <p className="mt-3 text-[11.5px] font-medium italic text-slate-400">Jobs service unreachable — pipeline hidden.</p>
+      )}
+
+      {!query.isLoading && !query.isError && (
+        <div className="mt-3 space-y-2">
+          {PULSE_ROWS.map((row) => {
+            const value = Number(summary[row.key] ?? 0);
+            return (
+              <div key={row.key} className="flex items-center gap-2.5">
+                <span className="w-[74px] text-[11px] font-bold text-slate-600">{row.label}</span>
+                <div className="deck-track flex-1">
+                  <div className={`deck-fill ${row.fill}`} style={{ width: total > 0 ? `${Math.min(100, (value / total) * 100)}%` : 0 }} />
+                </div>
+                <span className="w-6 text-right text-[12px] font-black tabular-nums text-slate-800">{value}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Live alerts feed — raised chips on an inset tray ─────────────────── */
+function AlertsFeed({
+  query, alerts, onOpen,
+}: {
+  query: { isLoading: boolean; isError: boolean };
+  alerts: Array<{ id: string; title: string; severity: string; status: string; createdAt?: string }>;
+  onOpen: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-all ${
-        active ? `${bg} ${border} ring-2 ring-offset-1 ring-teal-400` : "bg-white border-slate-200 hover:border-slate-300"
-      }`}
-    >
-      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${active ? bg : "bg-slate-50"}`}>
-        <Icon className={`h-4.5 w-4.5 ${active ? accent : "text-slate-400"}`} />
+    <div className="deck-neumo flex min-h-[240px] flex-1 flex-col overflow-hidden p-4 xl:min-h-[190px]">
+      <div className="flex shrink-0 items-center justify-between">
+        <span className="section-title inline-flex items-center gap-2">
+          <BellRing className="h-3.5 w-3.5 text-teal-700" />
+          Open Alerts
+        </span>
+        <button type="button" onClick={onOpen} className="text-[10.5px] font-bold text-teal-700 hover:underline">
+          {alerts.length > 0 ? `${alerts.length} open →` : "Center →"}
+        </button>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-          <p className="text-2xl font-bold text-slate-900">{count}</p>
-        </div>
-        <p className={`truncate text-xs font-semibold ${active ? accent : "text-slate-500"}`}>{label}</p>
+
+      <div className="deck-inset mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl p-2.5">
+        {query.isLoading && [...Array(3)].map((_, i) => <div key={i} className="skeleton h-11 w-full rounded-xl" />)}
+
+        {query.isError && (
+          <p className="px-2 py-3 text-[11.5px] font-medium italic text-slate-400">Alerts service unreachable.</p>
+        )}
+
+        {!query.isLoading && !query.isError && alerts.length === 0 && (
+          <div className="flex items-center gap-2.5 px-2 py-3">
+            <span className="deck-led deck-led-emerald" />
+            <p className="text-[12px] font-semibold text-slate-500">No open alerts — all clear.</p>
+          </div>
+        )}
+
+        {alerts.map((a) => {
+          const sev = a.severity.toLowerCase();
+          const age = timeAgo(a.createdAt);
+          return (
+            <button key={a.id} type="button" onClick={onOpen} className="deck-alert flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
+              <span className={`deck-led shrink-0 ${SEVERITY_LED[sev] ?? "deck-led-sky"}`} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12.5px] font-bold text-slate-800">{a.title}</span>
+                <span className="mt-0.5 block text-[10.5px] font-semibold text-slate-400">
+                  <span className={SEVERITY_TEXT[sev] ?? "text-sky-700"}>{a.severity}</span>
+                  {age ? ` · ${age} ago` : ""} · {a.status}
+                </span>
+              </span>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+            </button>
+          );
+        })}
       </div>
-    </button>
+    </div>
   );
 }

@@ -1293,6 +1293,89 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   box-shadow: 0 2px 4px rgba(71, 52, 32, .10), inset 0 1px 0 rgba(255,255,255,.9);
 }
 
+/* ---------- ALERTS ROOM (warm tactile command surface) ---------- */
+.alerts-command-room {
+  margin: -6px;
+  padding: 16px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(210, 138, 77, .14), transparent 26%),
+    radial-gradient(circle at 88% 14%, rgba(118, 86, 53, .10), transparent 28%),
+    radial-gradient(circle at 50% 70%, rgba(13,148,136,.06), transparent 28%),
+    repeating-linear-gradient(0deg, rgba(98, 72, 44, .018) 0, rgba(98, 72, 44, .018) 1px, transparent 1px, transparent 6px),
+    linear-gradient(180deg, #fffaf5 0%, #f8f0e7 56%, #f2e6d8 100%);
+}
+
+.alerts-command-room .panel {
+  border-color: #e2cfbb;
+  background: linear-gradient(180deg, #fffefb 0%, #f7efe4 100%);
+  box-shadow:
+    0 1px 2px rgba(77, 54, 31, .05),
+    0 18px 44px rgba(95, 66, 35, .10),
+    inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+.alerts-command-room .panel::before {
+  opacity: .72;
+  background: linear-gradient(180deg, rgba(255,255,255,.42), transparent 34%);
+}
+
+.alerts-command-room .section-title {
+  color: #725842;
+}
+
+.alerts-command-room .btn-ghost {
+  border-color: #d6c2ad;
+  background: linear-gradient(180deg, #fffdfa 0%, #f6eee2 100%);
+  color: #5c4633;
+  box-shadow: 0 1px 2px rgba(77, 54, 31, .05), inset 0 1px 0 rgba(255,255,255,.9);
+}
+
+.alerts-command-room .btn-ghost:hover {
+  border-color: #c9ab89;
+  background: linear-gradient(180deg, #fffefc 0%, #f4e5d2 100%);
+  color: #402b1b;
+  box-shadow: 0 5px 12px rgba(96, 68, 38, .10);
+}
+
+.alerts-command-room .btn-primary {
+  border-color: rgba(158, 94, 48, .24);
+  background: linear-gradient(135deg, #a65f2d 0%, #d67f31 42%, #0d9488 100%);
+  box-shadow: 0 10px 20px rgba(146, 84, 36, .18);
+}
+
+.alerts-command-room .btn-primary:hover {
+  box-shadow: 0 14px 26px rgba(146, 84, 36, .20);
+}
+
+.alerts-command-room .badge,
+.alerts-command-room .rounded-full.border {
+  border-color: #d9c6b0;
+}
+
+.alerts-center-workbench {
+  padding-top: 2px;
+}
+
+.alerts-center-workbench .panel {
+  border-radius: 24px;
+}
+
+.alerts-center-workbench article {
+  border-radius: 22px;
+}
+
+.alerts-center-workbench button {
+  letter-spacing: .01em;
+}
+
+@media (max-width: 639px) {
+  .alerts-command-room {
+    margin: -4px;
+    padding: 10px;
+  }
+}
+
 @media (max-width: 639px) {
   .live-map-workbench {
     border-radius: 18px;
@@ -1301,5 +1384,324 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
 
   .live-map-canvas {
     border-width: 5px;
+  }
+}
+
+/* ============================================================
+   OPS DECK v5.1 — main dashboard (/live-dashboard)
+   Clay (puffy tiles) · Neumorphism (extruded chassis, inset
+   wells) · Skeuomorphism (bezel screen, LEDs, screws, LCD,
+   analog gauge). Cool porcelain palette so the flagship deck
+   reads distinct from the warm live-map / alerts rooms.
+   No backdrop-filter anywhere here — pure gradients/shadows.
+   ============================================================ */
+.ops-deck {
+  --deck-bg: #e9eff8;
+  --deck-hi: rgba(255, 255, 255, .92);
+  --deck-lo: rgba(141, 157, 184, .38);
+  margin: -6px;
+  padding: 14px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 10% 4%, rgba(45, 212, 191, .09), transparent 30%),
+    radial-gradient(circle at 90% 10%, rgba(59, 130, 246, .08), transparent 32%),
+    repeating-linear-gradient(0deg, rgba(100, 116, 139, .022) 0 1px, transparent 1px 6px),
+    linear-gradient(170deg, #f0f5fc 0%, var(--deck-bg) 52%, #e2eaf5 100%);
+  border: 1px solid rgba(203, 213, 225, .7);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .9),
+    inset 0 -12px 30px rgba(141, 157, 184, .10);
+}
+
+.ops-deck .section-title { color: #5b6b83; }
+
+/* ── Console rail (header) — brushed panel with corner screws ── */
+.deck-rail {
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 20px;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, .38) 0 1px, rgba(203, 213, 225, .18) 1px 2px),
+    linear-gradient(180deg, #f6f9fd 0%, #e3ebf6 100%);
+  box-shadow:
+    -6px -6px 14px var(--deck-hi),
+    8px 10px 22px var(--deck-lo),
+    inset 0 1px 0 rgba(255, 255, 255, .95);
+}
+
+.deck-screw {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 32% 28%, #ffffff, #c4cfdd 42%, #8a99ad 100%);
+  box-shadow:
+    inset 0 -1px 2px rgba(30, 41, 59, .42),
+    0 1px 1px rgba(255, 255, 255, .9);
+}
+.deck-screw::after {
+  content: "";
+  position: absolute;
+  left: 1.5px;
+  right: 1.5px;
+  top: 50%;
+  height: 1.4px;
+  border-radius: 2px;
+  background: rgba(51, 65, 85, .55);
+  transform: translateY(-50%) rotate(var(--slot, -30deg));
+}
+
+/* ── LCD clock ── */
+.deck-lcd {
+  border: 1px solid #0b1f1b;
+  border-radius: 12px;
+  color: #5eead4;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .03) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #0f2420 0%, #123128 100%);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, .55),
+    inset 0 -1px 0 rgba(94, 234, 212, .12),
+    0 1px 0 rgba(255, 255, 255, .55);
+  text-shadow: 0 0 6px rgba(94, 234, 212, .45);
+}
+
+/* ── Clay tiles — puffy double-shadow pressables ── */
+.deck-clay {
+  position: relative;
+  border: 1.5px solid rgba(255, 255, 255, .85);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.deck-clay:hover { transform: translateY(-2px); }
+.deck-clay:active { transform: translateY(1px); }
+
+.deck-clay-emerald {
+  background: linear-gradient(150deg, #eafcf4 0%, #d6f5e7 100%);
+  box-shadow: 0 10px 22px rgba(16, 185, 129, .16), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.deck-clay-emerald:hover {
+  box-shadow: 0 14px 28px rgba(16, 185, 129, .22), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.deck-clay-amber {
+  background: linear-gradient(150deg, #fff7e8 0%, #fdecd0 100%);
+  box-shadow: 0 10px 22px rgba(245, 158, 11, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.deck-clay-amber:hover {
+  box-shadow: 0 14px 28px rgba(245, 158, 11, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.deck-clay-sky {
+  background: linear-gradient(150deg, #ecf5ff 0%, #dcebfc 100%);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.deck-clay-sky:hover {
+  box-shadow: 0 14px 28px rgba(59, 130, 246, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.deck-clay-red {
+  background: linear-gradient(150deg, #fef0f0 0%, #fcdede 100%);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.deck-clay-red:hover {
+  box-shadow: 0 14px 28px rgba(239, 68, 68, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.deck-clay-slate {
+  background: linear-gradient(150deg, #f3f6fb 0%, #e5ecf5 100%);
+  box-shadow: 0 10px 22px rgba(100, 116, 139, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(100, 116, 139, .12);
+}
+.deck-clay-slate:hover {
+  box-shadow: 0 14px 28px rgba(100, 116, 139, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(100, 116, 139, .12);
+}
+
+/* Pressed (selected filter) — clay squishes in */
+.deck-clay-pressed,
+.deck-clay-pressed:hover {
+  transform: translateY(1px);
+  border-color: rgba(13, 148, 136, .38);
+  box-shadow:
+    inset 0 4px 10px rgba(71, 85, 105, .22),
+    inset 0 -2px 6px rgba(255, 255, 255, .65),
+    0 2px 6px rgba(15, 23, 42, .05);
+}
+
+.deck-blob {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffffff 0%, #edf3fb 100%);
+  box-shadow:
+    0 4px 8px rgba(15, 23, 42, .10),
+    inset 0 1px 0 #ffffff,
+    inset 0 -3px 6px rgba(148, 163, 184, .28);
+}
+
+/* ── Neumorphic chassis + inset wells ── */
+.deck-neumo {
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #f2f6fc 0%, #e6edf7 100%);
+  box-shadow:
+    -7px -7px 16px var(--deck-hi, rgba(255, 255, 255, .92)),
+    9px 12px 24px var(--deck-lo, rgba(141, 157, 184, .38)),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+.deck-inset {
+  border: 1px solid rgba(203, 213, 225, .55);
+  background: linear-gradient(180deg, #e3eaf4 0%, #e9f0f9 100%);
+  box-shadow:
+    inset 5px 6px 12px rgba(141, 157, 184, .28),
+    inset -5px -6px 12px rgba(255, 255, 255, .85);
+}
+
+/* ── Bezel + screen (roster table) ── */
+.deck-bezel {
+  padding: 7px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #d8e1ee 0%, #eef3fa 100%);
+  box-shadow:
+    inset 0 2px 5px rgba(71, 85, 105, .22),
+    inset 0 -1px 0 rgba(255, 255, 255, .85),
+    0 1px 0 rgba(255, 255, 255, .8);
+}
+
+.deck-screen {
+  border: 1px solid #cbd7e6;
+  border-radius: 13px;
+  background: #fcfdff;
+  box-shadow: inset 0 2px 10px rgba(30, 41, 59, .08);
+}
+
+/* ── Neumorphic segmented control ── */
+.deck-seg {
+  border: 1px solid rgba(203, 213, 225, .5);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e2e9f4 0%, #e9f0f9 100%);
+  box-shadow:
+    inset 4px 4px 9px rgba(141, 157, 184, .26),
+    inset -4px -4px 9px rgba(255, 255, 255, .85);
+}
+
+.deck-seg-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: .42rem .8rem;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.deck-seg-btn:hover { color: #0f172a; }
+
+.deck-seg-btn-active,
+.deck-seg-btn-active:hover {
+  border-color: rgba(255, 255, 255, .9);
+  background: linear-gradient(180deg, #ffffff 0%, #f2f7fd 100%);
+  color: #0f766e;
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .14),
+    inset 0 1px 0 #ffffff;
+}
+
+/* ── Meter tracks + fills ── */
+.deck-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #dbe4f0;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1.5px 3px rgba(71, 85, 105, .28),
+    inset 0 -1px 0 rgba(255, 255, 255, .7);
+}
+
+.deck-fill {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 0;
+  transition: width .6s cubic-bezier(.34, 1.56, .64, 1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55);
+}
+.deck-fill-emerald { background: linear-gradient(180deg, #4ade80, #10b981); }
+.deck-fill-amber   { background: linear-gradient(180deg, #fcd34d, #f59e0b); }
+.deck-fill-red     { background: linear-gradient(180deg, #f87171, #dc2626); }
+.deck-fill-sky     { background: linear-gradient(180deg, #60a5fa, #2563eb); }
+.deck-fill-teal    { background: linear-gradient(180deg, #2dd4bf, #0d9488); }
+.deck-fill-slate   { background: linear-gradient(180deg, #94a3b8, #64748b); }
+
+/* ── LEDs — domed indicator lamps ── */
+.deck-led {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+.deck-led-emerald {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #34d399 42%, #047857 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, .65), inset 0 -1px 2px rgba(6, 78, 59, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-amber {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #fbbf24 42%, #b45309 100%);
+  box-shadow: 0 0 8px rgba(245, 158, 11, .6), inset 0 -1px 2px rgba(120, 53, 15, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-red {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #f87171 42%, #b91c1c 100%);
+  box-shadow: 0 0 8px rgba(239, 68, 68, .6), inset 0 -1px 2px rgba(127, 29, 29, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-sky {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #60a5fa 42%, #1d4ed8 100%);
+  box-shadow: 0 0 8px rgba(59, 130, 246, .6), inset 0 -1px 2px rgba(30, 58, 138, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-slate {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #cbd5e1 42%, #64748b 100%);
+  box-shadow: inset 0 -1px 2px rgba(51, 65, 85, .4), 0 1px 1px rgba(255, 255, 255, .8);
+}
+
+/* ── Alert chips — raised cards sitting in the inset tray ── */
+.deck-alert {
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .09),
+    inset 0 1px 0 #ffffff;
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.deck-alert:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, .13), inset 0 1px 0 #ffffff;
+}
+.deck-alert:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 6px rgba(71, 85, 105, .2);
+}
+
+/* ── Gauge needle ── */
+.deck-needle {
+  transform: rotate(var(--needle, 0deg));
+  transform-origin: 100px 100px;
+  transition: transform .7s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@media (max-width: 639px) {
+  .ops-deck {
+    margin: -4px;
+    padding: 9px;
+    border-radius: 20px;
   }
 }
