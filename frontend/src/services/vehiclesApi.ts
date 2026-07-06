@@ -17,6 +17,9 @@ export const vehiclesApi = {
   planningInsights: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/planning-insights")),
   detail: (id: string | number) => getVehicleById(id),
   recommendations: (id: string | number) => getVehicleById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
+  // Real CSV import pipeline — server-validated preview, then committed upsert.
+  importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import-preview", { rows })),
+  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import", { rows })),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)),

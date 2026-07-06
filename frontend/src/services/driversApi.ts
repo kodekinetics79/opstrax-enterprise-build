@@ -12,9 +12,11 @@ export const driversApi = {
     total: rows.length,
   })),
   detail: (id: string | number) => getDriverById(id),
-  // Recommendations are sourced from the live detail payload (driver detail returns them);
-  // this satisfies the EntityApi contract and is the offline fallback only.
-  recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review driver fit", body: "Match vehicle assignment, HOS posture and compliance coverage before dispatching the next load.", score: 84 }],
+  // Recommendations come from the live detail envelope — never fabricated client-side.
+  recommendations: (id: string | number) => getDriverById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
+  // Real CSV import pipeline — server-validated preview, then committed upsert.
+  importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/drivers/import-preview", { rows })),
+  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/drivers/import", { rows })),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/drivers", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/drivers/${id}`, payload)),

@@ -104,6 +104,17 @@ public static partial class EndpointMappings
         app.MapPost("/api/vehicles/{id:long}/assign-driver", ChangeEntityStatus("vehicles", "assigned_driver_id", "vehicle.driver.assigned", "fleet:manage"));
         app.MapPost("/api/vehicles/{id:long}/change-status", ChangeStatus("vehicles", "vehicle.status.changed", "fleet:manage"));
 
+        // ===== ENTITY CSV IMPORT (vehicles + drivers) =================================
+        // Real import pipeline: template → client-parsed rows → server preview
+        // (validation + create/update detection) → committed upsert. Tenant-scoped,
+        // permission-gated, audit-logged. No fabricated counts.
+        app.MapGet("/api/vehicles/import-template", VehiclesImportTemplate);
+        app.MapPost("/api/vehicles/import-preview", VehiclesImportPreview);
+        app.MapPost("/api/vehicles/import", VehiclesImportCommit);
+        app.MapGet("/api/drivers/import-template", DriversImportTemplate);
+        app.MapPost("/api/drivers/import-preview", DriversImportPreview);
+        app.MapPost("/api/drivers/import", DriversImportCommit);
+
         // ===== TELEMETRY INGEST & LIVE STREAM =========================================
         // Device-authenticated via X-Device-Key + X-Timestamp + X-Nonce + X-Signature (HMAC-SHA256)
         app.MapPost("/api/telemetry/ingest", TelemetryIngest);
@@ -5928,6 +5939,333 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static object AsId(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString()) ? DBNull.Value : value;
     private static object AsDecimal(object? value) { if (value is null or DBNull || string.IsNullOrWhiteSpace(value?.ToString())) return DBNull.Value; return decimal.TryParse(value.ToString(), out var d) ? d : DBNull.Value; }
+
+    // ===== ENTITY CSV IMPORT — vehicles + drivers ==================================
+
+    private const int ImportMaxRows = 500;
+
+    // Extracts { rows: [...] } from the request body into per-row dictionaries whose
+    // values remain JsonElement so the existing Get()/Bind* helpers work unchanged.
+    private static List<Dictionary<string, object?>> ImportRows(Dictionary<string, object?> body)
+    {
+        var rows = new List<Dictionary<string, object?>>();
+        if (body.TryGetValue("rows", out var raw) && raw is JsonElement arr && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var row = new Dictionary<string, object?>();
+                foreach (var prop in item.EnumerateObject()) row[prop.Name] = prop.Value.Clone();
+                rows.Add(row);
+                if (rows.Count >= ImportMaxRows) break;
+            }
+        }
+        return rows;
+    }
+
+    private static string? ImportStr(Dictionary<string, object?> row, string key)
+    {
+        var v = Get(row, key);
+        var s = v is DBNull ? null : v?.ToString()?.Trim();
+        return string.IsNullOrWhiteSpace(s) ? null : s;
+    }
+
+    // Rebuilds a row with strict types so numeric CSV cells (arriving as strings)
+    // bind to integer/numeric columns instead of failing as text parameters.
+    private static Dictionary<string, object?> CleanVehicleImportRow(Dictionary<string, object?> row)
+    {
+        long? year = long.TryParse(ImportStr(row, "year"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var y) ? y : null;
+        decimal? odo = decimal.TryParse(ImportStr(row, "odometerMiles"), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var o) ? o : null;
+        return new Dictionary<string, object?>
+        {
+            ["vehicleCode"] = ImportStr(row, "vehicleCode"),
+            ["type"] = ImportStr(row, "type"),
+            ["make"] = ImportStr(row, "make"),
+            ["model"] = ImportStr(row, "model"),
+            ["year"] = year,
+            ["vin"] = ImportStr(row, "vin"),
+            ["plateNumber"] = ImportStr(row, "plateNumber"),
+            ["status"] = ImportStr(row, "status"),
+            ["odometerMiles"] = odo,
+        };
+    }
+
+    private static List<string> ValidateVehicleImportRow(Dictionary<string, object?> row, HashSet<string> seenCodes)
+    {
+        var errors = new List<string>();
+        var code = ImportStr(row, "vehicleCode");
+        if (code is null) errors.Add("vehicleCode is required.");
+        else if (!seenCodes.Add(code)) errors.Add($"Duplicate vehicleCode '{code}' earlier in this file.");
+        var yearRaw = ImportStr(row, "year");
+        if (yearRaw is not null && (!long.TryParse(yearRaw, out var yr) || yr < 1950 || yr > 2100))
+            errors.Add("year must be a number between 1950 and 2100.");
+        var odoRaw = ImportStr(row, "odometerMiles");
+        if (odoRaw is not null && (!decimal.TryParse(odoRaw, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var od) || od < 0))
+            errors.Add("odometerMiles must be a non-negative number.");
+        return errors;
+    }
+
+    private static IResult VehiclesImportTemplate(HttpContext http)
+    {
+        if (RequirePermission(http, "vehicles:view") is { } denied) return denied;
+        const string csv = "vehicleCode,type,make,model,year,odometerMiles,vin,plateNumber,status\n" +
+                           "TRK-101,Truck,Volvo,VNL 860,2022,84500,4V4NC9EH5NN123456,PLT-4821,Available\n";
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "vehicles-import-template.csv");
+    }
+
+    private static async Task<IResult> VehiclesImportPreview(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+
+        var results = new List<object>();
+        int creates = 0, updates = 0, invalid = 0;
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateVehicleImportRow(rows[i], seenCodes);
+            var code = ImportStr(rows[i], "vehicleCode") ?? "";
+            long existingId = 0;
+            if (errors.Count == 0)
+            {
+                existingId = await db.ScalarLongAsync(
+                    "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct);
+                var vin = ImportStr(rows[i], "vin");
+                if (vin is not null)
+                {
+                    var vinOwner = await db.ScalarLongAsync(
+                        "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vin)=LOWER(@vin) AND deleted_at IS NULL",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vin", vin); }, ct);
+                    if (vinOwner > 0 && vinOwner != existingId)
+                        errors.Add($"VIN '{vin}' is already registered to another vehicle.");
+                }
+            }
+            var action = errors.Count > 0 ? "error" : existingId > 0 ? "update" : "create";
+            if (action == "create") creates++; else if (action == "update") updates++; else invalid++;
+            results.Add(new { rowNumber = i + 1, key = code, action, errors });
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { total = rows.Count, creates, updates, invalid, rows = results }));
+    }
+
+    private static async Task<IResult> VehiclesImportCommit(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+
+        int created = 0, updated = 0;
+        var skipped = new List<object>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateVehicleImportRow(rows[i], seenCodes);
+            var code = ImportStr(rows[i], "vehicleCode") ?? "";
+            long existingId = 0;
+            if (errors.Count == 0)
+            {
+                existingId = await db.ScalarLongAsync(
+                    "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct);
+                var vin = ImportStr(rows[i], "vin");
+                if (vin is not null)
+                {
+                    var vinOwner = await db.ScalarLongAsync(
+                        "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vin)=LOWER(@vin) AND deleted_at IS NULL",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vin", vin); }, ct);
+                    if (vinOwner > 0 && vinOwner != existingId)
+                        errors.Add($"VIN '{vin}' is already registered to another vehicle.");
+                }
+            }
+            if (errors.Count > 0)
+            {
+                skipped.Add(new { rowNumber = i + 1, key = code, errors });
+                continue;
+            }
+            var clean = CleanVehicleImportRow(rows[i]);
+            if (existingId > 0)
+            {
+                await db.ExecuteAsync(@"UPDATE vehicles SET vehicle_code=COALESCE(@code,vehicle_code), type=COALESCE(@type,type), make=COALESCE(@make,make),
+                    model=COALESCE(@model,model), year=COALESCE(@year,year), vin=COALESCE(@vin,vin), plate_number=COALESCE(@plate,plate_number),
+                    status=COALESCE(@status,status), odometer_miles=COALESCE(@odometer,odometer_miles)
+                    WHERE id=@id AND company_id=@companyId", c =>
+                {
+                    c.Parameters.AddWithValue("@id", existingId);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    BindVehicle(c, clean);
+                }, ct);
+                updated++;
+            }
+            else
+            {
+                await db.InsertAsync(@"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
+                    VALUES (@companyId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Available'), COALESCE(@odometer, 0), 92, 96)", c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    BindVehicle(c, clean);
+                }, ct);
+                created++;
+            }
+        }
+        await audit.LogAsync(http, "vehicles.imported", "Vehicle", null,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { created, updated, skipped = skipped.Count, total = rows.Count }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { created, updated, skipped, total = rows.Count }));
+    }
+
+    private static Dictionary<string, object?> CleanDriverImportRow(Dictionary<string, object?> row) => new()
+    {
+        ["driverCode"] = ImportStr(row, "driverCode"),
+        ["fullName"] = ImportStr(row, "fullName"),
+        ["phone"] = ImportStr(row, "phone"),
+        ["email"] = ImportStr(row, "email"),
+        ["licenseNumber"] = ImportStr(row, "licenseNumber"),
+        ["status"] = ImportStr(row, "status"),
+    };
+
+    private static List<string> ValidateDriverImportRow(Dictionary<string, object?> row, HashSet<string> seenCodes)
+    {
+        var errors = new List<string>();
+        var code = ImportStr(row, "driverCode");
+        if (code is null) errors.Add("driverCode is required.");
+        else if (!seenCodes.Add(code)) errors.Add($"Duplicate driverCode '{code}' earlier in this file.");
+        if (ImportStr(row, "fullName") is null) errors.Add("fullName is required.");
+        var email = ImportStr(row, "email");
+        if (email is not null && !email.Contains('@')) errors.Add("email is not a valid address.");
+        return errors;
+    }
+
+    private static IResult DriversImportTemplate(HttpContext http)
+    {
+        if (RequirePermission(http, "drivers:view") is { } denied) return denied;
+        const string csv = "driverCode,fullName,phone,email,licenseNumber,status\n" +
+                           "DRV-101,Jordan Ellis,+1-555-0142,jordan.ellis@example.com,D1234567,Available\n";
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "drivers-import-template.csv");
+    }
+
+    private static async Task<IResult> DriversImportPreview(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var results = new List<object>();
+        int creates = 0, updates = 0, invalid = 0;
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateDriverImportRow(rows[i], seenCodes);
+            var code = ImportStr(rows[i], "driverCode") ?? "";
+            long existingId = 0;
+            if (errors.Count == 0)
+            {
+                existingId = await db.ScalarLongAsync(
+                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct);
+                var license = ImportStr(rows[i], "licenseNumber");
+                if (license is not null)
+                {
+                    var dupSql = pii.Enabled
+                        ? "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND license_number_bidx=@bidx AND deleted_at IS NULL"
+                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(license_number)=LOWER(@lic) AND deleted_at IS NULL";
+                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                        else c.Parameters.AddWithValue("@lic", license);
+                    }, ct);
+                    if (licOwner > 0 && licOwner != existingId)
+                        errors.Add($"License number '{license}' is already registered to another driver.");
+                }
+            }
+            var action = errors.Count > 0 ? "error" : existingId > 0 ? "update" : "create";
+            if (action == "create") creates++; else if (action == "update") updates++; else invalid++;
+            results.Add(new { rowNumber = i + 1, key = code, action, errors });
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { total = rows.Count, creates, updates, invalid, rows = results }));
+    }
+
+    private static async Task<IResult> DriversImportCommit(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        int created = 0, updated = 0;
+        var skipped = new List<object>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateDriverImportRow(rows[i], seenCodes);
+            var code = ImportStr(rows[i], "driverCode") ?? "";
+            var license = ImportStr(rows[i], "licenseNumber");
+            long existingId = 0;
+            if (errors.Count == 0)
+            {
+                existingId = await db.ScalarLongAsync(
+                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct);
+                if (license is not null)
+                {
+                    var dupSql = pii.Enabled
+                        ? "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND license_number_bidx=@bidx AND deleted_at IS NULL"
+                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(license_number)=LOWER(@lic) AND deleted_at IS NULL";
+                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                        else c.Parameters.AddWithValue("@lic", license);
+                    }, ct);
+                    if (licOwner > 0 && licOwner != existingId)
+                        errors.Add($"License number '{license}' is already registered to another driver.");
+                }
+            }
+            if (errors.Count > 0)
+            {
+                skipped.Add(new { rowNumber = i + 1, key = code, errors });
+                continue;
+            }
+            var clean = CleanDriverImportRow(rows[i]);
+            if (existingId > 0)
+            {
+                await db.ExecuteAsync(@"UPDATE drivers SET driver_code=COALESCE(@code,driver_code), full_name=COALESCE(@name,full_name), phone=COALESCE(@phone,phone),
+                    email=COALESCE(@email,email), license_number=COALESCE(@license,license_number),
+                    license_number_bidx=CASE WHEN @license IS NULL THEN license_number_bidx ELSE @licenseBidx END,
+                    status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
+                {
+                    c.Parameters.AddWithValue("@id", existingId);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@licenseBidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                    BindDriver(c, clean, pii);
+                }, ct);
+                updated++;
+            }
+            else
+            {
+                await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, license_number_bidx, status, safety_score, readiness_score)
+                    VALUES (@companyId, @code, @name, @phone, @email, @license, @licenseBidx, COALESCE(@status,'Available'), 92, 93)", c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@licenseBidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                    BindDriver(c, clean, pii);
+                }, ct);
+                created++;
+            }
+        }
+        await audit.LogAsync(http, "drivers.imported", "Driver", null,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { created, updated, skipped = skipped.Count, total = rows.Count }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { created, updated, skipped, total = rows.Count }));
+    }
 
     private static void BindVehicle(NpgsqlCommand c, Dictionary<string, object?> body)
     {

@@ -1776,6 +1776,12 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
     inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
 }
 .fc-clay-amber:hover { box-shadow: 0 14px 28px rgba(245, 158, 11, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12); }
+.fc-clay-sky {
+  background: linear-gradient(150deg, #ecf5ff 0%, #dcebfc 100%);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.fc-clay-sky:hover { box-shadow: 0 14px 28px rgba(59, 130, 246, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11); }
 
 .fc-blob {
   display: grid;

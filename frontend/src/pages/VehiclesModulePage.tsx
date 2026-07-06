@@ -2,12 +2,25 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, Boxes, ClipboardList, Gauge, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, DataTable, StatusBadge } from "@/components/ui";
+import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
+import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
+import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
+
+const VEHICLE_IMPORT_EXPORT = {
+  entity: "vehicles",
+  columns: ["vehicleCode", "type", "make", "model", "year", "odometerMiles", "vin", "plateNumber", "status"],
+  requiredColumns: ["vehicleCode"],
+  templateEndpoint: "/api/vehicles/import-template",
+  exportEndpoint: "/api/vehicles/export",
+  importPreview: vehiclesApi.importPreview,
+  importCommit: vehiclesApi.importCommit,
+  invalidateKey: "vehicles",
+} as const;
 
 type VehicleSection = "overview" | "roster" | "planning" | "health" | "records";
 
@@ -57,6 +70,7 @@ export function VehiclesModulePage() {
   const location = useLocation();
   const section = readSection(location.pathname);
   const { session } = useAuth();
+  const hasPermission = useHasPermission();
 
   const list = useQuery({ queryKey: ["vehicles"], queryFn: vehiclesApi.list });
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary });
@@ -77,24 +91,26 @@ export function VehiclesModulePage() {
   const readiness = Math.round(num(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score) || avg(rows, "fleetReadinessScore"));
 
   const shellBanner = (
-    <header className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white/80 px-6 py-5 text-slate-900 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(90deg,rgba(20,184,166,0.16),rgba(59,130,246,0.14),rgba(99,102,241,0.10))]" />
-      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-teal-200/35 blur-3xl" />
+    <header className="fc-rail relative px-6 py-4">
       <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 shadow-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-500" /> Fleet module
-          </div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900">Vehicles</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Split into focused subviews so users can get to the right fleet task without scrolling through one oversized page.
+          <span className="section-title inline-flex items-center gap-2">
+            <Truck className="h-3.5 w-3.5 text-teal-700" /> Fleet · Master Data
+          </span>
+          <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
+          <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
+            <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> units in the live registry ·{" "}
+            <span className="font-bold text-emerald-600 tabular-nums">{available}</span> available ·{" "}
+            <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => exportCsv("vehicles", rows)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50">
-            Export fleet
-          </button>
-          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10 bg-gradient-to-r from-teal-600 to-blue-600 shadow-md shadow-blue-200/60 hover:from-teal-500 hover:to-blue-500">
+        <div className="flex flex-wrap items-center gap-2">
+          <EntityImportExport
+            config={VEHICLE_IMPORT_EXPORT}
+            canImport={hasPermission("fleet:manage")}
+            canExport={hasPermission("vehicles:view")}
+          />
+          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
             Open roster <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -103,10 +119,10 @@ export function VehiclesModulePage() {
   );
 
   return (
-    <div className="control-tower space-y-6 pb-10">
+    <div className="fleet-console space-y-3 pb-6">
       {shellBanner}
 
-      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+      <nav className="fc-neumo sticky top-4 z-20 p-2">
         <div className="grid gap-1 sm:grid-cols-5">
           {SECTIONS.map((item) => (
             <button
@@ -114,77 +130,76 @@ export function VehiclesModulePage() {
               type="button"
               onClick={() => navigate(`/vehicles/${item.key}`)}
               className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "bg-slate-900 text-white shadow-sm" : "bg-slate-50/40 hover:bg-slate-100"
+                section === item.key ? "fc-seg-btn-active rounded-xl" : "hover:bg-white/60"
               }`}
             >
-              <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
-              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-slate-300" : "text-slate-500"}`}>{item.description}</div>
+              <div className={`text-xs font-bold uppercase tracking-[0.14em] ${section === item.key ? "text-teal-800" : "text-slate-700"}`}>{item.label}</div>
+              <div className="mt-0.5 text-[11px] text-slate-500">{item.description}</div>
             </button>
           ))}
         </div>
       </nav>
 
       {section === "overview" && (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <KpiCard label="Fleet readiness" value={`${readiness}%`} icon={<Gauge className="h-4 w-4" />} />
-            <KpiCard label="Available now" value={String(available)} icon={<Truck className="h-4 w-4" />} />
-            <KpiCard label="At risk" value={String(atRisk)} status="Review" icon={<ShieldAlert className="h-4 w-4" />} />
-            <KpiCard label="Device gaps" value={String(deviceEx)} status="Review" icon={<Boxes className="h-4 w-4" />} />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <OverviewClay Icon={Gauge}       tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness" value={`${readiness}%`} caption={`${rows.length} live units`} />
+            <OverviewClay Icon={Truck}       tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available now"   value={available}       caption="Ready for dispatch" />
+            <OverviewClay Icon={ShieldAlert} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"         value={atRisk}          caption="High risk or down" alert={atRisk > 0} />
+            <OverviewClay Icon={Boxes}       tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device gaps"     value={deviceEx}        caption="Telematics blind spots" alert={deviceEx > 0} />
           </div>
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-3 lg:grid-cols-3">
             <ModuleCard title="Roster" body="Browse, search, edit, assign and export live fleet records." action="Open roster" onClick={() => navigate("/vehicles/roster")} icon={<ClipboardList className="h-5 w-5" />} />
-            <ModuleCard title="Planning" body="See replacement pressure, operational gaps and CapEx priority." action="Open planning" onClick={() => navigate("/vehicles/planning")} icon={<Sparkles className="h-5 w-5" />} />
-            <ModuleCard title="Health" body="Inspect device, camera, maintenance and compliance posture." action="Open health" onClick={() => navigate("/vehicles/health")} icon={<Wrench className="h-5 w-5" />} />
+            <ModuleCard title="Planning" body="Replacement pressure, operational gaps and CapEx priority computed from the live fleet." action="Open planning" onClick={() => navigate("/vehicles/planning")} icon={<Sparkles className="h-5 w-5" />} />
+            <ModuleCard title="Health" body="Device, camera, maintenance and compliance posture per unit." action="Open health" onClick={() => navigate("/vehicles/health")} icon={<Wrench className="h-5 w-5" />} />
           </div>
-          <section className="panel p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Entity links</h2>
-                <p className="text-sm text-slate-500">Keep vehicle work connected to the other records a fleet user actually needs.</p>
-              </div>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                Related modules
-              </span>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {RELATED_ENTITIES.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-900">{item.label}</span>
-                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
-                  </div>
-                  <p className="mt-2 text-sm text-slate-500">{item.note}</p>
-                </button>
-              ))}
-            </div>
-          </section>
-          <div className="panel p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Live fleet snapshot</h2>
-                <p className="text-sm text-slate-500">A compact summary of the live data now driving the module.</p>
-              </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {rows.slice(0, 4).map((row) => (
-                <div key={String(row.id)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Vehicle</p>
-                  <p className="mt-1 text-base font-semibold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</p>
-                  <p className="mt-1 text-sm text-slate-500">{String(g(row, "make") ?? "")} {String(g(row, "model") ?? "")}</p>
-                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                    <StatusBadge status={String(g(row, "status") ?? "--")} />
-                    <span>{String(g(row, "assignedDriver", "assigned_driver") ?? "Unassigned")}</span>
-                  </div>
+          <div className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+            <section className="fc-neumo p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-black text-slate-900">Latest units</h2>
+                  <p className="text-xs font-medium text-slate-500">Most recent records from the live registry.</p>
                 </div>
-              ))}
-            </div>
+                <button type="button" className="btn-ghost h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
+              </div>
+              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+                {rows.slice(0, 4).map((row) => (
+                  <div key={String(row.id)} className="deck-inset rounded-xl p-3.5">
+                    <p className="text-base font-bold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{[g(row, "make"), g(row, "model")].filter(Boolean).join(" ") || String(g(row, "type") ?? "—")}</p>
+                    <div className="mt-2.5 flex items-center justify-between text-xs text-slate-500">
+                      <StatusBadge status={String(g(row, "status") ?? "--")} />
+                      <span className="truncate pl-2">{String(g(row, "assignedDriver", "assigned_driver") ?? "Unassigned")}</span>
+                    </div>
+                  </div>
+                ))}
+                {rows.length === 0 && <p className="deck-inset col-span-full rounded-xl px-3 py-4 text-sm text-slate-400">No vehicles in the registry yet — import a CSV or add one from the roster.</p>}
+              </div>
+            </section>
+            <section className="fc-neumo p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-black text-slate-900">Connected records</h2>
+                  <p className="text-xs font-medium text-slate-500">Jump to the records tied to your fleet.</p>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {RELATED_ENTITIES.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => navigate(item.route)}
+                    className="deck-alert group flex items-center justify-between px-3.5 py-2.5 text-left"
+                  >
+                    <span>
+                      <span className="block text-[13px] font-bold text-slate-800">{item.label}</span>
+                      <span className="block text-[10.5px] font-medium text-slate-400">{item.note}</span>
+                    </span>
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
         </div>
       )}
@@ -198,16 +213,32 @@ export function VehiclesModulePage() {
   );
 }
 
+function OverviewClay({ Icon, tone, iconCls, label, value, caption, alert }:
+  { Icon: React.ElementType; tone: string; iconCls: string; label: string; value: React.ReactNode; caption?: string; alert?: boolean }) {
+  const n = Number(value);
+  const valueColor = alert && Number.isFinite(n) && n > 0 ? (tone.includes("red") ? "text-rose-600" : "text-amber-600") : "text-slate-900";
+  return (
+    <div className={`fc-clay ${tone} p-4`}>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-bold text-slate-600">{label}</span>
+        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
+      </div>
+      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
+      {caption ? <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p> : null}
+    </div>
+  );
+}
+
 function ModuleCard({ title, body, action, onClick, icon }: { title: string; body: string; action: string; onClick: () => void; icon: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
+    <button type="button" onClick={onClick} className="fc-neumo group p-5 text-left transition hover:-translate-y-0.5">
       <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>
-        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5" />
+        <div className="fc-blob h-10 w-10 text-slate-500">{icon}</div>
+        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
       </div>
-      <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
-      <p className="mt-2 text-sm text-slate-500">{body}</p>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
+      <h3 className="mt-4 text-base font-black text-slate-900">{title}</h3>
+      <p className="mt-1.5 text-sm text-slate-500">{body}</p>
+      <p className="mt-3 text-xs font-bold uppercase tracking-[0.14em] text-teal-700">{action}</p>
     </button>
   );
 }
@@ -221,8 +252,8 @@ function PlanningView({ rows, planning, onNavigate }: { rows: AnyRecord[]; plann
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-semibold text-slate-900">Planning view</h2>
-        <p className="mt-1 text-sm text-slate-500">Replacement pressure and operational gaps, without the rest of the roster crowding the screen.</p>
+        <h2 className="text-lg font-black text-slate-900">Planning</h2>
+        <p className="mt-1 text-sm text-slate-500">Replacement priority, CapEx pressure and operational gaps computed from the live fleet, customer and route data.</p>
       </section>
       <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <SimpleListCard title="Replacement priority" rows={forecast} fields={["vehicleCode", "replacementWindow", "capexPriorityScore"]} />
@@ -246,8 +277,8 @@ function HealthView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rout
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-semibold text-slate-900">Health view</h2>
-        <p className="mt-1 text-sm text-slate-500">A tighter operational screen for readiness, device and camera exceptions.</p>
+        <h2 className="text-lg font-black text-slate-900">Health</h2>
+        <p className="mt-1 text-sm text-slate-500">Readiness, device and camera exceptions across the fleet, updated from live vehicle telemetry.</p>
       </section>
       <div className="grid gap-4 xl:grid-cols-4">
         {[
@@ -287,8 +318,8 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-semibold text-slate-900">Records view</h2>
-        <p className="mt-1 text-sm text-slate-500">Vehicle records are split out from the roster so the user can inspect one record at a time.</p>
+        <h2 className="text-lg font-black text-slate-900">Records</h2>
+        <p className="mt-1 text-sm text-slate-500">Maintenance, compliance, documents and audit history for the selected unit.</p>
       </section>
       <RelatedJumpRow onNavigate={onNavigate} />
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
