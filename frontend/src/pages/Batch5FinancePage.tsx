@@ -6,7 +6,7 @@ import {
   Download, Fuel, Landmark,
   PenTool, Plus, TrendingDown, Truck, WalletCards, X, Zap,
 } from "lucide-react";
-import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import {
   useCarrierDetail, useCarriers, useCarriersSummary,
   useContractDetail, useContracts, useContractsSummary,
@@ -122,7 +122,7 @@ const configs = {
   },
 } satisfies Record<Kind, {
   queryKey: string; eyebrow: string; title: string; icon: ReactNode; description: string;
-  useRows: () => { data?: AnyRecord[]; isLoading: boolean };
+  useRows: () => { data?: AnyRecord[]; isLoading: boolean; isError?: boolean; refetch?: () => unknown };
   useSummary: () => { data?: AnyRecord };
   useDetail: (id?: string | number) => { data?: AnyRecord; isLoading: boolean };
   api: { create: ((p: AnyRecord) => Promise<AnyRecord>) | null; update: ((id: string | number, p: AnyRecord) => Promise<AnyRecord>) | null };
@@ -192,6 +192,14 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   }), [tabRows, search, filter]);
 
   if (rowsQ.isLoading) return <LoadingState />;
+  if (rowsQ.isError) {
+    return (
+      <ErrorState
+        message={`Unable to load ${config.title}. Check backend connectivity and retry.`}
+        onRetry={rowsQ.refetch ? () => void rowsQ.refetch?.() : undefined}
+      />
+    );
+  }
 
   const s = summaryQ.data ?? {};
 

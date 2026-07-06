@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -10,6 +11,8 @@ export function PlatformLoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -17,10 +20,20 @@ export function PlatformLoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const session = await platformApi.login(nextEmail, nextPassword);
+      const session = await platformApi.login(nextEmail, nextPassword, mfaCode.trim() || undefined);
       setSession(session);
       navigate("/platform", { replace: true });
     } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as { message?: string; errors?: string[] } | undefined;
+        if (data?.errors?.includes("mfa_required")) {
+          setMfaRequired(true);
+          setError("Enter the 6-digit code from your authenticator app.");
+          return;
+        }
+        setError(data?.message ?? "Login failed");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setLoading(false);
@@ -113,6 +126,21 @@ export function PlatformLoginPage() {
                 className="field border-slate-700 bg-slate-900/70 text-slate-100 placeholder:text-slate-500 focus:border-teal-400"
               />
             </label>
+            {mfaRequired && (
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Authenticator code</span>
+                <input
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  required
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  className="field border-slate-700 bg-slate-900/70 text-center font-mono text-lg tracking-[0.4em] text-slate-100 placeholder:text-slate-600 focus:border-teal-400"
+                />
+              </label>
+            )}
             <button
               type="submit"
               disabled={loading}

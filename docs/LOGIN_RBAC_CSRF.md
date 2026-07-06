@@ -137,7 +137,7 @@ role: "company_admin" → permissions: ["dashboard.view", "map.view", ...]
 ### Demo Users
 - **File**: `auth/demoUsers.ts`
 - **Available**: 12 demo users covering all roles
-- **Password**: `demo123` for all demo users
+- **Password**: provisioned out-of-band; never documented or committed
 
 ## Security Features
 
@@ -193,22 +193,12 @@ const result = await apiClient.post("/api/endpoint", data);
 // Equivalent to: POST with X-CSRF-Token header
 ```
 
-## Demo Credentials
+## Pilot Credential Provisioning
 
-| Role | Email | Password |
-|------|-------|----------|
-| Super Admin | superadmin@opstrax.com | demo123 |
-| Company Admin | admin@demo-fleet.com | demo123 |
-| Operations Manager | operations@demo-fleet.com | demo123 |
-| Dispatcher | dispatcher@demo-fleet.com | demo123 |
-| Fleet Manager | fleet@demo-fleet.com | demo123 |
-| Driver | driver@demo-fleet.com | demo123 |
-| Safety Manager | safety@demo-fleet.com | demo123 |
-| Maintenance Manager | maintenance@demo-fleet.com | demo123 |
-| Finance Manager | finance@demo-fleet.com | demo123 |
-| CRM Manager | crm@demo-fleet.com | demo123 |
-| Customer Portal | customer@client.com | demo123 |
-| Vendor | vendor@service.com | demo123 |
+No shared or static credentials are maintained in source control. Platform operators
+use the one-time invite flow. Tenant users are provisioned by an authorized tenant
+administrator, and customer portal users must additionally be bound to a customer.
+Passwords and MFA enrollment data are delivered out-of-band.
 
 ## Troubleshooting
 

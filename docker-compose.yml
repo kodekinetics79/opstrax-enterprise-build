@@ -24,6 +24,7 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       # RLS ENFORCEMENT: connect as the restricted, non-BYPASSRLS app role and turn on
       # per-request tenant scoping. This makes Postgres RLS the active backstop so any
       # read missing a company_id predicate fail-closes to the current tenant instead of
@@ -32,6 +33,26 @@ services:
       ConnectionStrings__DefaultConnection: ${PG_CONNECTION_APP:-${PG_CONNECTION}}
       Rls__EnforceTenantContext: "true"
       Cors__AllowedOrigins: http://localhost:10000
+      Jwt__Key: ${JWT_KEY}
+      Telemetry__DeviceSecret: ${TELEMETRY_DEVICE_SECRET}
+      Sse__TicketKey: ${SSE_TICKET_KEY}
+      PLATFORM_SUPERADMIN_PASSWORD: ${PLATFORM_SUPERADMIN_PASSWORD}
+      PLATFORM_SUPERADMIN_EMAIL: ${PLATFORM_SUPERADMIN_EMAIL:-platform@opstrax.local}
+      DemoSeed__Enabled: ${DEMO_SEED_ENABLED:-false}
+      DemoSeed__Password: ${DEMO_SEED_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-}
+      STORAGE_REGION: ${STORAGE_REGION:-}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
+      DATA_ENCRYPTION_KEY_PREVIOUS: ${DATA_ENCRYPTION_KEY_PREVIOUS:-}
+      PII_INDEX_KEY: ${PII_INDEX_KEY:-}
     ports:
       - "8088:8080"
 
@@ -47,4 +68,3 @@ services:
       CORS_ORIGIN: http://localhost:10000
     ports:
       - "8090:8090"
-

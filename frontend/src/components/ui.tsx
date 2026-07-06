@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
-  Bot, ChevronUp, ChevronDown as ChevronDownIcon,
-  Loader2, Minus, Search, SlidersHorizontal,
+  ChevronUp, ChevronDown as ChevronDownIcon,
+  Loader2, Search,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
 import type { AnyRecord } from "@/types";
@@ -32,15 +32,97 @@ export function labelize(value: string) {
 }
 
 /* ============================================================
+   BUTTON  (v5.0 primitive — wraps the .btn-* design-system classes)
+   ============================================================ */
+type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+
+const BUTTON_CLASS: Record<ButtonVariant, string> = {
+  primary: "btn-primary",
+  secondary: "btn-secondary",
+  danger: "btn-danger",
+  ghost: "btn-ghost",
+};
+
+export function Button({
+  variant = "primary", type = "button", className = "", loading = false, disabled, children, ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
+  return (
+    <button
+      type={type}
+      className={`${BUTTON_CLASS[variant]} ${className}`.trim()}
+      disabled={disabled || loading}
+      aria-busy={loading}
+      {...rest}
+    >
+      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+      {children}
+    </button>
+  );
+}
+
+/* ============================================================
+   SURFACES  (v5.0 primitives — clay + liquid glass)
+   ============================================================ */
+/** Opaque soft-molded card. Safe for any text content (no blur underneath). */
+export function ClayCard({ className = "", interactive = false, ...rest }: HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
+  return <div className={`clay-card ${interactive ? "card-hover" : ""} ${className}`.trim()} {...rest} />;
+}
+
+/** Translucent liquid-glass panel. Reserve for hero/header surfaces and small
+    overlays — not large scrolling lists (see index.css blur policy). */
+export function GlassPanel({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={`liquid-glass ${className}`.trim()} {...rest} />;
+}
+
+/* ============================================================
+   FORM FIELD  (v5.0 primitive — label + control + hint/error wiring)
+   ============================================================ */
+export function FormField({
+  label, hint, error, required, className = "", children,
+}: {
+  label: string; hint?: string; error?: string; required?: boolean; className?: string; children: ReactNode;
+}) {
+  const id = useId();
+  const messageId = `${id}-msg`;
+
+  // Wire aria attributes into the control when it is a single element
+  // (e.g. <input className="field" />) so screen readers announce the
+  // hint/error and invalid state without every call site doing it by hand.
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        id: (children.props as Record<string, unknown>).id ?? id,
+        "aria-describedby": hint || error ? messageId : undefined,
+        "aria-invalid": error ? true : undefined,
+        "aria-required": required || undefined,
+      })
+    : children;
+
+  return (
+    <div className={`flex flex-col gap-1.5 ${className}`.trim()}>
+      <label htmlFor={id} className="text-[12px] font-bold text-slate-700">
+        {label}
+        {required && <span aria-hidden className="ml-0.5 text-red-600">*</span>}
+      </label>
+      {control}
+      {error ? (
+        <p id={messageId} role="alert" className="text-xs font-semibold text-red-600">{error}</p>
+      ) : hint ? (
+        <p id={messageId} className="text-xs text-slate-500">{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/* ============================================================
    PAGE HEADER
    ============================================================ */
 export function PageHeader({
-  title, eyebrow, description, actions,
+  title, eyebrow, description, actions, footer,
 }: {
-  title: string; eyebrow?: string; description: string; actions?: ReactNode;
+  title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
 }) {
   return (
-    <div className="panel relative overflow-hidden px-5 py-6 lg:px-6">
+    <div className="liquid-glass relative overflow-hidden px-5 py-6 lg:px-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
       <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
@@ -59,6 +141,7 @@ export function PageHeader({
           </div>
         )}
       </div>
+      {footer && <div className="relative mt-5 border-t border-slate-200/70 pt-4">{footer}</div>}
     </div>
   );
 }
@@ -82,7 +165,7 @@ export function KpiCard({
     : "text-slate-950";
 
   return (
-    <div className="panel card-hover relative overflow-hidden p-5">
+    <div className="clay-card card-hover relative overflow-hidden p-5">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -111,7 +194,7 @@ export function KpiCard({
    ============================================================ */
 export function SkeletonCard() {
   return (
-    <div className="panel flex flex-col justify-between p-5">
+    <div className="clay-card flex flex-col justify-between p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="skeleton h-3 w-24 rounded-full" />
         <div className="skeleton h-5 w-14 rounded-full" />
@@ -141,16 +224,23 @@ export function StatusBadge({ status }: { status?: unknown }) {
   // Text colors use the 700-level ramp so the label meets WCAG AA (≥4.5:1)
   // against the light tinted pill backgrounds. (300-level text was designed for
   // dark surfaces and fails AA on the v4.0 light panels.)
-  if (/critical|failed|breach|expired/i.test(text)) {
+  // Tone map covers the canonical P4 dispatch vocabulary (assigned, accepted,
+  // en_route_pickup, arrived_*, loaded, in_transit, delivered, exception,
+  // cancelled) alongside the generic operational statuses.
+  if (/critical|failed|breach|expired|exception/i.test(text)) {
     cls = "border-red-400/30 bg-red-500/10 text-red-700"; pulse = true;
   } else if (/risk|anomaly|overdue|missing|rejected/i.test(text)) {
     cls = "border-red-400/20 bg-red-500/8 text-red-700";
   } else if (/warning|review|pending|near|expiring|at.risk/i.test(text)) {
     cls = "border-amber-400/28 bg-amber-500/10 text-amber-700";
-  } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant/i.test(text)) {
+  } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant|delivered|resolved/i.test(text)) {
     cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-700";
+  } else if (/in.?transit|en.?route|assigned|accepted|arrived|loaded|dispatch|scheduled/i.test(text)) {
+    cls = "border-sky-400/28 bg-sky-500/10 text-sky-700";
   } else if (/ai|intelligence|predict/i.test(text)) {
     cls = "border-violet-400/28 bg-violet-500/10 text-violet-700";
+  } else if (/cancel|inactive|archived|offline/i.test(text)) {
+    cls = "border-slate-300 bg-slate-100 text-slate-500";
   } else {
     cls = "border-slate-300 bg-slate-50 text-slate-600";
   }
@@ -272,6 +362,17 @@ export function DataTable({
     else { setSortKey(col); setSortDir("asc"); }
   };
 
+  // Right-align numeric/currency columns (readability: numbers scan best
+  // ragged-left) — sampled from the first rows so headers align with cells.
+  const numericCols = useMemo(() => {
+    const sample = rows.slice(0, 20);
+    return new Set(columns.filter((col) => {
+      const values = sample.map((row) => row[col]).filter((v) => v !== null && v !== undefined && v !== "");
+      if (!values.length) return false;
+      return values.every((v) => typeof v === "number" || /^-?\$?[\d,]+(\.\d+)?%?$/.test(String(v)));
+    }));
+  }, [rows, columns]);
+
   return (
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
@@ -281,33 +382,33 @@ export function DataTable({
           <input
             className="field h-9 py-0 pl-9 pr-3 text-sm"
             placeholder="Search records..."
+            aria-label="Search records"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
-            {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
-          </span>
-          <button type="button" className="btn-secondary h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
-        </div>
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
+          {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
+        </span>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="border-b border-slate-100 bg-slate-50/80">
+          <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50">
             <tr>
               {columns.map((col) => {
                 const isActive = sortKey === col;
+                const numeric = numericCols.has(col);
                 return (
                   <th
                     key={col}
                     onClick={() => handleSort(col)}
+                    aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
                     className={`sortable px-5 py-3.5 text-xs font-semibold uppercase tracking-wider transition ${
                       isActive ? "sort-active text-slate-700" : "text-slate-500"
                     }`}
                   >
-                    <span className="flex items-center gap-1.5">
+                    <span className={`flex items-center gap-1.5 ${numeric ? "justify-end" : ""}`}>
                       {labelize(col)}
                       <span className="sort-icon">
                         {isActive
@@ -350,7 +451,7 @@ export function DataTable({
                   className={`group transition-colors hover:bg-slate-50 ${onSelect ? "cursor-pointer" : ""}`}
                 >
                   {columns.map((col) => (
-                    <td key={col} className="px-5 py-3.5 text-slate-600">
+                    <td key={col} className={`px-5 py-3.5 text-slate-600 ${numericCols.has(col) ? "text-right tabular-nums" : ""}`}>
                       {renderCell(col, row[col])}
                     </td>
                   ))}
@@ -372,15 +473,31 @@ export function DataTable({
 }
 
 /* ============================================================
-   FILTER BAR
+   FILTER BAR  (chip row with a real active state)
    ============================================================ */
-export function FilterBar({ children }: { children?: ReactNode }) {
+export function FilterBar({
+  options, value, onChange, children,
+}: {
+  options?: string[]; value?: string; onChange?: (option: string) => void; children?: ReactNode;
+}) {
   return (
-    <div className="panel flex flex-wrap items-center gap-2.5 p-3.5">
-      {children ||
-        ["All", "Active", "At Risk", "Completed", "Pending"].map((x) => (
-          <button key={x} type="button" className="btn-ghost py-1.5 text-xs">{x}</button>
-        ))}
+    <div className="panel flex flex-wrap items-center gap-2 p-3">
+      {options
+        ? options.map((option) => {
+            const active = option === value;
+            return (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={active}
+                className={active ? "filter-chip filter-chip-active" : "filter-chip"}
+                onClick={() => onChange?.(option)}
+              >
+                {option}
+              </button>
+            );
+          })
+        : children}
     </div>
   );
 }
@@ -389,11 +506,30 @@ export function FilterBar({ children }: { children?: ReactNode }) {
    DETAIL DRAWER  (generic slot, used outside Batch pages)
    ============================================================ */
 export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const open = record !== null;
+
+  // Dialog behavior: Escape dismisses, focus lands on the close control.
+  useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm anim-fade-in">
-      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl">
-        <button className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+      {/* Backdrop dismiss is mouse-only; keyboard users have Escape + the Close button */}
+      <div aria-hidden className="absolute inset-0" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Record details"
+        className="anim-slide-right relative h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl"
+      >
+        <button ref={closeRef} aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         <p className="section-title text-teal-700">OpsTrax Detail</p>
         <h2 className="mt-3 text-[28px] font-black tracking-tight text-slate-950">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}
@@ -443,19 +579,24 @@ export function LoadingState() {
 /* ============================================================
    ERROR / EMPTY STATES
    ============================================================ */
-export function ErrorState({ message }: { message?: string }) {
+export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
   return (
-    <div className="panel flex items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-6 text-red-300">
-      <AlertTriangle className="h-5 w-5 shrink-0" />
-      <div>
+    <div className="panel flex flex-wrap items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-6" role="alert">
+      <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
+      <div className="min-w-0 flex-1">
         <p className="font-semibold text-red-700">Unable to load data</p>
-        <p className="text-sm text-red-500/90">{message || "Check your connection and try again."}</p>
+        <p className="text-sm text-red-600/90">{message || "Check your connection and try again."}</p>
       </div>
+      {onRetry && (
+        <button type="button" className="btn-secondary shrink-0 py-2 text-xs" onClick={onRetry}>
+          Retry
+        </button>
+      )}
     </div>
   );
 }
 
-export function EmptyState({ title = "No records found", subtitle }: { title?: string; subtitle?: string }) {
+export function EmptyState({ title = "No records found", subtitle, action }: { title?: string; subtitle?: string; action?: ReactNode }) {
   return (
     <div className="panel flex flex-col items-center justify-center p-14 text-center">
       <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
@@ -463,6 +604,7 @@ export function EmptyState({ title = "No records found", subtitle }: { title?: s
       </div>
       <p className="font-semibold text-slate-800">{title}</p>
       {subtitle && <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{subtitle}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }

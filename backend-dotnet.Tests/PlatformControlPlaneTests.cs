@@ -15,6 +15,7 @@ namespace Opstrax.Tests;
 // behaviour (middleware ordering, CSRF, rate limiting) is additionally covered
 // by tools/platform-admin-smoke-test.sh against a running API.
 // ─────────────────────────────────────────────────────────────────────────────
+[Collection("platform-control-plane")]
 public class PlatformControlPlaneTests
 {
     private const string LocalConnectionString =
@@ -536,7 +537,7 @@ public class PlatformControlPlaneTests
         // Platform routes must keep bypassing the TENANT session middleware (they
         // self-authenticate), and rate limiting must run before that bypass.
         Assert.Contains("path.StartsWith(\"/api/platform\"", program);
-        var rateLimitIdx = program.IndexOf("Rate limiting runs BEFORE the auth-bypass", StringComparison.Ordinal);
+        var rateLimitIdx = program.IndexOf("app.UseRateLimiter();", StringComparison.Ordinal);
         var bypassIdx = program.IndexOf("path.StartsWith(\"/api/platform\"", StringComparison.Ordinal);
         Assert.True(rateLimitIdx >= 0 && rateLimitIdx < bypassIdx, "rate limiter must precede the platform/login auth bypass");
     }

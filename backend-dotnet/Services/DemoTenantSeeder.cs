@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -30,10 +31,11 @@ public sealed record DemoSeedResult(
 // runs and any bug surfaces here. Base entities (vehicles/drivers/customers/jobs/trips/
 // dispatch/proofs) have no dedicated service layer and are created directly.
 // Idempotent: if the demo company already exists, it reports "already seeded" and stops.
-public sealed class DemoTenantSeeder(Database db)
+public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
 {
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
+    private readonly string demoPassword = ResolveDemoPassword(config);
 
     // companyCode/companyName are overridable so integration TESTS can seed an ISOLATED
     // throwaway tenant (e.g. "MERIDIAN-DEMO-TEST") without touching the real runtime demo
@@ -251,7 +253,7 @@ public sealed class DemoTenantSeeder(Database db)
         return new DemoSeedResult(false, companyId, companyName,
             vehicles.Count, drivers.Count, customers.Count, jobs.Count, trips, dispatch, proofs,
             invoiceIds.Count, payments, feedback, 2, 1, 1,
-            "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Logins: admin@meridian.demo / portal@acme.demo (password: MeridianDemo!23).");
+            "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Credentials are configured through DemoSeed:Password.");
     }
 
     // ── Backdated time-series enrichment (idempotent) ──────────────────────────────
@@ -351,12 +353,18 @@ public sealed class DemoTenantSeeder(Database db)
             {
                 var vehicleId = Convert.ToInt64(v["id"]);
                 var p = di % providers.Length;
+                // Active devices must carry real credentials (ck_eld_devices_active_credentials):
+                // generate per-device random creds exactly like the provisioning endpoint.
+                var rawApiKey  = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                var hmacSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
                 await db.ExecuteAsync(
                     @"INSERT INTO eld_devices
                         (company_id, device_serial, device_model, provider, vehicle_id, firmware_version,
+                         api_key_hash, hmac_secret,
                          status, last_heartbeat_at, last_sync_at, created_at)
                       VALUES
                         (@cid, @serial, @model, @provider, @vid, @fw,
+                         encode(sha256(@rawKey::bytea), 'hex'), @hmac,
                          @status, NOW() - make_interval(mins => @hb), NOW() - make_interval(mins => @hb), NOW() - INTERVAL '90 days')",
                     c =>
                     {
@@ -366,6 +374,8 @@ public sealed class DemoTenantSeeder(Database db)
                         c.Parameters.AddWithValue("@provider", providers[p]);
                         c.Parameters.AddWithValue("@vid", vehicleId);
                         c.Parameters.AddWithValue("@fw", $"v{4 + p}.{rng.Next(0, 9)}.{rng.Next(0, 9)}");
+                        c.Parameters.AddWithValue("@rawKey", rawApiKey);
+                        c.Parameters.AddWithValue("@hmac", hmacSecret);
                         c.Parameters.AddWithValue("@status", deviceStatuses[di % deviceStatuses.Length]);
                         c.Parameters.AddWithValue("@hb", rng.Next(1, 45));
                     }, ct);
@@ -383,8 +393,8 @@ public sealed class DemoTenantSeeder(Database db)
 
     private async Task SeedUserAsync(long companyId, string email, string fullName, string roleName, long? customerId, string permissionsJson, CancellationToken ct)
         => await db.ExecuteAsync(
-            @"INSERT INTO users (company_id, customer_id, full_name, email, role_name, status, demo_password, permissions_json)
-              VALUES (@companyId, @customerId, @fullName, @email, @roleName, 'Active', 'MeridianDemo!23', @perms::jsonb)",
+            @"INSERT INTO users (company_id, customer_id, full_name, email, role_name, status, password_hash, permissions_json)
+              VALUES (@companyId, @customerId, @fullName, @email, @roleName, 'Active', @passwordHash, @perms::jsonb)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -392,8 +402,17 @@ public sealed class DemoTenantSeeder(Database db)
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
+                c.Parameters.AddWithValue("@passwordHash", PlatformSchemaService.HashPassword(demoPassword));
                 c.Parameters.AddWithValue("@perms", permissionsJson);
             }, ct);
+
+    private static string ResolveDemoPassword(IConfiguration? config)
+    {
+        var configured = config?["DemoSeed:Password"];
+        return !string.IsNullOrWhiteSpace(configured) && configured.Length >= 12
+            ? configured
+            : Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
+    }
 
     private async Task<long> SeedCustomerAsync(long companyId, string code, string name, CancellationToken ct)
         => await db.InsertAsync(

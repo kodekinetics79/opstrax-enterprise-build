@@ -49,9 +49,9 @@ public sealed class NotificationService(Database db)
         // Insert notification
         var notifId = await db.InsertAsync(
             @"INSERT INTO notifications
-                (company_id, source_type, source_id, event_type, severity, title, message,
+                (company_id, source_type, source_id, event_type, severity, title, message, body,
                  audience_type, channel, status, dedupe_key, priority, delivered_at)
-              VALUES (@cid, @srcType, @srcId, @evType, @sev, @title, @msg,
+              VALUES (@cid, @srcType, @srcId, @evType, @sev, @title, @msg, @msg,
                       @aud, @chan, 'unread', @dedup, @pri,
                       CASE WHEN @chan='in_app' THEN NOW() ELSE NULL END)",
             c =>

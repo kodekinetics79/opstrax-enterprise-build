@@ -59,6 +59,70 @@
   --sidebar-text:    #475569;
   --sidebar-active:  #eff6ff;
   --sidebar-hover:   #f8fafc;
+
+  /* ==========================================================
+     v5.0 FOUNDATION — controlled clay · liquid glass · glass nav
+     ========================================================== */
+
+  /* Blur scale — the ONLY sanctioned blur values. xs/sm for chrome,
+     md for fixed nav surfaces, lg reserved for small overlay panels.
+     Never apply lg blur to large scrolling regions. */
+  --blur-xs: 4px;
+  --blur-sm: 8px;
+  --blur-md: 14px;
+  --blur-lg: 22px;
+
+  /* Clay — soft-molded surface (inset light top, inset shade bottom) */
+  --r-clay:            20px;
+  --clay-bg:           linear-gradient(145deg, #ffffff 0%, #f3f7fc 100%);
+  --clay-border:       rgba(255,255,255,.72);
+  --clay-shadow:       inset 0 1.5px 0 rgba(255,255,255,.95),
+                       inset 0 -2px 6px rgba(148,163,184,.15),
+                       0 2px 4px rgba(15,23,42,.04),
+                       0 12px 28px rgba(15,23,42,.08),
+                       0 0 0 1px rgba(148,163,184,.14);
+  --clay-shadow-hover: inset 0 1.5px 0 rgba(255,255,255,.95),
+                       inset 0 -2px 6px rgba(148,163,184,.12),
+                       0 14px 30px rgba(15,23,42,.10),
+                       0 26px 56px rgba(15,23,42,.10),
+                       0 0 0 1px rgba(148,163,184,.16);
+
+  /* Liquid glass — translucent panel with specular edge highlight */
+  --lg-bg:             linear-gradient(160deg, rgba(255,255,255,.78), rgba(244,249,255,.6));
+  --lg-border:         rgba(255,255,255,.6);
+  --lg-highlight:      inset 0 1px 0 rgba(255,255,255,.9);
+  --lg-shadow:         0 1px 2px rgba(15,23,42,.05),
+                       0 16px 40px rgba(15,23,42,.09);
+
+  /* Glass navigation (fixed chrome: sidebar / header) */
+  --glass-nav-bg:        rgba(255,255,255,.84);
+  --glass-nav-border:    rgba(226,232,240,.9);
+  --glass-nav-dark-bg:   linear-gradient(180deg, rgba(15,23,42,.92) 0%, rgba(3,7,18,.94) 100%);
+  --glass-nav-dark-border: rgba(51,65,85,.6);
+
+  /* Status colors — single source for badges, accents, semantic text */
+  --status-danger:         #dc2626;
+  --status-danger-bg:      #fef2f2;
+  --status-danger-border:  #fecaca;
+  --status-warning:        #d97706;
+  --status-warning-bg:     #fffbeb;
+  --status-warning-border: #fde68a;
+  --status-success:        #059669;
+  --status-success-bg:     #ecfdf5;
+  --status-success-border: #a7f3d0;
+  --status-info:           #2563eb;
+  --status-info-bg:        #eff6ff;
+  --status-info-border:    #bfdbfe;
+  --status-ai:             #7c3aed;
+  --status-ai-bg:          #f5f3ff;
+  --status-ai-border:      #ddd6fe;
+  --status-muted:          #64748b;
+  --status-muted-bg:       #f8fafc;
+  --status-muted-border:   #e2e8f0;
+
+  /* Focus ring (keyboard) */
+  --focus-ring-color: var(--teal);
+  --focus-ring-soft:  0 0 0 3px rgba(13,148,136,.14);
 }
 
 /* ---------- BASE ---------- */
@@ -88,12 +152,20 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* ---------- PANEL (white card) ---------- */
+/* Perf: no backdrop-filter here — panels tile large scrolling regions and
+   their background is ~99% opaque, so blur was invisible GPU cost. */
 .panel {
   border: 1px solid var(--border);
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255,255,255,.99), rgba(248,250,252,.96));
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(14px);
+}
+
+/* Full-bleed panel variant (drawers/sheets flush to a viewport edge).
+   Declared after .panel so it wins at equal specificity; lives unlayered
+   because Tailwind's rounded-* utilities cannot override .panel's radius. */
+.panel-flush {
+  border-radius: 0;
 }
 
 .panel-glow {
@@ -106,16 +178,84 @@ body {
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(249,251,253,.96));
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(16px);
 }
 
 /* ---------- GLASS (for overlays, dropdowns) ---------- */
 .glass {
   background: rgba(255,255,255,.86);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(var(--blur-lg));
+  backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border);
   border-radius: 16px;
+}
+
+/* ---------- CLAY CARD (v5.0) ----------
+   Controlled claymorphism: a soft-molded raised surface. Background is fully
+   opaque (no blur) so text always sits on a solid surface — WCAG-safe and
+   cheap to composite. Use for KPI cards and featured stat surfaces. */
+.clay-card {
+  position: relative;
+  border: 1px solid var(--clay-border);
+  border-radius: var(--r-clay);
+  background: var(--clay-bg);
+  box-shadow: var(--clay-shadow);
+}
+.clay-card.card-hover:hover {
+  border-color: var(--clay-border);
+  box-shadow: var(--clay-shadow-hover);
+}
+/* Clay inherits the panel's light-mode text corrections */
+.clay-card .text-white { color: #0f172a; }
+
+/* ---------- LIQUID GLASS PANEL (v5.0) ----------
+   Translucent panel with a specular top edge. Reserve for hero/header
+   surfaces and small overlays — NOT for large scrolling lists. Text-bearing
+   content stays readable because the app background behind it is always
+   light; a solid fallback is defined below for non-supporting browsers. */
+.liquid-glass {
+  position: relative;
+  border: 1px solid var(--lg-border);
+  border-radius: var(--r-card);
+  background: var(--lg-bg);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.4);
+  box-shadow: var(--lg-shadow), var(--lg-highlight);
+}
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg,
+    rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 36%,
+    rgba(255,255,255,0) 64%, rgba(255,255,255,.24) 100%);
+  opacity: .6;
+}
+.liquid-glass > * { position: relative; z-index: 1; }
+
+/* ---------- GLASS NAVIGATION (v5.0) ----------
+   For fixed chrome only (sidebar, app header). Fixed elements repaint far
+   less than scrolling content, so md blur is affordable here. */
+.glass-nav {
+  background: var(--glass-nav-bg);
+  border-color: var(--glass-nav-border);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.35);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.35);
+}
+.glass-nav-dark {
+  background: var(--glass-nav-dark-bg);
+  border-color: var(--glass-nav-dark-border);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.2);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.2);
+}
+
+/* Solid fallbacks — never leave text on an unpredictable backdrop */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .liquid-glass { background: linear-gradient(160deg, #ffffff, #f4f9ff); }
+  .glass-nav    { background: #ffffff; }
+  .glass-nav-dark { background: #060d1c; }
+  .glass        { background: #ffffff; }
 }
 
 /* ---------- BUTTONS ---------- */
@@ -195,6 +335,31 @@ body {
 .btn-secondary:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
 .btn-ghost:active { transform: translateY(0); }
 
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  border-radius: var(--r-btn);
+  border: 1px solid rgba(220,38,38,.25);
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  padding: .72rem 1.15rem;
+  color: #ffffff;
+  font-size: .855rem;
+  font-weight: 700;
+  letter-spacing: .01em;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(220,38,38,.22), 0 1px 2px rgba(0,0,0,.08);
+  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+}
+.btn-danger:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(220,38,38,.24), 0 1px 3px rgba(0,0,0,.10);
+}
+.btn-danger:active  { transform: translateY(0); filter: brightness(.96); }
+.btn-danger:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -249,6 +414,10 @@ body {
   box-shadow: 0 0 0 3px rgba(13,148,136,.12), 0 1px 2px rgba(0,0,0,.04);
 }
 .field::placeholder { color: var(--text-muted); }
+.field[aria-invalid="true"] {
+  border-color: var(--status-danger);
+  box-shadow: 0 0 0 3px rgba(220,38,38,.10), 0 1px 2px rgba(0,0,0,.04);
+}
 
 /* ---------- GLOBAL KEYBOARD FOCUS RING ----------
    Visible focus indicator for keyboard navigation (WCAG 2.4.7), using the
@@ -259,6 +428,34 @@ body {
 *:focus-visible {
   outline: 2px solid var(--teal);
   outline-offset: 2px;
+}
+
+/* ---------- FILTER CHIP (v5.0 — shared tab/filter row) ---------- */
+.filter-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  padding: .5rem .9rem;
+  color: var(--text-secondary);
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+}
+.filter-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+.filter-chip-active,
+.filter-chip-active:hover {
+  border-color: rgba(13,148,136,.45);
+  background: linear-gradient(135deg, #ccfbf1, #e0f2fe);
+  color: #0f766e;
+  box-shadow: 0 6px 18px rgba(13,148,136,.14);
 }
 
 /* ---------- SECTION TITLE ---------- */
@@ -364,6 +561,20 @@ body {
   border-radius: 8px;
 }
 
+/* ---------- REDUCED MOTION (WCAG 2.3.3) ----------
+   Collapse all decorative animation/transition for users who ask for it.
+   Skeletons fall back to a static tint so loading is still signalled. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton { animation: none; background: #e4ebf4; }
+  .stagger > * { animation: none; opacity: 1; }
+}
+
 /* ---------- LIVE DOT ---------- */
 .live-dot {
   display: inline-block;
@@ -457,7 +668,7 @@ body {
 .anim-count       { animation: countUp .32s ease-out both; }
 
 /* ---------- TABLE SORT ---------- */
-th.sortable { cursor: pointer; user-select: none; }
+th.sortable { cursor: pointer; -webkit-user-select: none; user-select: none; }
 th.sortable:hover { color: var(--text-primary); }
 th.sortable .sort-icon { opacity: .3; transition: opacity .12s; }
 th.sortable:hover .sort-icon { opacity: 1; }
@@ -794,13 +1005,15 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   display: flex; align-items: center; justify-content: center;
 }
 
-/* ---------- STATUS / RISK BADGES (light-mode tones) ---------- */
-.badge-danger  { border-color: #fecaca; background: #fef2f2; color: #dc2626; }
-.badge-warning { border-color: #fde68a; background: #fffbeb; color: #d97706; }
-.badge-success { border-color: #a7f3d0; background: #ecfdf5; color: #059669; }
-.badge-info    { border-color: #bfdbfe; background: #eff6ff; color: #2563eb; }
-.badge-ai      { border-color: #ddd6fe; background: #f5f3ff; color: #7c3aed; }
-.badge-muted   { border-color: #e2e8f0; background: #f8fafc; color: #64748b; }
+/* ---------- STATUS / RISK BADGES (light-mode tones) ----------
+   All tone values route through the v5.0 --status-* tokens (WCAG AA:
+   600/700-level text on 50-level tinted backgrounds). */
+.badge-danger  { border-color: var(--status-danger-border);  background: var(--status-danger-bg);  color: var(--status-danger); }
+.badge-warning { border-color: var(--status-warning-border); background: var(--status-warning-bg); color: var(--status-warning); }
+.badge-success { border-color: var(--status-success-border); background: var(--status-success-bg); color: var(--status-success); }
+.badge-info    { border-color: var(--status-info-border);    background: var(--status-info-bg);    color: var(--status-info); }
+.badge-ai      { border-color: var(--status-ai-border);      background: var(--status-ai-bg);      color: var(--status-ai); }
+.badge-muted   { border-color: var(--status-muted-border);   background: var(--status-muted-bg);   color: var(--status-muted); }
 
 /* ---------- COLORED TEXT LEGIBILITY IN LIGHT PANELS ---------- */
 .panel .text-red-300,     .panel .text-red-400     { color: #b91c1c; }

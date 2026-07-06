@@ -54,7 +54,7 @@ public sealed class SecurityEventService(Database db)
               VALUES
                 (@cid, @uid, @type, @sev,
                  @ip, @ua, @ok, @msg,
-                 @meta, NOW())",
+                 @meta::jsonb, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",  companyId);
@@ -63,7 +63,7 @@ public sealed class SecurityEventService(Database db)
                 c.Parameters.AddWithValue("@sev",  severity);
                 c.Parameters.AddWithValue("@ip",   (object?)ipTrunc  ?? DBNull.Value);
                 c.Parameters.AddWithValue("@ua",   (object?)agentHash ?? DBNull.Value);
-                c.Parameters.AddWithValue("@ok",   success ? 1 : 0);
+                c.Parameters.AddWithValue("@ok",   success);
                 c.Parameters.AddWithValue("@msg",  safeMessage[..Math.Min(safeMessage.Length, 500)]);
                 c.Parameters.AddWithValue("@meta", (object?)metaJson ?? DBNull.Value);
             }, ct);
@@ -107,7 +107,7 @@ public sealed class SecurityEventService(Database db)
         var val = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM security_events
               WHERE company_id = @cid
-                AND success = 0
+                AND success = false
                 AND created_at >= NOW() - @m * INTERVAL '1 minute'",
             c =>
             {

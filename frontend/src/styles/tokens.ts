@@ -42,6 +42,35 @@ export const tokens = {
   rCard: "18px",
   rBtn: "12px",
   rField: "12px",
+  rClay: "20px",
+
+  // v5.0 blur scale (mirror of --blur-*)
+  blurXs: "4px",
+  blurSm: "8px",
+  blurMd: "14px",
+  blurLg: "22px",
+} as const;
+
+/* ---------- v5.0 status tokens — 1:1 with index.css --status-* ---------- */
+export const status = {
+  danger: "#dc2626",
+  dangerBg: "#fef2f2",
+  dangerBorder: "#fecaca",
+  warning: "#d97706",
+  warningBg: "#fffbeb",
+  warningBorder: "#fde68a",
+  success: "#059669",
+  successBg: "#ecfdf5",
+  successBorder: "#a7f3d0",
+  info: "#2563eb",
+  infoBg: "#eff6ff",
+  infoBorder: "#bfdbfe",
+  ai: "#7c3aed",
+  aiBg: "#f5f3ff",
+  aiBorder: "#ddd6fe",
+  muted: "#64748b",
+  mutedBg: "#f8fafc",
+  mutedBorder: "#e2e8f0",
 } as const;
 
 /* ---------- Extended chart / data-viz palette ----------

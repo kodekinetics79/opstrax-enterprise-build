@@ -153,6 +153,32 @@ public sealed class SecuritySettingsService(Database db, AuditService audit)
         return (failures.Count == 0, [.. failures]);
     }
 
+    public static bool IsMfaRequiredForRole(SecuritySettings settings, string? role)
+    {
+        if (!settings.MfaRequired) return false;
+
+        var configuredRoles = settings.MfaRequiredRoles
+            .Select(NormalizeRole)
+            .Where(value => value.Length > 0)
+            .ToArray();
+
+        // An enabled policy with no role restriction applies tenant-wide.
+        if (configuredRoles.Length == 0) return true;
+
+        var normalizedRole = NormalizeRole(role);
+        return configuredRoles.Contains("*", StringComparer.Ordinal)
+            || configuredRoles.Contains(normalizedRole, StringComparer.Ordinal);
+    }
+
+    private static string NormalizeRole(string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return string.Empty;
+        if (role.Trim() == "*") return "*";
+        return new string(role.Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+    }
+
     private static string[] ParseJsonArray(object? value)
     {
         if (value is null) return [];

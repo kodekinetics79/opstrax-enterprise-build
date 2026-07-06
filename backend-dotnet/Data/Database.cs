@@ -78,6 +78,18 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         ?? throw new InvalidOperationException(
             "Database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION.");
 
+    // Optional read-replica endpoint (Neon read replica / hot standby). When set,
+    // read-only work can be routed here to offload the primary and to keep serving
+    // reads if the primary is degraded. Falls back to the primary automatically when
+    // unset or unreachable — a graceful read-path bypass, never a hard dependency.
+    private readonly string? _replicaConnectionString =
+        Coalesce(
+            configuration.GetConnectionString("ReadReplica"),
+            Environment.GetEnvironmentVariable("PG_CONNECTION_REPLICA"));
+
+    /// <summary>True when a read replica is configured (surfaced in health/reliability).</summary>
+    public bool HasReadReplica => !string.IsNullOrWhiteSpace(_replicaConnectionString);
+
     // Optional so tests / schema services can still do `new Database(config)` — in
     // that case there is never an ambient scope and every call uses its own
     // connection (unchanged pre-RLS behaviour). DI injects the shared singleton.
@@ -92,6 +104,20 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
 
     private static string? Coalesce(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    // ── DB metrics hook (observability) ─────────────────────────────────────────
+    // Optional sink wired once at startup (Program.cs) so every query records its
+    // latency + success/failure into ApiMetricsService, feeding the DB-latency and
+    // db-connection-failure metrics/alerts. Static so the many `new Database(config)`
+    // call sites (tests, schema services) are unaffected and never NRE.
+    public static Action<double, bool>? MetricsSink { get; set; }
+
+    private static void RecordDb(System.Diagnostics.Stopwatch sw, bool failed)
+    {
+        var sink = MetricsSink;
+        if (sink is null) return;
+        try { sw.Stop(); sink(sw.Elapsed.TotalMilliseconds, failed); } catch { /* never break a query */ }
+    }
 
     // Runs off-pipeline work under a platform-admin bypass scope so cross-tenant
     // background processing (which already filters by company_id in SQL) can read/write
@@ -140,6 +166,30 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                 await connection.DisposeAsync();
                 await Task.Delay(200 * attempt, ct); // 200ms, then 400ms
             }
+        }
+    }
+
+    // Opens a connection for READ-ONLY work, preferring the read replica when one is
+    // configured. If the replica open fails (replica degraded/unreachable), it FALLS
+    // BACK to the primary — reads keep serving through a replica outage. Only for
+    // queries that never write and are NOT inside an ambient tenant transaction.
+    public async Task<NpgsqlConnection> OpenReadAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(_replicaConnectionString))
+            return await OpenAsync(ct);
+
+        try
+        {
+            var replica = new NpgsqlConnection(_replicaConnectionString);
+            await replica.OpenAsync(ct);
+            return replica;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Replica down → serve the read from the primary. Recorded as a DB failure
+            // signal so the Reliability Center can surface replica degradation.
+            MetricsSink?.Invoke(0, true);
+            return await OpenAsync(ct);
         }
     }
 
@@ -210,6 +260,8 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
 
     public async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var failed = false;
         var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
@@ -228,8 +280,10 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             }
             return rows;
         }
+        catch { failed = true; throw; }
         finally
         {
+            RecordDb(sw, failed);
             ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
@@ -238,8 +292,31 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     public async Task<Dictionary<string, object?>?> QuerySingleAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
         => (await QueryAsync(sql, bind, ct)).FirstOrDefault();
 
+    public async Task<Dictionary<string, object?>?> QuerySingleInSystemScopeAsync(
+        string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
+    {
+        await using var scope = await BeginSystemScopeAsync(ct);
+        Dictionary<string, object?>? row = null;
+        await using (var command = new NpgsqlCommand(sql, scope.Connection, scope.Transaction))
+        {
+            bind?.Invoke(command);
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                for (var i = 0; i < reader.FieldCount; i++)
+                    row[ToCamel(reader.GetName(i))] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            }
+        }
+
+        await scope.CompleteAsync(ct);
+        return row;
+    }
+
     public async Task<long> ScalarLongAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var failed = false;
         var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
@@ -248,11 +325,27 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             var value = await command.ExecuteScalarAsync(ct);
             return value is null or DBNull ? 0 : Convert.ToInt64(value);
         }
+        catch { failed = true; throw; }
         finally
         {
+            RecordDb(sw, failed);
             ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
+    }
+
+    public async Task<long> ScalarLongInSystemScopeAsync(
+        string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
+    {
+        await using var scope = await BeginSystemScopeAsync(ct);
+        object? value;
+        await using (var command = new NpgsqlCommand(sql, scope.Connection, scope.Transaction))
+        {
+            bind?.Invoke(command);
+            value = await command.ExecuteScalarAsync(ct);
+        }
+        await scope.CompleteAsync(ct);
+        return value is null or DBNull ? 0 : Convert.ToInt64(value);
     }
 
     public async Task<decimal?> ScalarDecimalAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
@@ -274,6 +367,8 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
 
     public async Task<int> ExecuteAsync(string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var failed = false;
         var (connection, tx, owns, scope) = await AcquireAsync(ct);
         try
         {
@@ -281,8 +376,10 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             bind?.Invoke(command);
             return await command.ExecuteNonQueryAsync(ct);
         }
+        catch { failed = true; throw; }
         finally
         {
+            RecordDb(sw, failed);
             ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }

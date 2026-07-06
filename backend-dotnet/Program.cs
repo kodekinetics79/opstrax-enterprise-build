@@ -4,14 +4,156 @@ using Opstrax.Api.Foundation;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Middleware;
+using Opstrax.Api.Observability;
 using Opstrax.Api.Services;
-using System.Collections.Concurrent;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Net;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Structured (JSON) logging ────────────────────────────────────────────────
+// Production emits one JSON object per log line (trace_id/correlation_id/tenant
+// enriched from the ambient TelemetryContext), which Render/Loki/Datadog ingest
+// natively. Dev keeps the readable console formatter. Toggle with Logging:Json.
+var useJsonLogs = builder.Configuration.GetValue("Logging:Json", builder.Environment.IsProduction());
+if (useJsonLogs)
+{
+    builder.Logging.ClearProviders();
+    builder.Logging.AddProvider(new JsonConsoleLoggerProvider());
+}
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+// On SIGTERM (Render deploy/restart) drain in-flight requests for up to 25s
+// before the host force-stops. Combined with health-readiness flipping to 503,
+// this prevents partial writes and dropped requests during a rolling deploy.
+builder.Services.Configure<HostOptions>(o =>
+{
+    o.ShutdownTimeout = TimeSpan.FromSeconds(25);
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+
+    static void AddNetwork(ForwardedHeadersOptions target, string cidr)
+    {
+        var parts = cidr.Split('/', 2, StringSplitOptions.TrimEntries);
+        if (parts.Length == 2 &&
+            IPAddress.TryParse(parts[0], out var address) &&
+            int.TryParse(parts[1], out var prefixLength))
+        {
+            target.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefixLength));
+        }
+    }
+
+    foreach (var cidr in builder.Configuration["Proxy:KnownNetworks"]?
+                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+             ?? [])
+    {
+        AddNetwork(options, cidr);
+    }
+
+    // Render terminates public traffic at a private-network proxy. Trust only the
+    // immediate private peer; ForwardLimit prevents client-supplied XFF chains.
+    if (string.Equals(builder.Configuration["RENDER"], "true", StringComparison.OrdinalIgnoreCase))
+    {
+        AddNetwork(options, "10.0.0.0/8");
+        AddNetwork(options, "172.16.0.0/12");
+        AddNetwork(options, "192.168.0.0/16");
+    }
+});
+builder.Services.AddRateLimiter(options =>
+{
+    const int apiPermitLimit = 240;
+    const int loginPermitLimit = 10;
+    var window = TimeSpan.FromMinutes(1);
+
+    static string ClientKey(HttpContext context) =>
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    static bool IsHealthProbe(PathString path) =>
+        path.Equals("/api/health", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/ready", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase);
+
+    static bool IsLogin(PathString path) =>
+        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);
+
+    var generalApiLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        if (!context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) ||
+            IsHealthProbe(context.Request.Path))
+        {
+            return RateLimitPartition.GetNoLimiter("unlimited");
+        }
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            $"api:{ClientKey(context)}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = apiPermitLimit,
+                QueueLimit = 0,
+                Window = window
+            });
+    });
+
+    var loginLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        if (!IsLogin(context.Request.Path))
+            return RateLimitPartition.GetNoLimiter("not-login");
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            $"login:{ClientKey(context)}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = loginPermitLimit,
+                QueueLimit = 0,
+                Window = window
+            });
+    });
+
+    options.GlobalLimiter = PartitionedRateLimiter.CreateChained(generalApiLimiter, loginLimiter);
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var retryAfter = window;
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var leaseRetryAfter))
+            retryAfter = leaseRetryAfter;
+
+        context.HttpContext.Response.Headers.RetryAfter =
+            Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            ApiResponse<object>.Fail("Too many requests", "Rate limit exceeded"),
+            cancellationToken);
+    };
+});
+// Observability — in-process metrics collector (request/latency/error/DB), SLO
+// evaluation, and reliability aggregation. All singletons; no external deps.
+builder.Services.AddSingleton<ApiMetricsService>();
+builder.Services.AddSingleton<SloService>();
+builder.Services.AddScoped<ReliabilityService>();
+// Data protection — application-layer PII encryption (AES-256-GCM envelope) with a
+// KMS-swappable key provider, + S3-compatible object storage for uploaded files.
+builder.Services.AddSingleton<Opstrax.Api.Security.IDataKeyProvider, Opstrax.Api.Security.EnvDataKeyProvider>();
+builder.Services.AddSingleton<Opstrax.Api.Security.PiiProtectionService>();
+builder.Services.AddSingleton<Opstrax.Api.Storage.IObjectStore>(sp =>
+    Opstrax.Api.Storage.ObjectStoreFactory.Create(
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
@@ -118,20 +260,57 @@ builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
+// Data-retention enforcement — executes the stored retention policies (purge of
+// expired operational logs), respecting legal hold. Opt-in in Production via
+// RetentionWorker:Enabled. Closes the "policy stored but never enforced" gap.
+builder.Services.AddHostedService<RetentionEnforcementBackgroundService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("OpsTraxCors", policy =>
     {
         var origins = builder.Configuration["Cors:AllowedOrigins"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             ?? ["http://localhost:10000"];
-        policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+        policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()
+            // Expose trace headers so the browser can read them cross-origin and
+            // surface a trace reference for a failed request (frontend→DB tracing).
+            .WithExposedHeaders("X-Trace-Id", "X-Correlation-Id", "X-Deployment-Version", "X-CSRF-Token");
     });
 });
 
 var app = builder.Build();
-var rateWindows = new ConcurrentDictionary<string, (DateTimeOffset WindowStart, int Count)>();
-var rateWindowSize = TimeSpan.FromMinutes(1);
-const int apiRequestLimitPerWindow = 240;
+
+// Validate before any database initialization or hosted workload starts. Production
+// must explicitly enable tenant RLS context enforcement; missing/false is fatal.
+{
+    var validator = app.Services.GetRequiredService<ConfigValidationService>();
+    var result = validator.Validate();
+    foreach (var issue in result.Issues.Where(i => i.Level is "fail" or "warn"))
+        app.Logger.Log(issue.Level == "fail" ? LogLevel.Error : LogLevel.Warning,
+            new EventId(0, $"config_{issue.Check}"), "Config check '{Check}': {Message}", issue.Check, issue.Message);
+
+    try
+    {
+        ConfigValidationService.EnsureStartupAllowed(result, app.Environment.IsProduction());
+    }
+    catch (InvalidOperationException)
+    {
+        app.Logger.LogCritical(new EventId(1, "startup_config_invalid"),
+            "Startup aborted: {FailCount} critical configuration failure(s). Fix config and redeploy.", result.FailCount);
+        throw;
+    }
+
+    app.Logger.LogInformation(new EventId(0, "startup_config_ok"),
+        "Config validation: {Status} ({Fail} failures, {Warn} warnings) · version {Version} · env {Env}",
+        result.Status, result.FailCount, result.WarnCount, Opstrax.Api.Observability.BuildInfo.Version, app.Environment.EnvironmentName);
+}
+
+// Route every DB query's latency + success/failure into the metrics collector so
+// DB-latency and DB-connection-failure metrics/alerts have live data. Static hook
+// keeps the many `new Database(config)` call sites (tests, schema services) clean.
+{
+    var apiMetrics = app.Services.GetRequiredService<ApiMetricsService>();
+    Database.MetricsSink = (ms, failed) => apiMetrics.RecordDbQuery(ms, failed);
+}
 
 using (var scope = app.Services.CreateScope())
 {
@@ -203,6 +382,13 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
+// the whole request (continuing an inbound W3C traceparent if present), binds it
+// as ambient so every log line + DB call carries the same trace, records metrics
+// on completion, and echoes the ids back on the response for frontend→DB tracing.
+app.UseForwardedHeaders();
+app.UseMiddleware<RequestTelemetryMiddleware>();
+
 app.Use(async (context, next) =>
 {
     context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
@@ -213,13 +399,14 @@ app.Use(async (context, next) =>
 });
 
 app.UseMiddleware<ErrorHandlingMiddleware>();
+app.UseRateLimiter();
 app.UseMiddleware<CsrfMiddleware>();
 app.UseCors("OpsTraxCors");
 app.UseSwagger();
 
-// RLS enforcement (Option A1). OFF by default: when false the request pipeline
-// behaves exactly as before (no per-request transaction / GUC). Set to true ONLY
-// in an environment whose PG_CONNECTION uses the restricted `opstrax_app` role
+// RLS enforcement (Option A1). Production startup requires this to be explicitly
+// true. Non-production may leave it off for local/test compatibility. Enable it
+// only when PG_CONNECTION uses the restricted `opstrax_app` role
 // (see 2026_06_30_stage20_rls_force_and_app_role.sql). When true, each authenticated
 // request runs inside a tenant-scoped transaction (set_config('app.current_tenant_id',
 // …, true)); the pre-tenant auth bootstrap and public/platform paths run under the
@@ -234,47 +421,9 @@ app.UseWhen(
         {
             var path = context.Request.Path.Value ?? string.Empty;
 
-            // Rate limiting runs BEFORE the auth-bypass branch so unauthenticated
-            // surfaces (/api/auth/login, /api/platform/*, public tracking) are covered
-            // too — otherwise login brute-force is unthrottled. Health probes are
-            // exempt (k8s / load-balancer probes share few source IPs).
-            var isHealthProbe =
-                string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
-            if (!isHealthProbe)
-            {
-                var rlIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                var rlNow = DateTimeOffset.UtcNow;
-                var rlWindow = rateWindows.AddOrUpdate(
-                    rlIp,
-                    _ => (rlNow, 1),
-                    (_, current) => rlNow - current.WindowStart > rateWindowSize
-                        ? (rlNow, 1)
-                        : (current.WindowStart, current.Count + 1));
-                if (rlNow - rlWindow.WindowStart <= rateWindowSize && rlWindow.Count > apiRequestLimitPerWindow)
-                {
-                    context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Too many requests", "Rate limit exceeded"));
-                    return;
-                }
-            }
-
             // Ambient tenant-scope plumbing (no-ops entirely when RLS is off).
             var scopes = context.RequestServices.GetRequiredService<TenantScopeAccessor>();
             var scopedDb = context.RequestServices.GetRequiredService<Database>();
-
-            // Runs a single bootstrap read (session / entitlement) under the platform
-            // bypass GUC so it succeeds even under the restricted role before tenant
-            // context exists. Scoped to just the read — leaves the ambient scope alone.
-            async Task<T> BootstrapReadAsync<T>(Func<Task<T>> read)
-            {
-                if (!rlsEnforceTenantContext) return await read();
-                await using var sys = await scopedDb.BeginSystemScopeAsync(context.RequestAborted);
-                scopes.Current = sys;
-                try { var r = await read(); await sys.CompleteAsync(context.RequestAborted); return r; }
-                finally { scopes.Current = null; }
-            }
 
             // Wraps next() under a bypass scope for no-tenant-context paths (public /
             // platform / device-auth), so their handlers can reach RLS tables.
@@ -358,7 +507,7 @@ app.UseWhen(
             var db = context.RequestServices.GetRequiredService<Database>();
             // Pre-tenant bootstrap read of RLS-protected auth tables — runs under the
             // platform bypass so it succeeds under the restricted role (no tenant yet).
-            var session = await BootstrapReadAsync(() => db.QuerySingleAsync(
+            var sessionSql =
                 @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id, u.permissions_json, r.permissions_json role_permissions_json
                   FROM user_sessions s
                   JOIN users u ON u.id = s.user_id
@@ -366,8 +515,12 @@ app.UseWhen(
                   WHERE s.session_token=@token
                     AND s.expires_at > NOW()
                     AND u.status='Active'
-                  LIMIT 1",
-                c => c.Parameters.AddWithValue("@token", token)));
+                  LIMIT 1";
+            var session = rlsEnforceTenantContext
+                ? await db.QuerySingleInSystemScopeAsync(
+                    sessionSql, c => c.Parameters.AddWithValue("@token", token), context.RequestAborted)
+                : await db.QuerySingleAsync(
+                    sessionSql, c => c.Parameters.AddWithValue("@token", token), context.RequestAborted);
 
             if (session is null)
             {
@@ -400,9 +553,10 @@ app.UseWhen(
                 }
             }
 
-            if (permissions.Count == 0 && string.Equals(roleName, "Super Admin", StringComparison.OrdinalIgnoreCase))
+            if (permissions.Count == 0 &&
+                EndpointMappings.RolePermissionDefaults.TryGetValue(roleName, out var defaultPermissions))
             {
-                permissions.Add("*");
+                permissions.UnionWith(defaultPermissions);
             }
 
             context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
@@ -428,13 +582,16 @@ app.UseWhen(
             var moduleKey = ModuleKeyForPath(path);
             if (moduleKey is not null)
             {
-                var blocked = await BootstrapReadAsync(() => db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@mk AND enabled=false",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@mk", moduleKey);
-                    }));
+                const string entitlementSql =
+                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@mk AND enabled=false";
+                void BindEntitlement(Npgsql.NpgsqlCommand c)
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@mk", moduleKey);
+                }
+                var blocked = rlsEnforceTenantContext
+                    ? await db.ScalarLongInSystemScopeAsync(entitlementSql, BindEntitlement, context.RequestAborted)
+                    : await db.ScalarLongAsync(entitlementSql, BindEntitlement, context.RequestAborted);
                 if (blocked > 0)
                 {
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -473,44 +630,64 @@ app.MapGet("/swagger/index.html", () => Results.Content(SwaggerHtml(), "text/htm
 //   /health  → same as /health/live
 //   /ready   → same as /health/ready
 
-app.MapGet("/health",       () => Results.Ok(new { status = "alive", service = "opstrax-api", utc = DateTime.UtcNow }));
-app.MapGet("/health/live",  () => Results.Ok(new { status = "alive", service = "opstrax-api", utc = DateTime.UtcNow }));
-
-app.MapGet("/ready", async (Database db, CancellationToken ct) =>
+// Liveness — process is up. Cheap, no dependencies. Every response carries the
+// version/environment/uptime block so probes double as deploy verification.
+static object HealthEnvelope(string status, object? checks = null, string? failureReason = null) => new
 {
+    status,
+    service     = Opstrax.Api.Observability.BuildInfo.Service,
+    version     = Opstrax.Api.Observability.BuildInfo.Version,
+    environment = Opstrax.Api.Observability.BuildInfo.Environment,
+    uptime_seconds = Opstrax.Api.Observability.BuildInfo.UptimeSeconds,
+    timestamp   = DateTime.UtcNow.ToString("o"),
+    checks,
+    failure_reason = failureReason,
+};
+
+app.MapGet("/health",       () => Results.Ok(HealthEnvelope("alive")));
+app.MapGet("/health/live",  () => Results.Ok(HealthEnvelope("alive")));
+
+// Readiness — validates the app can actually serve traffic: DB connectivity +
+// critical config (env vars, JWT key, etc.). A failing readiness pulls the
+// instance out of the load balancer without killing the process (unlike liveness).
+static async Task<IResult> ReadinessAsync(Database db, ConfigValidationService cfg, CancellationToken ct)
+{
+    var checks = new Dictionary<string, object>();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var dbOk = false;
+    string? failure = null;
     try
     {
-        await using var conn = await db.OpenAsync(ct);
-        await using var cmd  = conn.CreateCommand();
-        cmd.CommandText      = "SELECT 1";
-        await cmd.ExecuteScalarAsync(ct);
-        return Results.Ok(new { status = "ready", service = "opstrax-api", database = "connected", utc = DateTime.UtcNow });
+        await db.ScalarLongAsync("SELECT 1", ct: ct);
+        sw.Stop();
+        dbOk = true;
+        checks["database"] = new { status = "connected", latency_ms = (int)sw.ElapsedMilliseconds };
     }
-    catch
+    catch (Exception ex)
     {
-        return Results.Json(
-            new { status = "not_ready", service = "opstrax-api", database = "unavailable", utc = DateTime.UtcNow },
-            statusCode: StatusCodes.Status503ServiceUnavailable);
+        sw.Stop();
+        failure = "database_unavailable";
+        checks["database"] = new { status = "unavailable", latency_ms = -1, error_code = ex.GetType().Name };
     }
-});
 
-app.MapGet("/health/ready", async (Database db, CancellationToken ct) =>
-{
-    try
-    {
-        await using var conn = await db.OpenAsync(ct);
-        await using var cmd  = conn.CreateCommand();
-        cmd.CommandText      = "SELECT 1";
-        await cmd.ExecuteScalarAsync(ct);
-        return Results.Ok(new { status = "ready", service = "opstrax-api", database = "connected", utc = DateTime.UtcNow });
-    }
-    catch
-    {
-        return Results.Json(
-            new { status = "not_ready", service = "opstrax-api", database = "unavailable", utc = DateTime.UtcNow },
-            statusCode: StatusCodes.Status503ServiceUnavailable);
-    }
-});
+    // Critical config gate — a 'fail'-level config issue (e.g. missing JWT key or
+    // DB string, default superadmin password in prod) means we are NOT ready.
+    var cfgResult = cfg.Validate();
+    checks["config"] = new { status = cfgResult.Status, failures = cfgResult.FailCount, warnings = cfgResult.WarnCount };
+    if (cfgResult.FailCount > 0) failure ??= "critical_config_invalid";
+
+    var ready = dbOk && cfgResult.FailCount == 0;
+    var envelope = HealthEnvelope(ready ? "ready" : "not_ready", checks, ready ? null : failure);
+    return Results.Json(envelope, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+}
+
+app.MapGet("/ready",        (Database db, ConfigValidationService cfg, CancellationToken ct) => ReadinessAsync(db, cfg, ct));
+app.MapGet("/health/ready", (Database db, ConfigValidationService cfg, CancellationToken ct) => ReadinessAsync(db, cfg, ct));
+
+// Prometheus scrape target — any external monitor (Grafana Agent, Datadog,
+// UptimeRobot-with-metrics) can alert on 5xx rate / p95 / DB failures within 60s.
+app.MapGet("/metrics", (Opstrax.Api.Observability.ApiMetricsService m) =>
+    Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4"));
 
 app.MapGet("/health/deep", async (Database db, ConfigValidationService configValidator, CancellationToken ct) =>
 {
@@ -587,11 +764,23 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
 
     var statusCode = overallStatus == "unhealthy" ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status200OK;
 
+    var failureReason =
+        !dbOk                    ? "database_unavailable" :
+        cfgResult.FailCount > 0  ? "critical_config_invalid" :
+        serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
+                                 ? "background_service_degraded" :
+                                   null;
+
     return Results.Json(new
     {
-        status  = overallStatus,
-        service = "opstrax-api",
-        utc     = DateTime.UtcNow,
+        status         = overallStatus,
+        service        = Opstrax.Api.Observability.BuildInfo.Service,
+        version        = Opstrax.Api.Observability.BuildInfo.Version,
+        environment    = Opstrax.Api.Observability.BuildInfo.Environment,
+        uptime_seconds = Opstrax.Api.Observability.BuildInfo.UptimeSeconds,
+        timestamp      = DateTime.UtcNow.ToString("o"),
+        db_latency_ms  = dbLatMs,
+        failure_reason = failureReason,
         checks
     }, statusCode: statusCode);
 });

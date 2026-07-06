@@ -37,5 +37,8 @@
     "globals": "^17.6.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.4"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }

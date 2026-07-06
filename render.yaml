@@ -5,7 +5,10 @@ services:
     rootDir: backend-dotnet
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    healthCheckPath: /health
+    # Readiness (not liveness) so Render only routes traffic once the DB is
+    # reachable AND critical config is valid; returns 503 until then. See
+    # /health/ready in Program.cs.
+    healthCheckPath: /health/ready
     autoDeploy: true
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
@@ -14,10 +17,64 @@ services:
         value: http://0.0.0.0:8080
       - key: PORT
         value: "8080"
+      # Structured JSON logs (trace_id/correlation_id enriched). Defaults on in
+      # Production; set false to fall back to the human-readable console logger.
+      - key: Logging__Json
+        value: "true"
+      # Deploy version surfaced in /health, logs, traces, and the Reliability
+      # Center. Render also injects RENDER_GIT_COMMIT automatically, used as the
+      # fallback — leave OPSTRAX_DEPLOY_VERSION unset to auto-track the commit.
+      - key: OPSTRAX_DEPLOY_VERSION
+        sync: false
       # Neon connection string (postgresql://user:pass@host/db?sslmode=require).
       # Set in the Render dashboard after the service is created — never in git.
       - key: PG_CONNECTION
         sync: false
+      - key: Jwt__Key
+        sync: false
+      - key: Telemetry__DeviceSecret
+        sync: false
+      - key: Sse__TicketKey
+        sync: false
+      # Production startup fails closed unless tenant context is applied to every
+      # RLS-protected request transaction.
+      - key: Rls__EnforceTenantContext
+        value: "true"
+      # OPTIONAL Neon read-replica connection string. When set, read-only queries
+      # can be offloaded here and reads survive a primary blip (auto-fallback to
+      # primary). Leave unset to route everything to the primary.
+      - key: PG_CONNECTION_REPLICA
+        sync: false
+      # ── Data protection (PII encryption at rest) ──────────────────────────────
+      # base64 of 32 random bytes: `openssl rand -base64 32`. Enables AES-256-GCM
+      # encryption of sensitive PII columns. KMS-swappable (see IDataKeyProvider).
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      # Optional previous key (base64) to keep old ciphertext readable during a rotation.
+      - key: DATA_ENCRYPTION_KEY_PREVIOUS
+        sync: false
+      # Optional dedicated HMAC key (base64) for blind-index lookups; derived from
+      # DATA_ENCRYPTION_KEY if unset.
+      - key: PII_INDEX_KEY
+        sync: false
+      # ── Object storage (S3-compatible: Cloudflare R2 / AWS S3 / Backblaze B2) ──
+      # Durable store for uploaded PODs/signatures/documents. Without these the app
+      # falls back to a NON-durable local dev store (flagged in the Reliability Center).
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      # R2/MinIO/B2 endpoint (e.g. https://<acct>.r2.cloudflarestorage.com). Omit for AWS S3.
+      - key: STORAGE_ENDPOINT
+        sync: false
+      # AWS region (used only when STORAGE_ENDPOINT is unset).
+      - key: STORAGE_REGION
+        sync: false
+      # Enable the data-retention purge worker (default off in Production).
+      - key: RetentionWorker__Enabled
+        value: "false"
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false
@@ -26,6 +83,20 @@ services:
       - key: PLATFORM_SUPERADMIN_EMAIL
         sync: false
       - key: PLATFORM_SUPERADMIN_PASSWORD
+        sync: false
+      - key: DemoSeed__Enabled
+        value: "false"
+      - key: DemoSeed__Password
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
         sync: false
 
   - type: web

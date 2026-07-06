@@ -1,4 +1,5 @@
 using Opstrax.Api.Data;
+using Opstrax.Api.Observability;
 
 namespace Opstrax.Api.Services;
 
@@ -41,11 +42,18 @@ public sealed class IncidentService(Database db)
 
         if (existing > 0) return existing;
 
+        // Auto-link the incident to the trace + deployment that surfaced it (from the
+        // ambient TelemetryContext when created inside a request), so an operator can
+        // pivot straight from the incident to the failing request's trace.
+        var tc = TelemetryContext.Current;
+
         return await db.ScalarLongAsync(
             @"INSERT INTO platform_incidents
                 (company_id, severity, source_service, source_event,
-                 status, title, safe_description, opened_at)
-              VALUES (@cid, @sev, @svc, @evt, 'open', @title, @desc, NOW())
+                 status, title, safe_description, opened_at,
+                 affected_service, trace_id, deployment_version)
+              VALUES (@cid, @sev, @svc, @evt, 'open', @title, @desc, NOW(),
+                 @svc, @trace, @ver)
               RETURNING id",
             c =>
             {
@@ -55,8 +63,47 @@ public sealed class IncidentService(Database db)
                 c.Parameters.AddWithValue("@evt",   sourceEvent);
                 c.Parameters.AddWithValue("@title", title);
                 c.Parameters.AddWithValue("@desc",  (object?)safeDescription ?? DBNull.Value);
+                c.Parameters.AddWithValue("@trace", (object?)tc?.TraceId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@ver",   (object?)tc?.DeploymentVersion ?? BuildInfo.Version);
             }, ct);
     }
+
+    // ── Acknowledge / Resolve (audit trail) ─────────────────────────────────────
+
+    /// <summary>Records acknowledgement (sets acknowledged_at + who), moving the
+    /// incident to 'investigating'. Idempotent — first ack wins.</summary>
+    public Task AcknowledgeAsync(long id, string acknowledgedBy, CancellationToken ct = default) =>
+        db.ExecuteAsync(
+            @"UPDATE platform_incidents
+              SET status = CASE WHEN status = 'open' THEN 'investigating' ELSE status END,
+                  acknowledged_at = COALESCE(acknowledged_at, NOW()),
+                  acknowledged_by = COALESCE(acknowledged_by, @by)
+              WHERE id = @id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@by", acknowledgedBy);
+                c.Parameters.AddWithValue("@id", id);
+            }, ct);
+
+    /// <summary>Resolves an incident with a root-cause + actions-taken record.</summary>
+    public Task ResolveAsync(
+        long id, string? rootCause, string? actionsTaken, string? resolvedBy,
+        CancellationToken ct = default) =>
+        db.ExecuteAsync(
+            @"UPDATE platform_incidents
+              SET status = 'resolved',
+                  resolved_at = COALESCE(resolved_at, NOW()),
+                  root_cause = @rc,
+                  actions_taken = @at,
+                  assigned_to = COALESCE(@by, assigned_to)
+              WHERE id = @id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@rc", (object?)rootCause ?? DBNull.Value);
+                c.Parameters.AddWithValue("@at", (object?)actionsTaken ?? DBNull.Value);
+                c.Parameters.AddWithValue("@by", (object?)resolvedBy ?? DBNull.Value);
+                c.Parameters.AddWithValue("@id", id);
+            }, ct);
 
     // ── Update status ─────────────────────────────────────────────────────────
 
@@ -81,10 +128,15 @@ public sealed class IncidentService(Database db)
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
+    private const string IncidentColumns =
+        @"id, company_id, severity, source_service, source_event,
+          status, title, safe_description, opened_at, resolved_at, assigned_to,
+          acknowledged_at, acknowledged_by, affected_service, affected_tenants,
+          root_cause, actions_taken, trace_id, deployment_version";
+
     public Task<List<Dictionary<string, object?>>> GetOpenAsync(CancellationToken ct = default) =>
         db.QueryAsync(
-            @"SELECT id, company_id, severity, source_service, source_event,
-                     status, title, safe_description, opened_at, resolved_at, assigned_to
+            $@"SELECT {IncidentColumns}
               FROM platform_incidents
               WHERE status IN ('open','investigating','mitigated')
               ORDER BY opened_at DESC
@@ -93,8 +145,7 @@ public sealed class IncidentService(Database db)
     public Task<List<Dictionary<string, object?>>> GetRecentAsync(
         int hours = 48, CancellationToken ct = default) =>
         db.QueryAsync(
-            @"SELECT id, company_id, severity, source_service, source_event,
-                     status, title, safe_description, opened_at, resolved_at, assigned_to
+            $@"SELECT {IncidentColumns}
               FROM platform_incidents
               WHERE opened_at >= NOW() - @h * INTERVAL '1 hour'
               ORDER BY opened_at DESC

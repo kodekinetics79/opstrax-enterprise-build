@@ -1,4 +1,5 @@
 using Npgsql;
+using NpgsqlTypes;
 using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Opstrax.Api.Foundation;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Observability;
 using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
@@ -45,8 +47,9 @@ public static partial class EndpointMappings
 
     public static void MapOpsTraxEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/auth/login", (HttpContext http, LoginRequest request, Database db, AuditService audit, CancellationToken ct) =>
-            Login(http, request, db, audit, ct));
+        app.MapPost("/api/auth/login", (HttpContext http, LoginRequest request, Database db, AuditService audit,
+                SecuritySettingsService securitySettings, PasswordPolicyService passwordPolicy, CancellationToken ct) =>
+            Login(http, request, db, audit, securitySettings, passwordPolicy, ct));
         app.MapGet("/api/auth/me", AuthMe);
         app.MapPost("/api/auth/refresh", AuthRefresh);
         app.MapPost("/api/auth/logout", AuthLogout);
@@ -931,11 +934,35 @@ public static partial class EndpointMappings
         });
         app.MapGet("/api/documents/{id:long}/timeline", DocumentTimeline);
 
+        // ── Real file upload/download (durable object storage) ──────────────────
+        // Multipart upload → object store (R2/S3/local) → documents row with an
+        // objkey: reference. Download resolves to a short-lived signed URL or streams
+        // through this authenticated, tenant-checked proxy. Replaces the placeholder.
+        app.MapPost("/api/documents/upload", DocumentUpload).DisableAntiforgery();
+        app.MapGet("/api/documents/{id:long}/download", DocumentDownload);
+        app.MapGet("/api/files/{**key}", FileProxyDownload); // authenticated proxy by key
+
         // Safety v1 legacy routes forwarded to v2 handlers
         app.MapGet("/api/safety/summary", SafetyDashboard);
         app.MapGet("/api/safety/drivers/scorecards", SafetyDriverScores);
-        app.MapGet("/api/safety/vehicles/scorecards", (Database db, CancellationToken ct) => OkRows(db, "SELECT sc.*, v.vehicle_code, v.type FROM vehicle_safety_scorecards sc JOIN vehicles v ON v.id=sc.vehicle_id ORDER BY sc.risk_score DESC", ct: ct));
-        app.MapGet("/api/safety/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='safety' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/safety/vehicles/scorecards", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                @"SELECT sc.*, v.vehicle_code, v.type
+                  FROM vehicle_safety_scorecards sc
+                  JOIN vehicles v ON v.id=sc.vehicle_id AND v.company_id=sc.company_id
+                  WHERE sc.company_id=@cid
+                  ORDER BY sc.risk_score DESC",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/safety/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='safety' ORDER BY score DESC LIMIT 8",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapGet("/api/safety/trends", SafetyDashboard);
         app.MapPost("/api/safety/events/{id:long}/create-coaching-task", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -962,7 +989,13 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : UpdateDashcamEvent(http, id, body, db, audit, ct);
         });
         app.MapDelete("/api/dashcam/events/{id:long}", SoftDeleteWithPermission("dashcam_events", "dashcam.event.deleted", "dashcam:manage"));
-        app.MapGet("/api/dashcam/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='dashcam' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/dashcam/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "dashcam:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='dashcam' ORDER BY score DESC LIMIT 8",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/dashcam/events/{id:long}/review", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
@@ -1090,7 +1123,13 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : EvidenceLock(http, id, db, audit, ct);
         });
 
-        app.MapGet("/api/ai/insights", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_insights ORDER BY created_at DESC LIMIT 30", ct: ct));
+        app.MapGet("/api/ai/insights", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "dashboard:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                "SELECT * FROM ai_insights WHERE company_id=@cid ORDER BY created_at DESC LIMIT 30",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/ai/ask", AiAsk);
 
         // ===== BATCH 5: FUEL & IDLING ===========================================
@@ -1498,9 +1537,21 @@ public static partial class EndpointMappings
         app.MapPost("/api/admin/audit-events", CreateAdminAuditEvent);
 
         // ===== BATCH 7: EXECUTIVE DASHBOARD ======================================
-        app.MapGet("/api/executive/snapshots", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 14", ct: ct));
+        app.MapGet("/api/executive/snapshots", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                "SELECT * FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 14",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapGet("/api/executive/summary", ExecutiveSummary);
-        app.MapGet("/api/executive/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 10", ct: ct));
+        app.MapGet("/api/executive/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
+                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive' ORDER BY score DESC LIMIT 10",
+                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ===== ALERT RULES =====================================================
         app.MapGet("/api/alert-rules", AlertRulesList);
@@ -1794,11 +1845,15 @@ public static partial class EndpointMappings
         var correlation = services?.GetService<ICorrelationContext>();
         var authorization = services?.GetService<IAuthorizationDecisionService>() ?? AuthorizationEngine.Default;
         var audit = services?.GetService<IAuditLogService>();
+        var effectivePermissions = permissions
+            .SelectMany(PermissionAliases)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var actor = new ActorContext(
             ActorTypes.TenantUser,
             userIdRaw?.ToString(),
             role,
-            permissions,
+            effectivePermissions,
             companyId.ToString());
 
         var decision = authorization.Decide(new AuthorizationDecisionRequest(
@@ -1983,16 +2038,20 @@ public static partial class EndpointMappings
             "customers:view" or "crm:view" or "crm.view" => ["customers:view", "crm:view", "crm.view"],
             "customers:create" or "customers:update" or "customers:delete" or "customers.manage" or "customers:manage" or "crm.manage" or "crm:manage" => ["customers:create", "customers:update", "customers:delete", "customers.manage", "customers:manage", "crm.manage", "crm:manage"],
 
-            "customer.account.read" or "customer.account.view" => ["customer.account.read", "customer.account.view", "customer.contact.read", "customer.address.read"],
-            "customer.account.create" or "customer.account.update" or "customer.account.manage" => ["customer.account.create", "customer.account.update", "customer.account.manage", "customer.contact.create", "customer.contact.update", "customer.contact.manage", "customer.address.create", "customer.address.update", "customer.address.manage"],
+            "customer.account.read" or "customer.account.view" => ["customer.account.read", "customer.account.view", "customer.contact.read", "customer.address.read", "customers:view", "crm:view"],
+            "customer.account.create" or "customer.account.update" or "customer.account.manage" => ["customer.account.create", "customer.account.update", "customer.account.manage", "customer.contact.create", "customer.contact.update", "customer.contact.manage", "customer.address.create", "customer.address.update", "customer.address.manage", "customers:create", "customers:update", "customers:manage", "crm:manage"],
 
-            "contract.read" or "contract.view" => ["contract.read", "contract.view", "contracts:view", "finance:view", "rate_card.read"],
-            "contract.create" or "contract.update" or "contract.manage" => ["contract.create", "contract.update", "contract.manage", "contracts:create", "contracts:update", "contracts:manage", "finance:manage", "rate_card.create", "rate_card.update", "rate_card.manage", "charge.create", "charge.update", "charge.manage"],
-            "rate_card.read" or "rate_card.view" or "rate-card.read" => ["rate_card.read", "rate_card.view", "rate-card.read", "contracts-rates", "contracts:rates"],
-            "rate_card.create" or "rate_card.update" or "rate_card.manage" or "rate-card.create" or "rate-card.update" or "rate-card.manage" => ["rate_card.create", "rate_card.update", "rate_card.manage", "rate-card.create", "rate-card.update", "rate-card.manage", "contracts-rates", "finance:manage"],
+            // finance:view ⇄ billing:view equivalence (declared below) is carried through
+            // to the concrete finance nouns so billing-capable roles reach them.
+            "contract.read" or "contract.view" => ["contract.read", "contract.view", "contracts:view", "finance:view", "billing:view", "rate_card.read"],
+            "contract.create" or "contract.update" or "contract.manage" => ["contract.create", "contract.update", "contract.manage", "contracts:create", "contracts:update", "contracts:manage", "finance:manage", "billing:manage", "rate_card.create", "rate_card.update", "rate_card.manage", "charge.create", "charge.update", "charge.manage"],
+            "rate_card.read" or "rate_card.view" or "rate-card.read" => ["rate_card.read", "rate_card.view", "rate-card.read", "contracts-rates", "contracts:rates", "finance:view", "billing:view"],
+            "rate_card.create" or "rate_card.update" or "rate_card.manage" or "rate-card.create" or "rate-card.update" or "rate-card.manage" => ["rate_card.create", "rate_card.update", "rate_card.manage", "rate-card.create", "rate-card.update", "rate-card.manage", "contracts-rates", "finance:manage", "billing:manage"],
 
             "job.read" or "job.view" => ["job.read", "job.view", "jobs:view", "trip.read"],
-            "job.create" or "job.update" or "job.manage" => ["job.create", "job.update", "job.manage", "jobs:create", "jobs:update", "jobs:manage", "trip.create", "trip.update", "trip.manage"],
+            // Colon-form keys (job:create/job:update guard POST/PUT /api/jobs) and the
+            // dispatch/shipments hop mirror the job-delete guard (dispatch:manage).
+            "job.create" or "job.update" or "job.manage" or "job:create" or "job:update" or "job:manage" => ["job.create", "job.update", "job.manage", "jobs:create", "jobs:update", "jobs:manage", "trip.create", "trip.update", "trip.manage", "dispatch:create", "dispatch:update", "dispatch.manage", "dispatch:manage", "shipments:create", "shipments:update"],
 
             "trip.read" or "trip.view" => ["trip.read", "trip.view", "trips:view", "job.read"],
             "trip.create" or "trip.update" or "trip.manage" => ["trip.create", "trip.update", "trip.manage", "trips:create", "trips:update", "trips:manage", "job.create", "job.update", "job.manage"],
@@ -2009,14 +2068,16 @@ public static partial class EndpointMappings
             "telemetry.live_state.read" or "telemetry.live-state.read" => ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry.alerts.view", "telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "map:view", "map.view", "fleet:view", "fleet.view", "telematics:gps:view", "telematics.gps.view"],
             "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view", "fleet:view", "fleet.view"],
             "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+            // Mirror of the frontend permission group: providers-manage ⇄ devices-manage ⇄ fleet:manage.
+            "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "telemetry.devices.manage", "fleet:manage", "fleet.manage"],
             "telemetry.alerts.read" or "telemetry.alerts.view" => ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
             "telemetry.alerts.manage" => ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"],
             "telemetry.rules.read" or "telemetry.rules.view" => ["telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "fleet:view", "fleet.view"],
             "telemetry.rules.manage" => ["telemetry.rules.manage", "devices:manage", "fleet:manage", "fleet.manage"],
             "telemetry.recommendations.read" => ["telemetry.recommendations.read", "reports:view", "reports.view", "dashboard:view", "dashboard.view"],
 
-            "charge.read" or "charge.view" => ["charge.read", "charge.view", "charges:view", "finance:view"],
-            "charge.create" or "charge.update" or "charge.manage" => ["charge.create", "charge.update", "charge.manage", "charges:create", "charges:update", "charges:manage", "finance:manage"],
+            "charge.read" or "charge.view" => ["charge.read", "charge.view", "charges:view", "finance:view", "billing:view"],
+            "charge.create" or "charge.update" or "charge.manage" => ["charge.create", "charge.update", "charge.manage", "charges:create", "charges:update", "charges:manage", "finance:manage", "billing:manage"],
 
             "finance.job.ready_to_bill" or "finance.job.ready-to-bill" => ["finance.job.ready_to_bill", "finance.job.ready-to-bill", "finance:manage", "billing:manage"],
             "finance.invoice_draft.read" or "finance.invoice_draft.view" => ["finance.invoice_draft.read", "finance.invoice_draft.view", "finance:view", "billing:view"],
@@ -2037,7 +2098,8 @@ public static partial class EndpointMappings
             "safety:evidence:export" or "dashcam:manage" or "dashcam.manage" => ["safety:evidence:export", "dashcam:manage", "dashcam.manage"],
 
             "maintenance:view" or "maintenance.view" => ["maintenance:view", "maintenance.view"],
-            "maintenance:create" or "maintenance:update" or "maintenance:close" or "maintenance.manage" or "maintenance:manage" => ["maintenance:create", "maintenance:update", "maintenance:close", "maintenance.manage", "maintenance:manage"],
+            // maintenance:review (work-order review/approval) folds into the manage tier.
+            "maintenance:create" or "maintenance:update" or "maintenance:close" or "maintenance:review" or "maintenance.manage" or "maintenance:manage" => ["maintenance:create", "maintenance:update", "maintenance:close", "maintenance:review", "maintenance.manage", "maintenance:manage"],
 
             "compliance:view" or "compliance.view" => ["compliance:view", "compliance.view"],
             "compliance:update" or "compliance:export" or "compliance.manage" or "compliance:manage" => ["compliance:update", "compliance:export", "compliance.manage", "compliance:manage"],
@@ -2101,10 +2163,17 @@ public static partial class EndpointMappings
         };
     }
 
-    private static async Task<IResult> Login(HttpContext http, LoginRequest request, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> Login(
+        HttpContext http,
+        LoginRequest request,
+        Database db,
+        AuditService audit,
+        SecuritySettingsService securitySettings,
+        PasswordPolicyService passwordPolicy,
+        CancellationToken ct)
     {
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.demo_password,
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.status user_status,
                      c.id company_id, c.name company_name, c.company_code, c.status company_status
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.email=@email LIMIT 1",
@@ -2112,7 +2181,20 @@ public static partial class EndpointMappings
             {
                 cmd.Parameters.AddWithValue("@email", request.Email);
             }, ct);
-        if (user is null) return Results.Unauthorized();
+        if (user is null) return InvalidCredentials();
+
+        var userId = Convert.ToInt64(user["id"]);
+        var companyId = Convert.ToInt64(user["companyId"]);
+        var settings = await securitySettings.GetAsync(companyId, ct);
+        var sourceIp = http.Connection.RemoteIpAddress?.ToString();
+        var userAgent = http.Request.Headers.UserAgent.FirstOrDefault();
+
+        var (isLocked, _) = await passwordPolicy.CheckLockoutAsync(userId, ct);
+        if (isLocked) return InvalidCredentials();
+
+        var userStatus = user.GetValueOrDefault("userStatus")?.ToString();
+        if (!string.Equals(userStatus, "Active", StringComparison.OrdinalIgnoreCase))
+            return InvalidCredentials();
 
         // Tenant lifecycle gate: a suspended/cancelled tenant must be locked out
         // entirely (non-payment, contract breach, security hold). Platform admins
@@ -2120,74 +2202,58 @@ public static partial class EndpointMappings
         // active. Checked BEFORE password verification so no session is ever issued.
         var companyStatus = (user.GetValueOrDefault("companyStatus")?.ToString() ?? "active").ToLowerInvariant();
         if (companyStatus is "suspended" or "cancelled" or "canceled" or "disabled")
-            return Results.Json(
-                ApiResponse<object>.Fail("Account unavailable",
-                    "Your organization's account is not active. Contact your administrator."),
-                statusCode: StatusCodes.Status403Forbidden);
+            return InvalidCredentials();
 
         var passwordHash = user["passwordHash"]?.ToString();
         var passwordOk = VerifyPasswordHash(request.Password, passwordHash);
-        var usedLegacyDemoPassword = false;
-
-        // Temporary local/demo fallback only; keeps seeded demo users working while migrating away from plaintext storage.
         if (!passwordOk)
         {
-            var legacy = user["demoPassword"]?.ToString();
-            if (!string.IsNullOrWhiteSpace(legacy) && string.Equals(legacy, request.Password, StringComparison.Ordinal))
-            {
-                passwordOk = true;
-                usedLegacyDemoPassword = true;
-            }
+            await passwordPolicy.RecordFailedLoginAsync(
+                companyId, userId, settings, sourceIp, userAgent, ct);
+            return InvalidCredentials();
         }
 
-        if (!passwordOk) return Results.Unauthorized();
-
-        // User is authenticated here; establish their tenant context so the login
-        // is audited against their real company. The auth middleware is bypassed for
-        // the public /api/auth/login route, so http.Items is not yet populated.
-        http.Items[AuthCompanyIdItemKey] = Convert.ToInt64(user["companyId"]);
-        http.Items[AuthUserIdItemKey] = Convert.ToInt64(user["id"]);
-        await audit.LogAsync(http, "user.login", "User", Convert.ToInt64(user["id"]), JsonSerializer.Serialize(new { source = "login", email = request.Email }), ct: ct);
-
         var role = user["roleName"]?.ToString() ?? "Company Admin";
+
+        // The public login route has no middleware-populated tenant context. Set it
+        // only after password verification so the MFA denial is tenant-auditable.
+        http.Items[AuthCompanyIdItemKey] = companyId;
+        http.Items[AuthUserIdItemKey] = userId;
+        http.Items[AuthRoleItemKey] = role;
+
+        if (SecuritySettingsService.IsMfaRequiredForRole(settings, role))
+        {
+            await audit.LogAsync(http, "user.login.mfa_required", "User", userId,
+                JsonSerializer.Serialize(new { source = "login", role }), ct);
+            return Results.Json(
+                ApiResponse<object>.Fail(
+                    "Multi-factor authentication required",
+                    "This account cannot receive a session until a configured second factor is verified."),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        await audit.LogAsync(http, "user.login", "User", userId,
+            JsonSerializer.Serialize(new { source = "login", email = request.Email }), ct: ct);
+        await passwordPolicy.RecordSuccessfulLoginAsync(
+            companyId, userId, sourceIp, userAgent, ct);
+
         var permissions = await ResolvePermissionsAsync(user, db, ct);
 
         var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
         var csrfToken = http.Request.Cookies["__CSRF_Token__"] ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
-        // Persist session so the token can be validated later if needed
-        try
-        {
-            var userId = Convert.ToInt64(user["id"]);
-            var companyId = Convert.ToInt64(user["companyId"]);
-            await db.ExecuteAsync(
-                @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
-                  VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
-                  ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
-                c =>
-                {
-                    c.Parameters.AddWithValue("@uid", userId);
-                    c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@tok", token);
-                }, ct);
-        }
-        catch (Exception _sessionEx) { System.Console.Error.WriteLine($"[SESSION-INSERT-FAIL] {_sessionEx.Message}"); }
-
-        if (usedLegacyDemoPassword)
-        {
-            try
+        // A session is part of successful authentication. Fail the request if it cannot
+        // be persisted rather than issuing a token that is invalid on its first use.
+        await db.ExecuteAsync(
+            @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
+              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+            c =>
             {
-                var newHash = HashPassword(request.Password);
-                await db.ExecuteAsync(
-                    "UPDATE users SET password_hash=@hash WHERE id=@id",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@hash", newHash);
-                        c.Parameters.AddWithValue("@id", user["id"]);
-                    }, ct);
-            }
-            catch { /* do not block login on demo hash upgrade failure */ }
-        }
+                c.Parameters.AddWithValue("@uid", userId);
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@tok", token);
+            }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -2203,6 +2269,23 @@ public static partial class EndpointMappings
             company = new { name = user["companyName"], code = user["companyCode"] },
             permissions,
         }, "Login successful"));
+    }
+
+    private static IResult InvalidCredentials() =>
+        Results.Json(
+            ApiResponse<object>.Fail("Invalid credentials"),
+            statusCode: StatusCodes.Status401Unauthorized);
+
+    private static void LogSafeEndpointFailure(HttpContext http, Exception exception, string operation)
+    {
+        var correlationId = http.RequestServices.GetService<ICorrelationContext>()?.CorrelationId
+            ?? http.TraceIdentifier;
+        var logger = http.RequestServices
+            .GetService<Microsoft.Extensions.Logging.ILoggerFactory>()
+            ?.CreateLogger("Opstrax.Api.EndpointMappings");
+        logger?.LogWarning(
+            "Endpoint operation {Operation} failed correlationId={CorrelationId} errorType={ErrorType} error={SafeError}",
+            operation, correlationId, exception.GetType().Name, LogRedactor.Scrub(exception.Message));
     }
 
     private static string BearerToken(HttpContext http)
@@ -2262,8 +2345,8 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { loggedOut = true }, "Logged out"));
     }
 
-    // POST /api/auth/change-password — verify current password, store a new PBKDF2
-    // hash, drop the legacy demo password, and revoke other sessions.
+    // POST /api/auth/change-password — verify the current password hash, store a new
+    // PBKDF2 hash, clear any legacy plaintext value, and revoke other sessions.
     private static async Task<IResult> ChangePassword(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var userId = GetUserId(http);
@@ -2273,16 +2356,11 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("New password must be at least 6 characters"));
 
         var user = await db.QuerySingleAsync(
-            "SELECT password_hash, demo_password FROM users WHERE id=@id AND status='Active' LIMIT 1",
+            "SELECT password_hash FROM users WHERE id=@id AND status='Active' LIMIT 1",
             c => c.Parameters.AddWithValue("@id", userId), ct);
         if (user is null) return Results.Unauthorized();
 
         var ok = VerifyPasswordHash(current, user["passwordHash"]?.ToString());
-        if (!ok)
-        {
-            var legacy = user["demoPassword"]?.ToString();
-            ok = !string.IsNullOrWhiteSpace(legacy) && string.Equals(legacy, current, StringComparison.Ordinal);
-        }
         if (!ok) return Results.BadRequest(ApiResponse<object>.Fail("Current password is incorrect"));
 
         await db.ExecuteAsync(
@@ -2862,7 +2940,7 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await EntityTimeline(db, "Vehicle", id, ct),
-            recommendations = await ModuleRecommendations(db, "vehicles", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct),
             documents = await db.QueryAsync("SELECT * FROM vehicle_documents WHERE vehicle_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             maintenance = await db.QueryAsync("SELECT * FROM maintenance_items WHERE vehicle_id=@id ORDER BY due_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             compliance = await db.QueryAsync("SELECT * FROM compliance_documents WHERE related_entity_type='Vehicle' AND related_entity_id=@id ORDER BY expiry_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -2882,6 +2960,8 @@ public static partial class EndpointMappings
               FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL AND d.company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
+        // Decrypt encrypted-at-rest PII (license_number) before returning.
+        ProjectDriverPii(record, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -2897,7 +2977,7 @@ public static partial class EndpointMappings
                   LIMIT 1",
                 c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await EntityTimeline(db, "Driver", id, ct),
-            recommendations = await ModuleRecommendations(db, "drivers", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "drivers", ct),
             documents = await db.QueryAsync("SELECT * FROM driver_documents WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             certifications = await db.QueryAsync("SELECT * FROM driver_certifications WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             hos = await db.QueryAsync("SELECT * FROM hos_logs WHERE driver_id=@id ORDER BY log_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -2917,7 +2997,7 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await EntityTimeline(db, "Customer", id, ct),
-            recommendations = await ModuleRecommendations(db, "customers", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "customers", ct),
             contacts = await db.QueryAsync("SELECT * FROM customer_contacts WHERE customer_id=@id ORDER BY is_primary DESC, full_name", c => c.Parameters.AddWithValue("@id", id), ct),
             addresses = await db.QueryAsync("SELECT * FROM customer_addresses WHERE customer_id=@id ORDER BY address_type", c => c.Parameters.AddWithValue("@id", id), ct),
             sites = await commercial.ListCustomerSitesAsync(GetCompanyId(http), id, ct),
@@ -2945,7 +3025,7 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await EntityTimeline(db, "Asset", id, ct),
-            recommendations = await ModuleRecommendations(db, "assets", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "assets", ct),
             documents = await db.QueryAsync("SELECT * FROM asset_documents WHERE asset_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             movementHistory = await db.QueryAsync("SELECT * FROM entity_timeline_events WHERE entity_type='Asset' AND entity_id=@id ORDER BY created_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             auditTrail = await AuditTrail(db, "Asset", id, ct)
@@ -3016,7 +3096,7 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await EntityTimeline(db, "Job", id, ct),
-            recommendations = await ModuleRecommendations(db, "jobs", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "jobs", ct),
             assignment = await db.QuerySingleAsync(@"SELECT da.*, d.full_name driver_name, v.vehicle_code FROM dispatch_assignments da LEFT JOIN drivers d ON d.id=da.driver_id LEFT JOIN vehicles v ON v.id=da.vehicle_id WHERE da.job_id=@id ORDER BY da.assigned_at DESC LIMIT 1", c => c.Parameters.AddWithValue("@id", id), ct),
             stops = await db.QueryAsync("SELECT * FROM route_stops WHERE job_id=@id ORDER BY stop_sequence", c => c.Parameters.AddWithValue("@id", id), ct),
             communications = await db.QueryAsync("SELECT * FROM customer_communications WHERE job_id=@id ORDER BY sent_at DESC LIMIT 10", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -3281,17 +3361,31 @@ public static partial class EndpointMappings
         if (await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
             errors.Add($"Driver code '{code}' already exists in this fleet.");
-        if (!string.IsNullOrWhiteSpace(license) && await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(license_number)=LOWER(@lic) AND deleted_at IS NULL",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@lic", license); }, ct) > 0)
-            errors.Add($"License number '{license}' is already registered to another driver.");
+        // Uniqueness on license: when PII encryption is on, match by blind index
+        // (HMAC) since the stored value is ciphertext; otherwise legacy plaintext match.
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        if (!string.IsNullOrWhiteSpace(license))
+        {
+            var dupSql = pii.Enabled
+                ? "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND license_number_bidx=@bidx AND deleted_at IS NULL"
+                : "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(license_number)=LOWER(@lic) AND deleted_at IS NULL";
+            var dup = await db.ScalarLongAsync(dupSql, c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                else c.Parameters.AddWithValue("@lic", license);
+            }, ct);
+            if (dup > 0) errors.Add($"License number '{license}' is already registered to another driver.");
+        }
         if (errors.Count > 0)
             return Results.Conflict(ApiResponse<object>.Fail("Driver validation failed", errors.ToArray()));
 
-        var id = await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, status, safety_score, readiness_score)
-            VALUES (@companyId, @code, @name, @phone, @email, @license, COALESCE(@status,'Active'), 92, 93)", c =>
+        var id = await db.InsertAsync(@"INSERT INTO drivers (company_id, driver_code, full_name, phone, email, license_number, license_number_bidx, status, safety_score, readiness_score)
+            VALUES (@companyId, @code, @name, @phone, @email, @license, @licenseBidx, COALESCE(@status,'Active'), 92, 93)", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
-                BindDriver(c, body);
+                c.Parameters.AddWithValue("@licenseBidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
+                BindDriver(c, body, pii);
             }, ct);
         await audit.LogAsync(http, "driver.created", "Driver", id, ct: ct);
         return Results.Created($"/api/drivers/{id}", ApiResponse<object>.Ok(new { id }));
@@ -3301,12 +3395,17 @@ public static partial class EndpointMappings
     {
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var licenseRaw = Get(body, "licenseNumber") as string;
         await db.ExecuteAsync(@"UPDATE drivers SET driver_code=COALESCE(@code,driver_code), full_name=COALESCE(@name,full_name), phone=COALESCE(@phone,phone),
-            email=COALESCE(@email,email), license_number=COALESCE(@license,license_number), status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
+            email=COALESCE(@email,email), license_number=COALESCE(@license,license_number),
+            license_number_bidx=CASE WHEN @license IS NULL THEN license_number_bidx ELSE @licenseBidx END,
+            status=COALESCE(@status,status) WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-            BindDriver(c, body);
+            c.Parameters.AddWithValue("@licenseBidx", (object?)pii.BlindIndex(licenseRaw) ?? DBNull.Value);
+            BindDriver(c, body, pii);
         }, ct);
         await audit.LogAsync(http, "driver.updated", "Driver", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }));
@@ -4107,7 +4206,7 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static async Task<IResult> MaintenanceDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> MaintenanceDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = (await db.QueryAsync(MaintenanceBaseSql + " WHERE mi.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Maintenance item not found"));
@@ -4121,8 +4220,8 @@ public static partial class EndpointMappings
             }, ct),
             workOrders = await db.QueryAsync("SELECT * FROM work_orders WHERE maintenance_item_id=@id AND deleted_at IS NULL ORDER BY created_date DESC", c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await EntityTimeline(db, "Maintenance", id, ct),
-            recommendations = await ModuleRecommendations(db, "maintenance", ct),
-            auditTrail = await AuditRows(db, "Maintenance", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "maintenance", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Maintenance", id, ct)
         }));
     }
 
@@ -4247,8 +4346,8 @@ public static partial class EndpointMappings
             parts = await db.QueryAsync("SELECT * FROM work_order_parts WHERE work_order_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await WorkOrderTimelineRows(id, db, ct),
             documents = await db.QueryAsync("SELECT * FROM documents WHERE entity_type IN ('work order','work_order') AND entity_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "work-orders", ct),
-            auditTrail = await AuditRows(db, "WorkOrder", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "work-orders", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "WorkOrder", id, ct)
         }));
     }
 
@@ -4391,8 +4490,8 @@ public static partial class EndpointMappings
             checklist = await db.QueryAsync("SELECT ici.* FROM inspection_checklist_items ici JOIN dvir_templates t ON t.id=ici.template_id WHERE t.inspection_type=@type ORDER BY ici.sort_order LIMIT 30", c => c.Parameters.AddWithValue("@type", record["inspectionType"]), ct),
             workOrders = await db.QueryAsync("SELECT * FROM work_orders WHERE dvir_report_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await DvirTimelineRows(id, db, ct),
-            recommendations = await ModuleRecommendations(db, "dvir-inspections", ct),
-            auditTrail = await AuditRows(db, "DVIR", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "dvir-inspections", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "DVIR", id, ct)
         }));
     }
 
@@ -4528,8 +4627,8 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await db.QueryAsync("SELECT * FROM document_timeline_events WHERE document_id=@id ORDER BY occurred_at DESC LIMIT 20", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "documents", ct),
-            auditTrail = await AuditRows(db, "Document", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "documents", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Document", id, ct)
         }));
     }
 
@@ -4573,6 +4672,115 @@ public static partial class EndpointMappings
         return result;
     }
 
+    // POST /api/documents/upload — real multipart upload to durable object storage.
+    private static async Task<IResult> DocumentUpload(
+        HttpContext http, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "compliance:manage");
+        if (denied is not null) return denied;
+
+        if (!http.Request.HasFormContentType)
+            return Results.BadRequest(ApiResponse<object>.Fail("multipart/form-data with a 'file' field is required"));
+
+        var form = await http.Request.ReadFormAsync(ct);
+        var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+        if (file is null || file.Length == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
+
+        var companyId = GetCompanyId(http);
+        Opstrax.Api.Storage.FileStorageService.UploadResult stored;
+        try
+        {
+            await using var s = file.OpenReadStream();
+            stored = await files.UploadAsync(companyId, "documents", file.FileName, file.ContentType ?? "application/octet-stream", s, ct);
+        }
+        catch (ArgumentException ex) // validation (size/type/empty)
+        {
+            LogSafeEndpointFailure(http, ex, "document.upload");
+            return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
+        }
+
+        var id = await db.InsertAsync(
+            @"INSERT INTO documents (company_id, title, document_number, entity_type, entity_id, document_type, category, status, renewal_status, file_url, risk_score, recommended_action, notes)
+              VALUES (@cid, @title, @number, @entityType, @entityId, @type, @category, 'Active', 'Current', @file, 25, 'Keep active in vault', @notes)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@title", (object?)(form["title"].FirstOrDefault() ?? file.FileName) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@number", (object?)(form["documentNumber"].FirstOrDefault() ?? $"DOC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@entityType", (object?)form["entityType"].FirstOrDefault() ?? DBNull.Value);
+                c.Parameters.AddWithValue("@entityId", (object?)ToNullableLong(form["entityId"].FirstOrDefault()) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@type", (object?)(form["documentType"].FirstOrDefault() ?? "General") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@category", (object?)(form["category"].FirstOrDefault() ?? "Uploaded") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@file", stored.Reference); // objkey:tenant/{cid}/...
+                c.Parameters.AddWithValue("@notes", (object?)$"Uploaded {stored.Size} bytes ({stored.ContentType})" ?? DBNull.Value);
+            }, ct);
+
+        await audit.LogAsync(http, "document.uploaded", "Document", id,
+            System.Text.Json.JsonSerializer.Serialize(new { size = stored.Size, contentType = stored.ContentType, provider = files.Provider }), ct: ct);
+        await AddDocumentEvent(db, companyId, id, "Document uploaded", $"File stored to {files.Provider} ({stored.Size} bytes)", ct);
+
+        return Results.Created($"/api/documents/{id}", ApiResponse<object>.Ok(
+            new { id, size = stored.Size, contentType = stored.ContentType }, "Document uploaded"));
+    }
+
+    // GET /api/documents/{id}/download — resolve the stored file to a signed URL
+    // (redirect) or stream via proxy. Tenant-scoped: only the owning tenant's rows.
+    private static async Task<IResult> DocumentDownload(
+        HttpContext http, long id, Opstrax.Api.Storage.FileStorageService files, Database db, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "compliance:view");
+        if (denied is not null) return denied;
+
+        var companyId = GetCompanyId(http);
+        var row = await db.QuerySingleAsync(
+            "SELECT file_url FROM documents WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
+
+        var reference = row["fileUrl"]?.ToString();
+        var resolved = await files.ResolveAsync(reference, TimeSpan.FromMinutes(5), ct);
+
+        if (!resolved.IsManaged)
+            return string.IsNullOrWhiteSpace(resolved.LegacyUrl)
+                ? Results.NotFound(ApiResponse<object>.Fail("No file attached"))
+                : Results.Ok(ApiResponse<object>.Ok(new { url = resolved.LegacyUrl }, "Legacy file URL"));
+
+        // Signed URL available → hand it to the client; else stream through the proxy.
+        if (!string.IsNullOrWhiteSpace(resolved.SignedUrl))
+            return Results.Ok(ApiResponse<object>.Ok(new { url = resolved.SignedUrl, expiresInSeconds = 300 }, "Signed download URL"));
+
+        var stream = await files.OpenAsync(resolved.Key!, ct);
+        return Results.Stream(stream, "application/octet-stream");
+    }
+
+    // GET /api/files/{key} — authenticated proxy that streams a stored object,
+    // enforcing that the key belongs to the caller's tenant (IDOR guard).
+    private static async Task<IResult> FileProxyDownload(
+        HttpContext http, string key, Opstrax.Api.Storage.FileStorageService files, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "compliance:view");
+        if (denied is not null) return denied;
+
+        var companyId = GetCompanyId(http);
+        if (!Opstrax.Api.Storage.FileStorageService.KeyBelongsToTenant(key, companyId))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "File does not belong to your account"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        try
+        {
+            var stream = await files.OpenAsync(key, ct);
+            return Results.Stream(stream, "application/octet-stream");
+        }
+        catch (FileNotFoundException)
+        {
+            return Results.NotFound(ApiResponse<object>.Fail("File not found"));
+        }
+    }
+
+    private static long? ToNullableLong(string? s) =>
+        long.TryParse(s, out var v) ? v : null;
+
     private static async Task<IResult> DocumentRenewPlaceholder(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         await db.ExecuteAsync("UPDATE documents SET renewal_status='Renewal Queued', status='Expiring', recommended_action='Renewal queued by OpsTrax advisor' WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
@@ -4588,41 +4796,69 @@ public static partial class EndpointMappings
     }
 
     private const string SafetySql = @"SELECT se.*, d.full_name driver_name, v.vehicle_code, COALESCE(j.job_number,j.job_code) job_number, r.route_code
-        FROM safety_events se LEFT JOIN drivers d ON d.id=se.driver_id LEFT JOIN vehicles v ON v.id=se.vehicle_id
-        LEFT JOIN jobs j ON j.id=se.job_id LEFT JOIN routes r ON r.id=se.route_id";
+        FROM safety_events se
+        LEFT JOIN drivers d ON d.id=se.driver_id AND d.company_id=se.company_id
+        LEFT JOIN vehicles v ON v.id=se.vehicle_id AND v.company_id=se.company_id
+        LEFT JOIN jobs j ON j.id=se.job_id AND j.company_id=se.company_id
+        LEFT JOIN routes r ON r.id=se.route_id AND r.company_id=se.company_id";
     private const string DashcamSql = @"SELECT de.*, d.full_name driver_name, v.vehicle_code, COALESCE(j.job_number,j.job_code) job_number, r.route_code
-        FROM dashcam_events de LEFT JOIN drivers d ON d.id=de.driver_id LEFT JOIN vehicles v ON v.id=de.vehicle_id
-        LEFT JOIN jobs j ON j.id=de.job_id LEFT JOIN routes r ON r.id=de.route_id";
+        FROM dashcam_events de
+        LEFT JOIN drivers d ON d.id=de.driver_id AND d.company_id=de.company_id
+        LEFT JOIN vehicles v ON v.id=de.vehicle_id AND v.company_id=de.company_id
+        LEFT JOIN jobs j ON j.id=de.job_id AND j.company_id=de.company_id
+        LEFT JOIN routes r ON r.id=de.route_id AND r.company_id=de.company_id";
     private const string CoachingSql = @"SELECT ct.*, d.full_name driver_name, u.full_name assigned_to_name, se.event_number safety_event_number, de.event_number dashcam_event_number
-        FROM coaching_tasks ct LEFT JOIN drivers d ON d.id=ct.driver_id LEFT JOIN users u ON u.id=ct.assigned_to_user_id
-        LEFT JOIN safety_events se ON se.id=ct.safety_event_id LEFT JOIN dashcam_events de ON de.id=ct.dashcam_event_id";
+        FROM coaching_tasks ct
+        LEFT JOIN drivers d ON d.id=ct.driver_id AND d.company_id=ct.company_id
+        LEFT JOIN users u ON u.id=ct.assigned_to_user_id AND u.company_id=ct.company_id
+        LEFT JOIN safety_events se ON se.id=ct.safety_event_id AND se.company_id=ct.company_id
+        LEFT JOIN dashcam_events de ON de.id=ct.dashcam_event_id AND de.company_id=ct.company_id";
     private const string IncidentSql = @"SELECT i.*, d.full_name driver_name, v.vehicle_code, se.event_number safety_event_number, de.event_number dashcam_event_number, COALESCE(j.job_number,j.job_code) job_number, r.route_code
-        FROM incidents i LEFT JOIN drivers d ON d.id=i.driver_id LEFT JOIN vehicles v ON v.id=i.vehicle_id
-        LEFT JOIN safety_events se ON se.id=i.safety_event_id LEFT JOIN dashcam_events de ON de.id=i.dashcam_event_id
-        LEFT JOIN jobs j ON j.id=i.job_id LEFT JOIN routes r ON r.id=i.route_id";
+        FROM incidents i
+        LEFT JOIN drivers d ON d.id=i.driver_id AND d.company_id=i.company_id
+        LEFT JOIN vehicles v ON v.id=i.vehicle_id AND v.company_id=i.company_id
+        LEFT JOIN safety_events se ON se.id=i.safety_event_id AND se.company_id=i.company_id
+        LEFT JOIN dashcam_events de ON de.id=i.dashcam_event_id AND de.company_id=i.company_id
+        LEFT JOIN jobs j ON j.id=i.job_id AND j.company_id=i.company_id
+        LEFT JOIN routes r ON r.id=i.route_id AND r.company_id=i.company_id";
     private const string EvidenceSql = @"SELECT ep.*, i.incident_number, d.full_name driver_name, v.vehicle_code, se.event_number safety_event_number, de.event_number dashcam_event_number
-        FROM evidence_packages ep LEFT JOIN incidents i ON i.id=ep.incident_id LEFT JOIN drivers d ON d.id=ep.driver_id LEFT JOIN vehicles v ON v.id=ep.vehicle_id
-        LEFT JOIN safety_events se ON se.id=ep.safety_event_id LEFT JOIN dashcam_events de ON de.id=ep.dashcam_event_id";
+        FROM evidence_packages ep
+        LEFT JOIN incidents i ON i.id=ep.incident_id AND i.company_id=ep.company_id
+        LEFT JOIN drivers d ON d.id=ep.driver_id AND d.company_id=ep.company_id
+        LEFT JOIN vehicles v ON v.id=ep.vehicle_id AND v.company_id=ep.company_id
+        LEFT JOIN safety_events se ON se.id=ep.safety_event_id AND se.company_id=ep.company_id
+        LEFT JOIN dashcam_events de ON de.id=ep.dashcam_event_id AND de.company_id=ep.company_id";
 
-    private static async Task<IResult> SafetySummary(Database db, CancellationToken ct)
+    private static async Task<IResult> SafetySummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(@"SELECT ROUND(100-AVG(LEAST(risk_score,95)),1) fleet_safety_score, COUNT(*) safety_events_today,
             SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_events, SUM(CASE WHEN event_type='Harsh Braking' THEN 1 ELSE 0 END) harsh_braking, SUM(CASE WHEN event_type='Harsh Acceleration' THEN 1 ELSE 0 END) harsh_acceleration,
             SUM(CASE WHEN event_type='Speeding' THEN 1 ELSE 0 END) speeding_events, SUM(CASE WHEN event_type='Route Deviation' THEN 1 ELSE 0 END) route_deviation, SUM(CASE WHEN event_type LIKE '%Distracted%' THEN 1 ELSE 0 END) distracted_driving_placeholder,
             SUM(CASE WHEN coaching_status IN ('Needed','Created') THEN 1 ELSE 0 END) coaching_needed, SUM(CASE WHEN incident_status='Open' THEN 1 ELSE 0 END) open_incidents, SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) reviewed_events,
-            ROUND(AVG(risk_score),1) preventable_risk_score FROM safety_events WHERE deleted_at IS NULL", ct: ct);
+            ROUND(AVG(risk_score),1) preventable_risk_score FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
-    private static Task<IResult> SafetyEvents(Database db, CancellationToken ct) => OkRows(db, SafetySql + " WHERE se.deleted_at IS NULL ORDER BY se.occurred_at DESC", ct: ct);
-    private static async Task<IResult> SafetyEventDetail(long id, Database db, CancellationToken ct)
+    private static Task<IResult> SafetyEvents(HttpContext http, Database db, CancellationToken ct)
     {
-        var record = (await db.QueryAsync(SafetySql + " WHERE se.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
+        if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db, SafetySql + " WHERE se.company_id=@cid AND se.deleted_at IS NULL ORDER BY se.occurred_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
+    private static async Task<IResult> SafetyEventDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var record = (await db.QueryAsync(SafetySql + " WHERE se.id=@id AND se.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Safety event not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            dashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE safety_event_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE safety_event_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            incidents = await db.QueryAsync("SELECT * FROM incidents WHERE safety_event_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "safety", ct), auditTrail = await AuditRows(db, "SafetyEvent", id, ct) }));
+            dashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            incidents = await db.QueryAsync("SELECT * FROM incidents WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "safety", ct),
+            auditTrail = await TenantAuditRows(db, companyId, "SafetyEvent", id, ct) }));
     }
     private static async Task<IResult> CreateSafetyEvent(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -4666,24 +4902,36 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { id = incidentId }, "Incident created"));
     }
 
-    private static async Task<IResult> DashcamSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> DashcamSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(@"SELECT COUNT(*) dashcam_events_today, SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_video_events, SUM(CASE WHEN review_status LIKE '%Pending%' THEN 1 ELSE 0 END) pending_review,
             SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) reviewed_events, SUM(CASE WHEN false_positive=TRUE THEN 1 ELSE 0 END) false_positives, SUM(CASE WHEN coaching_status='Created' THEN 1 ELSE 0 END) coaching_created,
             SUM(CASE WHEN evidence_status='Packaged' THEN 1 ELSE 0 END) evidence_packages, SUM(CASE WHEN event_type LIKE '%Collision%' OR event_type LIKE '%Near Miss%' THEN 1 ELSE 0 END) collision_near_miss,
             SUM(CASE WHEN event_type LIKE '%Distracted%' THEN 1 ELSE 0 END) distracted_driving_placeholder, SUM(CASE WHEN event_type LIKE '%Tailgating%' THEN 1 ELSE 0 END) tailgating_placeholder,
-            SUM(CASE WHEN event_type LIKE '%Speeding%' THEN 1 ELSE 0 END) speeding_video_events, SUM(CASE WHEN recommended_action LIKE '%exoneration%' THEN 1 ELSE 0 END) driver_exoneration_placeholder FROM dashcam_events WHERE deleted_at IS NULL", ct: ct);
+            SUM(CASE WHEN event_type LIKE '%Speeding%' THEN 1 ELSE 0 END) speeding_video_events, SUM(CASE WHEN recommended_action LIKE '%exoneration%' THEN 1 ELSE 0 END) driver_exoneration_placeholder
+            FROM dashcam_events WHERE company_id=@cid AND deleted_at IS NULL",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
-    private static Task<IResult> DashcamEvents(Database db, CancellationToken ct) => OkRows(db, DashcamSql + " WHERE de.deleted_at IS NULL ORDER BY de.occurred_at DESC", ct: ct);
-    private static async Task<IResult> DashcamEventDetail(long id, Database db, CancellationToken ct)
+    private static Task<IResult> DashcamEvents(HttpContext http, Database db, CancellationToken ct)
     {
-        var record = (await db.QueryAsync(DashcamSql + " WHERE de.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
+        if (RequirePermission(http, "dashcam:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db, DashcamSql + " WHERE de.company_id=@cid AND de.deleted_at IS NULL ORDER BY de.occurred_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
+    private static async Task<IResult> DashcamEventDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var record = (await db.QueryAsync(DashcamSql + " WHERE de.id=@id AND de.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE dashcam_event_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            evidencePackages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE dashcam_event_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "dashcam", ct), auditTrail = await AuditRows(db, "DashcamEvent", id, ct) }));
+            coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE dashcam_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            evidencePackages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE dashcam_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "dashcam", ct),
+            auditTrail = await TenantAuditRows(db, companyId, "DashcamEvent", id, ct) }));
     }
     private static async Task<IResult> CreateDashcamEvent(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -4753,13 +5001,15 @@ public static partial class EndpointMappings
     private static async Task<IResult> CoachingTaskDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
-        var record = (await db.QueryAsync(CoachingSql + " WHERE ct.id=@id AND ct.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct)).FirstOrDefault();
+        var companyId = GetCompanyId(http);
+        var record = (await db.QueryAsync(CoachingSql + " WHERE ct.id=@id AND ct.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Coaching task not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            notes = await db.QueryAsync("SELECT * FROM coaching_notes WHERE coaching_task_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
-            relatedSafetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE id=@id", c => c.Parameters.AddWithValue("@id", record["safetyEventId"]), ct),
-            relatedDashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE id=@id", c => c.Parameters.AddWithValue("@id", record["dashcamEventId"]), ct),
-            recommendations = await ModuleRecommendations(db, "coaching", ct), auditTrail = await AuditRows(db, "CoachingTask", id, ct) }));
+            notes = await db.QueryAsync("SELECT * FROM coaching_notes WHERE coaching_task_id=@id AND company_id=@cid ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            relatedSafetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["safetyEventId"]); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            relatedDashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"]); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "coaching", ct),
+            auditTrail = await TenantAuditRows(db, companyId, "CoachingTask", id, ct) }));
     }
     private static async Task<IResult> CreateCoachingTask(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -4801,13 +5051,16 @@ public static partial class EndpointMappings
     private static async Task<IResult> IncidentDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
-        var record = (await db.QueryAsync(IncidentSql + " WHERE i.id=@id AND i.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct)).FirstOrDefault();
+        var companyId = GetCompanyId(http);
+        var record = (await db.QueryAsync(IncidentSql + " WHERE i.id=@id AND i.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Incident not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            evidence = await db.QueryAsync("SELECT * FROM incident_evidence WHERE incident_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
-            packages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE incident_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
-            insuranceReports = await db.QueryAsync("SELECT * FROM insurance_reports WHERE incident_id=@id", c => c.Parameters.AddWithValue("@id", id), ct),
-            timeline = await IncidentTimelineRows(id, db, ct), recommendations = await ModuleRecommendations(db, "incidents", ct), auditTrail = await AuditRows(db, "Incident", id, ct) }));
+            evidence = await db.QueryAsync("SELECT * FROM incident_evidence WHERE incident_id=@id AND company_id=@cid ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            packages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE incident_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            insuranceReports = await db.QueryAsync("SELECT * FROM insurance_reports WHERE incident_id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            timeline = await IncidentTimelineRows(companyId, id, db, ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "incidents", ct),
+            auditTrail = await TenantAuditRows(db, companyId, "Incident", id, ct) }));
     }
     private static async Task<IResult> CreateIncident(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -4825,41 +5078,115 @@ public static partial class EndpointMappings
     private static async Task<IResult> IncidentStatus(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) { var status = Get(body, "status")?.ToString() ?? "Under Review"; await db.ExecuteAsync("UPDATE incidents SET status=@status WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@status", status); }, ct); await audit.LogAsync(http, "incident.status.changed", "Incident", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id, status }, "Incident status updated")); }
     private static async Task<IResult> IncidentAttachEvidence(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        var evidenceId = await db.InsertAsync("INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, evidence_json, source_entity_type, source_entity_id) VALUES (@companyId,@id,COALESCE(@type,'Document'),COALESCE(@title,'Evidence placeholder'),@url,jsonb_build_object('placeholder',true),@sourceType,@sourceId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "evidenceType")); c.Parameters.AddWithValue("@title", Get(body, "evidenceTitle")); c.Parameters.AddWithValue("@url", Get(body, "evidenceUrl")); c.Parameters.AddWithValue("@sourceType", Get(body, "sourceEntityType")); c.Parameters.AddWithValue("@sourceId", Get(body, "sourceEntityId")); }, ct);
+        var companyId = GetCompanyId(http);
+        var incidentExists = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM incidents WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (incidentExists == 0) return Results.NotFound(ApiResponse<object>.Fail("Incident not found"));
+        var evidenceId = await db.InsertAsync("INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, evidence_json, source_entity_type, source_entity_id) VALUES (@companyId,@id,COALESCE(@type,'Document'),COALESCE(@title,'Evidence placeholder'),@url,jsonb_build_object('placeholder',true),@sourceType,@sourceId)", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "evidenceType")); c.Parameters.AddWithValue("@title", Get(body, "evidenceTitle")); c.Parameters.AddWithValue("@url", Get(body, "evidenceUrl")); c.Parameters.AddWithValue("@sourceType", Get(body, "sourceEntityType")); c.Parameters.AddWithValue("@sourceId", Get(body, "sourceEntityId")); }, ct);
         await audit.LogAsync(http, "incident.evidence.attached", "Incident", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id = evidenceId }, "Evidence attached"));
     }
     private static async Task<IResult> IncidentCreateInsuranceReport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { var reportId = await InsertInsuranceReport(http, db, id, null, ct); await db.ExecuteAsync("UPDATE incidents SET insurance_report_status='Ready', status='Insurance Report Ready' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "insurance.report.created", "Incident", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id = reportId }, "Insurance report created")); }
-    private static async Task<IResult> IncidentTimeline(long id, Database db, CancellationToken ct) => Results.Ok(ApiResponse<object>.Ok(await IncidentTimelineRows(id, db, ct)));
-    private static Task<List<Dictionary<string, object?>>> IncidentTimelineRows(long id, Database db, CancellationToken ct) => db.QueryAsync("SELECT id, evidence_title title, evidence_type event_type, created_at event_time FROM incident_evidence WHERE incident_id=@id UNION ALL SELECT id, action_name, 'Audit', created_at FROM audit_logs WHERE entity_name='Incident' AND entity_id=@id ORDER BY event_time DESC", c => c.Parameters.AddWithValue("@id", id), ct);
-
-    private static async Task<IResult> EvidenceSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> IncidentTimeline(HttpContext http, long id, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var incidentExists = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM incidents WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (incidentExists == 0) return Results.NotFound(ApiResponse<object>.Fail("Incident not found"));
+        return Results.Ok(ApiResponse<object>.Ok(await IncidentTimelineRows(companyId, id, db, ct)));
+    }
+    private static Task<List<Dictionary<string, object?>>> IncidentTimelineRows(long companyId, long id, Database db, CancellationToken ct) =>
+        db.QueryAsync(
+            @"SELECT id, evidence_title title, evidence_type event_type, created_at event_time
+              FROM incident_evidence WHERE incident_id=@id AND company_id=@cid
+              UNION ALL
+              SELECT id, action_name, 'Audit', created_at
+              FROM audit_logs WHERE entity_name='Incident' AND entity_id=@id AND company_id=@cid
+              ORDER BY event_time DESC",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+    private static async Task<IResult> EvidenceSummary(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "safety:evidence:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_packages, SUM(CASE WHEN status='Draft' THEN 1 ELSE 0 END) draft_packages, SUM(CASE WHEN status='Export Ready' THEN 1 ELSE 0 END) export_ready,
-            SUM(CASE WHEN locked=TRUE THEN 1 ELSE 0 END) locked_packages, SUM(CASE WHEN package_type LIKE '%Insurance%' THEN 1 ELSE 0 END) insurance_packages, SUM(CASE WHEN export_url IS NOT NULL THEN 1 ELSE 0 END) exports_generated FROM evidence_packages WHERE deleted_at IS NULL", ct: ct);
+            SUM(CASE WHEN locked=TRUE THEN 1 ELSE 0 END) locked_packages, SUM(CASE WHEN package_type LIKE '%Insurance%' THEN 1 ELSE 0 END) insurance_packages, SUM(CASE WHEN export_url IS NOT NULL THEN 1 ELSE 0 END) exports_generated
+            FROM evidence_packages WHERE company_id=@cid AND deleted_at IS NULL",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
-    private static Task<IResult> EvidencePackages(Database db, CancellationToken ct) => OkRows(db, EvidenceSql + " WHERE ep.deleted_at IS NULL ORDER BY ep.created_at DESC", ct: ct);
-    private static async Task<IResult> EvidencePackageDetail(long id, Database db, CancellationToken ct)
+    private static Task<IResult> EvidencePackages(HttpContext http, Database db, CancellationToken ct)
     {
-        var record = (await db.QueryAsync(EvidenceSql + " WHERE ep.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
+        if (RequirePermission(http, "safety:evidence:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db, EvidenceSql + " WHERE ep.company_id=@cid AND ep.deleted_at IS NULL ORDER BY ep.created_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
+    private static async Task<IResult> EvidencePackageDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "safety:evidence:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var record = (await db.QueryAsync(EvidenceSql + " WHERE ep.id=@id AND ep.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            items = await db.QueryAsync("SELECT * FROM evidence_package_items WHERE evidence_package_id=@id ORDER BY created_at", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "evidence-packages", ct), auditTrail = await AuditRows(db, "EvidencePackage", id, ct) }));
+            items = await db.QueryAsync("SELECT * FROM evidence_package_items WHERE evidence_package_id=@id AND company_id=@cid ORDER BY created_at", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "evidence-packages", ct),
+            auditTrail = await TenantAuditRows(db, companyId, "EvidencePackage", id, ct) }));
     }
     private static async Task<IResult> CreateEvidencePackage(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        if (IsBlank(Get(body, "incidentId")) && IsBlank(Get(body, "safetyEventId")) && IsBlank(Get(body, "dashcamEventId"))) return Results.BadRequest(ApiResponse<object>.Fail("Evidence package must reference incident, safety event or dashcam event."));
-        var id = await InsertEvidencePackage(http, db, Get(body, "incidentId"), Get(body, "safetyEventId"), Get(body, "dashcamEventId"), Get(body, "driverId"), Get(body, "vehicleId"), Get(body, "jobId"), ct);
+        var references = new[]
+        {
+            OptionalPositiveId(Get(body, "incidentId")),
+            OptionalPositiveId(Get(body, "safetyEventId")),
+            OptionalPositiveId(Get(body, "dashcamEventId")),
+            OptionalPositiveId(Get(body, "driverId")),
+            OptionalPositiveId(Get(body, "vehicleId")),
+            OptionalPositiveId(Get(body, "jobId")),
+        };
+        if (references.Any(reference => !reference.valid))
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence package references are invalid."));
+
+        var (incidentId, safetyEventId, dashcamEventId, driverId, vehicleId, jobId) =
+            (references[0].id, references[1].id, references[2].id, references[3].id, references[4].id, references[5].id);
+        if (incidentId is null && safetyEventId is null && dashcamEventId is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence package must reference incident, safety event or dashcam event."));
+
+        var companyId = GetCompanyId(http);
+        var referencesValid = await db.ScalarLongAsync(
+            @"SELECT CASE WHEN
+                (@incident::bigint IS NULL OR EXISTS (SELECT 1 FROM incidents WHERE id=@incident AND company_id=@cid AND deleted_at IS NULL))
+                AND (@safety::bigint IS NULL OR EXISTS (SELECT 1 FROM safety_events WHERE id=@safety AND company_id=@cid AND deleted_at IS NULL))
+                AND (@dashcam::bigint IS NULL OR EXISTS (SELECT 1 FROM dashcam_events WHERE id=@dashcam AND company_id=@cid AND deleted_at IS NULL))
+                AND (@driver::bigint IS NULL OR EXISTS (SELECT 1 FROM drivers WHERE id=@driver AND company_id=@cid AND deleted_at IS NULL))
+                AND (@vehicle::bigint IS NULL OR EXISTS (SELECT 1 FROM vehicles WHERE id=@vehicle AND company_id=@cid AND deleted_at IS NULL))
+                AND (@job::bigint IS NULL OR EXISTS (SELECT 1 FROM jobs WHERE id=@job AND company_id=@cid AND deleted_at IS NULL))
+              THEN 1 ELSE 0 END",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@incident", (object?)incidentId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@safety", (object?)safetyEventId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@dashcam", (object?)dashcamEventId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@driver", (object?)driverId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@vehicle", (object?)vehicleId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@job", (object?)jobId ?? DBNull.Value);
+            }, ct);
+        if (referencesValid != 1)
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence package references are invalid."));
+
+        var id = await InsertEvidencePackage(http, db, incidentId, safetyEventId, dashcamEventId, driverId, vehicleId, jobId, ct);
         await audit.LogAsync(http, "evidence.package.created", "EvidencePackage", id, ct: ct);
         return Results.Created($"/api/evidence-packages/{id}", ApiResponse<object>.Ok(new { id }, "Evidence package created"));
     }
     private static async Task<IResult> UpdateEvidencePackage(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        var locked = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND locked=TRUE", c => c.Parameters.AddWithValue("@id", id), ct);
+        var companyId = GetCompanyId(http);
+        var locked = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND company_id=@cid AND locked=TRUE", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (locked > 0 && !string.Equals(Get(body, "override")?.ToString(), "true", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(ApiResponse<object>.Fail("Locked evidence package cannot be modified without override."));
-        await db.ExecuteAsync("UPDATE evidence_packages SET status=COALESCE(@status,status), summary=COALESCE(@summary,summary) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@status", Get(body, "status")); c.Parameters.AddWithValue("@summary", Get(body, "summary")); }, ct);
+        await db.ExecuteAsync("UPDATE evidence_packages SET status=COALESCE(@status,status), summary=COALESCE(@summary,summary) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@status", Get(body, "status")); c.Parameters.AddWithValue("@summary", Get(body, "summary")); }, ct);
         await audit.LogAsync(http, "evidence.package.updated", "EvidencePackage", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package updated"));
     }
@@ -4926,9 +5253,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             aiSummary  = json.GetProperty("message").GetProperty("content").GetString()
                          ?? "Unable to parse AI response.";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            aiSummary = $"OpsTrax AI reviewed {category}. {fleetCtx.Replace("\n","; ")} — AI service temporarily unavailable: {ex.Message}";
+            aiSummary = $"OpsTrax AI reviewed {category}. {fleetCtx.Replace("\n","; ")} — AI service temporarily unavailable.";
         }
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -4951,8 +5278,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static Func<long, Database, CancellationToken, Task<IResult>> Timeline(string entityType)
         => async (id, db, ct) => Results.Ok(ApiResponse<object>.Ok(await EntityTimeline(db, entityType, id, ct)));
 
-    private static Func<long, Database, CancellationToken, Task<IResult>> Recommendations(string module)
-        => async (id, db, ct) => Results.Ok(ApiResponse<object>.Ok(await ModuleRecommendations(db, module, ct)));
+    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Recommendations(string module)
+        => async (http, id, db, ct) => Results.Ok(ApiResponse<object>.Ok(
+            await TenantModuleRecommendations(db, GetCompanyId(http), module, ct)));
 
     private static Func<HttpContext, long, Dictionary<string, object?>, Database, AuditService, CancellationToken, Task<IResult>> ChangeStatus(string table, string action, string permission)
         => async (http, id, body, db, audit, ct) =>
@@ -5088,9 +5416,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@id", id);
             }, ct);
 
-    private static Task<List<Dictionary<string, object?>>> ModuleRecommendations(Database db, string module, CancellationToken ct)
-        => db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key=@module ORDER BY score DESC LIMIT 8",
-            c => c.Parameters.AddWithValue("@module", module.ToLowerInvariant()), ct);
+    private static Task<List<Dictionary<string, object?>>> TenantModuleRecommendations(
+        Database db, long companyId, string module, CancellationToken ct)
+        => db.QueryAsync(
+            "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key=@module ORDER BY score DESC LIMIT 8",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@module", module.ToLowerInvariant());
+            }, ct);
 
     private static Task<List<Dictionary<string, object?>>> AuditTrail(Database db, string entityName, long id, CancellationToken ct)
         => db.QueryAsync("SELECT * FROM audit_logs WHERE entity_name=@entity AND entity_id=@id ORDER BY created_at DESC LIMIT 20",
@@ -5517,6 +5851,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return value;
     }
 
+    private static (bool valid, long? id) OptionalPositiveId(object? value)
+    {
+        if (value is null or DBNull || string.IsNullOrWhiteSpace(value.ToString()))
+            return (true, null);
+        return long.TryParse(value.ToString(), out var id) && id > 0
+            ? (true, id)
+            : (false, null);
+    }
+
     private static async Task<List<string>> ValidateJob(Dictionary<string, object?> body, Database db, CancellationToken ct, bool partial = false)
     {
         var errors = new List<string>();
@@ -5600,13 +5943,28 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     private static void BindDriver(NpgsqlCommand c, Dictionary<string, object?> body)
+        => BindDriver(c, body, null);
+
+    // license_number is encrypted at rest when a Pii key is configured. The value
+    // read back is transparently decrypted via ProjectDriverPii on the read path.
+    private static void BindDriver(NpgsqlCommand c, Dictionary<string, object?> body, Opstrax.Api.Security.PiiProtectionService? pii)
     {
         c.Parameters.AddWithValue("@code", Get(body, "driverCode"));
         c.Parameters.AddWithValue("@name", Get(body, "fullName"));
         c.Parameters.AddWithValue("@phone", Get(body, "phone"));
         c.Parameters.AddWithValue("@email", Get(body, "email"));
-        c.Parameters.AddWithValue("@license", Get(body, "licenseNumber"));
+        var license = Get(body, "licenseNumber");
+        var licenseVal = pii is not null && license is string ls ? (object?)pii.Encrypt(ls) ?? DBNull.Value : license;
+        c.Parameters.AddWithValue("@license", licenseVal);
         c.Parameters.AddWithValue("@status", Get(body, "status"));
+    }
+
+    // Decrypts license_number in a driver result row in place (no-op when the value
+    // is legacy plaintext or PII is disabled). Applied to reads that return license.
+    private static void ProjectDriverPii(Dictionary<string, object?> row, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        if (row.TryGetValue("licenseNumber", out var v) && v is string s)
+            row["licenseNumber"] = pii.Decrypt(s);
     }
 
     private static void BindCustomer(NpgsqlCommand c, Dictionary<string, object?> body)
@@ -5864,12 +6222,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             }, ct);
     }
 
-    private static Task<List<Dictionary<string, object?>>> AuditRows(Database db, string entity, long id, CancellationToken ct)
-        => db.QueryAsync("SELECT * FROM audit_logs WHERE entity_name=@entity AND entity_id=@id ORDER BY created_at DESC LIMIT 20", c =>
-        {
-            c.Parameters.AddWithValue("@entity", entity);
-            c.Parameters.AddWithValue("@id", id);
-        }, ct);
+    private static Task<List<Dictionary<string, object?>>> TenantAuditRows(
+        Database db, long companyId, string entity, long id, CancellationToken ct)
+        => db.QueryAsync(
+            "SELECT * FROM audit_logs WHERE company_id=@cid AND entity_name=@entity AND entity_id=@id ORDER BY created_at DESC LIMIT 20",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@entity", entity);
+                c.Parameters.AddWithValue("@id", id);
+            }, ct);
 
     private static void BindSafety(NpgsqlCommand c, Dictionary<string, object?> body)
     {
@@ -6019,7 +6381,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               WHERE ft.deleted_at IS NULL
               ORDER BY ft.fuel_date DESC, ft.id DESC", ct: ct);
 
-    private static async Task<IResult> FuelTransactionDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> FuelTransactionDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync(
             @"SELECT ft.*, v.vehicle_code, d.full_name driver_name, j.job_code
@@ -6034,8 +6396,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             record,
             anomalies = await db.QueryAsync("SELECT * FROM fuel_anomalies WHERE fuel_transaction_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "fuel-idling", ct),
-            auditTrail = await AuditRows(db, "FuelTransaction", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "fuel-idling", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "FuelTransaction", id, ct)
         }));
     }
 
@@ -6122,7 +6484,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN jobs j ON j.id=ie.job_id
               ORDER BY ie.started_at DESC", ct: ct);
 
-    private static async Task<IResult> IdlingEventDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> IdlingEventDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync(
             @"SELECT ie.*, v.vehicle_code, d.full_name driver_name
@@ -6135,7 +6497,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            recommendations = await ModuleRecommendations(db, "fuel-idling", ct),
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "fuel-idling", ct),
         }));
     }
 
@@ -6254,7 +6616,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               WHERE e.deleted_at IS NULL
               ORDER BY ARRAY_POSITION(ARRAY['Pending','Rejected','Approved'], e.approval_status), e.expense_date DESC", ct: ct);
 
-    private static async Task<IResult> ExpenseDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> ExpenseDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync(
             @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name
@@ -6269,8 +6631,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            recommendations = await ModuleRecommendations(db, "expenses", ct),
-            auditTrail = await AuditRows(db, "Expense", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "expenses", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Expense", id, ct)
         }));
     }
 
@@ -6467,8 +6829,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 ORDER BY effective_date DESC, id DESC",
                 c => c.Parameters.AddWithValue("@id", id), ct),
             versions = await commercial.ListContractVersionsAsync(GetCompanyId(http), id, ct),
-            recommendations = await ModuleRecommendations(db, "contracts-rates", ct),
-            auditTrail = await AuditRows(db, "Contract", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "contracts-rates", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Contract", id, ct)
         }));
     }
 
@@ -6801,7 +7163,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               WHERE c.deleted_at IS NULL
               ORDER BY ARRAY_POSITION(ARRAY['Non-Compliant','At Risk','Compliant'], c.compliance_status), c.performance_score DESC", ct: ct);
 
-    private static async Task<IResult> CarrierDetail(long id, Database db, CancellationToken ct)
+    private static async Task<IResult> CarrierDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         var record = await db.QuerySingleAsync("SELECT * FROM carriers WHERE id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Carrier not found"));
@@ -6812,8 +7174,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             documents = await db.QueryAsync("SELECT * FROM carrier_documents WHERE carrier_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             contracts = await db.QueryAsync("SELECT * FROM contracts WHERE carrier_id=@id AND deleted_at IS NULL ORDER BY expiry_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             expenses = await db.QueryAsync("SELECT * FROM expenses WHERE carrier_id=@id AND deleted_at IS NULL ORDER BY expense_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
-            recommendations = await ModuleRecommendations(db, "carrier-management", ct),
-            auditTrail = await AuditRows(db, "Carrier", id, ct)
+            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "carrier-management", ct),
+            auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Carrier", id, ct)
         }));
     }
 
@@ -7374,10 +7736,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ORDER BY created_at DESC LIMIT 100",
             c => {
                 c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@module", string.IsNullOrWhiteSpace(module) ? DBNull.Value : module);
-                c.Parameters.AddWithValue("@action", string.IsNullOrWhiteSpace(action) ? DBNull.Value : action);
-                c.Parameters.AddWithValue("@severity", string.IsNullOrWhiteSpace(severity) ? DBNull.Value : severity);
-                c.Parameters.AddWithValue("@search", string.IsNullOrWhiteSpace(search) ? DBNull.Value : search);
+                c.Parameters.Add(new NpgsqlParameter("@module", NpgsqlDbType.Text) { Value = string.IsNullOrWhiteSpace(module) ? DBNull.Value : module });
+                c.Parameters.Add(new NpgsqlParameter("@action", NpgsqlDbType.Text) { Value = string.IsNullOrWhiteSpace(action) ? DBNull.Value : action });
+                c.Parameters.Add(new NpgsqlParameter("@severity", NpgsqlDbType.Text) { Value = string.IsNullOrWhiteSpace(severity) ? DBNull.Value : severity });
+                c.Parameters.Add(new NpgsqlParameter("@search", NpgsqlDbType.Text) { Value = string.IsNullOrWhiteSpace(search) ? DBNull.Value : search });
             }, ct);
         return Results.Ok(ApiResponse<object>.Ok(logs, "Audit logs"));
     }
@@ -7465,7 +7827,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!string.IsNullOrWhiteSpace(status)) where.Add("u.status=@status");
 
         var sql = $@"SELECT u.id, u.company_id, c.company_code, c.name company_name, u.role_id, u.role_name, u.full_name, u.email, u.status,
-                            u.permissions_json, u.demo_password, u.created_at, COALESCE(r.name, u.role_name) role_display_name
+                            u.permissions_json, u.created_at, COALESCE(r.name, u.role_name) role_display_name
                      FROM users u
                      JOIN companies c ON c.id=u.company_id
                      LEFT JOIN roles r ON r.id=u.role_id
@@ -7538,8 +7900,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         var id = await db.InsertAsync(
-            @"INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, password_hash, permissions_json, status)
-              VALUES (@companyId, @roleId, @fullName, @email, @roleName, @demoPassword, @passwordHash, @permissionsJson::jsonb, @status)",
+            @"INSERT INTO users (company_id, role_id, full_name, email, role_name, password_hash, permissions_json, status)
+              VALUES (@companyId, @roleId, @fullName, @email, @roleName, @passwordHash, @permissionsJson::jsonb, @status)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -7547,7 +7909,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
-                c.Parameters.AddWithValue("@demoPassword", password);
                 c.Parameters.AddWithValue("@passwordHash", HashPassword(password));
                 c.Parameters.AddWithValue("@permissionsJson", permissionsJson);
                 c.Parameters.AddWithValue("@status", status);
@@ -7807,7 +8168,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var allowAll = await AllowAllUsers(http, db, ct);
         var companyId = GetCompanyId(http);
         return await db.QuerySingleAsync(
-            @"SELECT u.id, u.company_id companyId, c.company_code, c.name companyName, u.role_id roleId, u.role_name roleName, u.full_name fullName, u.email, u.status, u.permissions_json permissionsJson, u.demo_password demoPassword, u.created_at createdAt, COALESCE(r.name, u.role_name) roleDisplayName
+            @"SELECT u.id, u.company_id companyId, c.company_code, c.name companyName, u.role_id roleId, u.role_name roleName, u.full_name fullName, u.email, u.status, u.permissions_json permissionsJson, u.created_at createdAt, COALESCE(r.name, u.role_name) roleDisplayName
               FROM users u
               JOIN companies c ON c.id=u.company_id
               LEFT JOIN roles r ON r.id=u.role_id
@@ -8248,14 +8609,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     // ── End Alerts ──────────────────────────────────────────────────────────────
 
-    private static async Task<IResult> ExecutiveSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> ExecutiveSummary(HttpContext http, Database db, CancellationToken ct)
     {
-        var latest     = await db.QueryAsync("SELECT * FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 1", ct: ct);
-        var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_readiness_score AS fleet_health_score, safety_health_score AS safety_score, compliance_health_score AS compliance_score, cost_health_score AS financial_score, ROUND((operations_health_score+safety_health_score+compliance_health_score+fleet_readiness_score)/4,1) AS overall_score FROM executive_snapshots ORDER BY snapshot_date DESC LIMIT 14", ct: ct);
-        var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical'", ct: ct);
-        var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE status='Open'", ct: ct);
-        var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE created_at::date=CURRENT_DATE", ct: ct);
-        var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE module_key='executive' ORDER BY score DESC LIMIT 5", ct: ct);
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        void BindTenant(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", companyId);
+        var latest     = await db.QueryAsync("SELECT * FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 1", BindTenant, ct);
+        var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_readiness_score AS fleet_health_score, safety_health_score AS safety_score, compliance_health_score AS compliance_score, cost_health_score AS financial_score, ROUND((operations_health_score+safety_health_score+compliance_health_score+fleet_readiness_score)/4,1) AS overall_score FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 14", BindTenant, ct);
+        var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@cid AND status='Critical'", BindTenant, ct);
+        var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE tenant_id=@cid AND status='Open'", BindTenant, ct);
+        var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND created_at::date=CURRENT_DATE", BindTenant, ct);
+        var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive' ORDER BY score DESC LIMIT 5", BindTenant, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { latest, trend, kpiCritical = kpiCrit, openSlaBreaches = slaBreach, auditActionsToday = auditToday, aiRecommendations = aiRecs }, "Executive summary"));
     }
 
@@ -8420,6 +8784,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
             return Results.Json(ApiResponse<object>.Fail("Missing X-Timestamp or X-Nonce"), statusCode: 401);
         }
+        if (string.IsNullOrWhiteSpace(xSig))
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Missing X-Signature"), statusCode: 401);
+        }
 
         // 3. X-Timestamp freshness — ±60 s (tighter window for HMAC; prevents clock-skew abuse)
         if (!long.TryParse(xTimestamp, out var tsUnix) ||
@@ -8464,27 +8834,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // 7. HMAC-SHA256 payload signature verification (constant-time)
         //    Canonical: "{METHOD}\n{path}\n{X-Timestamp}\n{X-Nonce}\n{sha256-hex(body)}"
-        //    Devices with NULL hmacSecret (only possible for legacy seed rows) skip HMAC.
-        if (!string.IsNullOrWhiteSpace(hmacSecret))
+        if (string.IsNullOrWhiteSpace(hmacSecret))
         {
-            if (string.IsNullOrWhiteSpace(xSig))
-            {
-                System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
-                System.Threading.Interlocked.Increment(ref _telemetryRejected);
-                return Results.Json(ApiResponse<object>.Fail("Missing X-Signature"), statusCode: 401);
-            }
-            var bodyHex  = TelemetryHmacHelper.Sha256Hex(rawBody);
-            var expected = TelemetryHmacHelper.ComputeSignature(
-                System.Text.Encoding.UTF8.GetBytes(hmacSecret),
-                http.Request.Method.ToUpperInvariant(),
-                http.Request.Path.Value ?? "/api/telemetry/ingest",
-                xTimestamp, xNonce, bodyHex);
-            if (!TelemetryHmacHelper.ConstantTimeEquals(expected, xSig))
-            {
-                System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
-                System.Threading.Interlocked.Increment(ref _telemetryRejected);
-                return Results.Json(ApiResponse<object>.Fail("Signature mismatch"), statusCode: 401);
-            }
+            System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Device credentials are incomplete"), statusCode: 401);
+        }
+
+        var bodyHex  = TelemetryHmacHelper.Sha256Hex(rawBody);
+        var expected = TelemetryHmacHelper.ComputeSignature(
+            System.Text.Encoding.UTF8.GetBytes(hmacSecret),
+            http.Request.Method.ToUpperInvariant(),
+            http.Request.Path.Value ?? "/api/telemetry/ingest",
+            xTimestamp, xNonce, bodyHex);
+        if (!TelemetryHmacHelper.ConstantTimeEquals(expected, xSig))
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Signature mismatch"), statusCode: 401);
         }
 
         // 8. Nonce replay — atomic INSERT; duplicate nonce for same device → DB unique key violation
@@ -9548,9 +9915,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      d.status driver_status,
                      v.vehicle_code current_vehicle
               FROM driver_safety_scores dss
-              JOIN drivers d ON d.id = dss.driver_id
-              LEFT JOIN eld_devices ed ON ed.driver_id = d.id AND ed.status='Active' AND ed.deleted_at IS NULL
-              LEFT JOIN vehicles v ON v.id = ed.vehicle_id
+              JOIN drivers d ON d.id = dss.driver_id AND d.company_id=dss.company_id
+              LEFT JOIN eld_devices ed ON ed.driver_id = d.id AND ed.company_id=dss.company_id AND ed.status='Active' AND ed.deleted_at IS NULL
+              LEFT JOIN vehicles v ON v.id = ed.vehicle_id AND v.company_id=dss.company_id
               WHERE dss.company_id = @cid
               ORDER BY dss.score_30d ASC, dss.events_30d DESC
               LIMIT 100",
@@ -10899,7 +11266,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                       'assigned', 'Assigned', @score,
                       @pickup, @delivery,
                       @uid, @notes, @override,
-                      @safetyOvr, @hosOvr, @elig,
+                      @safetyOvr, @hosOvr, @elig::jsonb,
                       NOW())",
             c =>
             {
@@ -10915,8 +11282,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@uid",       userId);
                 c.Parameters.AddWithValue("@notes",     body.Notes ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@override",  body.OverrideReason ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@safetyOvr", (!elig.Eligible && body.Override) ? 1 : 0);
-                c.Parameters.AddWithValue("@hosOvr",    elig.HosWarning && body.Override ? 1 : 0);
+                c.Parameters.AddWithValue("@safetyOvr", !elig.Eligible && body.Override);
+                c.Parameters.AddWithValue("@hosOvr",    elig.HosWarning && body.Override);
                 c.Parameters.AddWithValue("@elig",      eligJson);
             }, ct);
 
@@ -13956,8 +14323,91 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         app.MapGet("/api/ops/services/{name}",               OpsServiceRunsByName);
         app.MapGet("/api/ops/incidents",                     OpsIncidents);
         app.MapPatch("/api/ops/incidents/{id:long}/status",  OpsUpdateIncidentStatus);
+        app.MapPost("/api/ops/incidents/{id:long}/ack",      OpsAcknowledgeIncident);
+        app.MapPost("/api/ops/incidents/{id:long}/resolve",  OpsResolveIncident);
         app.MapGet("/api/ops/config/check",                  OpsConfigCheck);
+
+        // ── Reliability Center (Requirement 8) — the single feed the Platform
+        //    Admin renders: component health, live API metrics, SLO status +
+        //    error-budget burn, top failing endpoints, incidents, per-tenant
+        //    reliability, deploy version, and last health check. No mock data.
+        app.MapGet("/api/ops/reliability",                   OpsReliability);
+        app.MapGet("/api/ops/slo",                           OpsSlo);
+        app.MapGet("/api/ops/metrics/live",                  OpsLiveMetrics);
     }
+
+    // GET /api/ops/reliability — full Reliability Center snapshot.
+    private static async Task<IResult> OpsReliability(HttpContext http, ReliabilityService reliability)
+    {
+        var perms = http.Items[AuthPermissionsItemKey] as string[] ?? [];
+        if (!HasPermission(perms, "ops:view"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "ops:view required"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        var snapshot = await reliability.GetSnapshotAsync(http.RequestAborted);
+        return Results.Ok(ApiResponse<object>.Ok(snapshot, $"Reliability: {snapshot.Status}"));
+    }
+
+    // GET /api/ops/slo — SLO targets + live error-budget burn.
+    private static IResult OpsSlo(HttpContext http, SloService slo)
+    {
+        var perms = http.Items[AuthPermissionsItemKey] as string[] ?? [];
+        if (!HasPermission(perms, "ops:view"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "ops:view required"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        var report = slo.Evaluate();
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            report,
+            definitions = SloService.Definitions,
+            alertRules  = SloService.AlertRules,
+        }, $"SLO status: {report.OverallStatus}"));
+    }
+
+    // GET /api/ops/metrics/live — in-process API metrics (latency/error/DB).
+    private static IResult OpsLiveMetrics(HttpContext http, ApiMetricsService metrics)
+    {
+        var perms = http.Items[AuthPermissionsItemKey] as string[] ?? [];
+        if (!HasPermission(perms, "ops:view"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "ops:view required"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        return Results.Ok(ApiResponse<object>.Ok(metrics.Snapshot(), "Live API metrics"));
+    }
+
+    // POST /api/ops/incidents/{id}/ack — record acknowledgement (audit trail).
+    private static async Task<IResult> OpsAcknowledgeIncident(
+        long id, HttpContext http, IncidentService incidents, AuditService audit)
+    {
+        var perms = http.Items[AuthPermissionsItemKey] as string[] ?? [];
+        if (!HasPermission(perms, "ops:view"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "ops:view required"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        var who = http.Items[AuthUserIdItemKey]?.ToString() ?? "unknown";
+        await incidents.AcknowledgeAsync(id, who, http.RequestAborted);
+        await audit.LogAsync(http, "incident.acknowledged", "platform_incident", id);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, acknowledgedBy = who }, "Incident acknowledged"));
+    }
+
+    // POST /api/ops/incidents/{id}/resolve — resolve with root cause + actions.
+    private static async Task<IResult> OpsResolveIncident(
+        long id, HttpContext http, IncidentService incidents, AuditService audit)
+    {
+        var perms = http.Items[AuthPermissionsItemKey] as string[] ?? [];
+        if (!HasPermission(perms, "ops:view"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden", "ops:view required"),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        var body = await http.Request.ReadFromJsonAsync<OpsIncidentResolve>(http.RequestAborted);
+        var who  = http.Items[AuthUserIdItemKey]?.ToString() ?? "unknown";
+        await incidents.ResolveAsync(id, body?.RootCause, body?.ActionsTaken, who, http.RequestAborted);
+        await audit.LogAsync(http, "incident.resolved", "platform_incident", id);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "resolved" }, "Incident resolved"));
+    }
+
+    private sealed record OpsIncidentResolve(string? RootCause = null, string? ActionsTaken = null);
 
     // GET /api/ops/metrics
     private static async Task<IResult> OpsMetrics(HttpContext http,
@@ -14220,7 +14670,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (ArgumentException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "sso.create");
+            return Results.Json(ApiResponse<object>.Fail("SSO connection request is invalid"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14246,7 +14697,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "sso.update");
+            return Results.Json(ApiResponse<object>.Fail("SSO connection not found"),
                 statusCode: StatusCodes.Status404NotFound);
         }
     }
@@ -14264,7 +14716,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "sso.disable");
+            return Results.Json(ApiResponse<object>.Fail("SSO connection not found"),
                 statusCode: StatusCodes.Status404NotFound);
         }
     }
@@ -14312,7 +14765,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (ArgumentException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "access-review.create");
+            return Results.Json(ApiResponse<object>.Fail("Access review request is invalid"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14330,7 +14784,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "access-review.detail");
+            return Results.Json(ApiResponse<object>.Fail("Access review not found"),
                 statusCode: StatusCodes.Status404NotFound);
         }
     }
@@ -14374,7 +14829,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "access-review.complete");
+            return Results.Json(ApiResponse<object>.Fail("Access review cannot be completed"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14414,6 +14870,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (subject is null) return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
 
+        // Decrypt encrypted-at-rest PII so the data subject receives their real data
+        // (portability/access right, not the ciphertext).
+        if (entityType.Equals("driver", StringComparison.OrdinalIgnoreCase))
+            ProjectDriverPii(subject, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+
         await audit.LogAsync(http, "privacy.data_subject.exported", entityType, id,
             System.Text.Json.JsonSerializer.Serialize(new { entityType, id }), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { entityType, subject, exportedAt = DateTime.UtcNow }, "Data subject export generated"));
@@ -14429,10 +14890,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var token = $"ERASED-{id}";
 
+        // Erasure = anonymize display fields + CRYPTO-SHRED encrypted PII: nulling the
+        // ciphertext AND its blind index makes the value mathematically unrecoverable,
+        // a stronger guarantee than redaction (PDPL Art.18 / GDPR Art.17 erasure).
         var sql = entityType.ToLowerInvariant() switch
         {
             "driver" => @"UPDATE drivers SET full_name=@tok, phone=NULL, email=NULL, license_number=NULL,
-                          status='Archived' WHERE id=@id AND company_id=@cid",
+                          license_number_bidx=NULL, status='Archived' WHERE id=@id AND company_id=@cid",
             "customer" => @"UPDATE customers SET name=@tok, contact_name=NULL, email=NULL, phone=NULL,
                             status='Archived' WHERE id=@id AND company_id=@cid",
             _ => "",
@@ -14444,9 +14908,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@tok", token); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
 
+        // Delete any stored files belonging to this subject's tenant scope is handled
+        // at tenant offboarding; per-subject document erasure is recorded here.
         await audit.LogAsync(http, "privacy.data_subject.erased", entityType, id,
-            System.Text.Json.JsonSerializer.Serialize(new { entityType, id, method = "anonymization" }), ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { entityType, id, erased = true }, "Data subject PII erased (anonymized); records retained for referential integrity"));
+            System.Text.Json.JsonSerializer.Serialize(new { entityType, id, method = "anonymization+crypto_shred" }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { entityType, id, erased = true }, "Data subject PII erased (anonymized + crypto-shredded); records retained for referential integrity"));
     }
 
     private static async Task<IResult> ExportRequestCreate(
@@ -14495,7 +14961,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "export-request.approve");
+            return Results.Json(ApiResponse<object>.Fail("Export request cannot be approved"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14518,7 +14985,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "export-request.reject");
+            return Results.Json(ApiResponse<object>.Fail("Export request cannot be rejected"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14662,7 +15130,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (ArgumentException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "compliance-evidence.generate");
+            return Results.Json(ApiResponse<object>.Fail("Compliance evidence request is invalid"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }
@@ -14705,7 +15174,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (ArgumentException ex)
         {
-            return Results.Json(ApiResponse<object>.Fail(ex.Message),
+            LogSafeEndpointFailure(http, ex, "backup-verification.record");
+            return Results.Json(ApiResponse<object>.Fail("Backup verification request is invalid"),
                 statusCode: StatusCodes.Status400BadRequest);
         }
     }

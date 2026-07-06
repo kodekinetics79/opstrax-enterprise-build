@@ -11,6 +11,7 @@ import { maintenanceApi } from "@/services/maintenanceApi";
 import { safetyApi } from "@/services/safetyApi";
 import { coachingApi } from "@/services/coachingApi";
 import { useHasPermission } from "@/hooks/usePermission";
+import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Severity helpers ────────────────────────────────────────────────────────
@@ -997,33 +998,14 @@ export function FleetHealthPage() {
   const summaryData = summary.data ?? {};
   const insights    = (summaryData.systemInsights as AnyRecord[]) ?? [];
 
-  if (summary.isLoading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="flex flex-col items-center gap-3 text-slate-500">
-          <RefreshCw className="h-8 w-8 animate-spin" />
-          <p className="text-sm font-medium">Loading fleet health data…</p>
-        </div>
-      </div>
-    );
-  }
+  if (summary.isLoading) return <LoadingState />;
 
   if (summary.isError) {
     return (
-      <div className="flex items-center justify-center py-24 px-8">
-        <div className="text-center max-w-sm">
-          <XCircle className="h-10 w-10 text-red-400 mx-auto mb-3" />
-          <p className="text-base font-semibold text-slate-700 mb-1">Failed to load fleet health data</p>
-          <p className="text-sm text-slate-500">Check backend connectivity and try refreshing.</p>
-          <button
-            type="button"
-            onClick={() => summary.refetch()}
-            className="mt-4 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
+      <ErrorState
+        message="Failed to load fleet health data. Check backend connectivity and try refreshing."
+        onRetry={() => void summary.refetch()}
+      />
     );
   }
 
@@ -1045,29 +1027,24 @@ export function FleetHealthPage() {
 
       <div className="space-y-6">
         {/* Page header */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Activity className="h-5 w-5 text-slate-500" />
-              <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Operations</span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Fleet Health & Safety</h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Dispatch readiness · Maintenance risk · Driver safety — unified operating view
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              summary.refetch();
-              risks.refetch();
-            }}
-            className="flex items-center gap-2 text-sm font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-4 py-2.5 hover:bg-slate-50 hover:border-slate-300 transition-colors shadow-sm self-start"
-          >
-            <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-blue-500" : ""}`} />
-            Refresh
-          </button>
-        </div>
+        <PageHeader
+          eyebrow="Operations"
+          title="Fleet Health & Safety"
+          description="Dispatch readiness · Maintenance risk · Driver safety — unified operating view"
+          actions={
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                summary.refetch();
+                risks.refetch();
+              }}
+            >
+              <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-blue-500" : ""}`} />
+              Refresh
+            </button>
+          }
+        />
 
         {/* Readiness strip */}
         <ReadinessStrip summary={summaryData} />

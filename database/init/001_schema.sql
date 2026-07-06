@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   full_name VARCHAR(160) NOT NULL,
   email VARCHAR(220) NOT NULL UNIQUE,
   role_name VARCHAR(100) NOT NULL,
-  demo_password VARCHAR(120) NOT NULL DEFAULT 'Admin@12345',
+  demo_password VARCHAR(120),
   password_hash VARCHAR(255) NULL,
   permissions_json JSONB NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Active',

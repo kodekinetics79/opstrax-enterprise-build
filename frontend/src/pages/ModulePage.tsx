@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Plus, RadioTower, ShieldCheck, Target, X } from "lucide-react";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
-import { AiInsightCard, DataTable, DetailDrawer, FilterBar, KpiCard, LoadingState, PageHeader } from "@/components/ui";
+import { AiInsightCard, DataTable, DetailDrawer, ErrorState, FilterBar, KpiCard, LoadingState, PageHeader } from "@/components/ui";
 import { modulesApi } from "@/services/modulesApi";
 import type { AnyRecord } from "@/types";
 
@@ -56,6 +56,7 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [creating, setCreating] = useState(false);
   const [reviewOnly, setReviewOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("All");
   const module = modules.find((item) => item.key === moduleKey)!;
   const Icon = moduleIcons[moduleKey] || RadioTower;
   const qc = useQueryClient();
@@ -69,10 +70,26 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
   });
 
   if (query.isLoading) return <LoadingState />;
+  if (query.isError) {
+    return (
+      <ErrorState
+        message={query.error instanceof Error ? query.error.message : `Unable to load ${module.title}.`}
+        onRetry={() => void query.refetch()}
+      />
+    );
+  }
   const records = query.data?.records || [];
-  const displayRecords = reviewOnly
+  const STATUS_FILTERS: Record<string, (r: AnyRecord) => boolean> = {
+    All: () => true,
+    Active: (r) => /open|active|progress/i.test(String(r.status ?? "")),
+    "At Risk": (r) => /high|critical/i.test(String(r.riskLevel ?? "")) || /risk/i.test(String(r.status ?? "")),
+    Completed: (r) => /complete|closed|delivered|done|resolved/i.test(String(r.status ?? "")),
+    Pending: (r) => /pending|review|scheduled|draft/i.test(String(r.status ?? "")),
+  };
+  const displayRecords = (reviewOnly
     ? records.filter((r) => /high|critical/i.test(String(r.riskLevel ?? "")))
-    : records;
+    : records
+  ).filter(STATUS_FILTERS[statusFilter] ?? STATUS_FILTERS.All);
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto">
@@ -102,7 +119,11 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         <KpiCard label="Risk Items" value={String(query.data?.summary?.riskItems ?? records.filter((x) => String(x.riskLevel).match(/high|critical/i)).length)} icon={<Target />} status="Review" />
         <KpiCard label="Fleet Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recommended" />
       </div>
-      <FilterBar />
+      <FilterBar
+        options={["All", "Active", "At Risk", "Completed", "Pending"]}
+        value={statusFilter}
+        onChange={setStatusFilter}
+      />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <DataTable rows={displayRecords} columns={columns} onSelect={setSelected} />
         <div className="space-y-4">

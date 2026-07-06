@@ -124,6 +124,8 @@ export const PERMISSIONS = {
   CUSTOMER_PORTAL_VIEW: "customer_portal:view",
   CUSTOMER_PORTAL_MANAGE: "customer_portal:manage",
 
+  CAMPAIGNS_VIEW: "campaigns.view",
+
   // Fleet/TMS commercial surfaces (carriers, fuel, billing) — added with the
   // fleet.* taxonomy so nav/actions for these areas can be permission-gated.
   CARRIERS_VIEW: "carriers:view",
@@ -171,6 +173,8 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.DISPATCH_CANCEL]: ["dispatch.manage", "dispatch:manage", "orders.manage", "orders:manage"],
 
   [P.CUSTOMERS_VIEW]: ["customers.view", "customers:view", "crm.view", "crm:view"],
+  // Campaigns is a CRM & Growth surface — visible to any customer/CRM-capable role.
+  [P.CAMPAIGNS_VIEW]: ["campaigns.view", "campaigns:view", "crm.view", "crm:view", "customers.view", "customers:view"],
   [P.CUSTOMERS_CREATE]: ["customers.manage", "customers:manage", "crm.manage", "crm:manage"],
   [P.CUSTOMERS_UPDATE]: ["customers.manage", "customers:manage", "crm.manage", "crm:manage"],
   [P.CUSTOMERS_DELETE]: ["customers.manage", "customers:manage", "crm.manage", "crm:manage"],

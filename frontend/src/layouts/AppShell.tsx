@@ -491,7 +491,7 @@ export function AppShell() {
 
       {/* ── Desktop Sidebar ── */}
       {/* Single quiet surface — no nested shells; hierarchy comes from spacing. */}
-      <aside className="fixed left-4 top-4 bottom-4 z-30 hidden w-[280px] overflow-hidden rounded-2xl border border-slate-200/80 bg-white/88 shadow-[0_18px_44px_rgba(15,23,42,.08)] backdrop-blur-xl xl:flex xl:flex-col">
+      <aside className="glass-nav fixed left-4 top-4 bottom-4 z-30 hidden w-[280px] overflow-hidden rounded-2xl border shadow-[0_18px_44px_rgba(15,23,42,.08)] xl:flex xl:flex-col">
         {navContent}
       </aside>
 
@@ -522,7 +522,7 @@ export function AppShell() {
       <div className="flex h-screen flex-col overflow-hidden xl:pl-[296px]">
 
         {/* ── Header ── */}
-        <header className="shell-header z-20 shrink-0 border-b border-slate-200 bg-white/92 backdrop-blur-xl">
+        <header className="glass-nav shell-header z-20 shrink-0 border-b">
           <div className="mx-auto max-w-[1800px] px-4 md:px-6">
             <div className="flex h-[54px] items-center gap-3">
 

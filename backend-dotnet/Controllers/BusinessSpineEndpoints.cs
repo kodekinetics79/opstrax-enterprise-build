@@ -430,19 +430,31 @@ public static class BusinessSpineEndpoints
     }
 
     private static string? Str(Dictionary<string, object?> body, string key)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull ? Convert.ToString(value, CultureInfo.InvariantCulture) : null;
+        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
+            ? value is JsonElement element ? element.ToString() : Convert.ToString(value, CultureInfo.InvariantCulture)
+            : null;
 
     private static long? Long(Dictionary<string, object?> body, string key)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull ? Convert.ToInt64(value, CultureInfo.InvariantCulture) : null;
+        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
+            ? value is JsonElement element && element.TryGetInt64(out var parsed) ? parsed : Convert.ToInt64(value, CultureInfo.InvariantCulture)
+            : null;
 
     private static decimal Dec(Dictionary<string, object?> body, string key, decimal fallback = 0m)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull ? Convert.ToDecimal(value, CultureInfo.InvariantCulture) : fallback;
+        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
+            ? value is JsonElement element && element.TryGetDecimal(out var parsed) ? parsed : Convert.ToDecimal(value, CultureInfo.InvariantCulture)
+            : fallback;
 
     private static decimal? DecN(Dictionary<string, object?> body, string key)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull ? Convert.ToDecimal(value, CultureInfo.InvariantCulture) : null;
+        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
+            ? value is JsonElement element && element.TryGetDecimal(out var parsed) ? parsed : Convert.ToDecimal(value, CultureInfo.InvariantCulture)
+            : null;
 
     private static bool Bool(Dictionary<string, object?> body, string key, bool fallback = false)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull ? Convert.ToBoolean(value, CultureInfo.InvariantCulture) : fallback;
+        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
+            ? value is JsonElement element && element.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? element.GetBoolean()
+                : Convert.ToBoolean(value, CultureInfo.InvariantCulture)
+            : fallback;
 
     private static bool TryDate(Dictionary<string, object?> body, string key, out DateOnly value)
     {

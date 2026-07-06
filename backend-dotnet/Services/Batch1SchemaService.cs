@@ -57,6 +57,9 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         new("drivers", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
         new("drivers", "compliance_score", "DECIMAL(6,2) NOT NULL DEFAULT 95"),
         new("drivers", "deleted_at", "TIMESTAMPTZ NULL"),
+        // Blind index (HMAC) for license_number — lets the uniqueness check match on
+        // encrypted values without decrypting. See PiiProtectionService.BlindIndex.
+        new("drivers", "license_number_bidx", "VARCHAR(64) NULL"),
         new("customers", "phone", "VARCHAR(50) NULL"),
         new("customers", "billing_address", "VARCHAR(300) NULL"),
         new("customers", "shipping_address", "VARCHAR(300) NULL"),

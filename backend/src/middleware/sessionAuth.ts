@@ -26,13 +26,20 @@ export async function resolveSession(req: Request): Promise<RequestAuthContext |
   };
 }
 
-export function resolveTenantId(req: Request, auth?: RequestAuthContext | null) {
-  const fromAuth = auth?.user.companyId;
-  if (fromAuth && Number.isFinite(fromAuth)) return fromAuth;
+export function resolveTenantId(_req: Request, auth?: RequestAuthContext | null) {
+  const tenantId = auth?.user.companyId;
+  if (typeof tenantId !== "number" || !Number.isSafeInteger(tenantId) || tenantId <= 0) {
+    throw new Error("Authenticated session is missing a valid tenant");
+  }
+  return tenantId;
+}
 
-  const header = req.get("x-opstrax-tenant-id") || req.get("x-tenant-id") || "1";
-  const parsed = Number.parseInt(header, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+export function tenantMatchesAuthenticatedUser(
+  requestedTenantId: string | number | undefined,
+  authenticatedTenantId: number
+) {
+  if (requestedTenantId === undefined) return true;
+  return String(requestedTenantId).trim() === String(authenticatedTenantId);
 }
 
 export async function requirePermission(
@@ -59,4 +66,3 @@ export async function requirePermission(
 
   return auth;
 }
-

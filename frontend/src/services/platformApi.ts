@@ -61,8 +61,13 @@ platformClient.interceptors.response.use(
     const token = error?.response?.headers?.["x-csrf-token"];
     if (token) platformCsrfToken = token;
     if (error?.response?.status === 401) {
+      // accept-invite is pre-session: a wrong/expired token 401s and the page
+      // itself must show the error rather than bouncing to login.
+      const isPreSessionPage =
+        window.location.pathname.startsWith("/platform/login") ||
+        window.location.pathname.startsWith("/platform/accept-invite");
       storePlatformSession(null);
-      if (!window.location.pathname.startsWith("/platform/login")) {
+      if (!isPreSessionPage) {
         window.location.href = "/platform/login";
       }
     }
@@ -92,8 +97,8 @@ export function formatMoney(cents: number | undefined | null, currency = "USD"):
 
 export const platformApi = {
   // Auth
-  login: (email: string, password: string) =>
-    unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password })),
+  login: (email: string, password: string, mfaCode?: string) =>
+    unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password, mfaCode })),
   me: () => unwrap<PlatformSession>(platformClient.get("/api/platform/auth/me")),
   logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
 
@@ -134,6 +139,35 @@ export const platformApi = {
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
   audit: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/audit")),
   roles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/roles")),
+
+  // Platform operators (admin self-management — see PlatformAdminEndpoints.cs)
+  platformAdmins: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/admins")),
+  createPlatformAdmin: (body: { email: string; fullName: string; roleKey: string }) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/admins/invite", body)),
+  setPlatformAdminRole: (id: number, roleKey: string) =>
+    unwrap<AnyRecord>(platformClient.patch(`/api/platform/admins/${id}`, { roleKey })),
+  setPlatformAdminStatus: (id: number, status: "Active" | "Disabled") =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/${status === "Disabled" ? "disable" : "enable"}`)),
+  revokePlatformAdminSessions: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/revoke-sessions`)),
+  resetPlatformAdminInvite: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/reset-invite`)),
+  acceptPlatformInvite: (body: { email: string; token: string; password: string }) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/auth/accept-invite", body)),
+
+  // MFA (TOTP)
+  mfaEnroll: () => unwrap<{ secret: string; otpauthUri: string }>(platformClient.post("/api/platform/auth/mfa/enroll")),
+  mfaVerify: (code: string) => unwrap<AnyRecord>(platformClient.post("/api/platform/auth/mfa/verify", { code })),
+  resetPlatformAdminMfa: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/mfa/reset`)),
+
+  // Reliability Center — real system health, SLOs, error budget, incidents.
+  reliability: () => unwrap<AnyRecord>(platformClient.get("/api/platform/reliability")),
+  reliabilitySlo: () => unwrap<AnyRecord>(platformClient.get("/api/platform/reliability/slo")),
+  ackIncident: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/reliability/incidents/${id}/ack`)),
+  resolveIncident: (id: number, body: { rootCause?: string; actionsTaken?: string }) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/reliability/incidents/${id}/resolve`, body)),
 
   // Opstrax revenue foundation
   modulePackages: () => unwrap<AnyRecord>(platformClient.get("/api/platform/opstrax/module-packages")),

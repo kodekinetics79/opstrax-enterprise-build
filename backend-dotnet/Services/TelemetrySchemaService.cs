@@ -9,6 +9,7 @@ public sealed class TelemetrySchemaService(Database db)
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
+        foreach (var sql in CredentialHardening) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
@@ -183,10 +184,6 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Seeds =
     [
-        // api_key_hash: deterministic for dev; real devices use provision endpoint
-        "UPDATE eld_devices SET api_key_hash = encode(sha256(('opstrax-dev-' || device_serial)::bytea), 'hex') WHERE api_key_hash IS NULL",
-        // hmac_secret: deterministic for dev; real devices receive a random secret on provision
-        "UPDATE eld_devices SET hmac_secret = CONCAT('opstrax-hmac-dev-', device_serial) WHERE hmac_secret IS NULL",
         // last_seen_at: spread across last 12 minutes for demo staleness variety
         "UPDATE eld_devices SET last_seen_at = NOW() - (id % 12) * INTERVAL '1 minute' WHERE last_seen_at IS NULL",
         // Seed default speeding rule for every company that has devices
@@ -199,5 +196,52 @@ public sealed class TelemetrySchemaService(Database db)
           SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', true
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
+    ];
+
+    private static readonly string[] CredentialHardening =
+    [
+        // Never manufacture credentials during schema startup. Legacy or incomplete
+        // devices are quarantined until an operator explicitly rotates credentials.
+        @"UPDATE eld_devices
+          SET api_key_hash = NULL,
+              hmac_secret = NULL,
+              status = 'CredentialRotationRequired',
+              revoked_at = COALESCE(revoked_at, NOW()),
+              updated_at = NOW()
+          WHERE deleted_at IS NULL
+            AND (
+                api_key_hash IS NULL
+                OR btrim(api_key_hash) = ''
+                OR api_key_hash !~ '^[0-9a-fA-F]{64}$'
+                OR hmac_secret IS NULL
+                OR btrim(hmac_secret) = ''
+                OR length(hmac_secret) < 32
+                OR api_key_hash = encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
+                OR hmac_secret = ('opstrax-' || 'hmac-dev-' || device_serial)
+            )",
+        @"DO $$
+          BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_eld_devices_active_credentials'
+                  AND conrelid = 'eld_devices'::regclass
+            ) THEN
+                ALTER TABLE eld_devices
+                ADD CONSTRAINT ck_eld_devices_active_credentials
+                CHECK (
+                    status <> 'Active'
+                    OR (
+                        api_key_hash IS NOT NULL
+                        AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
+                        AND hmac_secret IS NOT NULL
+                        AND length(btrim(hmac_secret)) >= 32
+                        AND api_key_hash <> encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
+                        AND hmac_secret <> ('opstrax-' || 'hmac-dev-' || device_serial)
+                    )
+                );
+            END IF;
+          END
+          $$",
     ];
 }

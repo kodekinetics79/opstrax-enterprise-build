@@ -72,11 +72,24 @@ public static class PlatformEndpoints
         // ── Customer Success (health scores) ────────────────────────────────────
         app.MapGet("/api/platform/health", HealthScores);
 
+        // ── Reliability Center (platform-scoped mirror of /api/ops/reliability) ──
+        // Same aggregated system-health snapshot, reachable with the platform
+        // bearer token so the Platform Admin console renders real health, SLOs,
+        // error-budget burn, top failing endpoints, incidents, and per-tenant
+        // reliability — no mock/demo data.
+        app.MapGet("/api/platform/reliability", ReliabilityCenter);
+        app.MapGet("/api/platform/reliability/slo", ReliabilitySlo);
+        app.MapPost("/api/platform/reliability/incidents/{id:long}/ack", ReliabilityAckIncident);
+        app.MapPost("/api/platform/reliability/incidents/{id:long}/resolve", ReliabilityResolveIncident);
+
         // ── Security & Audit ────────────────────────────────────────────────────
         app.MapGet("/api/platform/audit", AuditList);
 
         // ── Roles (for RBAC visibility) ─────────────────────────────────────────
         app.MapGet("/api/platform/roles", RolesList);
+
+        // ── Platform operator management (list/invite/role/status/sessions) ──────
+        PlatformAdminEndpoints.Map(app);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -146,7 +159,8 @@ public static class PlatformEndpoints
         return false;
     }
 
-    private static Task AuditAsync(Database db, PlatformPrincipal actor, HttpContext http, string action,
+    // internal so PlatformAdminEndpoints shares the single platform audit writer.
+    internal static Task AuditAsync(Database db, PlatformPrincipal actor, HttpContext http, string action,
         string entityType, long? entityId, long? targetCompanyId, object? details, CancellationToken ct)
     {
         var detailsJson = details is null ? null : JsonSerializer.Serialize(details);
@@ -182,13 +196,32 @@ public static class PlatformEndpoints
     // AUTH HANDLERS
     // ════════════════════════════════════════════════════════════════════════════
 
-    internal sealed record PlatformLoginRequest(string Email, string Password);
+    internal sealed record PlatformLoginRequest(string Email, string Password, string? MfaCode = null);
 
     // Failed-login lockout: 5 failures per email+IP within 15 minutes → 429.
-    // In-memory (single runtime process); the audit trail is the durable record.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset WindowStart, int Count)> FailedLogins = new();
-    private const int MaxFailedLogins = 5;
-    private static readonly TimeSpan FailedLoginWindow = TimeSpan.FromMinutes(15);
+    // DB-backed: the platform_audit_log rows ARE the counter, so the lockout
+    // survives process restarts and applies across instances.
+    internal const int MaxFailedLogins = 5;
+
+    // Failures within the window, scoped to email+IP, counted only since the
+    // account's most recent successful login (a success resets the ledger,
+    // matching the previous in-memory semantics).
+    internal static Task<long> CountRecentAuthFailuresAsync(
+        Database db, string email, string ip, string failedAction, string? successAction, CancellationToken ct)
+        => db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM platform_audit_log
+              WHERE LOWER(actor_email)=@e AND ip_address=@ip AND action=@fail
+                AND created_at > NOW() - INTERVAL '15 minutes'
+                AND (@success IS NULL OR created_at > COALESCE(
+                    (SELECT MAX(created_at) FROM platform_audit_log
+                      WHERE LOWER(actor_email)=@e AND action=@success), '-infinity'::timestamptz))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@e", email.ToLowerInvariant());
+                c.Parameters.AddWithValue("@ip", ip);
+                c.Parameters.AddWithValue("@fail", failedAction);
+                c.Parameters.AddWithValue("@success", (object?)successAction ?? DBNull.Value);
+            }, ct);
 
     // Audit a failed/locked login attempt. No principal exists yet, so this writes the
     // attempted email directly. NEVER include the submitted password in details.
@@ -208,11 +241,9 @@ public static class PlatformEndpoints
     internal static async Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
     {
         var email = (request.Email ?? "").Trim();
-        var failKey = email.ToLowerInvariant() + "|" + (http.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        if (FailedLogins.TryGetValue(failKey, out var fails) &&
-            DateTimeOffset.UtcNow - fails.WindowStart <= FailedLoginWindow &&
-            fails.Count >= MaxFailedLogins)
+        if (await CountRecentAuthFailuresAsync(db, email, ip, "platform.login_failed", "platform.login", ct) >= MaxFailedLogins)
         {
             await AuditLoginFailureAsync(db, http, email, "platform.login_locked", "too_many_failed_attempts", ct);
             return Results.Json(ApiResponse<object>.Fail("Too many failed attempts", "Try again later"), statusCode: StatusCodes.Status429TooManyRequests);
@@ -220,18 +251,12 @@ public static class PlatformEndpoints
 
         async Task<IResult> FailAsync(string reason)
         {
-            FailedLogins.AddOrUpdate(
-                failKey,
-                _ => (DateTimeOffset.UtcNow, 1),
-                (_, cur) => DateTimeOffset.UtcNow - cur.WindowStart > FailedLoginWindow
-                    ? (DateTimeOffset.UtcNow, 1)
-                    : (cur.WindowStart, cur.Count + 1));
             await AuditLoginFailureAsync(db, http, email, "platform.login_failed", reason, ct);
             return Results.Json(ApiResponse<object>.Fail("Invalid credentials"), statusCode: StatusCodes.Status401Unauthorized);
         }
 
         var admin = await db.QuerySingleAsync(
-            @"SELECT a.id, a.email, a.full_name, a.password_hash, r.role_key, r.name role_name
+            @"SELECT a.id, a.email, a.full_name, a.password_hash, a.mfa_enabled, a.mfa_secret, r.role_key, r.name role_name
               FROM platform_admins a LEFT JOIN platform_roles r ON r.id = a.role_id
               WHERE a.email=@e AND a.status='Active' LIMIT 1",
             c => c.Parameters.AddWithValue("@e", email), ct);
@@ -240,7 +265,25 @@ public static class PlatformEndpoints
         if (!VerifyPassword(request.Password ?? "", admin["passwordHash"]?.ToString()))
             return await FailAsync("invalid_password");
 
-        FailedLogins.TryRemove(failKey, out _);
+        // Second factor: once enrolled+verified (mfa_enabled), a valid TOTP code is
+        // required on every login. A missing code is a distinct, non-counted prompt
+        // (the password was right); a WRONG code counts toward the lockout.
+        var storedMfaSecret = admin["mfaSecret"]?.ToString();
+        if (admin["mfaEnabled"] is true && !string.IsNullOrWhiteSpace(storedMfaSecret))
+        {
+            var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+            var mfaSecret = pii.Decrypt(storedMfaSecret);
+            if (string.IsNullOrWhiteSpace(mfaSecret))
+                return await FailAsync("mfa_secret_unavailable");
+            if (string.IsNullOrWhiteSpace(request.MfaCode))
+            {
+                return Results.Json(
+                    ApiResponse<object>.Fail("MFA code required", "mfa_required"),
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+            if (!Opstrax.Api.Security.TotpService.VerifyCode(mfaSecret, request.MfaCode))
+                return await FailAsync("invalid_mfa_code");
+        }
 
         var adminId = Convert.ToInt64(admin["id"]);
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -1214,6 +1257,63 @@ public static class PlatformEndpoints
         });
         return Results.Ok(ApiResponse<object>.Ok(result));
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // RELIABILITY CENTER (platform-scoped)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    private static async Task<IResult> ReliabilityCenter(
+        HttpContext http, Database db,
+        Opstrax.Api.Observability.ReliabilityService reliability, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        if (error is not null) return error;
+
+        var snapshot = await reliability.GetSnapshotAsync(ct);
+        return Results.Ok(ApiResponse<object>.Ok(snapshot, $"Reliability: {snapshot.Status}"));
+    }
+
+    private static async Task<IResult> ReliabilitySlo(
+        HttpContext http, Database db,
+        Opstrax.Api.Observability.SloService slo, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        if (error is not null) return error;
+
+        var report = slo.Evaluate();
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            report,
+            definitions = Opstrax.Api.Observability.SloService.Definitions,
+            alertRules  = Opstrax.Api.Observability.SloService.AlertRules,
+        }, $"SLO status: {report.OverallStatus}"));
+    }
+
+    private static async Task<IResult> ReliabilityAckIncident(
+        long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        if (error is not null) return error;
+
+        await incidents.AcknowledgeAsync(id, principal!.Email, ct);
+        await AuditAsync(db, principal!, http, "incident.acknowledged", "platform_incident", id, null, null, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, acknowledgedBy = principal!.Email }, "Incident acknowledged"));
+    }
+
+    private static async Task<IResult> ReliabilityResolveIncident(
+        long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        if (error is not null) return error;
+
+        var body = await http.Request.ReadFromJsonAsync<PlatformIncidentResolve>(ct);
+        await incidents.ResolveAsync(id, body?.RootCause, body?.ActionsTaken, principal!.Email, ct);
+        await AuditAsync(db, principal!, http, "incident.resolved", "platform_incident", id, null,
+            new { body?.RootCause, body?.ActionsTaken }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "resolved" }, "Incident resolved"));
+    }
+
+    private sealed record PlatformIncidentResolve(string? RootCause = null, string? ActionsTaken = null);
 
     // ════════════════════════════════════════════════════════════════════════════
     // AUDIT + ROLES

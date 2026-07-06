@@ -45,19 +45,19 @@ INSERT INTO roles (id, name, permissions_json) OVERRIDING SYSTEM VALUE VALUES
 SELECT setval(pg_get_serial_sequence('roles', 'id'), MAX(id)) FROM roles;
 
 INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_password, permissions_json) VALUES
-(1, 1, 'Mason Lee',       'superadmin@opstrax.com',   'Super Admin',             'demo123', jsonb_build_array('*')),
-(1, 2, 'Avery Stone',     'admin@opstrax.com',        'Company Admin',           'demo123', jsonb_build_array('*')),
-(1, 2, 'Avery Stone',     'admin@demo-fleet.com',     'Company Admin',           'demo123', jsonb_build_array('*')),
-(1, 13, 'Erin Parker',    'operations@demo-fleet.com','Operations Manager',      'demo123', jsonb_build_array('dashboard:view','map:view','fleet:view','dispatch:view','dispatch:manage','orders:view','orders:manage','shipments:view','shipments:manage','pod:view','pod:upload','maintenance:view','safety:view','dashcam:view','compliance:view','reports:view','settings:view')),
-(1, 4, 'Maya Patel',      'dispatcher@demo-fleet.com','Dispatcher',              'demo123', jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
-(1, 3, 'Nolan Brooks',    'fleet@demo-fleet.com',     'Fleet Manager',           'demo123', jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
-(1, 5, 'Omar Ali',        'driver@demo-fleet.com',    'Driver',                  'demo123', jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
-(1, 7, 'Sofia Ramirez',   'safety@demo-fleet.com',    'Safety & Compliance Manager','demo123', jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
-(1, 14, 'Priya Shah',     'finance@demo-fleet.com',   'Finance & Billing Manager','demo123', jsonb_build_array('finance:view','finance:manage','fuel:view','fuel:manage','reports:view','settings:view')),
-(1, 15, 'Jordan Kim',     'crm@demo-fleet.com',       'CRM & Sales Manager',     'demo123', jsonb_build_array('crm:view','crm:manage','campaigns:view','campaigns:manage','customer_portal:view','reports:view')),
-(1, 6, 'Jordan Reyes',    'maintenance@demo-fleet.com','Maintenance Manager',    'demo123', jsonb_build_array('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
-(3, 10, 'Priya Shah',     'customer@client.com',      'Customer Portal User',    'demo123', jsonb_build_array('customer-portal:view')),
-(4, 16, 'Victor Chen',    'vendor@service.com',       'Vendor Service Provider', 'demo123', jsonb_build_array('vendor_portal:view','maintenance:view','pod:view'));
+(1, 1, 'Mason Lee',       'superadmin@opstrax.com',   'Super Admin',             NULL, jsonb_build_array('*')),
+(1, 2, 'Avery Stone',     'admin@opstrax.com',        'Company Admin',           NULL, jsonb_build_array('*')),
+(1, 2, 'Avery Stone',     'admin@demo-fleet.com',     'Company Admin',           NULL, jsonb_build_array('*')),
+(1, 13, 'Erin Parker',    'operations@demo-fleet.com','Operations Manager',      NULL, jsonb_build_array('dashboard:view','map:view','fleet:view','dispatch:view','dispatch:manage','orders:view','orders:manage','shipments:view','shipments:manage','pod:view','pod:upload','maintenance:view','safety:view','dashcam:view','compliance:view','reports:view','settings:view')),
+(1, 4, 'Maya Patel',      'dispatcher@demo-fleet.com','Dispatcher',              NULL, jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+(1, 3, 'Nolan Brooks',    'fleet@demo-fleet.com',     'Fleet Manager',           NULL, jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
+(1, 5, 'Omar Ali',        'driver@demo-fleet.com',    'Driver',                  NULL, jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
+(1, 7, 'Sofia Ramirez',   'safety@demo-fleet.com',    'Safety & Compliance Manager',NULL, jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
+(1, 14, 'Priya Shah',     'finance@demo-fleet.com',   'Finance & Billing Manager',NULL, jsonb_build_array('finance:view','finance:manage','fuel:view','fuel:manage','reports:view','settings:view')),
+(1, 15, 'Jordan Kim',     'crm@demo-fleet.com',       'CRM & Sales Manager',     NULL, jsonb_build_array('crm:view','crm:manage','campaigns:view','campaigns:manage','customer_portal:view','reports:view')),
+(1, 6, 'Jordan Reyes',    'maintenance@demo-fleet.com','Maintenance Manager',    NULL, jsonb_build_array('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
+(3, 10, 'Priya Shah',     'customer@client.com',      'Customer Portal User',    NULL, jsonb_build_array('customer-portal:view')),
+(4, 16, 'Victor Chen',    'vendor@service.com',       'Vendor Service Provider', NULL, jsonb_build_array('vendor_portal:view','maintenance:view','pod:view'));
 
 INSERT INTO customers (company_id, customer_code, name, contact_name, email, status, sla_tier) VALUES
 (1,'CUS-001','Prince William Logistics','Nora Lane','nora@pwl.example','Active','Platinum'),

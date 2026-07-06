@@ -26,6 +26,26 @@ export const apiClient = axios.create({
   withCredentials: true,
 });
 
+// ── Distributed tracing (W3C trace context) ─────────────────────────────────────
+// The frontend ORIGINATES the trace so a failed call can be followed all the way
+// frontend → backend → DB with one trace_id. We mint a 16-byte trace id + 8-byte
+// span id per request and send them as `traceparent` (+ a human-facing
+// X-Correlation-Id). The backend continues this trace and echoes X-Trace-Id back.
+function hex(bytes: number): string {
+  const a = new Uint8Array(bytes);
+  (globalThis.crypto ?? (window as unknown as { crypto: Crypto }).crypto).getRandomValues(a);
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The most recent server-assigned trace id, so error UIs can show a reference. */
+export let lastTraceId = "";
+
+export function newTraceParent(): { traceparent: string; traceId: string; correlationId: string } {
+  const traceId = hex(16);
+  const spanId = hex(8);
+  return { traceparent: `00-${traceId}-${spanId}-01`, traceId, correlationId: hex(16) };
+}
+
 // Request interceptor: Add auth token and CSRF token
 apiClient.interceptors.request.use((config) => {
   const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
@@ -55,6 +75,11 @@ apiClient.interceptors.request.use((config) => {
     config.headers["X-CSRF-Token"] = csrfToken;
   }
 
+  // Originate a W3C trace so this call is followable end-to-end.
+  const tp = newTraceParent();
+  config.headers["traceparent"] = tp.traceparent;
+  config.headers["X-Correlation-Id"] = tp.correlationId;
+
   return config;
 });
 
@@ -65,9 +90,14 @@ apiClient.interceptors.response.use(
     if (csrfToken) {
       setGlobalCsrfToken(csrfToken);
     }
+    // Remember the server-side trace id so error surfaces can show a reference.
+    const tid = response.headers["x-trace-id"];
+    if (tid) lastTraceId = tid;
     return response;
   },
   (error) => {
+    const tid = error?.response?.headers?.["x-trace-id"];
+    if (tid) lastTraceId = tid;
     if (error?.response?.status === 401) {
       const url = (error.config?.url ?? "") as string;
       // Only auth bootstrap / refresh failures should invalidate the local session.

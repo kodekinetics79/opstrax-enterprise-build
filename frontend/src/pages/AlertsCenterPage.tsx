@@ -575,7 +575,14 @@ export function AlertsCenterPage() {
   }
 
   if (alertsQuery.isLoading) return <LoadingState />;
-  if (alertsQuery.isError) return <ErrorState message={alertsQuery.error instanceof Error ? alertsQuery.error.message : "Unable to load alerts."} />;
+  if (alertsQuery.isError) {
+    return (
+      <ErrorState
+        message={alertsQuery.error instanceof Error ? alertsQuery.error.message : "Unable to load alerts."}
+        onRetry={() => void alertsQuery.refetch()}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 pb-10">

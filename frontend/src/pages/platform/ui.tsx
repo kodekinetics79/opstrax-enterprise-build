@@ -14,7 +14,7 @@ export function PHeader({ title, eyebrow, description, actions }: {
       <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="max-w-3xl">
         {eyebrow && (
-          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-300">
+          <span className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-700">
             {eyebrow}
           </span>
         )}
@@ -27,20 +27,24 @@ export function PHeader({ title, eyebrow, description, actions }: {
   );
 }
 
+// `panel` scoping matters: it applies the light-surface text corrections from
+// index.css, so any legacy dark-theme utility (text-slate-100/200/300,
+// text-white) nested in platform pages renders readable on the white card.
 export function PCard({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] shadow-[0_10px_30px_rgba(15,23,42,.07)] ${className}`}>{children}</div>
+    <div className={`panel rounded-[20px] ${className}`}>{children}</div>
   );
 }
 
 export function PKpi({ label, value, sub, tone = "default" }: {
   label: string; value: ReactNode; sub?: string; tone?: "default" | "good" | "warn" | "bad";
 }) {
+  // WCAG AA on the light card: 600-level semantic colors, slate-950 default.
   const toneCls = {
-    default: "text-white",
-    good: "text-emerald-400",
-    warn: "text-amber-400",
-    bad: "text-red-400",
+    default: "text-slate-950",
+    good: "text-emerald-600",
+    warn: "text-amber-600",
+    bad: "text-red-600",
   }[tone];
   return (
     <PCard className="p-5">
@@ -51,25 +55,28 @@ export function PKpi({ label, value, sub, tone = "default" }: {
   );
 }
 
+// Light-surface tone ramps (700-level text on 50-tint) — WCAG AA on PCard.
 const TONES: Record<string, string> = {
-  active: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
-  paid: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
-  green: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
-  trial: "border-sky-400/30 bg-sky-500/10 text-sky-300",
-  sent: "border-sky-400/30 bg-sky-500/10 text-sky-300",
-  draft: "border-slate-600 bg-slate-700/40 text-slate-300",
-  yellow: "border-amber-400/30 bg-amber-500/10 text-amber-300",
-  past_due: "border-amber-400/30 bg-amber-500/10 text-amber-300",
-  overdue: "border-red-400/30 bg-red-500/10 text-red-300",
-  suspended: "border-red-400/30 bg-red-500/10 text-red-300",
-  cancelled: "border-slate-600 bg-slate-700/40 text-slate-400",
-  red: "border-red-400/30 bg-red-500/10 text-red-300",
-  manual_contract: "border-violet-400/30 bg-violet-500/10 text-violet-300",
+  active: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  paid: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  green: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  trial: "border-sky-200 bg-sky-50 text-sky-700",
+  sent: "border-sky-200 bg-sky-50 text-sky-700",
+  draft: "border-slate-200 bg-slate-100 text-slate-600",
+  yellow: "border-amber-200 bg-amber-50 text-amber-700",
+  past_due: "border-amber-200 bg-amber-50 text-amber-700",
+  overdue: "border-red-200 bg-red-50 text-red-700",
+  suspended: "border-red-200 bg-red-50 text-red-700",
+  cancelled: "border-slate-200 bg-slate-100 text-slate-500",
+  red: "border-red-200 bg-red-50 text-red-700",
+  manual_contract: "border-violet-200 bg-violet-50 text-violet-700",
+  invited: "border-sky-200 bg-sky-50 text-sky-700",
+  disabled: "border-red-200 bg-red-50 text-red-700",
 };
 
 export function PBadge({ value }: { value?: unknown }) {
   const raw = String(value ?? "").toLowerCase();
-  const cls = TONES[raw] ?? "border-slate-600 bg-slate-700/40 text-slate-300";
+  const cls = TONES[raw] ?? "border-slate-200 bg-slate-100 text-slate-600";
   const label = String(value ?? "—").replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-bold shadow-sm ${cls}`}>
@@ -191,12 +198,12 @@ export function PDrawer({ open, onClose, title, children }: {
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
       <aside
-        className="h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl"
+        className="panel panel-flush h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✕</button>
+          <button type="button" aria-label="Close" onClick={onClose} className="text-slate-500 hover:text-slate-700">✕</button>
         </div>
         <div className="mt-5">{children}</div>
       </aside>

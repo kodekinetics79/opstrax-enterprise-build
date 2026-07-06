@@ -44,14 +44,14 @@ public sealed class ConfigValidationService(IConfiguration config)
             issues.Add(new("device_hmac_secret", "pass", "Device HMAC secret present"));
 
         // SSE ticket key
-        var sseKey = config["Telemetry:SseTicketKey"] ?? config["SseTicketKey"];
+        var sseKey = config["Telemetry:SseTicketKey"] ?? config["Sse:TicketKey"] ?? config["SseTicketKey"];
         if (string.IsNullOrWhiteSpace(sseKey))
             issues.Add(new("sse_ticket_key", "warn", "SSE stream ticket key not configured — telemetry SSE will be unavailable"));
         else
             issues.Add(new("sse_ticket_key", "pass", "SSE ticket key present"));
 
         // Environment mode
-        var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
+        var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
         if (string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
             issues.Add(new("environment_mode", "warn", $"Environment is '{env}' — ensure production settings override demo/dev values before going live"));
         else if (string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase))
@@ -63,6 +63,16 @@ public sealed class ConfigValidationService(IConfiguration config)
         // a well-known demo password when the env var is unset — acceptable ONLY for
         // local/dev. In production the env var MUST be set and MUST NOT be the default.
         var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
+
+        // Tenant RLS is a production invariant. Missing and explicit false are both
+        // treated as disabled so a deployment cannot silently lose its DB backstop.
+        var tenantRlsEnabled = config.GetValue<bool?>("Rls:EnforceTenantContext") == true;
+        if (tenantRlsEnabled)
+            issues.Add(new("tenant_rls_enforcement", "pass", "Tenant RLS context enforcement is enabled"));
+        else
+            issues.Add(new("tenant_rls_enforcement", isProduction ? "fail" : "warn",
+                "Rls:EnforceTenantContext must be explicitly true before running in Production"));
+
         var platformPwd = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD") ?? config["Platform:SuperAdminPassword"];
         if (string.IsNullOrWhiteSpace(platformPwd))
             issues.Add(new("platform_superadmin_password", isProduction ? "fail" : "warn",
@@ -109,6 +119,13 @@ public sealed class ConfigValidationService(IConfiguration config)
         var overallStatus = failCount > 0 ? "invalid" : warnCount > 0 ? "warnings" : "valid";
 
         return new ConfigCheckResult(overallStatus, failCount, warnCount, issues);
+    }
+
+    public static void EnsureStartupAllowed(ConfigCheckResult result, bool isProduction)
+    {
+        if (isProduction && result.FailCount > 0)
+            throw new InvalidOperationException(
+                $"Refusing to start with {result.FailCount} critical configuration failure(s). See logs (values redacted).");
     }
 }
 

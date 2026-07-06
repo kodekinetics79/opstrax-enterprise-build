@@ -21,7 +21,7 @@ import { controlTowerApi } from "@/services/controlTowerApi";
 import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
-import { AiInsightCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
@@ -79,7 +79,7 @@ export function LiveMapPage() {
   const [search, setSearch] = useState("");
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["telemetry", "live-map-summary"],
     queryFn: telemetryApi.liveMapSummary,
     refetchInterval: 15_000,
@@ -158,6 +158,14 @@ export function LiveMapPage() {
     setFocusId(String(entity.id ?? entity.vehicleId ?? entity.vehicle_id ?? entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? ""));
   };
 
+  if (isError) {
+    return (
+      <ErrorState
+        message="Unable to load the live map telemetry feed. Check backend connectivity and retry."
+        onRetry={() => void refetch()}
+      />
+    );
+  }
   if (isLoading || !data) return <LoadingState />;
 
   const kpis = (data.kpis as AnyRecord) ?? {};
