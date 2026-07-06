@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Send, Sparkles, User } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bot, Check, Send, Sparkles, User, X, Zap } from "lucide-react";
 import { AiInsightCard, LoadingState, exportCsv } from "@/components/ui";
 import { aiApi } from "@/services/aiApi";
+import { aiCopilotApi } from "@/services/aiCopilotApi";
 import type { AnyRecord } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -227,6 +228,9 @@ export function AiCopilotPage() {
           </div>
         </div>
 
+        {/* Agentic Ops Copilot — live proposed actions awaiting dispatcher approval */}
+        <CopilotProposals />
+
         {/* Evidence feed */}
         <div className="panel p-4">
           <h2 className="text-sm font-semibold text-slate-900 mb-3">Live evidence</h2>
@@ -352,6 +356,76 @@ export function AiCopilotPage() {
           <p className="text-xs text-slate-400 mt-2">⌘↵ to send · Evidence is pulled from live fleet data</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+/* ── Agentic Ops Copilot — proposed actions awaiting human approval ──────────── */
+function CopilotProposals() {
+  const qc = useQueryClient();
+  const proposed = useQuery({
+    queryKey: ["copilot-proposed"],
+    queryFn: aiCopilotApi.proposed,
+    refetchInterval: 20000,
+  });
+  const approve = useMutation({
+    mutationFn: (id: number | string) => aiCopilotApi.approve(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["copilot-proposed"] }),
+  });
+  const dismiss = useMutation({
+    mutationFn: (id: number | string) => aiCopilotApi.dismiss(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["copilot-proposed"] }),
+  });
+
+  const rows = (proposed.data ?? []) as AnyRecord[];
+  const busyId = approve.variables ?? dismiss.variables;
+
+  return (
+    <div className="panel p-4">
+      <h2 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+        <Zap className="h-3.5 w-3.5 text-violet-500" /> Copilot proposals
+      </h2>
+      <p className="mb-3 text-[11px] leading-snug text-slate-400">
+        AI-proposed dispatch actions. Approve to execute through the audited workflow, or dismiss.
+      </p>
+      {proposed.isLoading ? (
+        <p className="text-xs text-slate-400">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-[11px] text-slate-400">
+          No proposals right now. The copilot posts here when it spots a dispatch exception worth acting on.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {rows.map((r) => {
+            const id = Number(r.id);
+            const risk = String(r.riskLevel ?? "medium");
+            const riskTone = /high/i.test(risk) ? "bg-rose-50 text-rose-700" : /low/i.test(risk) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700";
+            const conf = Math.round(Number(r.confidenceScore ?? 0) * 100);
+            const isBusy = busyId === id;
+            return (
+              <div key={id} className="rounded-xl border border-violet-200/70 bg-gradient-to-b from-violet-50/50 to-white p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[12.5px] font-bold leading-snug text-slate-900">{String(r.title ?? "Proposed action")}</p>
+                  <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase ${riskTone}`}>{risk}</span>
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-slate-500">{String(r.summary ?? "")}</p>
+                {conf > 0 && <p className="mt-1 text-[10px] font-semibold text-violet-500">{conf}% confidence</p>}
+                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  <button type="button" disabled={isBusy} onClick={() => approve.mutate(id)}
+                    className="inline-flex items-center justify-center gap-1 rounded-lg bg-violet-600 px-2 py-1.5 text-[11px] font-bold text-white transition hover:bg-violet-500 disabled:opacity-50">
+                    <Check className="h-3 w-3" /> {isBusy ? "…" : "Approve"}
+                  </button>
+                  <button type="button" disabled={isBusy} onClick={() => dismiss.mutate(id)}
+                    className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50 disabled:opacity-50">
+                    <X className="h-3 w-3" /> Dismiss
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

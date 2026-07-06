@@ -282,6 +282,14 @@ public static partial class EndpointMappings
         app.MapGet("/api/dispatch/eligibility",                        DispatchEligibilityCheck);
         app.MapGet("/api/dispatch/exceptions",                         DispatchExceptionsList);
 
+        // ── Agentic Ops Copilot — supervised autonomy ────────────────────────────
+        // The AI foundation's reasoning slot, filled: an agent proposes dispatch actions;
+        // a human dispatcher approves; the action executes through existing dispatch logic,
+        // fully audited. Reads/writes tenant-scoped ai_recommendations (status='proposed').
+        app.MapGet("/api/ai/recommendations", AgenticRecommendationsList);
+        app.MapPost("/api/ai/recommendations/{id:long}/approve", AgenticRecommendationApprove);
+        app.MapPost("/api/ai/recommendations/{id:long}/dismiss", AgenticRecommendationDismiss);
+
         app.MapGet("/api/routes/summary", (HttpContext http, Database db, CancellationToken ct) => RoutesSummary(http, db, ct));
         app.MapGet("/api/last-mile/deliveries", (HttpContext http, Database db, CancellationToken ct) => LastMileDeliveries(http, db, ct));
         app.MapGet("/api/routes", (HttpContext http, Database db, CancellationToken ct) => Routes(http, db, ct));
@@ -6161,6 +6169,87 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         c.Parameters.AddWithValue("@related", Json("relatedSystems"));
         c.Parameters.AddWithValue("@connected", Json("connectedTo"));
         c.Parameters.AddWithValue("@config", Json("config"));
+    }
+
+    // ===== AGENTIC OPS COPILOT — approve / dismiss / list ==========================
+
+    private static async Task<IResult> AgenticRecommendationsList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+        var status = http.Request.Query["status"].FirstOrDefault() ?? "proposed";
+        return await OkRows(db,
+            @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score,
+                     impact_json, reason_json, proposed_action_json, risk_level, status,
+                     source_event_id, actor_type, actor_id, created_at
+              FROM ai_recommendations
+              WHERE company_id=@cid AND status=@status
+              ORDER BY urgency_score DESC NULLS LAST, created_at DESC LIMIT 50",
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@status", status); }, ct: ct);
+    }
+
+    private static async Task<IResult> AgenticRecommendationDismiss(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
+        var affected = await db.ExecuteAsync(
+            "UPDATE ai_recommendations SET status='dismissed' WHERE company_id=@cid AND id=@id AND status='proposed'",
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Proposed recommendation not found"));
+        await audit.LogAsync(http, "agentic.recommendation.dismissed", "AiRecommendation", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "dismissed" }));
+    }
+
+    // Approve a proposed action: re-validate, execute through EXISTING dispatch logic under
+    // the request's tenant scope (RLS-enforced), record the outcome + audit. The agent
+    // itself never executes — this human-gated path is the only mutation route.
+    private static async Task<IResult> AgenticRecommendationApprove(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var rec = await db.QuerySingleAsync(
+            "SELECT id, status, proposed_action_json FROM ai_recommendations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (rec is null) return Results.NotFound(ApiResponse<object>.Fail("Recommendation not found"));
+        if (rec.TryGetValue("status", out var st) && !string.Equals(st?.ToString(), "proposed", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail("Recommendation is not in a proposed state"));
+
+        var actionJson = rec.GetValueOrDefault("proposedActionJson")?.ToString() ?? "{}";
+        string actionType = "escalate"; long? assignmentId = null; string? exceptionType = null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(actionJson);
+            var el = doc.RootElement;
+            if (el.TryGetProperty("action_type", out var at) && at.ValueKind == System.Text.Json.JsonValueKind.String) actionType = at.GetString() ?? actionType;
+            if (el.TryGetProperty("resource_id", out var ri) && long.TryParse(ri.ToString(), out var aid)) assignmentId = aid;
+            if (el.TryGetProperty("action_detail", out var ad) && ad.ValueKind == System.Text.Json.JsonValueKind.String) exceptionType = ad.GetString();
+        }
+        catch { return Results.BadRequest(ApiResponse<object>.Fail("Proposed action payload is malformed")); }
+
+        // v1 executor: the state-changing action types route to existing, audited dispatch
+        // logic; advisory types (notify_customer/monitor/escalate) are recorded as approved
+        // without a mutation (the human acts on the guidance). Everything is audit-logged.
+        var outcome = "approved";
+        if (assignmentId is { } aId)
+        {
+            if (actionType is "open_work_order" or "escalate")
+            {
+                // Raise a formal dispatch exception the ops team works — a safe, real mutation.
+                await db.ExecuteAsync(
+                    @"INSERT INTO dispatch_exceptions (company_id, assignment_id, exception_type, severity, title, notes, status, created_at)
+                      VALUES (@cid, @aid, @type, 'medium', @title, @notes, 'open', NOW())",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@aid", aId);
+                           c.Parameters.AddWithValue("@type", (object?)(actionType == "open_work_order" ? "maintenance" : "escalation") ?? DBNull.Value);
+                           c.Parameters.AddWithValue("@title", (object?)exceptionType ?? "Copilot-recommended action");
+                           c.Parameters.AddWithValue("@notes", "Raised from approved Agentic Ops Copilot recommendation"); }, ct);
+                outcome = "executed";
+            }
+        }
+
+        await db.ExecuteAsync(
+            "UPDATE ai_recommendations SET status='executed' WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        await audit.LogAsync(http, "agentic.recommendation.approved", "AiRecommendation", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { actionType, assignmentId, outcome }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, actionType, outcome, status = "executed" }));
     }
 
     // ===== ENTITY CSV IMPORT — vehicles + drivers ==================================

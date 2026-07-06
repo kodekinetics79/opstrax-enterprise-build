@@ -180,6 +180,8 @@ builder.Services.AddSingleton<ObservabilitySchemaService>();
 builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
+// Agentic Brain — the model behind the AI foundation's empty reasoning slot.
+builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<CustomerPortalService>();
 builder.Services.AddScoped<DemoTenantSeeder>();
@@ -259,6 +261,8 @@ builder.Services.AddHostedService<SafetyBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
+// Agentic Ops Copilot — reasons over open dispatch exceptions and proposes actions.
+builder.Services.AddHostedService<AgenticOpsBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
 // Data-retention enforcement — executes the stored retention policies (purge of
 // expired operational logs), respecting legal hold. Opt-in in Production via
