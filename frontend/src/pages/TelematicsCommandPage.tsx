@@ -252,7 +252,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
       <PageHeader
         eyebrow={config.eyebrow}
         title={config.title}

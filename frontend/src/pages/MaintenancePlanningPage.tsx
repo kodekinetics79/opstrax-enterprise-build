@@ -100,7 +100,7 @@ function ServiceHistoryTab() {
   const totalDowntime = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="fleet-console flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
         {[
           { label: "Completed Services", val: rows.length },
@@ -152,7 +152,7 @@ function DowntimeTab() {
   const totalHours = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="fleet-console flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
         {[
           { label: "Downtime Events", val: rows.length },
@@ -205,7 +205,7 @@ function PMScheduleTab() {
   const dueSoon = rows.filter((r) => r.pmStatus === "Due Soon").length;
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="fleet-console flex flex-col gap-3">
       <div className="flex flex-wrap gap-3">
         {[
           { label: "Total PM Items", val: rows.length },

@@ -171,42 +171,37 @@ function scopeDeviceById(deviceId: string | number, session: UserSession | null)
   return device;
 }
 
-function relatedVehicle(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.vehicles.find(
-    (vehicle) => String(vehicle.id ?? vehicle.vehicleId ?? vehicle.vehicleCode) === String(device.assignedVehicleId ?? device.assignedVehicleCode),
-  );
+// The real vehicle/driver identity already rides on the device row from the API
+// (assignedVehicleCode / assignedDriverName). We do NOT resolve richer detail from
+// seed fixtures — the device drawer links out to the real vehicles/drivers modules
+// for that. Returning undefined keeps every derived field honestly "—".
+function relatedVehicle(_device: MutableDeviceRecord): AnyRecord | undefined {
+  return undefined;
 }
 
-function relatedDriver(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.drivers.find(
-    (driver) => String(driver.id ?? driver.driverId ?? driver.driverCode) === String(device.assignedDriverId),
-  );
+function relatedDriver(_device: MutableDeviceRecord): AnyRecord | undefined {
+  return undefined;
 }
 
-function relatedShipment(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.shipments.find((shipment) => String(shipment.id ?? shipment.shipmentId) === String(device.shipmentId));
+function relatedShipment(_device: MutableDeviceRecord): AnyRecord | undefined {
+  return undefined;
 }
 
-function relatedMaintenance(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.maintenanceRecords.find(
-    (record) => String(record.vehicleCode ?? record.vehicle ?? "") === String(device.assignedVehicleCode),
-  );
+// Maintenance / alert / compliance cross-links are NOT sourced from seed fixtures —
+// surfacing an unrelated seed record against a real device would fabricate an
+// association. Real cross-module linkage flows from the device's real vehicle/driver
+// ids (the page links out to those modules); here we return nothing so the UI shows
+// an honest "—"/"Not assessed" until a real linkage endpoint provides it.
+function relatedMaintenance(_device: MutableDeviceRecord): AnyRecord | undefined {
+  return undefined;
 }
 
-function relatedAlerts(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.alerts.filter((alert) => {
-    const entity = String(alert.entity ?? "").toLowerCase();
-    return entity.includes(String(device.assignedVehicleCode ?? "").toLowerCase()) ||
-      entity.includes(String(device.assignedDriverName ?? "").toLowerCase()) ||
-      entity.includes(String(device.shipmentId ?? "").toLowerCase());
-  });
+function relatedAlerts(_device: MutableDeviceRecord): AnyRecord[] {
+  return [];
 }
 
-function relatedCompliance(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.complianceRecords.find((record) => {
-    return String(record.entityId ?? "").toLowerCase() === String(device.assignedVehicleId).toLowerCase() ||
-      String(record.entityId ?? "").toLowerCase() === String(device.assignedDriverId).toLowerCase();
-  });
+function relatedCompliance(_device: MutableDeviceRecord): AnyRecord | undefined {
+  return undefined;
 }
 
 function enrichDevice(device: MutableDeviceRecord): DeviceCommandRecord {
@@ -230,6 +225,12 @@ function enrichDevice(device: MutableDeviceRecord): DeviceCommandRecord {
   };
 }
 
+// Telemetry stream + health history are per-device time series that only a real
+// telematics feed can provide. These filter seed events by deviceId — a REAL device
+// id never matches a seed row, so real devices honestly yield an empty series (the
+// drawer shows "no telemetry yet"). Seed ids still resolve for the standalone demo
+// device catalog. When a real feed is wired (see the PR integration note) this reads
+// from it directly.
 function buildTelemetrySummary(deviceId: string | number) {
   return state.telemetryEvents.filter((event) => String(event.deviceId) === String(deviceId)).slice(0, 8);
 }
@@ -373,25 +374,32 @@ async function withFallback<T>(request: Promise<T>, fallback: () => T | Promise<
 
 function mergeBackendDevices(apiRows: AnyRecord[]): MutableDeviceRecord[] {
   const scopedSeed = state.devices;
+  // Shape used only to satisfy the record contract for fields the backend does not
+  // yet supply. It carries NO fabricated telemetry — never a real-looking value.
+  const emptyShape = scopedSeed[0] ?? ({} as MutableDeviceRecord);
   const merged = apiRows.map((row, index) => {
+    // Match a seed row ONLY by a real identity key (id / serial / vehicle). We do NOT
+    // index-match against an unrelated seed device — that used to inherit a random
+    // device's provider, signal and power readings onto a real unit (fabrication).
     const seed = scopedSeed.find((device) =>
       String(device.id) === String(row.id) ||
       String(device.deviceId) === String(row.device_serial ?? row.deviceId ?? "") ||
       String(device.assignedVehicleCode) === String(row.vehicle_code ?? row.vehicleCode ?? ""),
     );
 
-    const fallbackSeed = seed ?? scopedSeed[index % Math.max(scopedSeed.length, 1)];
     const normalizedId =
       typeof row.id === "string" || typeof row.id === "number"
         ? row.id
         : seed?.id ?? `device-${index + 1}`;
     return {
-      ...fallbackSeed,
+      // Contract shape only — every field below is overwritten from the real row (or a
+      // truthful "—"/"Unknown" marker). Seed is consulted only for a genuine match.
+      ...emptyShape,
       id: normalizedId,
       deviceId: String(row.device_serial ?? seed?.deviceId ?? `DEV-${index + 1}`),
-      deviceName: String(row.device_name ?? seed?.deviceName ?? seed?.provider ?? "Fleet telematics device"),
-      deviceType: String(row.device_type ?? seed?.deviceType ?? "ELD device"),
-      provider: String(row.provider ?? seed?.provider ?? "Connected provider"),
+      deviceName: String(row.device_name ?? row.device_model ?? seed?.deviceName ?? "Telematics device"),
+      deviceType: String(row.device_type ?? row.device_model ?? seed?.deviceType ?? "ELD device"),
+      provider: String(row.provider ?? seed?.provider ?? "Unknown"),
       providerCode: String(seed?.providerCode ?? "connected-provider"),
       serialNumber: String(row.device_serial ?? seed?.serialNumber ?? ""),
       identifier: String(row.imei ?? seed?.identifier ?? ""),

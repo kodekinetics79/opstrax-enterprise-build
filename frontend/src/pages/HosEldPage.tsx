@@ -91,7 +91,7 @@ export function HosEldPage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -112,12 +112,12 @@ export function HosEldPage() {
           { label: "HOS Violation",   value: violationCount, color: violationCount > 0 ? "text-red-700" : "text-slate-500",   icon: AlertTriangle },
           { label: "ELD Malfunction", value: eldMalfCount,   color: eldMalfCount   > 0 ? "text-red-700" : "text-slate-500",   icon: WifiOff },
         ].map(kpi => (
-          <div key={kpi.label} className="panel p-3">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">{kpi.label}</p>
-              <kpi.icon className={`h-4 w-4 ${kpi.color}`} />
+          <div key={kpi.label} className="fc-clay fc-clay-teal p-4">
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600">{kpi.label}</p>
+              <span className="fc-blob"><kpi.icon className={`h-4 w-4 ${kpi.color}`} /></span>
             </div>
-            <p className={`text-2xl font-extrabold ${kpi.color}`}>{driversQ.isLoading ? "—" : kpi.value}</p>
+            <p className={`text-[30px] font-black leading-none tabular-nums ${kpi.color}`}>{driversQ.isLoading ? "—" : kpi.value}</p>
           </div>
         ))}
       </div>

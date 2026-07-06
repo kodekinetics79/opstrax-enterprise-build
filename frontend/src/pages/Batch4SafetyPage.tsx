@@ -148,7 +148,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     return <EmptyState title={`${config.eyebrow} unavailable`} subtitle="Unable to load live records right now. Refresh to try again." />;
   }
   const s = (summary.data || {}) as AnyRecord;
-  return <div className="space-y-8">
+  return <div className="fleet-console space-y-3">
     <PageHeader
       eyebrow={config.eyebrow}
       title={config.title}

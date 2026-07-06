@@ -346,11 +346,11 @@ export function IotDevicesPage() {
   const emptyState = emptyStateForTab(tab);
 
   return (
-    <div className="space-y-6">
+    <div className="fleet-console space-y-3">
       <PageHeader
         eyebrow="Telematics & IoT"
         title="Device Health"
-        description="Operational control for GPS trackers, ELD units, OBD gateways, dashcams, sensor packs, firmware posture, diagnostics, and installation readiness."
+        description="GPS trackers, ELD units, OBD gateways, sensors — connection, firmware and diagnostics per device."
         actions={
           <>
             <button

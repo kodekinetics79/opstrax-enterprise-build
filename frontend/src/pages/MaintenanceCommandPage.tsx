@@ -84,10 +84,10 @@ export function MaintenanceCommandPage() {
   const insights         = (d?.insights     as AnyRecord[]) ?? [];
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
       <PageHeader
         eyebrow="Fleet Maintenance"
-        title="Maintenance Command Center"
+        title="Work Orders"
         description="DVIR inspections, defect management, work orders, fault codes, and preventive maintenance — all persisted and RBAC-enforced."
         actions={
           <button
