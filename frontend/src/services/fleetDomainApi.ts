@@ -58,17 +58,22 @@ export function getVehicles() {
 }
 
 export function getVehicleById(id: string | number) {
+  // Collections here mirror exactly what the /api/vehicles/{id} endpoint returns
+  // (ControlTowerVehicleDetail): live active jobs, safety + dashcam video events,
+  // upcoming maintenance, and the recent GPS replay trail. Anything the backend
+  // legitimately omits defaults to [] so the UI shows an honest empty state.
   return apiRecord(`/api/vehicles/${id}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,
-    maintenance: asRows(detail.maintenance),
+    activeJobs: asRows(detail.activeJobs),
     compliance: asRows(detail.compliance),
     documents: asRows(detail.documents),
-    safetyEvents: asRows(detail.safetyEvents),
-    trips: asRows(detail.trips),
-    timeline: asRows(detail.timeline),
-    recommendations: asRows(detail.recommendations),
     auditTrail: asRows(detail.auditTrail),
+    safetyEvents: asRows(detail.safetyEvents),
+    videoEvents: asRows(detail.videoEvents),
+    maintenance: asRows(detail.maintenance),
+    replayTrail: asRows(detail.replayTrail),
+    recommendations: asRows(detail.recommendations),
   }));
 }
 

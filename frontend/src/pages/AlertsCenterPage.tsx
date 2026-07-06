@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -559,6 +559,13 @@ export function AlertsCenterPage() {
   const detailRecord = normalizeAlertDetail(detailQuery.data as AnyRecord | undefined);
   const liveDetail = detailRecord.alert;
 
+  useEffect(() => {
+    if (!filtered.length) return;
+    if (!selectedAlert || !filtered.some((alert) => alert.id === selectedAlert.id)) {
+      setSelectedAlert(filtered[0]);
+    }
+  }, [filtered, selectedAlert]);
+
   function handleAction(type: ActionType, alert: Alert) {
     setActionType(type);
     setActionAlert(alert);
@@ -595,7 +602,7 @@ export function AlertsCenterPage() {
       <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,253,.96))] p-4 shadow-sm">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
         <div className="pointer-events-none absolute -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
-        <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_0.95fr] lg:items-center">
+        <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_0.85fr] lg:items-start">
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
               <BellRing className="h-3.5 w-3.5" /> Live alerts command room
@@ -628,7 +635,7 @@ export function AlertsCenterPage() {
             </div>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2 lg:self-start">
             <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
             <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
             <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
@@ -636,6 +643,51 @@ export function AlertsCenterPage() {
           </div>
         </div>
       </header>
+
+      <section className="panel p-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Live lanes</h2>
+                <p className="text-sm text-slate-500">Directly driven by the current queue, not static demo cards.</p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {filtered.length} visible
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {categoryBuckets.slice(0, 4).map((bucket) => (
+                <button
+                  key={bucket.category}
+                  type="button"
+                  onClick={() => navigate(bucket.route)}
+                  className="rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
+                  <p className="mt-2 text-2xl font-black tracking-tight text-slate-900">{bucket.count}</p>
+                  <p className="mt-1 text-xs text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_8px_18px_rgba(15,23,42,.05)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Queue health</h2>
+                <p className="text-sm text-slate-500">Live operating pressure from the current alert feed.</p>
+              </div>
+              <ShieldAlert className="h-4 w-4 text-sky-500" />
+            </div>
+            <div className="mt-3 space-y-3">
+              <HealthLine label="Critical open" value={summary.critical} total={Math.max(summary.open, 1)} tone="red" />
+              <HealthLine label="Aging 24h+" value={agingOpen} total={Math.max(summary.open, 1)} tone="amber" />
+              <HealthLine label="Unowned" value={unownedOpen} total={Math.max(summary.open, 1)} tone="sky" />
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -704,7 +756,7 @@ export function AlertsCenterPage() {
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
           {openAlerts.length ? openAlerts.map((alert) => (
             <AlertCard
               key={String(alert.id)}
@@ -773,6 +825,26 @@ function MiniStat({ label, value, sublabel }: { label: string; value: number | s
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
       <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
+    </div>
+  );
+}
+
+function HealthLine({ label, value, total, tone }: { label: string; value: number; total: number; tone: "red" | "amber" | "sky" }) {
+  const pct = Math.min(100, Math.round((value / total) * 100));
+  const toneClass =
+    tone === "red" ? "bg-red-500" :
+    tone === "amber" ? "bg-amber-500" :
+    "bg-sky-500";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
+        <span>{label}</span>
+        <span>{value}</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${toneClass}`} style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }

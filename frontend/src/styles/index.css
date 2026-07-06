@@ -1703,3 +1703,200 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
     border-radius: 20px;
   }
 }
+
+/* ============================================================
+   FLEET CONSOLE v5.1 — Vehicles module (/vehicles/roster)
+   Samsara-grade fleet operations console. Reuses the Ops Deck
+   primitives (.deck-screw/.deck-led/.deck-track/.deck-fill/
+   .deck-inset/.deck-alert) and adds the console chassis (fc-*).
+   Clay KPI tiles · neumorphic roster chassis · skeuomorphic
+   bezel screen, telemetry instruments, corner screws.
+   ============================================================ */
+.fleet-console {
+  --fc-bg: #e9eff8;
+  --fc-hi: rgba(255, 255, 255, .92);
+  --fc-lo: rgba(141, 157, 184, .38);
+  margin: -6px;
+  padding: 14px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 8% 4%, rgba(45, 212, 191, .09), transparent 30%),
+    radial-gradient(circle at 92% 8%, rgba(59, 130, 246, .08), transparent 32%),
+    repeating-linear-gradient(0deg, rgba(100, 116, 139, .022) 0 1px, transparent 1px 6px),
+    linear-gradient(170deg, #f0f5fc 0%, var(--fc-bg) 52%, #e2eaf5 100%);
+  border: 1px solid rgba(203, 213, 225, .7);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .9),
+    inset 0 -12px 30px rgba(141, 157, 184, .10);
+}
+.fleet-console .section-title { color: #5b6b83; }
+
+/* Console rail (header) — brushed panel */
+.fc-rail {
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 20px;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, .38) 0 1px, rgba(203, 213, 225, .18) 1px 2px),
+    linear-gradient(180deg, #f6f9fd 0%, #e3ebf6 100%);
+  box-shadow:
+    -6px -6px 14px var(--fc-hi),
+    8px 10px 22px var(--fc-lo),
+    inset 0 1px 0 rgba(255, 255, 255, .95);
+}
+
+/* Clay KPI tiles */
+.fc-clay {
+  position: relative;
+  border: 1.5px solid rgba(255, 255, 255, .85);
+  border-radius: 22px;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.fc-clay:hover { transform: translateY(-2px); }
+.fc-clay-teal {
+  background: linear-gradient(150deg, #e9fbf6 0%, #d3f3ea 100%);
+  box-shadow: 0 10px 22px rgba(13, 148, 136, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(13, 148, 136, .12);
+}
+.fc-clay-teal:hover { box-shadow: 0 14px 28px rgba(13, 148, 136, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(13, 148, 136, .12); }
+.fc-clay-emerald {
+  background: linear-gradient(150deg, #eafcf4 0%, #d6f5e7 100%);
+  box-shadow: 0 10px 22px rgba(16, 185, 129, .16), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.fc-clay-emerald:hover { box-shadow: 0 14px 28px rgba(16, 185, 129, .22), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12); }
+.fc-clay-red {
+  background: linear-gradient(150deg, #fef0f0 0%, #fcdede 100%);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.fc-clay-red:hover { box-shadow: 0 14px 28px rgba(239, 68, 68, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11); }
+.fc-clay-amber {
+  background: linear-gradient(150deg, #fff7e8 0%, #fdecd0 100%);
+  box-shadow: 0 10px 22px rgba(245, 158, 11, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.fc-clay-amber:hover { box-shadow: 0 14px 28px rgba(245, 158, 11, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12); }
+
+.fc-blob {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffffff 0%, #edf3fb 100%);
+  box-shadow: 0 4px 8px rgba(15, 23, 42, .10), inset 0 1px 0 #ffffff, inset 0 -3px 6px rgba(148, 163, 184, .28);
+}
+
+/* Neumorphic chassis */
+.fc-neumo {
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #f2f6fc 0%, #e6edf7 100%);
+  box-shadow:
+    -7px -7px 16px var(--fc-hi, rgba(255, 255, 255, .92)),
+    9px 12px 24px var(--fc-lo, rgba(141, 157, 184, .38)),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+/* Bezel + screen for the roster table */
+.fc-bezel {
+  padding: 7px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #d8e1ee 0%, #eef3fa 100%);
+  box-shadow: inset 0 2px 5px rgba(71, 85, 105, .22), inset 0 -1px 0 rgba(255, 255, 255, .85), 0 1px 0 rgba(255, 255, 255, .8);
+}
+.fc-screen {
+  border: 1px solid #cbd7e6;
+  border-radius: 13px;
+  background: #fcfdff;
+  box-shadow: inset 0 2px 10px rgba(30, 41, 59, .08);
+}
+
+/* Recessed search field */
+.fc-search {
+  border: 1px solid #cbd7e6;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #e6edf7 0%, #eef3fa 100%);
+  box-shadow: inset 3px 4px 8px rgba(141, 157, 184, .26), inset -3px -4px 8px rgba(255, 255, 255, .85);
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+.fc-search:focus {
+  border-color: rgba(13, 148, 136, .55);
+  box-shadow: inset 2px 3px 6px rgba(141, 157, 184, .22), 0 0 0 3px rgba(13, 148, 136, .12);
+}
+
+/* Neumorphic segmented filter */
+.fc-seg {
+  border: 1px solid rgba(203, 213, 225, .5);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e2e9f4 0%, #e9f0f9 100%);
+  box-shadow: inset 4px 4px 9px rgba(141, 157, 184, .26), inset -4px -4px 9px rgba(255, 255, 255, .85);
+}
+.fc-seg-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: .4rem .78rem;
+  color: #64748b;
+  font-size: .76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.fc-seg-btn:hover { color: #0f172a; }
+.fc-seg-btn-active,
+.fc-seg-btn-active:hover {
+  border-color: rgba(255, 255, 255, .9);
+  background: linear-gradient(180deg, #ffffff 0%, #f2f7fd 100%);
+  color: #0f766e;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, .14), inset 0 1px 0 #ffffff;
+}
+
+/* Pager buttons — raised keys */
+.fc-pager-btn {
+  border: 1px solid rgba(255, 255, 255, .85);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fa 100%);
+  padding: .35rem .7rem;
+  font-weight: 600;
+  color: #475569;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .1), inset 0 1px 0 #ffffff;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.fc-pager-btn:disabled { opacity: .4; }
+.fc-pager-btn:not(:disabled):hover { transform: translateY(-1px); }
+.fc-pager-btn:not(:disabled):active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(71, 85, 105, .2); }
+
+/* Drawer header — frosted rail */
+.fc-drawer-head {
+  border-bottom: 1px solid rgba(203, 213, 225, .8);
+  background: linear-gradient(180deg, #f6f9fd 0%, #eef3fa 100%);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .05);
+}
+
+/* Recommendation card — clay teal */
+.fc-reco {
+  border: 1px solid rgba(13, 148, 136, .28);
+  border-radius: 18px;
+  background: linear-gradient(150deg, #e9fbf6 0%, #d6f3ec 100%);
+  box-shadow: 0 6px 16px rgba(13, 148, 136, .14), inset 0 2px 0 rgba(255, 255, 255, .9), inset 0 -6px 12px rgba(13, 148, 136, .1);
+}
+
+/* The console reuses the primary button but flattens the heavy default shadow
+   inside its own chrome so buttons read as console keys, not floating CTAs. */
+.fleet-console .btn-ghost {
+  border-color: #cdd8e6;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fa 100%);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, .08), inset 0 1px 0 #ffffff;
+}
+.fleet-console .btn-ghost:active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(71, 85, 105, .18); }
+
+@media (max-width: 639px) {
+  .fleet-console {
+    margin: -4px;
+    padding: 9px;
+    border-radius: 20px;
+  }
+}

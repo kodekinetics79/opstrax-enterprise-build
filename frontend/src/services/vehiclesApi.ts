@@ -16,8 +16,7 @@ export const vehiclesApi = {
   // customer, route and document data. No client-side fabrication.
   planningInsights: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/planning-insights")),
   detail: (id: string | number) => getVehicleById(id),
-  timeline: async (id: string | number) => [{ eventType: "status.update", title: "Vehicle record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
-  recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review vehicle readiness", body: "Maintain service cadence and dispatch device health before assigning the next load.", score: 86 }],
+  recommendations: (id: string | number) => getVehicleById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)),
