@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Camera,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { controlTowerApi } from "@/services/controlTowerApi";
+import { routesApi } from "@/services/routesApi";
 import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
@@ -28,11 +29,46 @@ const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "F
 
 type LayerKey = "vehicles" | "geofences";
 type StatusBucket = "Moving" | "Idle" | "Offline";
+type RouteTrail = {
+  id: string;
+  label: string;
+  points: Array<[number, number]>;
+  color?: string;
+  summary?: string;
+};
 
 function hasValidPosition(entity: AnyRecord): boolean {
   const lat = Number(entity.lat ?? entity.latitude);
   const lng = Number(entity.lng ?? entity.longitude);
   return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
+}
+
+function extractPoint(entity: AnyRecord): [number, number] | null {
+  const lat = Number(entity.lat ?? entity.latitude ?? entity.centerLat ?? entity.center_lat);
+  const lng = Number(entity.lng ?? entity.longitude ?? entity.centerLng ?? entity.center_lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0 ? [lat, lng] : null;
+}
+
+function haversineMiles(a: [number, number], b: [number, number]): number {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const [lat1, lon1] = a;
+  const [lat2, lon2] = b;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const s1 = Math.sin(dLat / 2);
+  const s2 = Math.sin(dLon / 2);
+  const c = s1 * s1 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * s2 * s2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(c), Math.sqrt(Math.max(0, 1 - c)));
+}
+
+function routeTrailMiles(points: Array<[number, number]>): number {
+  if (points.length < 2) return 0;
+  return points.slice(1).reduce((sum, point, index) => sum + haversineMiles(points[index], point), 0);
+}
+
+function formatDistance(miles: number): string {
+  if (!Number.isFinite(miles) || miles <= 0) return "0 mi";
+  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
 }
 
 /** Classify a vehicle into a single live-status bucket — the heart of the status board. */
@@ -84,11 +120,22 @@ export function LiveMapPage() {
   const [activeFilter, setActiveFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["telemetry", "live-map-summary"],
     queryFn: telemetryApi.liveMapSummary,
     refetchInterval: 15_000,
+  });
+  const routesQ = useQuery({
+    queryKey: ["routes"],
+    queryFn: routesApi.list,
+    refetchInterval: 60_000,
+  });
+  const liveStatesQ = useQuery({
+    queryKey: ["telemetry", "live-states"],
+    queryFn: telemetryApi.liveStates,
+    refetchInterval: 30_000,
   });
   const telemetry = useLiveTelemetry();
   const qc = useQueryClient();
@@ -113,6 +160,36 @@ export function LiveMapPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["telemetry-alerts"] }),
   });
 
+  const routeRows = (routesQ.data as AnyRecord[]) ?? [];
+  useEffect(() => {
+    if (selectedRouteId && routeRows.some((route) => String(route.id) === selectedRouteId)) return;
+    const preferred =
+      routeRows.find((route) => /active|planned|at risk|delayed/i.test(String(route.status ?? ""))) ??
+      routeRows.find((route) => Number(route.stopCount ?? route.stops ?? 0) > 0) ??
+      routeRows[0] ??
+      null;
+    setSelectedRouteId(preferred ? String(preferred.id) : null);
+  }, [routeRows, selectedRouteId]);
+
+  const selectedRoute = useMemo(
+    () => routeRows.find((route) => String(route.id) === selectedRouteId) ?? null,
+    [routeRows, selectedRouteId],
+  );
+
+  const routeStopsQ = useQuery({
+    queryKey: ["routes", "stops", selectedRouteId],
+    queryFn: () => routesApi.stops(selectedRouteId ?? ""),
+    enabled: Boolean(selectedRouteId),
+    refetchInterval: 60_000,
+  });
+
+  const routePreviewQ = useQuery({
+    queryKey: ["routes", "optimize-preview", selectedRouteId],
+    queryFn: () => routesApi.optimizePreview(selectedRouteId ?? ""),
+    enabled: Boolean(selectedRouteId),
+    refetchInterval: 120_000,
+  });
+
   // Merge the live SSE GPS stream onto the DB entity snapshot so markers move in real time
   // and carry GPS freshness (secondsSincePing / isStale) for the status board and roster.
   const baseEntities = (data?.entities as AnyRecord[]) ?? [];
@@ -133,6 +210,65 @@ export function LiveMapPage() {
       };
     });
   }, [baseEntities, telemetry.positions]);
+
+  const routeStops = (routeStopsQ.data as AnyRecord[]) ?? [];
+  const routeTrail = useMemo<RouteTrail[]>(() => {
+    const points = routeStops
+      .map((stop) => ({
+        point: extractPoint(stop),
+        order: Number(stop.stopSequence ?? stop.sequenceNo ?? stop.stop_sequence ?? 0),
+      }))
+      .filter((entry) => entry.point !== null)
+      .sort((a, b) => a.order - b.order)
+      .map((entry) => entry.point as [number, number]);
+
+    if (points.length < 2) return [];
+
+    return [{
+      id: String(selectedRoute?.id ?? selectedRouteId ?? "route"),
+      label: String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.name ?? "Selected route"),
+      points,
+      color: "#0ea5e9",
+      summary: `${points.length} geo stops · ${formatDistance(routeTrailMiles(points))} span`,
+    }];
+  }, [routeStops, selectedRoute, selectedRouteId]);
+
+  const assetStates = (liveStatesQ.data as AnyRecord[]) ?? [];
+  const assetHealth = useMemo(() => {
+    const source = assetStates.length > 0 ? assetStates : liveEntities;
+    const stale = source.filter((row) => String(row.telemetryStatus ?? row.telemetry_status ?? "").toLowerCase() === "stale" || Boolean(row.isStale)).length;
+    const highRisk = source.filter((row) => String(row.riskLevel ?? row.risk_level ?? "").toLowerCase() === "high").length;
+    const watch = source.filter((row) => {
+      const risk = String(row.riskLevel ?? row.risk_level ?? "").toLowerCase();
+      return risk === "medium" || Number(row.openAlertCount ?? row.open_alert_count ?? 0) > 0;
+    }).length;
+    const geocoded = source.filter(hasValidPosition).length;
+    const avgFreshness = source.reduce((sum, row) => sum + Number(row.secondsSincePing ?? row.seconds_since_ping ?? 0), 0) / Math.max(source.length, 1);
+    return { stale, highRisk, watch, geocoded, total: source.length, avgFreshness };
+  }, [assetStates, liveEntities]);
+
+  const assetHealthRows = useMemo(() => {
+    const source = (liveStatesQ.data as AnyRecord[]) ?? liveEntities;
+    return [...source]
+      .sort((a, b) => {
+        const riskOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        const aRisk = riskOrder[String(a.riskLevel ?? a.risk_level ?? "").toLowerCase()] ?? 3;
+        const bRisk = riskOrder[String(b.riskLevel ?? b.risk_level ?? "").toLowerCase()] ?? 3;
+        if (aRisk !== bRisk) return aRisk - bRisk;
+        return Number(b.secondsSincePing ?? b.seconds_since_ping ?? 0) - Number(a.secondsSincePing ?? a.seconds_since_ping ?? 0);
+      })
+      .slice(0, 4)
+      .map((row) => ({
+        id: String(row.id ?? row.vehicleId ?? row.vehicle_id ?? row.vehicleCode ?? row.vehicle_code),
+        label: String(row.vehicleCode ?? row.vehicle_code ?? row.label ?? "Vehicle"),
+        risk: String(row.riskLevel ?? row.risk_level ?? "Low"),
+        status: String(row.telemetryStatus ?? row.telemetry_status ?? row.status ?? "Healthy"),
+        fresh: freshnessLabel(Number(row.secondsSincePing ?? row.seconds_since_ping ?? null)),
+        note: String(row.nextAction ?? row.next_action ?? row.liveAlert ?? row.live_alert ?? "Monitoring live"),
+        connectivity: String(row.connectivityStatus ?? row.connectivity_status ?? "Unknown"),
+        connectivityIssues: String(row.connectivityIssues ?? row.connectivity_issues ?? "None"),
+      }));
+  }, [liveStatesQ.data, liveEntities]);
 
   // Live status segmentation — Moving / Idle / Offline — the signature fleet-status board.
   const buckets = useMemo(() => {
@@ -222,6 +358,73 @@ export function LiveMapPage() {
             </div>
           </div>
 
+          <div className="mt-3 grid min-w-0 gap-2 lg:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route intelligence</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">{String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.name ?? "No route selected")}</p>
+                  <p className="truncate text-xs text-slate-500">{routeTrail[0]?.summary ?? "No geocoded route trail yet"}</p>
+                </div>
+                <Route className="h-4 w-4 shrink-0 text-sky-500" />
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <select
+                  className="field min-w-0 flex-1 py-2 text-sm"
+                  value={selectedRouteId ?? ""}
+                  onChange={(e) => setSelectedRouteId(e.target.value || null)}
+                >
+                  <option value="">Select a route</option>
+                  {routeRows.map((route) => (
+                    <option key={String(route.id)} value={String(route.id)}>
+                      {String(route.routeCode ?? route.routeName ?? route.name ?? `Route ${route.id}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route optimization</p>
+              {routePreviewQ.data ? (
+                <>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{String(routePreviewQ.data.efficiencyScore ?? "--")}%</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Saves {String(routePreviewQ.data.estimatedSavingsMinutes ?? 0)} min · {String(routePreviewQ.data.costLeakageReduction ?? "--")} leakage reduction
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-slate-500">Select a route with stops to generate a geospatial optimization preview.</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Asset health</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <MetricPill label="Geocoded" value={`${assetHealth.geocoded}/${assetHealth.total}`} />
+                <MetricPill label="Stale" value={String(assetHealth.stale)} tone="rose" />
+                <MetricPill label="At risk" value={String(assetHealth.highRisk)} tone="amber" />
+                <MetricPill label="Watch" value={String(assetHealth.watch)} tone="sky" />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Avg freshness {freshnessLabel(assetHealth.avgFreshness)} · geospatial state updates live from the telemetry feed
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Connectivity</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <MetricPill label="Connected" value={String(kpis.connectedUnits ?? 0)} tone="sky" />
+                <MetricPill label="Degraded" value={String(kpis.degradedUnits ?? 0)} tone="amber" />
+                <MetricPill label="Device offline" value={String(kpis.deviceOfflineUnits ?? 0)} tone="rose" />
+                <MetricPill label="Camera offline" value={String(kpis.cameraOfflineUnits ?? 0)} tone="rose" />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Connectivity coverage {String(kpis.connectivityCoverage ?? 0)}% · real vehicle, device, camera and GPS signals
+              </p>
+            </div>
+          </div>
+
           <div className="-mx-1 mt-3 overflow-x-auto px-1 pb-1">
             <div className="flex min-w-max items-center gap-2">
               {QUICK_FILTERS.map((filter) => (
@@ -246,7 +449,7 @@ export function LiveMapPage() {
           </div>
 
           <div className="map-surface live-map-canvas relative mt-2 min-h-[400px] flex-1 overflow-hidden sm:min-h-[500px] xl:min-h-[560px]">
-            <LiveMap entities={mapEntities} geofences={geofences} onSelect={setSelected} focusId={focusId} />
+            <LiveMap entities={mapEntities} geofences={geofences} routeTrails={routeTrail} onSelect={setSelected} focusId={focusId} />
             {locatedEntityCount === 0 ? (
               <div className="pointer-events-none absolute inset-x-4 top-4 z-[500] rounded-2xl border border-amber-300 bg-amber-50/95 p-4 shadow-lg backdrop-blur">
                 <div className="flex items-start gap-3">
@@ -265,6 +468,40 @@ export function LiveMapPage() {
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
         <aside className="panel live-map-tactile-card flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
+          <div className="border-b border-slate-100 px-4 pb-3 pt-4">
+            <div className="flex items-center justify-between">
+              <h2 className="section-title">Geospatial Health</h2>
+              <span className="text-xs font-semibold text-slate-400">{formatDistance(routeTrailMiles(routeTrail[0]?.points ?? []))}</span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {assetHealthRows.length === 0 ? (
+                <p className="text-sm text-slate-500">No live asset health rows yet.</p>
+              ) : (
+                assetHealthRows.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                          item.connectivity === "Connected"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : item.connectivity === "Degraded"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-slate-100 text-slate-500"
+                        }`}>
+                          {item.connectivity}
+                        </span>
+                        <RiskBadge risk={item.risk} />
+                      </div>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{item.status} · {item.fresh}</p>
+                    <p className="mt-1 text-xs text-slate-400">{item.note} · {item.connectivityIssues}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Live Roster</h2>
@@ -329,6 +566,24 @@ export function LiveMapPage() {
   );
 }
 
+type MetricTone = "slate" | "rose" | "amber" | "sky";
+
+function MetricPill({ label, value, tone = "slate" }: { label: string; value: string; tone?: MetricTone }) {
+  const toneClass: Record<MetricTone, string> = {
+    slate: "bg-slate-50 text-slate-700",
+    rose: "bg-rose-50 text-rose-700",
+    amber: "bg-amber-50 text-amber-700",
+    sky: "bg-sky-50 text-sky-700",
+  };
+
+  return (
+    <div className={`rounded-xl px-3 py-2 ${toneClass[tone]}`}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] opacity-70">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
 const BOARD_TONES: Record<string, { dot: string; activeBorder: string; activeBg: string; text: string }> = {
   slate:  { dot: "bg-slate-400",   activeBorder: "border-slate-400",   activeBg: "bg-slate-50",   text: "text-slate-700" },
   teal:   { dot: "bg-teal-500",    activeBorder: "border-teal-400",    activeBg: "bg-teal-50",    text: "text-teal-700" },
@@ -384,7 +639,7 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
           <RiskBadge risk={entity.riskLevel ?? entity.risk_level} />
         </div>
         <p className="truncate text-xs text-slate-500">{driver}</p>
-        <div className="mt-1 flex items-center gap-2 text-[11px] font-medium text-slate-400">
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-400">
           {bucket === "Moving" ? (
             <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speed)} mph</span>
           ) : (
@@ -392,7 +647,12 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
           )}
           <span>·</span>
           <span>{fresh}</span>
+          <span>·</span>
+          <span className={String(entity.connectivityStatus ?? "").toLowerCase() === "connected" ? "text-teal-600" : String(entity.connectivityStatus ?? "").toLowerCase() === "degraded" ? "text-amber-600" : "text-slate-500"}>
+            {String(entity.connectivityStatus ?? "Unknown")}
+          </span>
         </div>
+        <p className="mt-1 text-[10px] text-slate-400">{String(entity.connectivityIssues ?? "None")}</p>
       </div>
     </button>
   );
@@ -468,8 +728,8 @@ function VehicleDetailDrawer({ detail, loading, onClose }: { detail?: AnyRecord;
           <span className="badge"><MapPin className="mr-1 inline h-3 w-3" />Last seen {String(record.lastSeenAt ?? record.last_seen_at ?? "--")}</span>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <Mini title="Live Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status"]} />
-          <Mini title="Health & Diagnostics" record={record} keys={["readinessScore", "readiness_score", "dataQualityScore", "data_quality_score", "riskScore", "risk_score", "odometerMiles", "odometer_miles", "type"]} />
+          <Mini title="Live Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status", "connectivityStatus", "connectivity_status", "connectivityIssues", "connectivity_issues"]} />
+          <Mini title="Health & Diagnostics" record={record} keys={["readinessScore", "readiness_score", "dataQualityScore", "data_quality_score", "riskScore", "risk_score", "odometerMiles", "odometer_miles", "type", "vehicleStatus", "vehicle_status"]} />
         </div>
         <Grid title="Active Jobs / SLA" rows={(detail?.activeJobs as AnyRecord[]) ?? []} columns={["jobNumber", "status", "slaStatus", "eta", "priority"]} />
         <Grid title="Safety Events" rows={(detail?.safetyEvents as AnyRecord[]) ?? []} columns={["eventNumber", "eventType", "severity", "reviewStatus", "occurredAt"]} />

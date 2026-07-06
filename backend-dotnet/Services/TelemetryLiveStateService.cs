@@ -153,7 +153,7 @@ public sealed class TelemetryLiveStateService(Database db)
     public async Task<List<Dictionary<string, object?>>> ListLiveStatesAsync(long companyId, CancellationToken ct = default)
     {
         var rows = await db.QueryAsync(
-            @"SELECT lsa.*, 
+                @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
               WHERE lsa.company_id=@cid
@@ -167,7 +167,7 @@ public sealed class TelemetryLiveStateService(Database db)
     public async Task<Dictionary<string, object?>?> GetLiveStateAsync(long companyId, long vehicleId, CancellationToken ct = default)
     {
         var row = await db.QuerySingleAsync(
-            @"SELECT lsa.*, 
+            @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
               WHERE lsa.company_id=@cid AND lsa.vehicle_id=@vid
@@ -187,6 +187,8 @@ public sealed class TelemetryLiveStateService(Database db)
                      e.vehicle_id, e.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name,
+                     v.status vehicle_status, v.device_status, v.camera_status,
+                     v.readiness_score, v.data_quality_score, v.risk_score,
                      lsa.telemetry_status, lsa.risk_level, lsa.open_alert_count,
                      lsa.alert_count, lsa.stale_seconds, lsa.next_action, lsa.updated_at live_state_updated_at,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
@@ -208,6 +210,8 @@ public sealed class TelemetryLiveStateService(Database db)
                      e.vehicle_id, e.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name,
+                     v.status vehicle_status, v.device_status, v.camera_status,
+                     v.readiness_score, v.data_quality_score, v.risk_score,
                      lsa.telemetry_status, lsa.risk_level, lsa.open_alert_count,
                      lsa.alert_count, lsa.stale_seconds, lsa.next_action, lsa.updated_at live_state_updated_at,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
@@ -283,7 +287,7 @@ public sealed class TelemetryLiveStateService(Database db)
                 entities = BuildEntitiesFromDevices(devices);
             }
 
-            var kpis = BuildKpis(states, devices, alerts);
+            var kpis = BuildKpis(entities.ToList(), devices, alerts);
 
             return new Dictionary<string, object?>
             {
@@ -325,6 +329,8 @@ public sealed class TelemetryLiveStateService(Database db)
                      lvp.accuracy_meters, lvp.engine_status, lvp.fuel_level, lvp.odometer_miles,
                      lvp.battery_voltage, lvp.event_time, lvp.received_at, lvp.event_count,
                      v.vehicle_code, d.full_name driver_name, e.device_serial,
+                     v.status vehicle_status, v.device_status, v.camera_status,
+                     v.readiness_score, v.data_quality_score,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid), 0) alert_count,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid AND ta.status='Open'), 0) open_alert_count,
                      COALESCE((SELECT ta.alert_type FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid ORDER BY ta.created_at DESC LIMIT 1), 'clear') last_alert_type,
@@ -372,6 +378,19 @@ public sealed class TelemetryLiveStateService(Database db)
             ["heading"] = Value(state, "heading"),
             ["secondsSincePing"] = Value(state, "seconds_since_ping", "secondsSincePing"),
             ["isStale"] = string.Equals(Value(state, "telemetry_status", "telemetryStatus")?.ToString(), "stale", StringComparison.OrdinalIgnoreCase),
+            ["vehicleStatus"] = Value(state, "vehicle_status", "vehicleStatus"),
+            ["deviceStatus"] = Value(state, "device_status", "deviceStatus"),
+            ["cameraStatus"] = Value(state, "camera_status", "cameraStatus"),
+            ["readinessScore"] = Value(state, "readiness_score", "readinessScore"),
+            ["dataQualityScore"] = Value(state, "data_quality_score", "dataQualityScore"),
+            ["connectivityStatus"] = BuildConnectivityStatus(
+                Value(state, "device_status", "deviceStatus")?.ToString(),
+                Value(state, "camera_status", "cameraStatus")?.ToString(),
+                Value(state, "telemetry_status", "telemetryStatus")?.ToString()),
+            ["connectivityIssues"] = BuildConnectivityIssues(
+                Value(state, "device_status", "deviceStatus")?.ToString(),
+                Value(state, "camera_status", "cameraStatus")?.ToString(),
+                string.Equals(Value(state, "telemetry_status", "telemetryStatus")?.ToString(), "stale", StringComparison.OrdinalIgnoreCase)),
             ["telemetryStatus"] = Value(state, "telemetry_status", "telemetryStatus"),
             ["riskLevel"] = Value(state, "risk_level", "riskLevel"),
             ["liveAlert"] = Value(state, "next_action", "nextAction"),
@@ -402,27 +421,70 @@ public sealed class TelemetryLiveStateService(Database db)
             ["heading"] = null,
             ["secondsSincePing"] = Value(device, "seconds_since_ping", "secondsSincePing"),
             ["isStale"] = false,
+            ["vehicleStatus"] = Value(device, "vehicle_status", "vehicleStatus"),
+            ["deviceStatus"] = Value(device, "device_status", "deviceStatus") ?? Value(device, "status"),
+            ["cameraStatus"] = Value(device, "camera_status", "cameraStatus") ?? "Unknown",
+            ["readinessScore"] = Value(device, "readiness_score", "readinessScore"),
+            ["dataQualityScore"] = Value(device, "data_quality_score", "dataQualityScore"),
+            ["connectivityStatus"] = BuildConnectivityStatus(
+                Value(device, "device_status", "deviceStatus")?.ToString() ?? Value(device, "status")?.ToString(),
+                Value(device, "camera_status", "cameraStatus")?.ToString(),
+                null),
+            ["connectivityIssues"] = BuildConnectivityIssues(
+                Value(device, "device_status", "deviceStatus")?.ToString() ?? Value(device, "status")?.ToString(),
+                Value(device, "camera_status", "cameraStatus")?.ToString(),
+                false),
         }).ToList();
     }
 
-    private static Dictionary<string, object?> BuildKpis(List<Dictionary<string, object?>> states, List<Dictionary<string, object?>> devices, List<Dictionary<string, object?>> alerts)
+    private static Dictionary<string, object?> BuildKpis(List<Dictionary<string, object?>> entities, List<Dictionary<string, object?>> devices, List<Dictionary<string, object?>> alerts)
     {
-        var highRisk = states.Count(row => string.Equals(row.GetValueOrDefault("risk_level")?.ToString(), "high", StringComparison.OrdinalIgnoreCase));
-        var watch = states.Count(row => string.Equals(row.GetValueOrDefault("risk_level")?.ToString(), "medium", StringComparison.OrdinalIgnoreCase));
-        var healthy = states.Count(row => string.Equals(row.GetValueOrDefault("telemetry_status")?.ToString(), "healthy", StringComparison.OrdinalIgnoreCase));
-        var stale = states.Count(row => string.Equals(row.GetValueOrDefault("telemetry_status")?.ToString(), "stale", StringComparison.OrdinalIgnoreCase));
+        static bool IsOnline(object? value) => string.Equals(value?.ToString(), "Online", StringComparison.OrdinalIgnoreCase);
+        static bool IsOffline(object? value) => string.Equals(value?.ToString(), "Offline", StringComparison.OrdinalIgnoreCase);
+        var highRisk = entities.Count(row => string.Equals(row.GetValueOrDefault("riskLevel")?.ToString(), "high", StringComparison.OrdinalIgnoreCase));
+        var watch = entities.Count(row => string.Equals(row.GetValueOrDefault("riskLevel")?.ToString(), "medium", StringComparison.OrdinalIgnoreCase));
+        var healthy = entities.Count(row => string.Equals(row.GetValueOrDefault("telemetryStatus")?.ToString(), "healthy", StringComparison.OrdinalIgnoreCase));
+        var stale = entities.Count(row => string.Equals(row.GetValueOrDefault("telemetryStatus")?.ToString(), "stale", StringComparison.OrdinalIgnoreCase));
+        var deviceOffline = entities.Count(row => IsOffline(row.GetValueOrDefault("deviceStatus")) || row.GetValueOrDefault("deviceStatus") is null);
+        var cameraOffline = entities.Count(row => IsOffline(row.GetValueOrDefault("cameraStatus")) || row.GetValueOrDefault("cameraStatus") is null);
+        var connected = entities.Count(row => IsOnline(row.GetValueOrDefault("deviceStatus")) && IsOnline(row.GetValueOrDefault("cameraStatus")) && !Convert.ToBoolean(row.GetValueOrDefault("isStale") ?? false));
+        var degraded = Math.Max(0, entities.Count - connected - Math.Min(deviceOffline + cameraOffline, entities.Count));
         return new Dictionary<string, object?>
         {
-            ["liveUnits"] = states.Count,
+            ["liveUnits"] = entities.Count,
             ["registeredDevices"] = devices.Count,
             ["openAlerts"] = alerts.Count,
             ["highRiskUnits"] = highRisk,
             ["watchUnits"] = watch,
             ["healthyUnits"] = healthy,
             ["staleUnits"] = stale,
-            ["liveCoverage"] = states.Count == 0 ? 0 : Math.Round((decimal)healthy / states.Count * 100m, 1),
+            ["deviceOfflineUnits"] = deviceOffline,
+            ["cameraOfflineUnits"] = cameraOffline,
+            ["connectedUnits"] = connected,
+            ["degradedUnits"] = degraded,
+            ["connectivityCoverage"] = entities.Count == 0 ? 0 : Math.Round((decimal)connected / entities.Count * 100m, 1),
+            ["liveCoverage"] = entities.Count == 0 ? 0 : Math.Round((decimal)healthy / entities.Count * 100m, 1),
             ["asOf"] = DateTimeOffset.UtcNow,
         };
+    }
+
+    private static string BuildConnectivityStatus(string? deviceStatus, string? cameraStatus, string? telemetryStatus)
+    {
+        var deviceOnline = string.Equals(deviceStatus, "Online", StringComparison.OrdinalIgnoreCase);
+        var cameraOnline = string.Equals(cameraStatus, "Online", StringComparison.OrdinalIgnoreCase);
+        var stale = string.Equals(telemetryStatus, "stale", StringComparison.OrdinalIgnoreCase);
+        if (deviceOnline && cameraOnline && !stale) return "Connected";
+        if (!deviceOnline || !cameraOnline || stale) return "Degraded";
+        return "Unknown";
+    }
+
+    private static string BuildConnectivityIssues(string? deviceStatus, string? cameraStatus, bool stale)
+    {
+        var issues = new List<string>();
+        if (!string.Equals(deviceStatus, "Online", StringComparison.OrdinalIgnoreCase)) issues.Add("Device");
+        if (!string.Equals(cameraStatus, "Online", StringComparison.OrdinalIgnoreCase)) issues.Add("Camera");
+        if (stale) issues.Add("GPS stale");
+        return issues.Count == 0 ? "None" : string.Join(", ", issues);
     }
 
     private static object? Value(Dictionary<string, object?> row, params string[] keys)

@@ -16,16 +16,20 @@ function isMovingState(status: string, speed: number): boolean {
   return speed > 3 || /active|on route|moving|driving|en route/i.test(status);
 }
 
-function markerColor(risk: string, status: string, speed: number, isStale: boolean): string {
+function markerColor(risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
+  const deviceOnline = !deviceStatus || /online|recording/i.test(deviceStatus);
+  const cameraOnline = !cameraStatus || /online|recording/i.test(cameraStatus);
   if (isStale) return "#94a3b8"; // offline / no recent ping
+  if (!deviceOnline && !cameraOnline) return "#ef4444";
+  if (!deviceOnline || !cameraOnline) return "#f59e0b";
   if (/high|critical/i.test(risk)) return "#ef4444";
   if (/medium|warning/i.test(risk)) return "#f59e0b";
   return isMovingState(status, speed) ? "#14b8a6" : "#6366f1";
 }
 
-function makeVehicleIcon(risk: string, status: string, speed: number, heading: number, isStale: boolean): L.DivIcon {
+function makeVehicleIcon(risk: string, status: string, speed: number, heading: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
   const moving = isMovingState(status, speed) && !isStale;
-  const color = markerColor(risk, status, speed, isStale);
+  const color = markerColor(risk, status, speed, isStale, deviceStatus, cameraStatus);
 
   // Moving units render as a heading-aware arrow; stationary as a dot; offline as a hollow ring.
   const inner = moving
@@ -73,21 +77,48 @@ function makeGeofenceCircle(zone: AnyRecord, index: number): L.Circle | null {
   });
 }
 
+function makeRoutePolyline(route: AnyRecord, index: number): L.Polyline | null {
+  const rawPoints = Array.isArray(route.points) ? route.points : Array.isArray(route.path) ? route.path : [];
+  const points = rawPoints
+    .map((point: AnyRecord | [number, number]) => {
+      if (Array.isArray(point) && point.length >= 2) {
+        return [Number(point[0]), Number(point[1])] as [number, number];
+      }
+      const lat = Number((point as AnyRecord).lat ?? (point as AnyRecord).latitude ?? (point as AnyRecord).center_lat);
+      const lng = Number((point as AnyRecord).lng ?? (point as AnyRecord).longitude ?? (point as AnyRecord).center_lng);
+      return [lat, lng] as [number, number];
+    })
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0);
+
+  if (points.length < 2) return null;
+
+  return L.polyline(points, {
+    color: String(route.color ?? "#0ea5e9"),
+    weight: 3,
+    opacity: 0.9,
+    dashArray: "8 8",
+    lineCap: "round",
+    lineJoin: "round",
+  }).bindTooltip(String(route.label ?? route.routeCode ?? route.name ?? `Route ${index + 1}`), { sticky: true });
+}
+
 interface LiveMapProps {
   entities: AnyRecord[];
   geofences: AnyRecord[];
+  routeTrails?: AnyRecord[];
   onSelect: (entity: AnyRecord) => void;
   /** When set, the map pans/zooms to this vehicle (matched by id/label). */
   focusId?: string | null;
 }
 
-export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps) {
+export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focusId }: LiveMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const coordsRef = useRef<Map<string, [number, number]>>(new Map());
   const hasFitRef = useRef(false);
   const geofenceLayersRef = useRef<L.Circle[]>([]);
+  const routeLayersRef = useRef<L.Polyline[]>([]);
   // Store onSelect in a ref so markers don't need to be recreated when it changes
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -132,6 +163,7 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
       mapRef.current = null;
       markersRef.current.clear();
       coordsRef.current.clear();
+      routeLayersRef.current = [];
       hasFitRef.current = false;
     };
   }, []);
@@ -164,6 +196,8 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
       const isStale = Boolean(entity.isStale);
       const deviceStatus = String(entity.deviceStatus ?? entity.device_status ?? "--");
       const camStatus = String(entity.cameraStatus ?? entity.camera_status ?? "--");
+      const connectivity = String(entity.connectivityStatus ?? entity.connectivity_status ?? "--");
+      const connectivityIssues = String(entity.connectivityIssues ?? entity.connectivity_issues ?? "None");
 
       const popupHtml =
         `<div style="font-family:system-ui;font-size:12px;min-width:190px;line-height:1.5">
@@ -171,15 +205,16 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
           <p style="margin:0;color:#475569">${driver}</p>
           <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${isStale ? "Offline" : status}</p>
           <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Device: ${deviceStatus} &bull; Cam: ${camStatus}</p>
+          <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Connectivity: ${connectivity} &bull; ${connectivityIssues}</p>
         </div>`;
 
       let marker = markers.get(key);
       if (marker) {
         marker.setLatLng([lat, lng]);
-        marker.setIcon(makeVehicleIcon(risk, status, speed, heading, isStale));
+        marker.setIcon(makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus));
         marker.setPopupContent(popupHtml);
       } else {
-        marker = L.marker([lat, lng], { icon: makeVehicleIcon(risk, status, speed, heading, isStale) })
+        marker = L.marker([lat, lng], { icon: makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus) })
           .addTo(map)
           .bindPopup(popupHtml, { closeButton: false });
         markers.set(key, marker);
@@ -241,6 +276,41 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
       }
     });
   }, [geofences]);
+
+  // Draw geospatial route trails once the route planner selects a real route.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    routeLayersRef.current.forEach((layer) => layer.remove());
+    routeLayersRef.current = [];
+
+    routeTrails.forEach((route, index) => {
+      const polyline = makeRoutePolyline(route, index);
+      if (polyline) {
+        polyline.addTo(map);
+        routeLayersRef.current.push(polyline);
+      }
+    });
+  }, [routeTrails]);
+
+  // Re-fit once if the first meaningful thing on the map is a route trail instead of
+  // a live vehicle position. This keeps new users from landing on an empty canvas.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || hasFitRef.current) return;
+    if (markersRef.current.size === 0 && routeLayersRef.current.length > 0) {
+      try {
+        const bounds = L.featureGroup(routeLayersRef.current).getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds.pad(0.15), { maxZoom: 10, animate: false });
+          hasFitRef.current = true;
+        }
+      } catch {
+        // ignore invalid route bounds
+      }
+    }
+  }, [routeTrails]);
 
   return (
     <div
