@@ -6019,14 +6019,130 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               FROM audit_logs WHERE company_id=@cid AND module_key='integrations'
               ORDER BY created_at DESC LIMIT 20",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        // Shape raw DB rows into the frontend IntegrationRecord contract (camelCase,
+        // parsed arrays/objects). Without this the page's `record.relatedSystems.length`
+        // etc. throw at render because the DB returns related_systems_json as a JSON
+        // STRING under `relatedSystemsJson`, not a `relatedSystems` array.
+        var shapedRecords = records.Select(r => ShapeIntegration(r, companyId)).ToList();
+        var shapedActivity = activity.Select(ShapeIntegrationActivity).ToList();
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             moduleKey = "integrations",
             tenantId = companyId,
-            summary = summary ?? new Dictionary<string, object?>(),
-            records,
-            activity,
+            summary = ShapeIntegrationSummary(summary, shapedRecords),
+            records = shapedRecords,
+            activity = shapedActivity,
         }));
+    }
+
+    // ── Integration response shaping (DB row → frontend contract) ──────────────────
+    // Mirrors the Node store's mergeRecord: camelCase keys, JSON columns parsed into
+    // arrays/objects, and derived key/sync fields so the marketplace UI renders.
+    private static List<string> ParseJsonStringArray(object? raw)
+    {
+        if (raw is null) return new();
+        try
+        {
+            var json = raw as string ?? raw.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return new();
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return new();
+            return doc.RootElement.EnumerateArray().Select(e => e.ToString()).ToList();
+        }
+        catch { return new(); }
+    }
+
+    private static Dictionary<string, object?> ParseJsonObject(object? raw)
+    {
+        if (raw is null) return new();
+        try
+        {
+            var json = raw as string ?? raw.ToString();
+            if (string.IsNullOrWhiteSpace(json)) return new();
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return new();
+            var result = new Dictionary<string, object?>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+                result[prop.Name] = prop.Value.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.Number => prop.Value.TryGetInt64(out var l) ? l : prop.Value.GetDouble(),
+                    System.Text.Json.JsonValueKind.True => true,
+                    System.Text.Json.JsonValueKind.False => false,
+                    System.Text.Json.JsonValueKind.Null => null,
+                    _ => prop.Value.ToString(),
+                };
+            return result;
+        }
+        catch { return new(); }
+    }
+
+    private static object ShapeIntegration(Dictionary<string, object?> row, long companyId)
+    {
+        string Str(string k) => row.TryGetValue(k, out var v) && v is not null ? v.ToString() ?? "" : "";
+        var name = Str("providerName");
+        var key = Str("integrationKey");
+        if (string.IsNullOrWhiteSpace(key))
+            key = System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant(), "\\s+", "-");
+        var lastSyncAt = row.TryGetValue("lastSyncAt", out var ls) && ls is not null ? ls : null;
+        var syncLabel = Str("syncLabel");
+        return new
+        {
+            id = row.TryGetValue("id", out var idv) && idv is not null ? Convert.ToInt64(idv) : 0L,
+            key,
+            name,
+            category = Str("category"),
+            description = Str("description"),
+            logo = string.IsNullOrWhiteSpace(Str("logo"))
+                ? (name.Length >= 3 ? name[..3].ToUpperInvariant() : name.ToUpperInvariant())
+                : Str("logo"),
+            status = string.IsNullOrWhiteSpace(Str("status")) ? "Disconnected" : Str("status"),
+            sync = string.IsNullOrWhiteSpace(syncLabel) ? (lastSyncAt is null ? "—" : "Synced") : syncLabel,
+            lastSyncAt,
+            relatedSystems = ParseJsonStringArray(row.GetValueOrDefault("relatedSystemsJson")),
+            connectedTo = ParseJsonStringArray(row.GetValueOrDefault("connectedToJson")),
+            managedBy = string.IsNullOrWhiteSpace(Str("managedBy")) ? "Operations" : Str("managedBy"),
+            scope = string.IsNullOrWhiteSpace(Str("scope")) ? "tenant" : Str("scope"),
+            tenantId = companyId,
+            config = ParseJsonObject(row.GetValueOrDefault("configJson")),
+        };
+    }
+
+    private static object ShapeIntegrationActivity(Dictionary<string, object?> row)
+    {
+        string Str(string k) => row.TryGetValue(k, out var v) && v is not null ? v.ToString() ?? "" : "";
+        var details = ParseJsonObject(row.GetValueOrDefault("detailsJson"));
+        var action = Str("actionName");
+        var evt = details.TryGetValue("event", out var ev) && ev is not null ? ev.ToString() ?? ""
+                : action.Replace("integration.", "").Replace(".", " ");
+        var sev = Str("severity").ToLowerInvariant();
+        var status = sev is "error" or "critical" ? "Error" : sev is "warning" or "pending" ? "Pending" : "Success";
+        return new
+        {
+            id = row.TryGetValue("id", out var idv) && idv is not null ? Convert.ToInt64(idv) : 0L,
+            integrationId = 0,
+            integration = details.TryGetValue("integrationName", out var iname) && iname is not null ? iname.ToString() : "Integration",
+            @event = string.IsNullOrWhiteSpace(evt) ? "activity" : evt,
+            ts = row.GetValueOrDefault("createdAt"),
+            status,
+            records = details.TryGetValue("records", out var rec) && rec is not null && long.TryParse(rec.ToString(), out var rc) ? rc : 0L,
+            details = Str("actionType"),
+        };
+    }
+
+    private static object ShapeIntegrationSummary(Dictionary<string, object?>? summary, List<object> shaped)
+    {
+        int Count(Func<object, bool> pred) => shaped.Count(x => pred(x));
+        string StatusOf(object x) => (string)(x.GetType().GetProperty("status")!.GetValue(x) ?? "");
+        string CatOf(object x) => (string)(x.GetType().GetProperty("category")!.GetValue(x) ?? "");
+        return new
+        {
+            total = shaped.Count,
+            connected = Count(x => StatusOf(x) == "Connected"),
+            pending = Count(x => StatusOf(x) == "Pending"),
+            errors = Count(x => StatusOf(x) == "Error"),
+            categories = shaped.Select(CatOf).Distinct().Count(),
+            lastUpdated = DateTime.UtcNow,
+        };
     }
 
     private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db, CancellationToken ct)
@@ -6042,7 +6158,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               FROM audit_logs WHERE company_id=@cid AND module_key='integrations'
               ORDER BY created_at DESC LIMIT 20",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { record, activity }));
+        // Shape to the frontend IntegrationDetailPayload contract (parsed arrays/objects).
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            record = ShapeIntegration(record, companyId),
+            activity = activity.Select(ShapeIntegrationActivity).ToList(),
+        }));
     }
 
     private static string IntegrationSlug(string name) =>
