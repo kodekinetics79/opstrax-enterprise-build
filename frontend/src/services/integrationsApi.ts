@@ -1,10 +1,14 @@
-import { nodeApiClient, unwrap } from "./apiClient";
+import { apiClient as primaryApiClient, unwrap } from "./apiClient";
 import type { AnyRecord } from "@/types";
 
-// Integration calls go to the Node.js backend because it owns the live connector
-// lifecycle operations (list/detail/connect/configure/sync/disconnect) and now
-// receives the authenticated user session plus tenant header from the shared client.
-const apiClient = nodeApiClient;
+// Integration calls go to the PRIMARY .NET API (Opstrax.Api). It owns the full
+// connector lifecycle (list/detail/create/update/remove/connect/configure/sync/
+// disconnect), is tenant-scoped, and — critically — hydrates the connector catalog
+// per tenant on first read (IntegrationCatalog.EnsureTenantAsync), so the module is
+// never empty. This used to point at the Node :8090 side-service, which is not part
+// of the production (Render) deployment — when it was unreachable the page rendered
+// blank. Routing to the primary API fixes that and keeps everything on one backend.
+const apiClient = primaryApiClient;
 
 export type IntegrationCategory =
   | "ERP & Accounting"

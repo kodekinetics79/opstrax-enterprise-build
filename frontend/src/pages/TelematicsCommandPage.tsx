@@ -125,6 +125,24 @@ function filterRecord(kind: TelematicsKind, record: TelematicsClusterRecord, tab
   return true;
 }
 
+// Treat the service's honest empty markers ("—", "", "No ...") as "no value" so we
+// never join them into a half-real string like "—, —" or "— mph · —".
+function hasValue(value: string | number | null | undefined) {
+  if (value == null) return false;
+  const text = String(value).trim();
+  return text !== "" && text !== "—";
+}
+
+function formatCoordinates(lat: string, lng: string) {
+  return hasValue(lat) && hasValue(lng) ? `${lat}, ${lng}` : "No fix";
+}
+
+function formatSpeedHeading(speed: string, heading: string) {
+  const speedPart = hasValue(speed) ? `${speed} mph` : null;
+  const headingPart = hasValue(heading) ? heading : null;
+  return [speedPart, headingPart].filter(Boolean).join(" · ") || "—";
+}
+
 function renderCell(column: string, row: TelematicsClusterRecord) {
   if (column === "deviceName") {
     return (
@@ -176,19 +194,35 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     staleTime: 20_000,
   });
 
+  // Honest result reporting: the service returns { success:false, reason } for
+  // operations that have no backend persistence endpoint yet. We surface that
+  // truthfully instead of claiming a success the backend never performed. The live
+  // data is always re-fetched so the view reflects the real server state.
+  const okOrReason = (result: unknown, okNotice: string, failNotice: string) => {
+    const failed = result && typeof result === "object" && "success" in result && (result as { success?: boolean }).success === false;
+    if (!failed) { setNotice(okNotice); return; }
+    const reason = (result as { reason?: string }).reason;
+    setNotice(reason ? `${failNotice} (${reason})` : failNotice);
+  };
   const refreshMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.refreshDeviceStatus(deviceId),
-    onSuccess: async () => {
-      setNotice(kind === "gps-tracking" ? "GPS stream refreshed." : kind === "obd-j1939" ? "Diagnostics stream refreshed." : "Sensor readings refreshed.");
+    onSuccess: async (result) => {
+      // Re-fetch first so the operator always sees the freshest live snapshot,
+      // then report honestly whether a manual refresh was actually performed.
       await queryClient.invalidateQueries({ queryKey: ["telematics-cluster", kind] });
       await queryClient.invalidateQueries({ queryKey: ["telematics-cluster-detail"] });
+      okOrReason(
+        result,
+        kind === "gps-tracking" ? "GPS stream refreshed." : kind === "obd-j1939" ? "Diagnostics stream refreshed." : "Sensor readings refreshed.",
+        "Live data re-fetched. Manual device refresh is not available yet.",
+      );
     },
   });
   const acknowledgeMut = useMutation({
     mutationFn: ({ deviceId, note }: { deviceId: string | number; note: string }) => telematicsService.acknowledgeTelematicsIssue(deviceId, note),
-    onSuccess: async () => {
-      setNotice("Telematics issue acknowledged.");
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["telematics-cluster", kind] });
+      okOrReason(result, "Telematics issue acknowledged.", "Per-device acknowledgement is not available yet.");
     },
   });
   const resolveMut = useMutation({
@@ -240,11 +274,29 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = rows.filter((row) => row.offlineWarning).length;
-  const issueCount = rows.filter((row) => row.alertStatus === "Open" || row.troubleCodes.length > 0 || row.deviceHealth < 70).length;
-  const avgHealth = rows.length ? Math.round(rows.reduce((sum, row) => sum + row.deviceHealth, 0) / rows.length) : 0;
+  const issueCount = rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || row.deviceHealth < 70).length;
+
+  // Average health only counts rows that carry a real numeric health signal. With an
+  // empty (or all-signal-less) fleet there is nothing to average, so we surface "—"
+  // rather than a fabricated 0% / NaN%.
+  const healthValues = rows.map((row) => Number(row.deviceHealth)).filter((value) => Number.isFinite(value));
+  const avgHealth = healthValues.length
+    ? Math.round(healthValues.reduce((sum, value) => sum + value, 0) / healthValues.length)
+    : null;
+
+  // Distinguish "this tenant has no live telemetry at all" from "the current search /
+  // filter simply matched nothing" — the two empty states carry different meaning.
+  const hasAnyLiveData = (recordsQ.data?.length ?? 0) > 0;
 
   if (recordsQ.isLoading) return <LoadingState />;
-  if (recordsQ.isError) return <ErrorState message={`Unable to load ${config.title.toLowerCase()} right now.`} />;
+  if (recordsQ.isError) {
+    return (
+      <ErrorState
+        message={`Unable to load ${config.title.toLowerCase()} right now.`}
+        onRetry={() => recordsQ.refetch()}
+      />
+    );
+  }
 
   const exportCurrent = () => {
     const csv = telematicsService.exportClusterCsv(rows, config.columns);
@@ -285,7 +337,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         <KpiCard label="Visible Units" value={rows.length} status="Active" icon={kpiIcon} />
         <KpiCard label="Offline / Stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
         <KpiCard label="Needs Action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
-        <KpiCard label="Average Health" value={`${avgHealth}%`} status={avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<BatteryCharging className="h-4 w-4" />} />
+        <KpiCard
+          label="Average Health"
+          value={avgHealth == null ? "—" : `${avgHealth}%`}
+          status={avgHealth == null ? "Active" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"}
+          icon={<BatteryCharging className="h-4 w-4" />}
+        />
       </div>
 
       {kind === "gps-tracking" ? (
@@ -300,9 +357,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 <RiskBadge risk={row.geofenceStatus} />
               </div>
               <div className="mt-4 grid gap-2 text-sm text-slate-700">
-                <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps}</span></div>
-                <div className="flex justify-between"><span>Coordinates</span><span>{row.latitude}, {row.longitude}</span></div>
-                <div className="flex justify-between"><span>Speed / heading</span><span>{row.speedMph} mph · {row.heading}</span></div>
+                <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
+                <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
+                <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
               </div>
             </button>
           ))}
@@ -327,7 +384,16 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         </div>
 
         {!rows.length ? (
-          <EmptyState title={config.emptyTitle} subtitle={config.emptySubtitle} />
+          hasAnyLiveData ? (
+            // Live rows exist for this tenant; the active search / filter tab hid them all.
+            <EmptyState title={config.emptyTitle} subtitle={config.emptySubtitle} />
+          ) : (
+            // No devices reported any live telemetry for this tenant yet.
+            <EmptyState
+              title="No live telemetry yet"
+              subtitle={`No ${config.title.toLowerCase()} is streaming for this tenant. Provision or activate a device to see live data here.`}
+            />
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

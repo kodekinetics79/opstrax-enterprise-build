@@ -8,9 +8,11 @@ import {
   CheckCircle2,
   Cloud,
   Fuel,
+  Layers,
   Link2,
   MapPinned,
   PlugZap,
+  Plug,
   RadioTower,
   RefreshCw,
   Search,
@@ -20,7 +22,15 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { exportCsv, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import {
+  exportCsv,
+  EmptyState,
+  ErrorState,
+  KpiCard,
+  LoadingState,
+  PageHeader,
+  StatusBadge,
+} from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   integrationsApi,
@@ -28,8 +38,6 @@ import {
   type IntegrationRecord,
   type IntegrationsPayload,
 } from "@/services/integrationsApi";
-
-type Tab = "Connectors" | "Activity Log";
 
 type ConfigField = {
   key: string;
@@ -39,15 +47,26 @@ type ConfigField = {
   note?: string;
 };
 
-const CATEGORY_META: Record<IntegrationCategory, { icon: ReactNode; accent: string }> = {
-  "ERP & Accounting": { icon: <Building2 className="h-3.5 w-3.5" />, accent: "bg-blue-50 border-blue-200 text-blue-700" },
-  "Telematics & ELD": { icon: <RadioTower className="h-3.5 w-3.5" />, accent: "bg-teal-50 border-teal-200 text-teal-700" },
-  "Fuel Cards": { icon: <Fuel className="h-3.5 w-3.5" />, accent: "bg-amber-50 border-amber-200 text-amber-700" },
-  "Maps & Routing": { icon: <MapPinned className="h-3.5 w-3.5" />, accent: "bg-green-50 border-green-200 text-green-700" },
-  "Messaging & Notifications": { icon: <PlugZap className="h-3.5 w-3.5" />, accent: "bg-violet-50 border-violet-200 text-violet-700" },
-  "WMS & Shipment Ops": { icon: <Warehouse className="h-3.5 w-3.5" />, accent: "bg-indigo-50 border-indigo-200 text-indigo-700" },
-  "IoT & Sensors": { icon: <Cloud className="h-3.5 w-3.5" />, accent: "bg-sky-50 border-sky-200 text-sky-700" },
-  Compliance: { icon: <ShieldCheck className="h-3.5 w-3.5" />, accent: "bg-emerald-50 border-emerald-200 text-emerald-700" },
+const CATEGORY_ORDER: IntegrationCategory[] = [
+  "ERP & Accounting",
+  "Telematics & ELD",
+  "Fuel Cards",
+  "Maps & Routing",
+  "Messaging & Notifications",
+  "WMS & Shipment Ops",
+  "IoT & Sensors",
+  "Compliance",
+];
+
+const CATEGORY_META: Record<IntegrationCategory, { icon: ReactNode; accent: string; dot: string }> = {
+  "ERP & Accounting": { icon: <Building2 className="h-3.5 w-3.5" />, accent: "bg-blue-50 border-blue-200 text-blue-700", dot: "bg-blue-500" },
+  "Telematics & ELD": { icon: <RadioTower className="h-3.5 w-3.5" />, accent: "bg-teal-50 border-teal-200 text-teal-700", dot: "bg-teal-500" },
+  "Fuel Cards": { icon: <Fuel className="h-3.5 w-3.5" />, accent: "bg-amber-50 border-amber-200 text-amber-700", dot: "bg-amber-500" },
+  "Maps & Routing": { icon: <MapPinned className="h-3.5 w-3.5" />, accent: "bg-green-50 border-green-200 text-green-700", dot: "bg-green-500" },
+  "Messaging & Notifications": { icon: <PlugZap className="h-3.5 w-3.5" />, accent: "bg-violet-50 border-violet-200 text-violet-700", dot: "bg-violet-500" },
+  "WMS & Shipment Ops": { icon: <Warehouse className="h-3.5 w-3.5" />, accent: "bg-indigo-50 border-indigo-200 text-indigo-700", dot: "bg-indigo-500" },
+  "IoT & Sensors": { icon: <Cloud className="h-3.5 w-3.5" />, accent: "bg-sky-50 border-sky-200 text-sky-700", dot: "bg-sky-500" },
+  Compliance: { icon: <ShieldCheck className="h-3.5 w-3.5" />, accent: "bg-emerald-50 border-emerald-200 text-emerald-700", dot: "bg-emerald-500" },
 };
 
 function categoryFields(category: IntegrationCategory): ConfigField[] {
@@ -168,11 +187,16 @@ function buildConfigPayload(record: IntegrationRecord, form: Record<string, stri
   return payload;
 }
 
+/* ============================================================
+   CONFIG DRAWER — connect / configure a connector's live fields
+   ============================================================ */
 function ConfigDrawer({
   integration,
+  canManage,
   onClose,
 }: {
   integration: IntegrationRecord;
+  canManage: boolean;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -183,6 +207,14 @@ function ConfigDrawer({
     setForm(buildFormState(integration));
     setSaved(false);
   }, [integration]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const saveMut = useMutation({
     mutationFn: (payload: Record<string, string | number | boolean | null>) =>
@@ -195,70 +227,99 @@ function ConfigDrawer({
   });
 
   const fields = categoryFields(integration.category);
+  const meta = CATEGORY_META[integration.category];
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
-      <aside className="flex h-full w-full max-w-xl flex-col gap-5 overflow-y-auto border-l border-slate-200 bg-white p-6">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm anim-fade-in">
+      <div aria-hidden className="absolute inset-0" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Configure ${integration.name}`}
+        className="anim-slide-right relative flex h-full w-full max-w-xl flex-col gap-5 overflow-y-auto border-l border-slate-200 bg-linear-to-b from-white to-slate-50 p-6 shadow-2xl"
+      >
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-teal-600">Integration configuration</p>
-            <h2 className="mt-2 truncate text-xl font-bold text-slate-900">{integration.name}</h2>
-            <p className="mt-1 text-sm text-slate-500">{categoryText(integration.category)}</p>
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <span className="text-xs font-black tracking-tight text-slate-700">{integration.logo.slice(0, 3).toUpperCase()}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-teal-600">Integration configuration</p>
+              <h2 className="mt-1.5 truncate text-xl font-black tracking-tight text-slate-950">{integration.name}</h2>
+              <p className="mt-1 text-sm text-slate-500">{categoryText(integration.category)}</p>
+            </div>
           </div>
           <button type="button" aria-label="Close" className="icon-btn" onClick={onClose}>
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="clay-card p-4">
           <div className="flex items-center justify-between gap-3">
-            <StatusBadge status={integration.status} />
+            <div className="flex items-center gap-2">
+              <StatusBadge status={integration.status} />
+              <CategoryBadge category={integration.category} />
+            </div>
             <span className="text-xs text-slate-500">Last sync: {integration.sync}</span>
           </div>
           <p className="mt-3 text-sm leading-6 text-slate-600">{integration.description}</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {integration.relatedSystems.map((item) => (
-              <ConnectorPill key={item} value={item} />
-            ))}
-          </div>
+          {integration.relatedSystems.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Related systems</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {integration.relatedSystems.map((item) => (
+                  <ConnectorPill key={item} value={item} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <form
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!canManage) return;
             void saveMut.mutateAsync(buildConfigPayload(integration, form));
           }}
         >
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="field-label">Managed by</label>
+              <label className="field-label text-[12px] font-bold text-slate-700">Managed by</label>
               <input className="field mt-1 w-full bg-slate-50" value={integration.managedBy} readOnly />
             </div>
             <div>
-              <label className="field-label">Tenant scope</label>
-              <input className="field mt-1 w-full bg-slate-50" value={`Tenant ${integration.tenantId}`} readOnly />
+              <label className="field-label text-[12px] font-bold text-slate-700">Tenant scope</label>
+              <input
+                className="field mt-1 w-full bg-slate-50"
+                value={integration.scope === "platform" ? "Platform-wide" : `Tenant ${integration.tenantId}`}
+                readOnly
+              />
             </div>
           </div>
 
-          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Connection settings</p>
-                <p className="text-xs text-slate-500">These settings are persisted in the live backend state for this tenant.</p>
+              <div className="flex items-center gap-2">
+                <span className={`flex h-7 w-7 items-center justify-center rounded-lg border ${meta.accent}`}>{meta.icon}</span>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Connection settings</p>
+                  <p className="text-xs text-slate-500">Persisted in live backend state for this tenant.</p>
+                </div>
               </div>
               <Settings2 className="h-4 w-4 text-slate-400" />
             </div>
 
             {fields.map((field) => (
               <div key={field.key}>
-                <label className="field-label">{field.label}</label>
+                <label className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
                 <input
                   type={field.type}
                   className="field mt-1 w-full"
                   value={form[field.key] ?? ""}
                   onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
                   placeholder={field.placeholder}
+                  disabled={!canManage}
                 />
                 {field.note && <p className="mt-1 text-xs text-slate-400">{field.note}</p>}
               </div>
@@ -266,41 +327,238 @@ function ConfigDrawer({
           </div>
 
           {integration.category === "Messaging & Notifications" && (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Notification routing</p>
+            <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Notification routing</p>
               <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
-                <ArrowRightLeft className="h-4 w-4 text-teal-500" />
+                <ArrowRightLeft className="h-4 w-4 text-violet-500" />
                 Operational alerts and customer notifications are routed through this connector live.
               </div>
             </div>
           )}
 
-          <div className="flex items-center gap-3 border-t border-slate-100 pt-2">
-            <button type="submit" className="btn-primary flex-1" disabled={saveMut.isPending}>
-              {saveMut.isPending ? "Saving..." : "Save configuration"}
-            </button>
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            {saved && (
-              <span className="flex items-center gap-1 text-xs font-semibold text-teal-600">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Saved
-              </span>
-            )}
-          </div>
+          {canManage ? (
+            <div className="flex items-center gap-3 border-t border-slate-100 pt-3">
+              <button type="submit" className="btn-primary flex-1" disabled={saveMut.isPending}>
+                {saveMut.isPending ? "Saving..." : "Save configuration"}
+              </button>
+              <button type="button" className="btn-ghost" onClick={onClose}>
+                Cancel
+              </button>
+              {saved && (
+                <span className="flex items-center gap-1 text-xs font-semibold text-teal-600">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Saved
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-slate-400" />
+              You have read-only access. Ask an administrator to edit connector settings.
+            </div>
+          )}
         </form>
       </aside>
     </div>
   );
 }
 
+/* ============================================================
+   CONNECTOR CARD — claymorphic marketplace tile
+   ============================================================ */
+function ConnectorCard({
+  integration,
+  canManage,
+  busy,
+  onConnect,
+  onDisconnect,
+  onSync,
+  onConfigure,
+}: {
+  integration: IntegrationRecord;
+  canManage: boolean;
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  onSync: () => void;
+  onConfigure: () => void;
+}) {
+  const isConnected = integration.status === "Connected";
+  const isError = integration.status === "Error";
+  const meta = CATEGORY_META[integration.category];
+  const primaryLabel =
+    integration.status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
+
+  return (
+    <div className="clay-card card-hover flex flex-col gap-3 p-4">
+      <span
+        className={`pointer-events-none absolute inset-x-0 top-0 h-1 rounded-t-(--r-clay) ${
+          isConnected ? "bg-emerald-400/70" : isError ? "bg-red-400/70" : integration.status === "Pending" ? "bg-amber-400/70" : "bg-slate-300/70"
+        }`}
+      />
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-[inset_0_1px_2px_rgba(255,255,255,.9),0_1px_3px_rgba(15,23,42,.08)]">
+          <span className="text-[11px] font-black tracking-tight text-slate-700">{integration.logo.slice(0, 3).toUpperCase()}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold leading-tight text-slate-900">{integration.name}</p>
+          <div className="mt-1.5">
+            <CategoryBadge category={integration.category} />
+          </div>
+        </div>
+        <StatusBadge status={integration.status} />
+      </div>
+
+      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-500">{integration.description}</p>
+
+      {integration.connectedTo.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {integration.connectedTo.slice(0, 4).map((item) => (
+            <ConnectorPill key={item} value={item} />
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-50 px-3 py-2 shadow-[inset_0_1px_3px_rgba(148,163,184,.18)]">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last sync</span>
+        <span className="text-[11px] font-semibold text-slate-600">{integration.sync}</span>
+      </div>
+
+      {canManage ? (
+        <div className="flex gap-1.5">
+          {isConnected ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onSync}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Sync now
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onDisconnect}
+                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+              >
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onConnect}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
+            >
+              <Plug className="h-3.5 w-3.5" />
+              {primaryLabel}
+            </button>
+          )}
+
+          <button
+            type="button"
+            title="Configure"
+            aria-label={`Configure ${integration.name}`}
+            onClick={onConfigure}
+            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onConfigure}
+          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          View details
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   ACTIVITY FEED — recent live connector events
+   ============================================================ */
+function activityTone(status: string) {
+  if (/error|fail/i.test(status)) return { dot: "bg-red-500", ring: "ring-red-100" };
+  if (/pending|progress/i.test(status)) return { dot: "bg-amber-500", ring: "ring-amber-100" };
+  return { dot: "bg-emerald-500", ring: "ring-emerald-100" };
+}
+
+function ActivityFeed({ activity, onRefresh }: { activity: IntegrationsPayload["activity"]; onRefresh: () => void }) {
+  return (
+    <div className="clay-card flex h-full flex-col overflow-hidden p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-teal-500" />
+          <div>
+            <p className="text-sm font-bold text-slate-800">Activity feed</p>
+            <p className="text-[11px] text-slate-500">Live connect · configure · sync · disconnect</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-50"
+          onClick={onRefresh}
+        >
+          <RefreshCw className="h-3 w-3" />
+          Refresh
+        </button>
+      </div>
+
+      {activity.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center">
+          <Zap className="mb-2 h-5 w-5 text-slate-300" />
+          <p className="text-sm font-semibold text-slate-600">No activity yet</p>
+          <p className="mt-1 max-w-56 text-xs text-slate-400">Connect or sync a connector to populate the live event feed.</p>
+        </div>
+      ) : (
+        <div className="-mr-1 flex-1 space-y-0 overflow-y-auto pr-1">
+          {activity.map((row, index) => {
+            const tone = activityTone(row.status);
+            const isLast = index === activity.length - 1;
+            return (
+              <div key={row.id} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot} ring-4 ${tone.ring}`} />
+                  {!isLast && <span className="mt-1 w-px flex-1 bg-slate-200" />}
+                </div>
+                <div className="min-w-0 flex-1 pb-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="truncate text-sm font-semibold text-slate-800">{row.integration}</p>
+                    <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">{row.ts}</span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500">{row.event}</p>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <StatusBadge status={row.status} />
+                    {row.records > 0 && (
+                      <span className="text-[10px] font-mono text-slate-400">{row.records.toLocaleString()} records</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE
+   ============================================================ */
 export function IntegrationsPage() {
   const hasPermission = useHasPermission();
   const canManage = hasPermission("telematics:providers:manage");
   const qc = useQueryClient();
 
-  const [tab, setTab] = useState<Tab>("Connectors");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
@@ -323,27 +581,57 @@ export function IntegrationsPage() {
     lastUpdated: new Date().toISOString(),
   };
 
-  const categories = useMemo(
-    () => ["All", ...Array.from(new Set(integrations.map((item) => item.category)))],
-    [integrations],
+  // Category chips ordered canonically, then any unexpected categories.
+  const categories = useMemo(() => {
+    const present = new Set(integrations.map((item) => item.category));
+    const ordered = CATEGORY_ORDER.filter((cat) => present.has(cat));
+    const extra = Array.from(present).filter((cat) => !CATEGORY_ORDER.includes(cat as IntegrationCategory));
+    return ["All", ...ordered, ...extra];
+  }, [integrations]);
+
+  const categoryCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of integrations) map.set(item.category, (map.get(item.category) ?? 0) + 1);
+    return map;
+  }, [integrations]);
+
+  const filtered = useMemo(
+    () =>
+      integrations.filter((integration) => {
+        if (categoryFilter !== "All" && integration.category !== categoryFilter) return false;
+        if (statusFilter !== "All" && integration.status !== statusFilter) return false;
+        if (search) {
+          const haystack = [
+            integration.name,
+            integration.category,
+            integration.description,
+            integration.managedBy,
+            ...integration.relatedSystems,
+            ...integration.connectedTo,
+          ]
+            .join(" ")
+            .toLowerCase();
+          if (!haystack.includes(search.toLowerCase())) return false;
+        }
+        return true;
+      }),
+    [integrations, categoryFilter, statusFilter, search],
   );
 
-  const filtered = integrations.filter((integration) => {
-    if (categoryFilter !== "All" && integration.category !== categoryFilter) return false;
-    if (statusFilter !== "All" && integration.status !== statusFilter) return false;
-    if (search) {
-      const haystack = [
-        integration.name,
-        integration.category,
-        integration.description,
-        integration.managedBy,
-        ...integration.relatedSystems,
-        ...integration.connectedTo,
-      ].join(" ").toLowerCase();
-      if (!haystack.includes(search.toLowerCase())) return false;
+  // Group the filtered set by category in canonical order for section headers.
+  const grouped = useMemo(() => {
+    const map = new Map<IntegrationCategory, IntegrationRecord[]>();
+    for (const item of filtered) {
+      const list = map.get(item.category) ?? [];
+      list.push(item);
+      map.set(item.category, list);
     }
-    return true;
-  });
+    const order = [
+      ...CATEGORY_ORDER.filter((cat) => map.has(cat)),
+      ...Array.from(map.keys()).filter((cat) => !CATEGORY_ORDER.includes(cat)),
+    ];
+    return order.map((cat) => [cat, map.get(cat)!] as const);
+  }, [filtered]);
 
   const connectMut = useMutation({
     mutationFn: (id: number) => integrationsApi.connect(id),
@@ -366,11 +654,16 @@ export function IntegrationsPage() {
     },
   });
 
+  const busy = connectMut.isPending || disconnectMut.isPending || syncMut.isPending;
+
   if (q.isLoading) return <LoadingState />;
   if (q.isError) {
     return (
       <div className="py-6">
-        <ErrorState message="Unable to load live integrations from the backend." />
+        <ErrorState
+          message="Unable to load live integrations from the backend."
+          onRetry={() => void q.refetch()}
+        />
       </div>
     );
   }
@@ -378,16 +671,12 @@ export function IntegrationsPage() {
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       <PageHeader
-        eyebrow="Connector hub"
+        eyebrow="Connector marketplace"
         title="Integrations"
-        description="Live connector hub for ERP, accounting, telematics, fuel cards, routing, messaging, WMS, IoT, and compliance. Unrelated categories have been removed."
+        description="Samsara-grade connector marketplace for ERP, accounting, telematics, fuel cards, routing, messaging, WMS, IoT, and compliance — every card, status, and event streamed live from the primary API and scoped to your tenant."
         actions={
           <>
-            <button
-              type="button"
-              className="btn-ghost text-sm"
-              onClick={() => exportCsv("integrations", integrations)}
-            >
+            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", integrations)}>
               Export CSV
             </button>
             <button
@@ -395,6 +684,7 @@ export function IntegrationsPage() {
               className="btn-ghost text-sm"
               onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}
             >
+              <RefreshCw className="h-3.5 w-3.5" />
               Refresh
             </button>
           </>
@@ -402,229 +692,137 @@ export function IntegrationsPage() {
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          { label: "Connectors", val: summary.total, accent: "text-slate-900" },
-          { label: "Connected", val: summary.connected, accent: "text-teal-600" },
-          { label: "Pending", val: summary.pending, accent: summary.pending > 0 ? "text-amber-600" : "text-slate-400" },
-          { label: "Errors", val: summary.errors, accent: summary.errors > 0 ? "text-red-600" : "text-slate-400" },
-          { label: "Categories", val: summary.categories, accent: "text-slate-600" },
-        ].map((item) => (
-          <div key={item.label} className="panel flex flex-col gap-1">
-            <span className={`text-xl font-bold ${item.accent}`}>{item.val}</span>
-            <span className="text-xs font-medium text-slate-500">{item.label}</span>
-          </div>
-        ))}
+        <KpiCard label="Connectors" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
+        <KpiCard label="Connected" value={summary.connected} status="Live" icon={<Link2 className="h-5 w-5" />} />
+        <KpiCard label="Pending" value={summary.pending} status={summary.pending > 0 ? "Pending" : undefined} icon={<PlugZap className="h-5 w-5" />} />
+        <KpiCard label="Errors" value={summary.errors} status={summary.errors > 0 ? "Critical" : undefined} icon={<AlertTriangle className="h-5 w-5" />} />
+        <KpiCard label="Categories" value={summary.categories} icon={<Warehouse className="h-5 w-5" />} />
       </div>
 
-      <div className="flex gap-1 self-start rounded-xl border border-slate-200 bg-slate-50 p-1">
-        {(["Connectors", "Activity Log"] as Tab[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => setTab(item)}
-            className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition ${
-              tab === item ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {item === "Connectors" ? <Link2 className="h-3.5 w-3.5" /> : <Activity className="h-3.5 w-3.5" />}
-            {item}
-          </button>
-        ))}
-      </div>
-
-      {tab === "Connectors" && (
-        <>
-          <div className="panel flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                className="field w-56 pl-8 text-sm"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search connectors..."
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-1.5">
-              {categories.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setCategoryFilter(item)}
-                  className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
-                    categoryFilter === item
-                      ? "border-teal-300 bg-teal-50 text-teal-700"
-                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-
-            <select
-              aria-label="Status filter"
-              className="field ml-auto w-40 text-sm"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="All">All statuses</option>
-              <option value="Connected">Connected</option>
-              <option value="Pending">Pending</option>
-              <option value="Error">Error</option>
-              <option value="Disconnected">Disconnected</option>
-            </select>
-          </div>
-
-          {summary.errors > 0 && (
-            <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
-              <p className="text-sm font-medium text-red-700">
-                {summary.errors} connector{summary.errors > 1 ? "s" : ""} need attention. The backend is now showing this live instead of hiding it in a fake catalogue.
-              </p>
-            </div>
-          )}
-
-          {filtered.length === 0 ? (
-            <EmptyState
-              title="No connectors match your filters"
-              subtitle="Try clearing the category or status filter to see the live connector inventory."
-            />
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {filtered.map((integration) => {
-                const isConnected = integration.status === "Connected";
-                const isDisabled = connectMut.isPending || disconnectMut.isPending || syncMut.isPending;
-                return (
-                  <div key={integration.id} className="panel flex flex-col gap-3 transition hover:border-slate-300">
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-100">
-                        <span className="text-[10px] font-bold tracking-tight text-slate-600">{integration.logo.slice(0, 3)}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold leading-tight text-slate-900">{integration.name}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <CategoryBadge category={integration.category} />
-                        </div>
-                      </div>
-                    </div>
-
-                    <p className="flex-1 text-xs leading-relaxed text-slate-500">{integration.description}</p>
-
-                    <div className="flex flex-wrap gap-2">
-                      {integration.connectedTo.map((item) => (
-                        <ConnectorPill key={item} value={item} />
-                      ))}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
-                      <StatusBadge status={integration.status} />
-                      <span className="text-[10px] text-slate-400">Last sync: {integration.sync}</span>
-                    </div>
-
-                    <div className="flex gap-1.5">
-                      {isConnected ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={isDisabled}
-                            onClick={() => syncMut.mutate(integration.id)}
-                            className="flex-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-medium text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-                          >
-                            Sync now
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isDisabled}
-                            onClick={() => disconnectMut.mutate(integration.id)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-                          >
-                            Disconnect
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isDisabled}
-                          onClick={() => connectMut.mutate(integration.id)}
-                          className="flex-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-medium text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-                        >
-                          {integration.status === "Pending" ? "Authorize" : integration.status === "Error" ? "Reconnect" : "Connect"}
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        title="Configure"
-                        onClick={() => setConfigTarget(integration)}
-                        className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
-                      >
-                        <Settings2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-
-      {tab === "Activity Log" && (
-        <div className="panel overflow-hidden">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Recent live connector activity</p>
-              <p className="text-xs text-slate-500">Connect, configure, disconnect, and sync operations are coming from the backend module.</p>
-            </div>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-xs text-slate-500 transition hover:text-slate-700"
-              onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
-          </div>
-
-          {activity.length === 0 ? (
-            <EmptyState title="No activity yet" subtitle="Connect or sync a connector to populate the live event feed." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    {["Connector", "Event", "Records", "Timestamp", "Status"].map((header) => (
-                      <th key={header} className="pb-2 pr-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {header}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {activity.map((row) => (
-                    <tr key={row.id} className="transition hover:bg-slate-50">
-                      <td className="whitespace-nowrap py-2.5 pr-4 text-xs font-medium text-slate-800">{row.integration}</td>
-                      <td className="py-2.5 pr-4 text-xs text-slate-600">{row.event}</td>
-                      <td className="py-2.5 pr-4 text-xs font-mono text-slate-500">{row.records > 0 ? row.records.toLocaleString() : "—"}</td>
-                      <td className="whitespace-nowrap py-2.5 pr-4 text-xs text-slate-400">{row.ts}</td>
-                      <td className="py-2.5">
-                        <StatusBadge status={row.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {summary.errors > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+          <p className="text-sm font-medium text-red-700">
+            {summary.errors} connector{summary.errors > 1 ? "s" : ""} need attention. Filter by <b>Error</b> status to triage and reconnect.
+          </p>
         </div>
       )}
 
+      <div className="panel flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              className="field w-64 pl-8 text-sm"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search connectors, systems, owners..."
+              aria-label="Search connectors"
+            />
+          </div>
+          <select
+            aria-label="Status filter"
+            className="field w-40 text-sm"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="All">All statuses</option>
+            <option value="Connected">Connected</option>
+            <option value="Pending">Pending</option>
+            <option value="Error">Error</option>
+            <option value="Disconnected">Disconnected</option>
+          </select>
+          <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold text-slate-500">
+            {filtered.length === integrations.length ? `${integrations.length} connectors` : `${filtered.length} of ${integrations.length}`}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
+          {categories.map((item) => {
+            const active = categoryFilter === item;
+            const count = item === "All" ? integrations.length : categoryCounts.get(item) ?? 0;
+            const meta = item === "All" ? null : CATEGORY_META[item as IntegrationCategory];
+            return (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setCategoryFilter(item)}
+                className={active ? "filter-chip filter-chip-active" : "filter-chip"}
+              >
+                {meta ? <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} /> : null}
+                {item}
+                <span className="ml-1 rounded-full bg-black/5 px-1.5 text-[10px] font-bold tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-6">
+          {filtered.length === 0 ? (
+            <EmptyState
+              title="No connectors match your filters"
+              subtitle="Clear the category, status, or search filter to see the live connector inventory."
+              action={
+                <button
+                  type="button"
+                  className="btn-ghost text-sm"
+                  onClick={() => {
+                    setCategoryFilter("All");
+                    setStatusFilter("All");
+                    setSearch("");
+                  }}
+                >
+                  Reset filters
+                </button>
+              }
+            />
+          ) : (
+            grouped.map(([category, records]) => {
+              const meta = CATEGORY_META[category];
+              return (
+                <section key={category} className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-xl border ${meta.accent}`}>{meta.icon}</span>
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-black tracking-tight text-slate-900">{category}</h2>
+                      <p className="text-[11px] text-slate-500">{categoryText(category)}</p>
+                    </div>
+                    <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-bold text-slate-500">
+                      {records.length}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                    {records.map((integration) => (
+                      <ConnectorCard
+                        key={integration.id}
+                        integration={integration}
+                        canManage={canManage}
+                        busy={busy}
+                        onConnect={() => connectMut.mutate(integration.id)}
+                        onDisconnect={() => disconnectMut.mutate(integration.id)}
+                        onSync={() => syncMut.mutate(integration.id)}
+                        onConfigure={() => setConfigTarget(integration)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })
+          )}
+        </div>
+
+        <aside className="xl:sticky xl:top-6 xl:self-start">
+          <div className="xl:max-h-[calc(100vh-6rem)] xl:overflow-hidden">
+            <ActivityFeed activity={activity} onRefresh={() => void qc.invalidateQueries({ queryKey: ["integrations"] })} />
+          </div>
+        </aside>
+      </div>
+
       {configTarget && (
-        <ConfigDrawer
-          integration={configTarget}
-          onClose={() => setConfigTarget(null)}
-        />
+        <ConfigDrawer integration={configTarget} canManage={canManage} onClose={() => setConfigTarget(null)} />
       )}
     </div>
   );

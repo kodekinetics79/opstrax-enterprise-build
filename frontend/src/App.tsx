@@ -117,6 +117,7 @@ const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").th
 const DriverNotificationsPage = lazy(() => import("@/pages/driver/DriverNotificationsPage").then(m => ({ default: m.DriverNotificationsPage })));
 const PlatformOpsPage = lazy(() => import("@/pages/PlatformOpsPage"));
 const FleetHealthPage = lazy(() => import("@/pages/FleetHealthPage").then(m => ({ default: m.FleetHealthPage })));
+const FleetIntelligencePage = lazy(() => import("@/pages/FleetIntelligencePage").then(m => ({ default: m.FleetIntelligencePage })));
 const FleetOverviewPage = lazy(() => import("@/pages/FleetOverviewPage").then(m => ({ default: m.FleetOverviewPage })));
 // Platform Admin — global SaaS business control plane (own auth + routing)
 const PlatformApp = lazy(() => import("@/pages/platform/PlatformApp"));
@@ -207,6 +208,7 @@ export default function App() {
 
         {/* ── Fleet Health + Safety Command Center ── */}
         <Route path="/fleet-health" element={<RequirePermission permission="dashboard:view"><FleetHealthPage /></RequirePermission>} />
+        <Route path="/fleet-intelligence" element={<RequirePermission permission="dashboard:view"><FleetIntelligencePage /></RequirePermission>} />
         <Route path="/fleet-workspace" element={<RequirePermission permission="fleet:view"><FleetWorkspacePage mode="command" /></RequirePermission>} />
         <Route path="/fleet-cold-chain" element={<RequirePermission permission="fleet:view"><FleetColdChainPage /></RequirePermission>} />
         <Route path="/fleet-assets" element={<RequirePermission permission="fleet:view"><FleetAssetManagementPage /></RequirePermission>} />

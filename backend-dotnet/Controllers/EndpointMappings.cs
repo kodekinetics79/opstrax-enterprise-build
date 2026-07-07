@@ -5974,10 +5974,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         RequirePermission(http, "integrations:manage") is { } d1 &&
         RequirePermission(http, "telematics:providers:manage") is { } d2 ? d2 : null;
 
-    private static IResult? IntegrationsViewGuard(HttpContext http) =>
-        RequirePermission(http, "integrations:view") is { } d1 &&
-        RequirePermission(http, "integrations:manage") is not null &&
-        RequirePermission(http, "telematics:providers:manage") is { } d3 ? d3 : null;
+    // Allow if the caller holds ANY view-worthy permission (view OR either manage
+    // scope). Only deny when they hold NONE — returning the first denial as the
+    // response. The previous chain mixed `is { }` and `is not null`, which denied a
+    // legitimate integrations:view user who lacked manage rights (a 403 the frontend
+    // silently swallowed into an empty page — a root cause of "nothing there").
+    private static IResult? IntegrationsViewGuard(HttpContext http)
+    {
+        var viewDenied     = RequirePermission(http, "integrations:view");
+        if (viewDenied is null) return null;                       // has integrations:view
+        if (RequirePermission(http, "integrations:manage") is null) return null;
+        if (RequirePermission(http, "telematics:providers:manage") is null) return null;
+        return viewDenied;                                          // holds none — deny
+    }
 
     private const string IntegrationCols =
         @"id, provider_name, category, status, integration_key,
@@ -5989,6 +5998,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        // Hydrate the connector catalog for this tenant on first read (idempotent,
+        // never overwrites existing/custom rows). This is why the module is never
+        // empty: the primary .NET API self-seeds the marketplace instead of relying
+        // on the Node side-service that the frontend used to depend on.
+        await Opstrax.Api.Seed.IntegrationCatalog.EnsureTenantAsync(db, companyId, ct);
         var records = await db.QueryAsync(
             $"SELECT {IntegrationCols} FROM integrations WHERE company_id=@cid ORDER BY category, provider_name",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);

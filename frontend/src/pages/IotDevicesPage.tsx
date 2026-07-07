@@ -1,15 +1,18 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  AlertTriangle,
   ArrowRightLeft,
   CheckCircle2,
   ChevronDown,
+  Copy,
   Cpu,
   Download,
   Edit3,
   FileUp,
+  KeyRound,
   PlugZap,
   Plus,
   RadioTower,
@@ -17,6 +20,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Terminal,
   Trash2,
   Truck,
   WifiOff,
@@ -28,7 +32,12 @@ import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, S
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { vehiclesApi } from "@/services/vehiclesApi";
-import { telematicsService, type DeviceCommandRecord, type DeviceDetailRecord } from "@/services/telematicsService";
+import {
+  telematicsService,
+  type DeviceCommandRecord,
+  type DeviceDetailRecord,
+  type DeviceProvisionResult,
+} from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
 
 type DeviceTab =
@@ -61,6 +70,24 @@ type DeviceFormState = {
 type FirmwareFormState = {
   targetVersion: string;
   scheduledFor: string;
+};
+
+// Minimal, honest inputs for INITIATING A CONNECTION (the Render/Vercel model).
+// The device serial is the real key the backend provisions credentials against;
+// everything else is optional metadata. IMEI/SIM/firmware/power/compliance are
+// intentionally NOT collected here — they are not part of the connection handshake.
+type ConnectFormState = {
+  serialNumber: string;
+  provider: string;
+  deviceModel: string;
+  assignedVehicleId: string;
+};
+
+const defaultConnectForm: ConnectFormState = {
+  serialNumber: "",
+  provider: "",
+  deviceModel: "",
+  assignedVehicleId: "",
 };
 
 const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
@@ -173,8 +200,16 @@ export function IotDevicesPage() {
   const [tab, setTab] = useState<DeviceTab>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
-  const [deviceModal, setDeviceModal] = useState<{ mode: "create" | "edit"; id?: string | number } | null>(null);
+  // "create" now opens the connection flow (register → credentials → pairing);
+  // "edit" keeps the full field editor for an already-provisioned device.
+  const [deviceModal, setDeviceModal] = useState<{ mode: "edit"; id: string | number } | null>(null);
   const [deviceForm, setDeviceForm] = useState<DeviceFormState>(defaultForm);
+  // Step 1 of the connect flow — the minimal register-connection form.
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectForm, setConnectForm] = useState<ConnectFormState>(defaultConnectForm);
+  // Step 2 of the connect flow — the one-time credentials + live pairing panel.
+  // Populated ONLY by a real provisionDevice() response.
+  const [provisionResult, setProvisionResult] = useState<DeviceProvisionResult | null>(null);
   const [assignTarget, setAssignTarget] = useState<DeviceCommandRecord | null>(null);
   const [assignVehicleCode, setAssignVehicleCode] = useState("");
   const [firmwareTarget, setFirmwareTarget] = useState<DeviceCommandRecord | null>(null);
@@ -199,12 +234,24 @@ export function IotDevicesPage() {
     await queryClient.invalidateQueries({ queryKey: ["iot-devices"] });
   };
 
-  const createMut = useMutation({
-    mutationFn: (payload: DeviceFormState) => telematicsService.createDevice(payload),
-    onSuccess: async () => {
-      setNotice("Device registered successfully.");
-      setDeviceModal(null);
-      setDeviceForm(defaultForm);
+  // Provisioning INITIATES A REAL CONNECTION: the backend mints an apiKey + HMAC
+  // secret (returned once) that the physical device uses to authenticate its
+  // telemetry stream. We keep the result in state to render the credentials +
+  // live pairing panel; we do NOT close the flow or claim "registered" here.
+  const provisionMut = useMutation({
+    mutationFn: (payload: ConnectFormState) =>
+      telematicsService.provisionDevice({
+        serialNumber: payload.serialNumber.trim(),
+        provider: payload.provider.trim(),
+        deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
+        deviceType: payload.deviceModel.trim() || "Device",
+        assignedVehicleId: payload.assignedVehicleId || null,
+      }),
+    onSuccess: async (result) => {
+      setProvisionResult(result);
+      setConnectOpen(false);
+      setConnectForm(defaultConnectForm);
+      // Surface the new (not-yet-streaming) device in the list immediately.
       await refreshAll();
     },
   });
@@ -233,47 +280,65 @@ export function IotDevicesPage() {
       await refreshAll();
     },
   });
+  // Some device operations have no persistence endpoint in the current backend, so
+  // the service returns { success:false, reason }. We surface that HONESTLY rather
+  // than claiming a success the backend never performed. When (and only when) a real
+  // endpoint is added and the service starts returning success, the same handler
+  // shows the confirmation. `okNotice`/`failNotice` are the truthful messages.
+  const noticeFromResult = (
+    result: unknown,
+    okNotice: string,
+    failNotice: string,
+  ) => {
+    const ok = !(result && typeof result === "object" && "success" in result && (result as { success?: boolean }).success === false);
+    if (ok) {
+      setNotice(okNotice);
+    } else {
+      const reason = (result as { reason?: string }).reason;
+      setNotice(reason ? `${failNotice} (${reason})` : failNotice);
+    }
+  };
   const unassignMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.unassignDevice(deviceId),
-    onSuccess: async () => {
-      setNotice("Device unassigned successfully.");
+    onSuccess: async (result) => {
+      noticeFromResult(result, "Device unassigned successfully.", "Unassign is not available for this device yet.");
       await refreshAll();
     },
   });
   const installMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.markInstalled(deviceId),
-    onSuccess: async () => {
-      setNotice("Installation checklist completed.");
+    onSuccess: async (result) => {
+      noticeFromResult(result, "Installation checklist completed.", "Marking installed is not available for this device yet.");
       await refreshAll();
     },
   });
   const diagnosticsMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.runDeviceDiagnostics(deviceId),
-    onSuccess: async () => {
-      setNotice("Diagnostics completed.");
+    onSuccess: async (result) => {
+      noticeFromResult(result, "Diagnostics completed.", "On-demand diagnostics are not available for this device yet.");
       await refreshAll();
     },
   });
   const refreshMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.refreshDeviceStatus(deviceId),
-    onSuccess: async () => {
-      setNotice("Device status refreshed.");
+    onSuccess: async (result) => {
+      noticeFromResult(result, "Device status refreshed.", "Manual status refresh is not available for this device yet.");
       await refreshAll();
     },
   });
   const firmwareMut = useMutation({
     mutationFn: ({ id, payload }: { id: string | number; payload: FirmwareFormState }) => telematicsService.scheduleFirmwareUpdate(id, payload),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setFirmwareTarget(null);
       setFirmwareForm({ targetVersion: "", scheduledFor: "" });
-      setNotice("Firmware update scheduled.");
+      noticeFromResult(result, "Firmware update scheduled.", "Firmware scheduling is not available for this device yet.");
       await refreshAll();
     },
   });
   const providerSyncMut = useMutation({
     mutationFn: (providerId: string | number) => telematicsService.syncProvider(providerId),
-    onSuccess: async () => {
-      setNotice("Provider sync completed.");
+    onSuccess: async (result) => {
+      noticeFromResult(result, "Provider sync completed.", "Provider sync is not available yet.");
       await refreshAll();
     },
   });
@@ -328,14 +393,23 @@ export function IotDevicesPage() {
   if (devicesQ.isLoading) return <DeviceLoadingState />;
   if (devicesQ.isError) return <ErrorState message="Unable to load the device command center right now." />;
 
-  const openCreate = () => {
-    setDeviceForm(defaultForm);
-    setDeviceModal({ mode: "create" });
+  const openConnect = () => {
+    setConnectForm(defaultConnectForm);
+    setConnectOpen(true);
   };
 
   const openEdit = (row: DeviceCommandRecord) => {
     setDeviceForm(toForm(row));
     setDeviceModal({ mode: "edit", id: row.id });
+  };
+
+  // Close the pairing panel and land the user on the freshly connected device.
+  const finishConnect = async () => {
+    const deviceId = provisionResult?.credentials.deviceId ?? provisionResult?.device.id ?? null;
+    setProvisionResult(null);
+    provisionMut.reset();
+    await refreshAll();
+    if (deviceId != null) setSelectedId(deviceId);
   };
 
   const exportCurrent = async () => {
@@ -364,10 +438,10 @@ export function IotDevicesPage() {
             <button
               className="btn-primary"
               disabled={!canCreate}
-              title={actionTitle(canCreate, "Register a new device into the tenant inventory.")}
-              onClick={() => canCreate && openCreate()}
+              title={actionTitle(canCreate, "Connect a new device and generate its live credentials.")}
+              onClick={() => canCreate && openConnect()}
             >
-              <Plus className="h-4 w-4" /> Add Device
+              <PlugZap className="h-4 w-4" /> Connect Device
             </button>
           </>
         }
@@ -557,20 +631,37 @@ export function IotDevicesPage() {
         </div>
       ) : null}
 
+      {/* STEP 1 — Register connection. Minimal, honest inputs; the serial is the real key. */}
+      {connectOpen ? (
+        <ConnectDeviceDialog
+          form={connectForm}
+          onChange={setConnectForm}
+          onClose={() => { setConnectOpen(false); provisionMut.reset(); }}
+          onSubmit={() => provisionMut.mutate(connectForm)}
+          busy={provisionMut.isPending}
+          error={provisionMut.isError ? (provisionMut.error as Error)?.message : null}
+          vehicleOptions={vehicleOptions}
+        />
+      ) : null}
+
+      {/* STEP 2 — Connection established. One-time credentials + live pairing indicator. */}
+      {provisionResult ? (
+        <DeviceCredentialsDialog
+          result={provisionResult}
+          onDone={() => void finishConnect()}
+        />
+      ) : null}
+
       {deviceModal ? (
         <ModalForm
-          title={deviceModal.mode === "create" ? "Add Device" : "Edit Device"}
+          title="Edit Device"
           onClose={() => setDeviceModal(null)}
           onSubmit={(event) => {
             event.preventDefault();
-            if (deviceModal.mode === "create") {
-              createMut.mutate(deviceForm);
-            } else if (deviceModal.id != null) {
-              updateMut.mutate({ id: deviceModal.id, payload: deviceForm });
-            }
+            updateMut.mutate({ id: deviceModal.id, payload: deviceForm });
           }}
-          submitLabel={deviceModal.mode === "create" ? "Create Device" : "Save Device"}
-          busy={createMut.isPending || updateMut.isPending}
+          submitLabel="Save Device"
+          busy={updateMut.isPending}
         >
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Device Name"><input className="field w-full" value={deviceForm.deviceName} onChange={(event) => setDeviceForm((form) => ({ ...form, deviceName: event.target.value }))} required /></FormField>
@@ -687,9 +778,18 @@ function DeviceDetailDrawer({
   canFirmware: boolean;
 }) {
   const { device } = detail;
-  const latestTelemetry = detail.telemetry[0];
-  const latestDiagnostic = detail.diagnostics[0];
-  const latestSensor = detail.sensorReadings[0];
+  // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
+  // is a single live position point (or none), `diagnostics` are active fault codes
+  // (or none), `sensorReadings`/`installations` have no verified source and are always [].
+  const latestTelemetry = detail.telemetry[0] ?? null;
+  const latestDiagnostic = detail.diagnostics[0] ?? null;
+  const latestSensor = detail.sensorReadings[0] ?? null;
+  // Values from the live position are already normalized to "—" upstream when null,
+  // so a value is meaningful only when it is a non-empty, non-"—" string.
+  const cell = (value: unknown): string => {
+    const text = value == null ? "" : String(value).trim();
+    return text && text !== "—" ? text : "—";
+  };
 
   return (
     <>
@@ -751,84 +851,399 @@ function DeviceDetailDrawer({
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <PanelSection title="Latest Telemetry Summary">
-          <MiniGrid rows={[
-            ["Last GPS point", latestTelemetry ? `${latestTelemetry.latitude}, ${latestTelemetry.longitude}` : "No GPS fix recorded"],
-            ["Speed", latestTelemetry ? String(latestTelemetry.speedMph ?? "0") : "No speed reading"],
-            ["Heading", latestTelemetry ? String(latestTelemetry.heading ?? "Stationary") : "Awaiting heading"],
-            ["Last check-in", device.lastCheckIn],
-          ]} />
+          {latestTelemetry ? (
+            <MiniGrid rows={[
+              [
+                "Last GPS point",
+                cell(latestTelemetry.latitude) === "—" || cell(latestTelemetry.longitude) === "—"
+                  ? "—"
+                  : `${latestTelemetry.latitude}, ${latestTelemetry.longitude}`,
+              ],
+              ["Speed", cell(latestTelemetry.speedMph)],
+              ["Heading", cell(latestTelemetry.heading)],
+              ["Last check-in", cell(device.lastCheckIn)],
+            ]} />
+          ) : (
+            <p className="text-sm text-slate-400">No telemetry received yet. This device has no live position snapshot.</p>
+          )}
         </PanelSection>
         <PanelSection title="Engine / OBD / J1939">
-          <MiniGrid rows={[
-            ["Engine status", latestTelemetry ? String(latestTelemetry.engineStatus ?? "No engine state") : "No engine state"],
-            ["Odometer", latestTelemetry ? String(latestTelemetry.odometer ?? "No odometer reading") : "No odometer reading"],
-            ["Fuel level", latestTelemetry ? String(latestTelemetry.fuelLevel ?? "No fuel reading") : "No fuel reading"],
-            ["Geofence", latestTelemetry ? String(latestTelemetry.geofenceStatus ?? "In corridor") : "In corridor"],
-          ]} />
+          {latestTelemetry ? (
+            <MiniGrid rows={[
+              ["Engine status", cell(latestTelemetry.engineStatus)],
+              ["Odometer", cell(latestTelemetry.odometer)],
+              ["Fuel level", cell(latestTelemetry.fuelLevel)],
+              ["Geofence", cell(latestTelemetry.geofenceStatus)],
+            ]} />
+          ) : (
+            <p className="text-sm text-slate-400">No engine or OBD/J1939 data received from this device.</p>
+          )}
         </PanelSection>
         <PanelSection title="Latest Sensor Readings">
-          <MiniGrid rows={[
-            ["Temperature", latestSensor ? String(latestSensor.temperature ?? "Ambient") : "Ambient"],
-            ["Humidity", latestSensor ? String(latestSensor.humidity ?? "No humidity channel") : "No humidity channel"],
-            ["Door status", latestSensor ? String(latestSensor.doorStatus ?? "No door channel") : "No door channel"],
-            ["Tire / fuel", latestSensor ? `${String(latestSensor.tirePressure ?? "No tire channel")} · ${String(latestSensor.fuelLevel ?? "No fuel channel")}` : "No sensor channel"],
-          ]} />
+          {latestSensor ? (
+            <MiniGrid rows={[
+              ["Temperature", cell(latestSensor.temperature)],
+              ["Humidity", cell(latestSensor.humidity)],
+              ["Door status", cell(latestSensor.doorStatus)],
+              [
+                "Tire / fuel",
+                cell(latestSensor.tirePressure) === "—" && cell(latestSensor.fuelLevel) === "—"
+                  ? "—"
+                  : `${cell(latestSensor.tirePressure)} · ${cell(latestSensor.fuelLevel)}`,
+              ],
+            ]} />
+          ) : (
+            <p className="text-sm text-slate-400">No sensor channels reporting for this device.</p>
+          )}
         </PanelSection>
         <PanelSection title="Diagnostics">
-          <MiniGrid rows={[
-            ["Latest result", latestDiagnostic ? String(latestDiagnostic.result) : "Diagnostics not run"],
-            ["Battery voltage", latestDiagnostic ? String(latestDiagnostic.batteryVoltage) : "No voltage reading"],
-            ["Modem status", latestDiagnostic ? String(latestDiagnostic.modemStatus) : "No modem reading"],
-            ["GNSS status", latestDiagnostic ? String(latestDiagnostic.gnssStatus) : "No GNSS reading"],
-          ]} />
+          {latestDiagnostic ? (
+            <MiniGrid rows={[
+              ["Latest result", cell(latestDiagnostic.result)],
+              ["Fault code", cell(latestDiagnostic.faultCode)],
+              ["Battery voltage", cell(latestDiagnostic.batteryVoltage)],
+              ["Modem status", cell(latestDiagnostic.modemStatus)],
+              ["GNSS status", cell(latestDiagnostic.gnssStatus)],
+            ]} />
+          ) : (
+            <p className="text-sm text-slate-400">No active fault codes for this device.</p>
+          )}
         </PanelSection>
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <PanelSection title="Assignment History">
+          {/* No assignment-history endpoint exists — always empty until one is added. */}
           <TimelineList rows={detail.assignmentHistory.map((row) => ({
-            title: String(row.status ?? "Assignment"),
-            subtitle: `${String(row.vehicleCode ?? "No vehicle")} · ${String(row.driverName ?? "No driver")}`,
-            meta: String(row.assignedAt ?? ""),
-          }))} emptyText="No assignment changes recorded." />
+            title: cell(row.status) === "—" ? "Assignment" : String(row.status),
+            subtitle: `${cell(row.vehicleCode)} · ${cell(row.driverName)}`,
+            meta: cell(row.assignedAt) === "—" ? "" : String(row.assignedAt),
+          }))} emptyText="No assignment history available for this device." />
         </PanelSection>
         <PanelSection title="Health Timeline">
+          {/* Live: real telemetry alerts for this device (empty when none exist). */}
           <TimelineList rows={detail.healthEvents.map((row) => ({
-            title: String(row.status),
-            subtitle: `${String(row.summary)} · ${String(row.score)}%`,
-            meta: String(row.eventAt),
-          }))} emptyText="No health events recorded." />
+            title: cell(row.status),
+            subtitle: `${cell(row.summary)} · ${cell(row.score)}%`,
+            meta: cell(row.eventAt) === "—" ? "" : String(row.eventAt),
+          }))} emptyText="No health events or alerts recorded." />
         </PanelSection>
         <PanelSection title="Connectivity History">
+          {/* Derived from the single live position snapshot (one point, or none). */}
           <TimelineList rows={detail.telemetry.map((row) => ({
-            title: String(row.geofenceStatus ?? "Connectivity event"),
-            subtitle: `${String(row.speedMph ?? "0")} mph · ${String(row.engineStatus ?? "Signal update")}`,
-            meta: String(row.eventAt ?? ""),
+            title: cell(row.geofenceStatus) === "—" ? "Connectivity event" : String(row.geofenceStatus),
+            subtitle: `${cell(row.speedMph)} mph · ${cell(row.engineStatus)}`,
+            meta: cell(row.eventAt) === "—" ? "" : String(row.eventAt),
           }))} emptyText="No connectivity history recorded." />
         </PanelSection>
         <PanelSection title="Audit / Activity Log">
+          {/* No device audit-log endpoint exists — always empty until one is added. */}
           <TimelineList rows={detail.auditLog.map((row) => ({
-            title: String(row.action ?? "Activity"),
-            subtitle: String(row.notes ?? ""),
-            meta: String(row.eventAt ?? ""),
+            title: cell(row.action) === "—" ? "Activity" : String(row.action),
+            subtitle: cell(row.notes) === "—" ? "" : String(row.notes),
+            meta: cell(row.eventAt) === "—" ? "" : String(row.eventAt),
           }))} emptyText="No device activity recorded." />
         </PanelSection>
       </div>
 
-      <div className="mt-6 panel p-5">
-        <p className="section-title">Installation Checklist</p>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {(detail.installations[0]?.checklist ?? []).map((item: AnyRecord) => (
-            <div key={String(item.item)} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-white">{String(item.item)}</p>
-                <StatusBadge status={String(item.status)} />
-              </div>
+      <div className="mt-6 grid gap-4 xl:grid-cols-2">
+        <PanelSection title="Firmware History">
+          {/* No OTA/firmware-schedule endpoint exists — always empty until one is added. */}
+          <TimelineList rows={detail.firmwareUpdates.map((row) => ({
+            title: `${cell(row.currentVersion)} → ${cell(row.targetVersion)}`,
+            subtitle: cell(row.status),
+            meta: cell(row.scheduledFor) === "—" ? "" : String(row.scheduledFor),
+          }))} emptyText="No firmware history available." />
+        </PanelSection>
+        <PanelSection title="Installation Checklist">
+          {/* No installation-records endpoint exists — always empty until one is added. */}
+          {(detail.installations[0]?.checklist ?? []).length ? (
+            <div className="space-y-3">
+              {(detail.installations[0]?.checklist ?? []).map((item: AnyRecord) => (
+                <div key={String(item.item)} className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-white">{String(item.item)}</p>
+                    <StatusBadge status={String(item.status)} />
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          ) : (
+            <p className="text-sm text-slate-400">No installation checklist recorded for this device.</p>
+          )}
+        </PanelSection>
       </div>
     </>
+  );
+}
+
+// ── STEP 1: Register connection ─────────────────────────────────────────────
+// Minimal, honest form. Serial is the ONLY required field (the real key the
+// backend provisions credentials against). Provider is free text. Model/name
+// and assigned vehicle are optional. No IMEI/SIM/firmware/power/compliance —
+// none of those are part of the connection handshake.
+function ConnectDeviceDialog({
+  form,
+  onChange,
+  onClose,
+  onSubmit,
+  busy,
+  error,
+  vehicleOptions,
+}: {
+  form: ConnectFormState;
+  onChange: (form: ConnectFormState) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+  busy: boolean;
+  error?: string | null;
+  vehicleOptions: AnyRecord[];
+}) {
+  const serialValid = form.serialNumber.trim().length > 0;
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="connect-device-title">
+      <form
+        className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6"
+        onSubmit={(event) => { event.preventDefault(); if (serialValid && !busy) onSubmit(); }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl border border-teal-200 bg-teal-50 text-teal-600 shadow-inner">
+              <PlugZap className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 id="connect-device-title" className="text-2xl font-semibold text-slate-900">Connect a device</h2>
+              <p className="mt-1 text-sm text-slate-500">Register the device serial to mint its live streaming credentials. Nothing streams until the device authenticates with the key you get next.</p>
+            </div>
+          </div>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <FormField label="Device Serial (required)">
+            <input
+              className="field w-full font-mono"
+              value={form.serialNumber}
+              onChange={(event) => onChange({ ...form, serialNumber: event.target.value })}
+              placeholder="e.g. GT06-8891-2245"
+              autoFocus
+              required
+              aria-required="true"
+              aria-label="Device serial number, required"
+            />
+          </FormField>
+          <FormField label="Provider">
+            <input
+              className="field w-full"
+              value={form.provider}
+              onChange={(event) => onChange({ ...form, provider: event.target.value })}
+              placeholder="e.g. Motive, Geotab, Samsara"
+              list="connect-provider-options"
+              aria-label="Telematics provider"
+            />
+            <datalist id="connect-provider-options">
+              <option value="Motive" />
+              <option value="Geotab" />
+              <option value="Samsara" />
+              <option value="Verizon Connect" />
+            </datalist>
+          </FormField>
+          <FormField label="Device Model / Name (optional)">
+            <input
+              className="field w-full"
+              value={form.deviceModel}
+              onChange={(event) => onChange({ ...form, deviceModel: event.target.value })}
+              placeholder="e.g. OBD-II Gateway"
+              aria-label="Device model or friendly name"
+            />
+          </FormField>
+          <FormField label="Assign to Vehicle (optional)">
+            <select
+              className="field w-full"
+              value={form.assignedVehicleId}
+              onChange={(event) => onChange({ ...form, assignedVehicleId: event.target.value })}
+              aria-label="Assign device to a vehicle"
+            >
+              <option value="">Leave in installation queue</option>
+              {vehicleOptions.map((vehicle) => (
+                <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)}>
+                  {String(vehicle.vehicleCode ?? vehicle.vehicleId ?? vehicle.id)} · {String(vehicle.status ?? "Fleet asset")}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        </div>
+
+        <div className="mt-5 flex items-start gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+          <KeyRound className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
+          <span>On connect, we generate a one-time API key and HMAC secret. Copy them on the next screen — they are shown only once.</span>
+        </div>
+
+        {error ? (
+          <div className="mt-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={!serialValid || busy}>
+            {busy ? "Connecting..." : (<><PlugZap className="h-4 w-4" /> Register Connection</>)}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ── STEP 2: Connection established — credentials + live pairing ──────────────
+// Displays the one-time apiKey + hmacSecret (neumorphic inset wells with Copy),
+// the ingest endpoint + a "how to connect" block, and a live pairing indicator
+// that polls getDeviceConnectionState until the device streams its first
+// heartbeat. NEVER fabricates "connected" — it flips only on connected:true.
+function DeviceCredentialsDialog({
+  result,
+  onDone,
+}: {
+  result: DeviceProvisionResult;
+  onDone: () => void;
+}) {
+  const { credentials, ingestUrl, device } = result;
+
+  const connectionQ = useQuery({
+    queryKey: ["telematics", "device-connection", credentials.deviceId],
+    queryFn: () => telematicsService.getDeviceConnectionState(credentials.deviceId),
+    // Poll for the first heartbeat every 5s; stop once the device is connected.
+    refetchInterval: (query) => (query.state.data?.connected ? false : 5000),
+    refetchOnWindowFocus: false,
+  });
+  const connected = Boolean(connectionQ.data?.connected);
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="device-credentials-title">
+      <div className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+        <div className="flex items-start gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 shadow-inner">
+            <CheckCircle2 className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 id="device-credentials-title" className="text-2xl font-semibold text-slate-900">Connection established</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {device.deviceName} · {device.serialNumber || credentials.deviceSerial}. Configure your device with the credentials below.
+            </p>
+          </div>
+        </div>
+
+        {/* One-time warning banner */}
+        <div className="mt-5 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{credentials.note || "Store these credentials securely — they will not be shown again."}</span>
+        </div>
+
+        {/* Credentials — neumorphic inset wells */}
+        <div className="mt-5 space-y-4">
+          <CopyField label="API Key" value={credentials.apiKey} secret />
+          <CopyField label="HMAC Secret" value={credentials.hmacSecret} secret />
+        </div>
+
+        {/* Ingest endpoint */}
+        <div className="mt-5">
+          <CopyField label="Ingest Endpoint" value={ingestUrl} />
+        </div>
+
+        {/* How to connect */}
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <Terminal className="h-4 w-4 text-slate-500" /> How to connect
+          </div>
+          <ol className="mt-3 space-y-1.5 text-sm text-slate-600">
+            <li>1. Point the device (or your gateway) at the ingest endpoint above.</li>
+            <li>2. Authenticate every telemetry POST with header <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs text-slate-800 shadow-inner">X-Device-Key: {"<API Key>"}</code>.</li>
+            <li>3. Sign the request body with the HMAC secret; the first accepted POST completes pairing.</li>
+          </ol>
+        </div>
+
+        {/* Live pairing indicator — real state only */}
+        <div className="clay-card mt-5 flex items-center justify-between gap-4 p-4">
+          <div className="flex items-center gap-3">
+            {connected ? (
+              <span className="live-dot" aria-hidden />
+            ) : (
+              <span className="inline-block h-[7px] w-[7px] flex-shrink-0 animate-pulse rounded-full bg-amber-400" aria-hidden />
+            )}
+            <div>
+              <p className={connected ? "text-sm font-semibold text-emerald-700" : "text-sm font-semibold text-slate-800"}>
+                {connectionQ.isError
+                  ? "Unable to check connection status"
+                  : connected
+                    ? "Connected — device is streaming"
+                    : "Waiting for first heartbeat…"}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {connected && connectionQ.data?.lastSeenAt
+                  ? `Last seen ${connectionQ.data.lastSeenAt}`
+                  : connectionQ.isError
+                    ? "Retrying automatically."
+                    : "Polling the device for its first authenticated telemetry POST."}
+              </p>
+            </div>
+          </div>
+          <RadioTower className={connected ? "h-5 w-5 text-emerald-500" : "h-5 w-5 text-slate-300"} />
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" className="btn-primary" onClick={onDone}>
+            {connected ? "Done" : "Close and finish later"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Neumorphic inset well with a monospace value and an accessible Copy button.
+// `secret` values render in a subtly stronger inset to read as sensitive tokens.
+function CopyField({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div>
+      <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span>
+      <div
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2"
+        style={{ boxShadow: secret ? "inset 0 2px 5px rgba(15,23,42,.12)" : "inset 0 1px 3px rgba(15,23,42,.08)" }}
+      >
+        <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-sm text-slate-800">
+          {value || "—"}
+        </code>
+        <button
+          type="button"
+          className="btn-ghost h-8 flex-shrink-0 px-3"
+          onClick={() => void copy()}
+          disabled={!value}
+          aria-label={copied ? `${label} copied to clipboard` : `Copy ${label} to clipboard`}
+          title={copied ? "Copied" : `Copy ${label}`}
+        >
+          {copied ? (<><CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Copied</>) : (<><Copy className="h-3.5 w-3.5" /> Copy</>)}
+        </button>
+      </div>
+    </div>
   );
 }
 
