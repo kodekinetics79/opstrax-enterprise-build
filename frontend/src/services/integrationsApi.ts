@@ -39,6 +39,9 @@ export type IntegrationRecord = {
   scope: "tenant" | "platform";
   tenantId: number;
   config: Record<string, string | number | boolean | null>;
+  // True for tenant-created connectors (fully editable/deletable). Built-in catalog
+  // connectors are is_custom=false and are reset rather than deleted.
+  isCustom?: boolean;
 };
 
 export type IntegrationActivity = {

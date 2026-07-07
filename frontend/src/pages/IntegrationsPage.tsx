@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -11,13 +11,16 @@ import {
   Layers,
   Link2,
   MapPinned,
+  Pencil,
   PlugZap,
   Plug,
+  Plus,
   RadioTower,
   RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
+  Trash2,
   Warehouse,
   X,
   Zap,
@@ -37,6 +40,7 @@ import {
   type IntegrationCategory,
   type IntegrationRecord,
   type IntegrationsPayload,
+  type IntegrationWriteInput,
 } from "@/services/integrationsApi";
 
 type ConfigField = {
@@ -364,6 +368,316 @@ function ConfigDrawer({
 }
 
 /* ============================================================
+   CUSTOM CONNECTOR DIALOG — create / edit a tenant-owned connector
+   ============================================================ */
+type ConfigRow = { id: number; key: string; value: string };
+
+let configRowSeq = 0;
+function nextConfigRowId() {
+  configRowSeq += 1;
+  return configRowSeq;
+}
+
+function configToRows(config: IntegrationRecord["config"] | undefined): ConfigRow[] {
+  if (!config) return [];
+  return Object.entries(config)
+    .filter(([key]) => key.trim().length > 0)
+    .map(([key, value]) => ({ id: nextConfigRowId(), key, value: formatConfigValue(value) }));
+}
+
+function coerceConfigValue(raw: string): string | number | boolean | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  // Only treat as a number when it round-trips cleanly (avoids clobbering things
+  // like account codes with leading zeros or ids like "wex-88231").
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && String(parsed) === trimmed) return parsed;
+  }
+  return trimmed;
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function CustomConnectorDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  // null = create mode; an IntegrationRecord = edit mode.
+  target: IntegrationRecord | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const qc = useQueryClient();
+  const isEdit = target !== null;
+
+  const [name, setName] = useState(target?.name ?? "");
+  const [category, setCategory] = useState<IntegrationCategory>(target?.category ?? CATEGORY_ORDER[0]);
+  const [description, setDescription] = useState(target?.description ?? "");
+  const [logo, setLogo] = useState(target?.logo ?? "");
+  const [managedBy, setManagedBy] = useState(target?.managedBy ?? "");
+  const [relatedSystems, setRelatedSystems] = useState((target?.relatedSystems ?? []).join(", "));
+  const [connectedTo, setConnectedTo] = useState((target?.connectedTo ?? []).join(", "));
+  const [configRows, setConfigRows] = useState<ConfigRow[]>(() => configToRows(target?.config));
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const saveMut = useMutation({
+    mutationFn: (payload: IntegrationWriteInput) =>
+      isEdit ? integrationsApi.update(target!.id, payload) : integrationsApi.create(payload),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+      onSaved();
+    },
+  });
+
+  const trimmedName = name.trim();
+  const canSubmit = trimmedName.length > 0 && !saveMut.isPending;
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+
+    const config: Record<string, string | number | boolean | null> = {};
+    for (const row of configRows) {
+      const key = row.key.trim();
+      if (!key) continue;
+      config[key] = coerceConfigValue(row.value);
+    }
+
+    const payload: IntegrationWriteInput = {
+      name: trimmedName,
+      category,
+      description: description.trim(),
+      logo: logo.trim() || trimmedName.slice(0, 3).toUpperCase(),
+      managedBy: managedBy.trim(),
+      relatedSystems: splitList(relatedSystems),
+      connectedTo: splitList(connectedTo),
+      config,
+    };
+
+    void saveMut.mutate(payload);
+  }
+
+  const logoPreview = (logo.trim() || trimmedName.slice(0, 3)).slice(0, 3).toUpperCase();
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm anim-fade-in">
+      <div aria-hidden className="absolute inset-0" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEdit ? `Edit ${target?.name}` : "Add custom connector"}
+        className="anim-slide-right relative flex h-full w-full max-w-xl flex-col gap-5 overflow-y-auto border-l border-slate-200 bg-linear-to-b from-white to-slate-50 p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <span className="text-xs font-black tracking-tight text-slate-700">{logoPreview || "NEW"}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-teal-600">
+                {isEdit ? "Edit custom connector" : "Add custom connector"}
+              </p>
+              <h2 className="mt-1.5 truncate text-xl font-black tracking-tight text-slate-950">
+                {isEdit ? target?.name : "New connector"}
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">Tenant-owned integration, persisted live in the primary API.</p>
+            </div>
+          </div>
+          <button type="button" aria-label="Close" className="icon-btn" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+          <div>
+            <label className="field-label text-[12px] font-bold text-slate-700">
+              Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              className="field mt-1 w-full"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Acme Freight API"
+              autoFocus
+              required
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="field-label text-[12px] font-bold text-slate-700">
+                Category <span className="text-red-500">*</span>
+              </label>
+              <select
+                aria-label="Category"
+                className="field mt-1 w-full"
+                value={category}
+                onChange={(event) => setCategory(event.target.value as IntegrationCategory)}
+              >
+                {CATEGORY_ORDER.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="field-label text-[12px] font-bold text-slate-700">Logo badge</label>
+              <input
+                className="field mt-1 w-full uppercase"
+                value={logo}
+                onChange={(event) => setLogo(event.target.value.slice(0, 4))}
+                maxLength={4}
+                placeholder={trimmedName ? trimmedName.slice(0, 3).toUpperCase() : "Defaults to first 3 letters"}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="field-label text-[12px] font-bold text-slate-700">Description</label>
+            <textarea
+              className="field mt-1 w-full"
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="What does this connector do and what does it sync?"
+            />
+          </div>
+
+          <div>
+            <label className="field-label text-[12px] font-bold text-slate-700">Managed by</label>
+            <input
+              className="field mt-1 w-full"
+              value={managedBy}
+              onChange={(event) => setManagedBy(event.target.value)}
+              placeholder="e.g. Platform Ops"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="field-label text-[12px] font-bold text-slate-700">Related systems</label>
+              <input
+                className="field mt-1 w-full"
+                value={relatedSystems}
+                onChange={(event) => setRelatedSystems(event.target.value)}
+                placeholder="Comma-separated, e.g. NetSuite, SAP"
+              />
+              <p className="mt-1 text-xs text-slate-400">Separate multiple values with commas.</p>
+            </div>
+            <div>
+              <label className="field-label text-[12px] font-bold text-slate-700">Connected to</label>
+              <input
+                className="field mt-1 w-full"
+                value={connectedTo}
+                onChange={(event) => setConnectedTo(event.target.value)}
+                placeholder="Comma-separated, e.g. Dispatch, Billing"
+              />
+              <p className="mt-1 text-xs text-slate-400">Separate multiple values with commas.</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+                  <Settings2 className="h-3.5 w-3.5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Connection settings</p>
+                  <p className="text-xs text-slate-500">Free-form key/value config persisted live for this connector.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100"
+                onClick={() => setConfigRows((rows) => [...rows, { id: nextConfigRowId(), key: "", value: "" }])}
+              >
+                <Plus className="h-3 w-3" />
+                Add row
+              </button>
+            </div>
+
+            {configRows.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-3 py-3 text-center text-xs text-slate-400">
+                No config keys yet. Add a row to store credentials, URLs, or intervals.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {configRows.map((row) => (
+                  <div key={row.id} className="flex items-center gap-2">
+                    <input
+                      className="field w-2/5 text-sm"
+                      value={row.key}
+                      onChange={(event) =>
+                        setConfigRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, key: event.target.value } : r)))
+                      }
+                      placeholder="key"
+                      aria-label="Config key"
+                    />
+                    <input
+                      className="field flex-1 text-sm"
+                      value={row.value}
+                      onChange={(event) =>
+                        setConfigRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))
+                      }
+                      placeholder="value"
+                      aria-label="Config value"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove config row"
+                      className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:bg-red-100"
+                      onClick={() => setConfigRows((rows) => rows.filter((r) => r.id !== row.id))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {saveMut.isError && (
+            <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+              {saveMut.error instanceof Error
+                ? saveMut.error.message
+                : `Unable to ${isEdit ? "save changes to" : "create"} this connector. Please try again.`}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 border-t border-slate-100 pt-3">
+            <button type="submit" className="btn-primary flex-1" disabled={!canSubmit}>
+              {saveMut.isPending ? "Saving..." : isEdit ? "Save changes" : "Create connector"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+/* ============================================================
    CONNECTOR CARD — claymorphic marketplace tile
    ============================================================ */
 function ConnectorCard({
@@ -374,6 +688,8 @@ function ConnectorCard({
   onDisconnect,
   onSync,
   onConfigure,
+  onEdit,
+  onDelete,
 }: {
   integration: IntegrationRecord;
   canManage: boolean;
@@ -382,6 +698,8 @@ function ConnectorCard({
   onDisconnect: () => void;
   onSync: () => void;
   onConfigure: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const isConnected = integration.status === "Connected";
   const isError = integration.status === "Error";
@@ -401,7 +719,14 @@ function ConnectorCard({
           <span className="text-[11px] font-black tracking-tight text-slate-700">{integration.logo.slice(0, 3).toUpperCase()}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold leading-tight text-slate-900">{integration.name}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="truncate text-sm font-bold leading-tight text-slate-900">{integration.name}</p>
+            {integration.isCustom && (
+              <span className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.12em] text-teal-600">
+                Custom
+              </span>
+            )}
+          </div>
           <div className="mt-1.5">
             <CategoryBadge category={integration.category} />
           </div>
@@ -467,6 +792,30 @@ function ConnectorCard({
           >
             <Settings2 className="h-3.5 w-3.5" />
           </button>
+
+          {integration.isCustom && (
+            <>
+              <button
+                type="button"
+                title="Edit connector"
+                aria-label={`Edit ${integration.name}`}
+                onClick={onEdit}
+                className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title="Delete connector"
+                aria-label={`Delete ${integration.name}`}
+                disabled={busy}
+                onClick={onDelete}
+                className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <button
@@ -563,6 +912,11 @@ export function IntegrationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
+  // Custom-connector create/edit dialog. { mode: "create" } opens an empty form;
+  // { mode: "edit", record } prefills from an existing custom connector.
+  const [connectorDialog, setConnectorDialog] = useState<
+    { mode: "create" } | { mode: "edit"; record: IntegrationRecord } | null
+  >(null);
 
   const q = useQuery<IntegrationsPayload>({
     queryKey: ["integrations"],
@@ -654,7 +1008,28 @@ export function IntegrationsPage() {
     },
   });
 
-  const busy = connectMut.isPending || disconnectMut.isPending || syncMut.isPending;
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => integrationsApi.remove(id),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error) => {
+      window.alert(
+        error instanceof Error ? error.message : "Unable to delete this connector. Please try again.",
+      );
+    },
+  });
+
+  function handleDelete(integration: IntegrationRecord) {
+    if (!canManage) return;
+    const ok = window.confirm(
+      `Delete the custom connector "${integration.name}"? This removes it from your tenant's marketplace and cannot be undone.`,
+    );
+    if (ok) deleteMut.mutate(integration.id);
+  }
+
+  const busy =
+    connectMut.isPending || disconnectMut.isPending || syncMut.isPending || deleteMut.isPending;
 
   if (q.isLoading) return <LoadingState />;
   if (q.isError) {
@@ -687,6 +1062,12 @@ export function IntegrationsPage() {
               <RefreshCw className="h-3.5 w-3.5" />
               Refresh
             </button>
+            {canManage && (
+              <button type="button" className="btn-primary text-sm" onClick={() => setConnectorDialog({ mode: "create" })}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Custom Connector
+              </button>
+            )}
           </>
         }
       />
@@ -805,6 +1186,8 @@ export function IntegrationsPage() {
                         onDisconnect={() => disconnectMut.mutate(integration.id)}
                         onSync={() => syncMut.mutate(integration.id)}
                         onConfigure={() => setConfigTarget(integration)}
+                        onEdit={() => setConnectorDialog({ mode: "edit", record: integration })}
+                        onDelete={() => handleDelete(integration)}
                       />
                     ))}
                   </div>
@@ -823,6 +1206,15 @@ export function IntegrationsPage() {
 
       {configTarget && (
         <ConfigDrawer integration={configTarget} canManage={canManage} onClose={() => setConfigTarget(null)} />
+      )}
+
+      {connectorDialog && (
+        <CustomConnectorDialog
+          key={connectorDialog.mode === "edit" ? `edit-${connectorDialog.record.id}` : "create"}
+          target={connectorDialog.mode === "edit" ? connectorDialog.record : null}
+          onClose={() => setConnectorDialog(null)}
+          onSaved={() => setConnectorDialog(null)}
+        />
       )}
     </div>
   );

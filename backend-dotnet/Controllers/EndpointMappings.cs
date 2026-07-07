@@ -6104,6 +6104,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             scope = string.IsNullOrWhiteSpace(Str("scope")) ? "tenant" : Str("scope"),
             tenantId = companyId,
             config = ParseJsonObject(row.GetValueOrDefault("configJson")),
+            // Lets the UI show edit/delete only on tenant-created (custom) connectors;
+            // built-in catalog connectors are reset, not deleted.
+            isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b,
         };
     }
 
@@ -6291,8 +6294,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)
     {
         object? Str(string k) => Get(body, k) is { } v && v is not DBNull ? v : DBNull.Value;
-        object? Json(string k) => Get(body, k) is { } v && v is not DBNull
-            ? System.Text.Json.JsonSerializer.Serialize(v) : (object)DBNull.Value;
+        // JSON columns (relatedSystems/connectedTo/config): read the RAW JsonElement
+        // from the body and emit its literal JSON text for the `::jsonb` cast. Using
+        // Get() here was the bug — Get() turns an array/object JsonElement into its
+        // JSON *string* (json.ToString()), and re-serializing that string with
+        // JsonSerializer.Serialize double-encoded it into a jsonb string scalar, so
+        // relatedSystems/connectedTo/config always persisted empty.
+        object? Json(string k)
+        {
+            if (!body.TryGetValue(k, out var raw) || raw is null) return DBNull.Value;
+            if (raw is System.Text.Json.JsonElement je)
+            {
+                return je.ValueKind is System.Text.Json.JsonValueKind.Array or System.Text.Json.JsonValueKind.Object
+                    ? je.GetRawText()                                   // pass literal JSON to ::jsonb
+                    : je.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined
+                        ? (object)DBNull.Value
+                        : System.Text.Json.JsonSerializer.Serialize(je.ToString());
+            }
+            return System.Text.Json.JsonSerializer.Serialize(raw);
+        }
         c.Parameters.AddWithValue("@name", (object?)nameOverride ?? Str("name"));
         c.Parameters.AddWithValue("@key", (object?)keyOverride ?? DBNull.Value);
         c.Parameters.AddWithValue("@cat", Str("category"));
