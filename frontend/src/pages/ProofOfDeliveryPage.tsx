@@ -3,7 +3,7 @@ import { tokens } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge, KpiCard, ProgressBar } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
@@ -269,6 +269,38 @@ export function ProofOfDeliveryPage() {
     }
   }, [focusedJobId, rows, canCapture]);
 
+  // ── Derived KPIs (computed from live data already in scope) ──────────────────
+  const totalRecords = Number(s.total ?? rows.length);
+  const capturedCount = Number(s.captured ?? rows.filter((r) => r.status === "Captured").length);
+  const pendingCount = Number(s.pending ?? rows.filter((r) => r.status === "Pending").length);
+  const digitalSignatures = Number(
+    s.digitalSignatures ?? rows.filter((r) => r.proofType === "Digital Signature").length,
+  );
+  const jobsPendingProof = Number(s.jobsPendingProof ?? 0);
+  const captureRate = totalRecords > 0 ? Math.round((capturedCount / totalRecords) * 100) : 0;
+  const signatureRate = capturedCount > 0 ? Math.round((digitalSignatures / capturedCount) * 100) : 0;
+
+  // Proof-type breakdown across all captured records (live data).
+  const proofTypeBreakdown = Object.entries(
+    rows.reduce<Record<string, number>>((acc, r) => {
+      if (String(r.status ?? "") !== "Captured") return acc;
+      const key = String(r.proofType || "Unspecified");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
+
+  // Awaiting-capture queue (records still needing a POD).
+  const awaitingQueue = rows.filter((r) =>
+    ["Pending", "Awaiting Capture"].includes(String(r.status ?? "")),
+  );
+
+  // Recently captured, newest first (live capturedAt timestamps).
+  const recentCaptures = rows
+    .filter((r) => r.capturedAt)
+    .sort((a, b) => new Date(String(b.capturedAt)).getTime() - new Date(String(a.capturedAt)).getTime())
+    .slice(0, 8);
+
   const filtered = rows.filter((r) => {
     if (statusFilter !== "All" && r.status !== statusFilter) return false;
     if (search) {
@@ -309,22 +341,35 @@ export function ProofOfDeliveryPage() {
         </button>
       </div>
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Records", val: s.total ?? rows.length },
-          { label: "Captured", val: s.captured ?? rows.filter((r) => r.status === "Captured").length, accent: "text-teal-600" },
-          { label: "Pending", val: s.pending ?? rows.filter((r) => r.status === "Pending").length, accent: "text-amber-600" },
-          { label: "Digital Signatures", val: s.digitalSignatures ?? rows.filter((r) => r.proofType === "Digital Signature").length, accent: "text-violet-600" },
-          { label: "Jobs Pending POD", val: s.jobsPendingProof ?? 0, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="deck-inset min-w-30 flex-1 rounded-xl px-3 py-2.5">
-            <span className={`block text-2xl font-black tabular-nums ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
-          </div>
-        ))}
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <KpiCard
+          label="Total Records"
+          value={String(totalRecords)}
+          trend={`${filtered.length} in view`}
+        />
+        <KpiCard
+          label="Captured"
+          value={String(capturedCount)}
+          status="Complete"
+          delta={totalRecords ? `${captureRate}% capture rate` : undefined}
+        />
+        <KpiCard
+          label="Pending"
+          value={String(pendingCount)}
+          status={pendingCount > 0 ? "Pending" : undefined}
+        />
+        <KpiCard
+          label="Digital Signatures"
+          value={String(digitalSignatures)}
+          trend={capturedCount ? `${signatureRate}% of captures` : undefined}
+        />
+        <KpiCard
+          label="Jobs Pending POD"
+          value={String(jobsPendingProof)}
+          status={jobsPendingProof > 0 ? "Missing" : undefined}
+        />
       </div>
-
 
 
       {/* Filters */}
@@ -354,8 +399,9 @@ export function ProofOfDeliveryPage() {
         />
       </div>
 
-      {/* Table */}
-      <div className="panel overflow-hidden p-0">
+      {/* Table + supporting rail */}
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="clay-card overflow-hidden p-0">
         {filtered.length === 0 ? (
           <EmptyState title="No POD records match your filters" />
         ) : (
@@ -415,6 +461,101 @@ export function ProofOfDeliveryPage() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Supporting rail — recent captures, awaiting queue, proof-type mix */}
+      <div className="flex flex-col gap-3">
+        {/* Awaiting capture queue */}
+        <div className="clay-card p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="section-title">Awaiting Capture</h2>
+            <span className="badge badge-warning tabular-nums">{awaitingQueue.length}</span>
+          </div>
+          {awaitingQueue.length === 0 ? (
+            <p className="text-xs text-slate-500">Every delivery has proof on file. Nothing pending capture.</p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {awaitingQueue.slice(0, 6).map((r, i) => (
+                <li
+                  key={String(r.id ?? i)}
+                  className="deck-inset flex items-center justify-between gap-3 rounded-xl px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">
+                      {String(r.jobNumber ?? `JOB-${r.jobId}`)}
+                    </div>
+                    <div className="truncate text-[11px] text-slate-500">
+                      {String(r.customerName ?? "—")}
+                    </div>
+                  </div>
+                  {canCapture ? (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700 transition-colors hover:bg-teal-100"
+                      onClick={() => setCaptureJob(r)}
+                    >
+                      Capture
+                    </button>
+                  ) : (
+                    <StatusBadge status={r.status} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Proof-type mix */}
+        <div className="clay-card p-4">
+          <h2 className="section-title mb-3">Proof-Type Mix</h2>
+          {proofTypeBreakdown.length === 0 ? (
+            <p className="text-xs text-slate-500">No captured proofs yet.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {proofTypeBreakdown.map(([type, count]) => (
+                <ProgressBar
+                  key={type}
+                  value={count}
+                  max={capturedCount || 1}
+                  label={`${type} · ${count}`}
+                  color={/signature/i.test(type) ? "var(--teal)" : "#8b5cf6"}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recent captures timeline */}
+        <div className="clay-card p-4">
+          <h2 className="section-title mb-3">Recent Captures</h2>
+          {recentCaptures.length === 0 ? (
+            <p className="text-xs text-slate-500">No proofs captured yet.</p>
+          ) : (
+            <div className="space-y-0">
+              {recentCaptures.map((r, i) => {
+                const isLast = i === recentCaptures.length - 1;
+                return (
+                  <div key={String(r.id ?? i)} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-2 ring-white" />
+                      {!isLast && <div className="mt-1 min-h-[18px] w-px flex-1 bg-slate-200" />}
+                    </div>
+                    <div className="min-w-0 pb-3">
+                      <p className="truncate text-sm font-semibold text-slate-800">
+                        {String(r.jobNumber ?? `JOB-${r.jobId}`)}
+                        <span className="font-normal text-slate-500"> · {String(r.receivedBy || "signed")}</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {new Date(String(r.capturedAt)).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
       </div>
 
       {captureJob && (

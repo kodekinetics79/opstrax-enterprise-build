@@ -3,7 +3,7 @@ import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, KpiCard } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
@@ -25,17 +25,19 @@ function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
   const circ = 2 * Math.PI * r;
   const dash = (score / 100) * circ;
   const color = score >= 85 ? chart.teal500 : score >= 70 ? chart.amber500 : chart.red500;
+  const stroke = size >= 90 ? 9 : 6;
+  const fontSize = Math.max(13, Math.round(size * 0.24));
   return (
     <svg width={size} height={size} className="shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tokens.border} strokeWidth={6} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tokens.border} strokeWidth={stroke} />
       <circle
         cx={size / 2} cy={size / 2} r={r} fill="none"
-        stroke={color} strokeWidth={6}
+        stroke={color} strokeWidth={stroke}
         strokeDasharray={`${dash} ${circ - dash}`}
         strokeLinecap="round"
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
       />
-      <text x={size / 2} y={size / 2 + 5} textAnchor="middle" fontSize={13} fontWeight={700} fill={color}>
+      <text x={size / 2} y={size / 2 + fontSize / 3} textAnchor="middle" fontSize={fontSize} fontWeight={700} fill={color}>
         {score}
       </text>
     </svg>
@@ -78,44 +80,51 @@ function DriverDrawer({
 
   const maxCount = 15;
 
+  const statTiles: [string, unknown][] = [
+    ["Safety Score", `${score}/100`],
+    ["Risk Score", `${risk}`],
+    ["Coaching Open", driver.coachingOpenCount ?? 0],
+    ["Incidents", driver.incidentCount ?? 0],
+  ];
+
   return (
-    <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl"
+        className="w-full max-w-xl h-full flex flex-col overflow-y-auto bg-white shadow-2xl border-l border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-          <span className="text-sm font-semibold text-white">Driver Scorecard</span>
-          <button type="button" className="text-slate-400 hover:text-white" onClick={onClose}>✕</button>
+        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white/95 backdrop-blur">
+          <span className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Driver Scorecard</span>
+          <button type="button" className="text-slate-400 hover:text-slate-700 text-lg leading-none" onClick={onClose}>✕</button>
         </div>
 
-        <div className="px-5 pt-5 pb-4 flex items-center gap-4 border-b border-white/6">
-          <ScoreRing score={score} size={64} />
-          <div>
-            <p className="text-base font-semibold text-white">{String(driver.driverName ?? "Driver")}</p>
+        {/* Hero — prominent score ring */}
+        <div className="clay-card m-5 mb-4 flex items-center gap-5 p-5">
+          <ScoreRing score={score} size={104} />
+          <div className="min-w-0">
+            <p className="text-lg font-black tracking-tight text-slate-950">{String(driver.driverName ?? "Driver")}</p>
             <p className="text-xs text-slate-400 mt-0.5">{String(driver.driverCode ?? "")}</p>
-            <p className={`text-xs mt-1 font-medium ${score >= 85 ? "text-teal-400" : score >= 70 ? "text-amber-400" : "text-red-400"}`}>
+            <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] ${
+              score >= 85 ? "border-teal-200 bg-teal-50 text-teal-700" :
+              score >= 70 ? "border-amber-200 bg-amber-50 text-amber-700" :
+              "border-red-200 bg-red-50 text-red-700"
+            }`}>
               {scoreLabel}
-            </p>
+            </span>
           </div>
         </div>
 
-        <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
-          {[
-            ["Safety Score", `${score}/100`],
-            ["Risk Score", `${risk}`],
-            ["Coaching Open", driver.coachingOpenCount],
-            ["Incidents", driver.incidentCount],
-          ].map(([k, v]) => (
-            <div key={String(k)}>
-              <p className="text-xs text-slate-400">{String(k)}</p>
-              <p className="text-sm font-semibold text-white mt-0.5">{String(v ?? "--")}</p>
+        <div className="px-5 pb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {statTiles.map(([k, v]) => (
+            <div key={String(k)} className="clay-card p-3.5">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{String(k)}</p>
+              <p className="text-lg font-black text-slate-950 mt-1">{String(v ?? "--")}</p>
             </div>
           ))}
         </div>
 
-        <div className="px-5 py-4 flex flex-col gap-2.5 border-b border-white/6">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Behavior Breakdown</p>
+        <div className="clay-card mx-5 mb-4 p-5 flex flex-col gap-2.5">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 mb-1">Behavior Breakdown</p>
           <BehaviorBar label="Harsh Braking" count={Number(driver.harshBrakingCount ?? 0)} max={maxCount} color="bg-red-400" />
           <BehaviorBar label="Harsh Accel." count={Number(driver.harshAccelerationCount ?? 0)} max={maxCount} color="bg-orange-400" />
           <BehaviorBar label="Speeding" count={Number(driver.speedingCount ?? 0)} max={maxCount} color="bg-amber-400" />
@@ -123,9 +132,9 @@ function DriverDrawer({
           <BehaviorBar label="Coaching Completed" count={Number(driver.coachingCompletedCount ?? 0)} max={maxCount} color="bg-teal-400" />
         </div>
 
-        <div className="px-5 py-4 border-b border-white/6">
-          <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">AI Recommendation</p>
-          <p className="text-sm text-slate-300 leading-relaxed">
+        <div className="clay-card mx-5 mb-4 p-5">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-600 mb-1.5">AI Recommendation</p>
+          <p className="text-sm text-slate-600 leading-relaxed">
             {risk >= 60
               ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
               : risk >= 35
@@ -135,10 +144,10 @@ function DriverDrawer({
         </div>
 
         {canCoach && (
-          <div className="px-5 py-4">
+          <div className="px-5 pb-6 mt-auto">
             <button
               type="button"
-              className="w-full bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
+              className="w-full bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors shadow-sm"
               onClick={() => onCoach(driver)}
             >
               Create Coaching Task
@@ -264,6 +273,20 @@ export function DriverScorecardsPage() {
 
   const fleetScore = Number(s.fleetSafetyScore ?? (drivers.length ? (drivers.reduce((a, d) => a + Number(d.safetyScore ?? 0), 0) / drivers.length).toFixed(1) : 0));
 
+  // ── Derived leaderboard data (from already-fetched driver scorecards) ─────────
+  const rankedDrivers = [...drivers].sort((a, b) => Number(b.safetyScore ?? 0) - Number(a.safetyScore ?? 0));
+  const topPerformers = rankedDrivers.slice(0, 5);
+  const bottomPerformers = rankedDrivers.slice(-5).reverse();
+  const openCoaching = drivers.reduce((a, d) => a + Number(d.coachingOpenCount ?? 0), 0);
+  const atRiskCount = drivers.filter((d) => Number(d.safetyScore ?? 0) < 70).length;
+  const monitorCount = drivers.filter((d) => { const v = Number(d.safetyScore ?? 0); return v >= 70 && v < 85; }).length;
+  const goodCount = drivers.filter((d) => Number(d.safetyScore ?? 0) >= 85).length;
+
+  // Vehicle-side derived summary (from already-fetched vehicle scorecards)
+  const vehiclesAtRisk = vehicles.filter((v) => Number(v.safetyScore ?? 0) < 70).length;
+  const totalVehicleIncidents = vehicles.reduce((a, v) => a + Number(v.incidentCount ?? 0), 0);
+  const worstVehicles = [...vehicles].sort((a, b) => Number(a.safetyScore ?? 0) - Number(b.safetyScore ?? 0)).slice(0, 5);
+
   if (driversQ.isLoading) return <LoadingState />;
   if (driversQ.isError) return <ErrorState message={(driversQ.error as Error)?.message} />;
 
@@ -289,21 +312,40 @@ export function DriverScorecardsPage() {
         </button>
       </div>
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Fleet Safety Score", val: `${fleetScore}`, accent: fleetScore >= 85 ? "text-teal-600" : fleetScore >= 70 ? "text-amber-600" : "text-red-600" },
-          { label: "Critical Events", val: s.criticalEvents ?? 0, accent: "text-red-600" },
-          { label: "Harsh Braking", val: s.harshBraking ?? 0 },
-          { label: "Speeding Events", val: s.speedingEvents ?? 0, accent: "text-amber-600" },
-          { label: "Coaching Needed", val: s.coachingNeeded ?? 0, accent: "text-violet-600" },
-          { label: "Open Incidents", val: s.openIncidents ?? 0, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <KpiCard
+          label="Fleet Safety Score"
+          value={`${fleetScore}`}
+          status={fleetScore >= 85 ? "Healthy" : fleetScore >= 70 ? "Monitor" : "At Risk"}
+          delta={`${drivers.length} drivers scored`}
+        />
+        <KpiCard
+          label="Critical Events"
+          value={String(s.criticalEvents ?? 0)}
+          delta="Last 30 days"
+        />
+        <KpiCard
+          label="Harsh Braking"
+          value={String(s.harshBraking ?? 0)}
+          delta="Fleet-wide"
+        />
+        <KpiCard
+          label="Speeding Events"
+          value={String(s.speedingEvents ?? 0)}
+          status="Risk"
+          delta="Fleet-wide"
+        />
+        <KpiCard
+          label="Coaching Needed"
+          value={String(s.coachingNeeded ?? 0)}
+          delta={`${openCoaching} open tasks`}
+        />
+        <KpiCard
+          label="Open Incidents"
+          value={String(s.openIncidents ?? 0)}
+          delta="Awaiting review"
+        />
       </div>
 
       {/* Tab bar */}
@@ -333,9 +375,10 @@ export function DriverScorecardsPage() {
         )}
       </div>
 
-      {/* Driver scorecards table */}
+      {/* Driver scorecards table + performers rail */}
       {tab === "drivers" && (
-        <div className="panel overflow-hidden p-0">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="clay-card overflow-hidden p-0">
           {filteredDrivers.length === 0 ? (
             <EmptyState title="No drivers found" />
           ) : (
@@ -408,11 +451,89 @@ export function DriverScorecardsPage() {
             </div>
           )}
         </div>
+
+        {/* Performers rail — top / bottom safety scores + distribution */}
+        <div className="flex flex-col gap-3">
+          <div className="clay-card p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Score Distribution</h3>
+              <span className="text-[11px] font-bold text-slate-400">{drivers.length} drivers</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-xl border border-teal-200 bg-teal-50 py-2.5">
+                <p className="text-lg font-black text-teal-700">{goodCount}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-600">Good</p>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 py-2.5">
+                <p className="text-lg font-black text-amber-700">{monitorCount}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Monitor</p>
+              </div>
+              <div className="rounded-xl border border-red-200 bg-red-50 py-2.5">
+                <p className="text-lg font-black text-red-700">{atRiskCount}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">At Risk</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="clay-card p-4">
+            <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Top Performers</h3>
+            {topPerformers.length === 0 ? (
+              <p className="text-xs text-slate-400">No driver data</p>
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                {topPerformers.map((d, i) => (
+                  <li
+                    key={String(d.id ?? d.driverId ?? i)}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 transition-colors hover:bg-slate-50"
+                    onClick={() => setSelected(d)}
+                  >
+                    <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">{String(d.driverName ?? "--")}</p>
+                      <p className="truncate text-[11px] text-slate-400">{String(d.driverCode ?? "")}</p>
+                    </div>
+                    <ScoreBadge score={Number(d.safetyScore ?? 0)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="clay-card p-4">
+            <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Needs Attention</h3>
+            {bottomPerformers.length === 0 ? (
+              <p className="text-xs text-slate-400">No driver data</p>
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                {bottomPerformers.map((d, i) => (
+                  <li
+                    key={String(d.id ?? d.driverId ?? i)}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 transition-colors hover:bg-slate-50"
+                    onClick={() => setSelected(d)}
+                  >
+                    <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">{String(d.driverName ?? "--")}</p>
+                      <p className="truncate text-[11px] text-slate-400">
+                        {Number(d.coachingOpenCount ?? 0) > 0
+                          ? `${d.coachingOpenCount} open coaching`
+                          : String(d.driverCode ?? "")}
+                      </p>
+                    </div>
+                    <ScoreBadge score={Number(d.safetyScore ?? 0)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        </div>
       )}
 
-      {/* Vehicle scorecards */}
+      {/* Vehicle scorecards + risk rail */}
       {tab === "vehicles" && (
-        <div className="panel overflow-hidden p-0">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="clay-card overflow-hidden p-0">
           {vehicles.length === 0 ? (
             <EmptyState title="No vehicle scorecard data" subtitle="Scorecards are generated from safety events linked to vehicles" />
           ) : (
@@ -448,6 +569,50 @@ export function DriverScorecardsPage() {
               </table>
             </div>
           )}
+        </div>
+
+        {/* Vehicle risk rail */}
+        <div className="flex flex-col gap-3">
+          <div className="clay-card p-4">
+            <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Fleet Vehicle Health</h3>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 py-2.5">
+                <p className="text-lg font-black text-slate-900">{vehicles.length}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Vehicles</p>
+              </div>
+              <div className="rounded-xl border border-red-200 bg-red-50 py-2.5">
+                <p className="text-lg font-black text-red-700">{vehiclesAtRisk}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600">At Risk</p>
+              </div>
+              <div className="col-span-2 rounded-xl border border-amber-200 bg-amber-50 py-2.5">
+                <p className="text-lg font-black text-amber-700">{totalVehicleIncidents}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Total Incidents</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="clay-card p-4">
+            <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Lowest Scoring Vehicles</h3>
+            {worstVehicles.length === 0 ? (
+              <p className="text-xs text-slate-400">No vehicle data</p>
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                {worstVehicles.map((v, i) => (
+                  <li key={String(v.id ?? i)} className="flex items-center gap-3 rounded-xl px-1.5 py-1">
+                    <ScoreRing score={Number(v.safetyScore ?? 0)} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">{String(v.vehicleCode ?? "--")}</p>
+                      <p className="truncate text-[11px] text-slate-400">
+                        {Number(v.incidentCount ?? 0) > 0 ? `${v.incidentCount} incidents` : String(v.type ?? "")}
+                      </p>
+                    </div>
+                    <ScoreBadge score={Number(v.safetyScore ?? 0)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
         </div>
       )}
 
