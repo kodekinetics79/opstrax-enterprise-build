@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
+import { Download, Sparkles, Wrench } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, EmptyState, PageHeader } from "@/components/ui";
+import { exportCsv, LoadingState, EmptyState, KpiCard } from "@/components/ui";
 import { maintenance as seedMaintenance, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
@@ -142,46 +143,37 @@ function ServiceHistoryTab() {
   const totalDowntime = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Completed Services", val: rows.length },
-          { label: "Total Cost", val: `$${totalCost.toLocaleString()}`, accent: "text-amber-600" },
-          { label: "Total Downtime", val: `${totalDowntime.toFixed(1)}h`, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <KpiCard label="Completed Services" value={String(rows.length)} status="Active" />
+        <KpiCard label="Total Cost" value={`$${totalCost.toLocaleString()}`} status={totalCost > 10000 ? "Warning" : "Active"} />
+        <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 20 ? "Critical" : "Active"} />
       </div>
       {rows.length === 0 ? <EmptyState title="No completed service records" /> : (
-        <div className="panel overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((r, i) => (
-                  <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
-                    <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
-                    <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                    <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
-                  </tr>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
+                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
+                  <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -194,46 +186,37 @@ function DowntimeTab() {
   const totalHours = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Downtime Events", val: rows.length },
-          { label: "Total Hours", val: `${totalHours.toFixed(1)}h`, accent: "text-red-600" },
-          { label: "Est. Revenue Loss", val: `$${(totalHours * 280).toLocaleString()}`, accent: "text-amber-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-36">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <KpiCard label="Downtime Events" value={String(rows.length)} status={rows.length > 5 ? "Warning" : "Active"} />
+        <KpiCard label="Total Hours" value={`${totalHours.toFixed(1)}h`} status={totalHours > 15 ? "Critical" : "Active"} />
+        <KpiCard label="Est. Revenue Loss" value={`$${(totalHours * 280).toLocaleString()}`} status={totalHours > 10 ? "Warning" : "Active"} />
       </div>
       {rows.length === 0 ? <EmptyState title="No downtime events recorded" /> : (
-        <div className="panel overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((r, i) => (
-                  <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
-                    <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{String(r.title ?? "—")}</td>
-                    <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                    <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
-                    <td className="px-4 py-3 text-slate-700 text-xs">${Number(r.cost ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
-                  </tr>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
+                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.title ?? "—")}</td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
+                  <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
+                  <td className="px-4 py-3 text-slate-700 text-xs">${Number(r.cost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -247,51 +230,42 @@ function PMScheduleTab() {
   const dueSoon = rows.filter((r) => r.pmStatus === "Due Soon").length;
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total PM Items", val: rows.length },
-          { label: "Overdue", val: overdue, accent: "text-red-600" },
-          { label: "Due Soon", val: dueSoon, accent: "text-amber-600" },
-          { label: "Scheduled", val: rows.filter((r) => r.pmStatus === "Scheduled").length, accent: "text-teal-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-28">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Total PM Items" value={String(rows.length)} status="Active" />
+        <KpiCard label="Overdue" value={String(overdue)} status={overdue > 0 ? "Critical" : "Active"} />
+        <KpiCard label="Due Soon" value={String(dueSoon)} status={dueSoon > 2 ? "Warning" : "Active"} />
+        <KpiCard label="Scheduled" value={String(rows.filter((r) => r.pmStatus === "Scheduled").length)} status="Active" />
       </div>
       {rows.length === 0 ? <EmptyState title="No PM items scheduled" /> : (
-        <div className="panel overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((r, i) => (
-                  <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(r.title ?? "--")}</td>
-                    <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.category ?? "—")}</td>
-                    <td className="px-4 py-3"><PmStatusBadge status={String(r.pmStatus ?? "Scheduled")} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{String(r.dueDate ?? "—")}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-medium ${Number(r.daysUntilDue) < 0 ? "text-red-700" : Number(r.daysUntilDue) < 7 ? "text-amber-700" : "text-slate-600"}`}>
-                        {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-600">${Number(r.estimatedCost ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
-                  </tr>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.title ?? "--")}</td>
+                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.category ?? "—")}</td>
+                  <td className="px-4 py-3"><PmStatusBadge status={String(r.pmStatus ?? "Scheduled")} /></td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.dueDate ?? "—")}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-medium ${Number(r.daysUntilDue) < 0 ? "text-red-700" : Number(r.daysUntilDue) < 7 ? "text-amber-700" : "text-slate-600"}`}>
+                      {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">${Number(r.estimatedCost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -324,21 +298,80 @@ export function MaintenancePlanningPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 py-6">
-      <PageHeader
-        eyebrow="Maintenance"
-        title={titles[tab]}
-        description={descriptions[tab]}
-        actions={
-          <button type="button" className="btn-primary text-sm" onClick={exportFns[tab]}>Export CSV</button>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Wrench className="h-3 w-3" /> Maintenance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">{descriptions[tab]}</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {titles[tab]}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Service history, downtime tracking, and preventive maintenance scheduling
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={exportFns[tab]}>
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      <div className="panel flex gap-1.5 p-2">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            className={tab === t.key ? "control-tab control-tab-active" : "control-tab"}>{t.label}</button>
-        ))}
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {tab === "history"
+                ? "Service history loaded — review completed maintenance costs, downtime, and vendor performance."
+                : tab === "downtime"
+                ? "Downtime events tracked — analyze fleet availability and estimated revenue impact."
+                : "Preventive maintenance schedule active — monitor upcoming due dates and risk levels."}
+            </p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-6 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-slate-300">{tab === "pm" ? "PM schedule active" : tab === "downtime" ? "Downtime tracked" : "History loaded"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Wrench className="h-3.5 w-3.5 text-teal-400" />
+            <span className="text-slate-300">RBAC Enforced</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="flex flex-wrap gap-2">
+          {TABS.map((t) => (
+            <button key={t.key} type="button" onClick={() => setTab(t.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${
+                tab === t.key
+                  ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              }`}>{t.label}</button>
+          ))}
+        </div>
       </div>
 
       {tab === "history"  && <ServiceHistoryTab />}

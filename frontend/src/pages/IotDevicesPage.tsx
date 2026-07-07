@@ -17,6 +17,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Truck,
   WifiOff,
@@ -24,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, RiskBadge, Select, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
@@ -344,37 +345,83 @@ export function IotDevicesPage() {
   const emptyState = emptyStateForTab(tab);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Telematics & IoT"
-        title="Device Health"
-        description="Operational control for GPS trackers, ELD units, OBD gateways, dashcams, sensor packs, firmware posture, diagnostics, and installation readiness."
-        actions={
-          <>
-            <button
-              className="btn-ghost"
-              disabled={!canExport}
-              title={actionTitle(canExport, "Export the current device inventory to CSV.")}
-              onClick={() => canExport && void exportCurrent()}
-            >
-              <Download className="h-4 w-4" /> Export Devices CSV
-            </button>
-            <button
-              className="btn-primary"
-              disabled={!canCreate}
-              title={actionTitle(canCreate, "Register a new device into the tenant inventory.")}
-              onClick={() => canCreate && openCreate()}
-            >
-              <Plus className="h-4 w-4" /> Add Device
-            </button>
-          </>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <RadioTower className="h-3 w-3" /> Telematics &amp; IoT
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">GPS trackers, ELD units, OBD gateways, dashcams, sensor packs, firmware posture, and diagnostics</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Device Health
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Operational control for IoT device inventory, assignments, telemetry, diagnostics, and installation readiness.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="fh-btn-ghost cursor-pointer"
+                disabled={!canExport}
+                title={actionTitle(canExport, "Export the current device inventory to CSV.")}
+                onClick={() => canExport && void exportCurrent()}
+              >
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+              <button
+                className="fh-btn-primary cursor-pointer"
+                disabled={!canCreate}
+                title={actionTitle(canCreate, "Register a new device into the tenant inventory.")}
+                onClick={() => canCreate && openCreate()}
+              >
+                <Plus className="h-4 w-4" /> Add Device
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {offlineCount + attentionCount === 0
+                ? "All devices are online and healthy — no recovery workflows or firmware updates pending."
+                : `${offlineCount} offline device${offlineCount !== 1 ? "s" : ""}${attentionCount > 0 ? ` · ${attentionCount} need attention` : ""} require review`}
+            </p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-6 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-slate-300">{deviceRows.length} devices visible</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Cpu className="h-3.5 w-3.5 text-teal-400" />
+            <span className="text-slate-300">RBAC Enforced</span>
+          </div>
+        </div>
+      </div>
 
       {notice ? (
-        <div className="panel flex items-center justify-between gap-4 border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-          <span>{notice}</span>
-          <button className="icon-btn" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
+        <div className="anim-slide-right panel flex items-center justify-between gap-4 border-l-4 border-emerald-400 bg-white/95 p-4 text-sm text-slate-700 backdrop-blur">
+          <span className="font-medium">{notice}</span>
+          <button className="icon-btn cursor-pointer" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
         </div>
       ) : null}
 
@@ -385,25 +432,32 @@ export function IotDevicesPage() {
         <KpiCard label="Average Data Health" value={`${Number.isFinite(avgHealth) ? avgHealth : 0}%`} status={avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
       </div>
 
-      <div className="panel space-y-4 p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="relative xl:min-w-[360px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-            <input
-              className="field w-full pl-9"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {DEVICE_TABS.map((item) => (
-              <button key={item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item.key)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
+      {/* ── Search bar ─────────────────────────────────────── */}
+      <div className="panel p-4">
+        <div className="relative xl:min-w-[360px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <input
+            className="field h-10 w-full pl-9"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
+          />
         </div>
+      </div>
+
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="flex flex-wrap gap-2">
+          {DEVICE_TABS.map((item) => (
+            <button key={item.key} type="button" className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${tab === item.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`} onClick={() => setTab(item.key)}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Content panel ────────────────────────────────────── */}
+      <div className="panel p-5">
 
         {tab === "providers" ? (
           providersQ.isLoading ? (
@@ -430,7 +484,7 @@ export function IotDevicesPage() {
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
-                      className="btn-ghost"
+                      className="fh-btn-ghost cursor-pointer"
                       disabled={!canManageProviders}
                       title={actionTitle(canManageProviders, "Open provider management settings.")}
                       onClick={() => canManageProviders && navigate("/integrations")}
@@ -438,7 +492,7 @@ export function IotDevicesPage() {
                       <Settings2 className="h-4 w-4" /> Manage Provider
                     </button>
                     <button
-                      className="btn-ghost"
+                      className="fh-btn-ghost cursor-pointer"
                       disabled={!canManageProviders || providerSyncMut.isPending}
                       title={actionTitle(canManageProviders, "Run a provider sync for scoped device inventory.")}
                       onClick={() => canManageProviders && providerSyncMut.mutate(String(provider.id))}
@@ -453,18 +507,18 @@ export function IotDevicesPage() {
         ) : !deviceRows.length ? (
           <EmptyState title={emptyState.title} subtitle={emptyState.subtitle} />
         ) : (
-          <div className="overflow-x-auto" onClick={(e) => { if (!(e.target as HTMLElement).closest(".relative")) setOpenMenuId(null); }}>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200">
+          <div className="overflow-x-auto rounded-xl border border-slate-200" onClick={(e) => { if (!(e.target as HTMLElement).closest(".relative")) setOpenMenuId(null); }}>
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
                   {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Power", "Signal", "Health", "Install", "Compliance", "Support", "Actions"].map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                    <th key={header} className="px-4 py-2.5">{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {deviceRows.map((row) => (
-                  <tr key={String(row.id)} className="transition hover:bg-slate-50">
+                  <tr key={String(row.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <button className="text-left" onClick={() => setSelectedId(row.id)}>
                         <p className="font-semibold text-slate-900">{row.deviceName}</p>
@@ -497,7 +551,7 @@ export function IotDevicesPage() {
                       <div className="relative">
                         <button
                           type="button"
-                          className="btn-ghost h-8 px-3 flex items-center gap-1"
+                          className="fh-btn-ghost h-8 px-3 flex items-center gap-1 cursor-pointer"
                           onClick={() => setOpenMenuId(openMenuId === row.id ? null : row.id)}
                         >
                           Manage <ChevronDown className="h-3 w-3" />
@@ -524,9 +578,13 @@ export function IotDevicesPage() {
       </div>
 
       {selectedId ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setSelectedId(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-5xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <p className="section-title text-teal-600">Device Detail</p>
+              <button className="icon-btn cursor-pointer" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
             {detailQ.isLoading ? (
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (
@@ -551,6 +609,7 @@ export function IotDevicesPage() {
                 canFirmware={canFirmware}
               />
             )}
+            </div>
           </aside>
         </div>
       ) : null}
@@ -691,8 +750,7 @@ function DeviceDetailDrawer({
 
   return (
     <>
-      <p className="section-title text-teal-600">Device Detail</p>
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">{device.deviceName}</h2>
           <p className="mt-1 text-sm text-slate-500">{device.deviceType} · {device.provider} · {device.serialNumber || device.identifier}</p>
@@ -833,7 +891,7 @@ function DeviceDetailDrawer({
 function ActionButton({ label, icon, allowed, onClick }: { label: string; icon: ReactNode; allowed: boolean; onClick: () => void }) {
   return (
     <button
-      className={allowed ? "btn-ghost" : "btn-ghost opacity-60"}
+      className={allowed ? "fh-btn-ghost cursor-pointer" : "fh-btn-ghost opacity-60 cursor-not-allowed"}
       disabled={!allowed}
       title={actionTitle(allowed, label)}
       onClick={() => allowed && onClick()}
@@ -875,16 +933,16 @@ function ModalForm({
   busy: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
-      <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={onSubmit}>
-        <div className="flex items-center justify-between">
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6 shadow-2xl" onSubmit={onSubmit}>
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="mt-6">{children}</div>
-        <div className="mt-6 flex justify-end gap-3">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={busy}>{busy ? "Saving..." : submitLabel}</button>
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
+          <button type="submit" className="fh-btn-primary cursor-pointer" disabled={busy}>{busy ? "Saving..." : submitLabel}</button>
         </div>
       </form>
     </div>

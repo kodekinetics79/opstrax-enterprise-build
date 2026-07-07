@@ -12,13 +12,14 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
   Thermometer,
   Truck,
   Wrench,
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { maintenanceApi } from "@/services/maintenanceApi";
@@ -252,32 +253,79 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={config.eyebrow}
-        title={config.title}
-        description={config.description}
-        actions={
-          <>
-            <button
-              className="btn-ghost"
-              disabled={!canExport}
-              title={permissionTitle(canExport, "Export the current telematics view.")}
-              onClick={() => canExport && exportCurrent()}
-            >
-              <Download className="h-4 w-4" /> Export CSV
-            </button>
-            <button className="btn-primary" onClick={() => navigate("/iot-devices")}>
-              <Truck className="h-4 w-4" /> Open Device Command
-            </button>
-          </>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  {kind === "gps-tracking" ? <MapPinned className="h-3 w-3" /> : kind === "obd-j1939" ? <Gauge className="h-3 w-3" /> : <Thermometer className="h-3 w-3" />}
+                  {config.eyebrow}
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">{config.description}</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {config.title}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {kind === "gps-tracking" ? "Fleet location intelligence with geofence posture and route linkage" : kind === "obd-j1939" ? "Engine diagnostics and power telemetry in one workflow" : "Sensor health with reading quality and calibration state"}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="fh-btn-ghost cursor-pointer"
+                disabled={!canExport}
+                title={permissionTitle(canExport, "Export the current telematics view.")}
+                onClick={() => canExport && exportCurrent()}
+              >
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+              <button className="fh-btn-primary cursor-pointer" onClick={() => navigate("/iot-devices")}>
+                <Truck className="h-4 w-4" /> Open Device Command
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {offlineCount + issueCount === 0
+                ? `All ${config.title.toLowerCase()} units are online and healthy — no action items pending.`
+                : `${offlineCount} offline/stale${issueCount > 0 ? ` · ${issueCount} need action` : ""} require review`}
+            </p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-6 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-slate-300">{rows.length} units visible</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <RadioTower className="h-3.5 w-3.5 text-teal-400" />
+            <span className="text-slate-300">RBAC Enforced</span>
+          </div>
+        </div>
+      </div>
 
       {notice ? (
-        <div className="panel flex items-center justify-between gap-4 border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-          <span>{notice}</span>
-          <button className="icon-btn" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
+        <div className="anim-slide-right panel flex items-center justify-between gap-4 border-l-4 border-emerald-400 bg-white/95 p-4 text-sm text-slate-700 backdrop-blur">
+          <span className="font-medium">{notice}</span>
+          <button className="icon-btn cursor-pointer" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
         </div>
       ) : null}
 
@@ -291,7 +339,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       {kind === "gps-tracking" ? (
         <div className="grid gap-4 xl:grid-cols-3">
           {rows.slice(0, 6).map((row) => (
-            <button type="button" key={row.id} className="panel rounded-2xl p-4 text-left transition hover:border-teal-300 hover:bg-slate-50" onClick={() => setSelected(row)}>
+            <button type="button" key={row.id} className="panel rounded-2xl p-4 text-left transition hover:border-teal-300 hover:bg-slate-50 cursor-pointer" onClick={() => setSelected(row)}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
@@ -309,39 +357,46 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         </div>
       ) : null}
 
-      <div className="panel space-y-4 p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <input
-            className="field xl:min-w-[360px]"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={config.searchPlaceholder}
-          />
-          <div className="flex flex-wrap gap-2">
-            {config.filterTabs.map((item) => (
-              <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item)}>
-                {item}
-              </button>
-            ))}
-          </div>
+      {/* ── Search bar ─────────────────────────────────────── */}
+      <div className="panel p-4">
+        <input
+          className="field h-10 xl:min-w-[360px]"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={config.searchPlaceholder}
+        />
+      </div>
+
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="flex flex-wrap gap-2">
+          {config.filterTabs.map((item) => (
+            <button key={item} type="button" className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${tab === item ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`} onClick={() => setTab(item)}>
+              {item}
+            </button>
+          ))}
         </div>
+      </div>
+
+      {/* ── Content panel ────────────────────────────────────── */}
+      <div className="panel p-5">
 
         {!rows.length ? (
           <EmptyState title={config.emptyTitle} subtitle={config.emptySubtitle} />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
                   {config.columns.map((column) => (
-                    <th key={column} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{column}</th>
+                    <th key={column} className="px-4 py-2.5">{column}</th>
                   ))}
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">Actions</th>
+                  <th className="px-4 py-2.5">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row) => (
-                  <tr key={row.id} className="transition hover:bg-slate-50">
+                  <tr key={row.id} className="hover:bg-slate-50 cursor-pointer transition-colors">
                     {config.columns.map((column) => (
                       <td key={column} className="px-4 py-3 text-slate-700">
                         {renderCell(column, row)}
@@ -349,16 +404,16 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                     ))}
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost h-8 px-3" onClick={() => setSelected(row)}>
+                        <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => setSelected(row)}>
                           {kind === "gps-tracking" ? "View on map" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}
                         </button>
-                        <button className="btn-ghost h-8 px-3" onClick={() => navigate("/iot-devices")}>View device</button>
-                        <button className="btn-ghost h-8 px-3" onClick={() => navigate("/vehicles")}>View vehicle</button>
+                        <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => navigate("/iot-devices")}>View device</button>
+                        <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => navigate("/vehicles")}>View vehicle</button>
                         {row.shipmentId !== "No active shipment" ? (
-                          <button className="btn-ghost h-8 px-3" onClick={() => navigate("/jobs")}>Open trip</button>
+                          <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => navigate("/jobs")}>Open trip</button>
                         ) : null}
                         <button
-                          className="btn-ghost h-8 px-3"
+                          className="fh-btn-ghost h-8 px-3 cursor-pointer"
                           disabled={!canUpdate || refreshMut.isPending}
                           title={permissionTitle(canUpdate, kind === "gps-tracking" ? "Refresh GPS visibility." : "Refresh telematics stream.")}
                           onClick={() => canUpdate && refreshMut.mutate(row.deviceId)}
@@ -368,7 +423,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                         {kind === "obd-j1939" ? (
                           <>
                             <button
-                              className="btn-ghost h-8 px-3"
+                              className="fh-btn-ghost h-8 px-3 cursor-pointer"
                               disabled={!canUpdate}
                               title={permissionTitle(canUpdate, "Acknowledge this diagnostic issue.")}
                               onClick={() => canUpdate && acknowledgeMut.mutate({ deviceId: row.deviceId, note: `Acknowledged ${row.vehicleCode} diagnostics review.` })}
@@ -376,7 +431,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                               Acknowledge
                             </button>
                             <button
-                              className="btn-primary h-8 px-3"
+                              className="fh-btn-primary h-8 px-3 cursor-pointer"
                               disabled={!canUpdate || maintenanceMut.isPending}
                               title={permissionTitle(canUpdate, "Create a maintenance follow-up.")}
                               onClick={() => canUpdate && maintenanceMut.mutate(row)}
@@ -388,7 +443,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                         {kind === "sensor-health" ? (
                           <>
                             <button
-                              className="btn-ghost h-8 px-3"
+                              className="fh-btn-ghost h-8 px-3 cursor-pointer"
                               disabled={!canUpdate}
                               title={permissionTitle(canUpdate, "Acknowledge this sensor alert.")}
                               onClick={() => canUpdate && acknowledgeMut.mutate({ deviceId: row.deviceId, note: `Acknowledged ${row.sensorType} alert on ${row.vehicleCode}.` })}
@@ -396,7 +451,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                               Acknowledge
                             </button>
                             <button
-                              className="btn-primary h-8 px-3"
+                              className="fh-btn-primary h-8 px-3 cursor-pointer"
                               disabled={!canUpdate || maintenanceMut.isPending}
                               title={permissionTitle(canUpdate, "Create a maintenance task for this sensor.")}
                               onClick={() => canUpdate && maintenanceMut.mutate(row)}
@@ -407,7 +462,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                         ) : null}
                         {kind === "gps-tracking" && (row.offlineWarning || row.dataFreshnessStatus === "Stale") ? (
                           <button
-                            className="btn-primary h-8 px-3"
+                            className="fh-btn-primary h-8 px-3 cursor-pointer"
                             disabled={!canUpdate || resolveMut.isPending}
                             title={permissionTitle(canUpdate, "Resolve the stale or offline GPS state.")}
                             onClick={() => canUpdate && resolveMut.mutate(row.deviceId)}
@@ -426,9 +481,13 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       </div>
 
       {selectedRecord ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setSelected(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-5xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <p className="section-title text-teal-600">{kind === "gps-tracking" ? "GPS Detail" : kind === "obd-j1939" ? "Diagnostics Detail" : "Sensor Detail"}</p>
+              <button className="icon-btn cursor-pointer" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
             {detailQ.isLoading ? (
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (
@@ -445,6 +504,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 onMaintenance={() => canUpdate && maintenanceMut.mutate(selectedRecord)}
               />
             )}
+            </div>
           </aside>
         </div>
       ) : null}
@@ -476,8 +536,7 @@ function TelematicsDetailDrawer({
   const latestHealth = detail.healthEvents[0];
   return (
     <>
-      <p className="section-title text-teal-600">{kind === "gps-tracking" ? "GPS Detail" : kind === "obd-j1939" ? "Diagnostics Detail" : "Sensor Detail"}</p>
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">{row.vehicleCode}</h2>
           <p className="mt-1 text-sm text-slate-500">{row.deviceName} · {row.driverName} · {row.routeAssociation}</p>
@@ -489,14 +548,14 @@ function TelematicsDetailDrawer({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <button className="btn-ghost" onClick={() => window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> View on map</button>
-        <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button>
-        <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button>
-        {row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
-        <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Refresh telematics data.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Refresh</button>
-        {kind !== "gps-tracking" ? <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Acknowledge this issue.")} onClick={onAcknowledge}><ShieldCheck className="h-4 w-4" /> Acknowledge</button> : null}
-        {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
-        {row.offlineWarning || row.alertStatus === "Open" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Resolve this telematics exception.")} onClick={onResolve}><CheckCircle2 className="h-4 w-4" /> Resolve</button> : null}
+        <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> View on map</button>
+        <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button>
+        <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button>
+        {row.shipmentId !== "No active shipment" ? <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
+        <button className="fh-btn-ghost cursor-pointer" disabled={!canUpdate} title={permissionTitle(canUpdate, "Refresh telematics data.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Refresh</button>
+        {kind !== "gps-tracking" ? <button className="fh-btn-ghost cursor-pointer" disabled={!canUpdate} title={permissionTitle(canUpdate, "Acknowledge this issue.")} onClick={onAcknowledge}><ShieldCheck className="h-4 w-4" /> Acknowledge</button> : null}
+        {kind !== "gps-tracking" ? <button className="fh-btn-primary cursor-pointer" disabled={!canUpdate} title={permissionTitle(canUpdate, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
+        {row.offlineWarning || row.alertStatus === "Open" ? <button className="fh-btn-primary cursor-pointer" disabled={!canUpdate} title={permissionTitle(canUpdate, "Resolve this telematics exception.")} onClick={onResolve}><CheckCircle2 className="h-4 w-4" /> Resolve</button> : null}
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
