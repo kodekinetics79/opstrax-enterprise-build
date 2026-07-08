@@ -626,6 +626,9 @@ public static partial class EndpointMappings
         // marks the connector Connected when the provider accepts the credentials.
         app.MapPost("/api/integrations/{id:long}/test-connection", IntegrationTestConnection);
         app.MapPost("/api/integrations/{id:long}/run-action", IntegrationRunAction);
+        // Server-side Google Maps (uses the tenant's stored, encrypted Maps key).
+        app.MapGet("/api/maps/geocode", MapsGeocode);
+        app.MapGet("/api/maps/directions", MapsDirections);
 
         // ── Vehicle Assignments / Owners ──
         app.MapGet("/api/vehicle-assignments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
@@ -6281,8 +6284,53 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return await IntegrationDetail(http, id, db, ct);
     }
 
-    private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
-        => await SetIntegrationStatus(http, id, "Connected", "integration.synced", db, audit, ct);
+    private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var row = await db.QuerySingleAsync(
+            "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+
+        var key = row.GetValueOrDefault("integrationKey")?.ToString();
+        var connector = connectors.Resolve(key);
+        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+
+        // Connectors that implement a real "sync" action (e.g. Samsara → live positions)
+        // run the actual data pull. The tenant + last cursor are passed in the action body;
+        // the returned nextCursor is persisted so the next sync is incremental. Connectors
+        // with no sync action fall back to the legacy status refresh.
+        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson"));
+        var cursor = storedConfig.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
+        using var bodyDoc = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(new { action = "sync", companyId, cursor }));
+        var result = await connector.RunActionAsync("sync", config, bodyDoc.RootElement, ct);
+
+        if (result.Message.Contains("not supported", StringComparison.OrdinalIgnoreCase))
+            return await SetIntegrationStatus(http, id, "Connected", "integration.synced", db, audit, ct);
+
+        // Persist cursor + status from the real sync result.
+        var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
+        await db.ExecuteAsync(
+            @"UPDATE integrations SET
+                  status = CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
+                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
+                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
+                  config_json = CASE WHEN @cursor IS NULL THEN config_json
+                                     ELSE COALESCE(config_json,'{}'::jsonb) || jsonb_build_object('syncCursor', @cursor::text) END,
+                  updated_at = NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
+                   c.Parameters.AddWithValue("@ok", result.Success);
+                   c.Parameters.AddWithValue("@cursor", (object?)nextCursor ?? DBNull.Value); }, ct);
+        await audit.LogAsync(http, result.Success ? "integration.synced" : "integration.sync.failed", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { message = result.Message }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new { success = result.Success, message = result.Message, details = result.Details },
+            result.Success ? "Sync completed" : "Sync failed"));
+    }
 
     private static async Task<IResult> ConfigureIntegration(HttpContext http, long id, System.Text.Json.JsonElement body, Database db, AuditService audit,
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
@@ -6372,6 +6420,44 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { action, ok = result.Success, message = result.Message }), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { success = result.Success, message = result.Message, details = result.Details },
             result.Success ? "Action completed" : "Action failed"));
+    }
+
+    // ── GET /api/maps/geocode?address=... ──────────────────────────────────────────
+    // Server-side geocoding using the tenant's Google Maps connector key. The key never
+    // reaches the browser; the map itself stays on free Leaflet tiles.
+    private static async Task<IResult> MapsGeocode(HttpContext http, Database db,
+        Opstrax.Api.Services.Connectors.GoogleMapsService maps, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var address = http.Request.Query["address"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(address)) return Results.BadRequest(ApiResponse<object>.Fail("address is required"));
+        var key = await maps.ResolveKeyAsync(db, companyId, ct);
+        if (string.IsNullOrWhiteSpace(key))
+            return Results.Ok(ApiResponse<object>.Fail("Google Maps is not connected. Configure the Google Maps Platform connector with an API key first."));
+        var r = await maps.GeocodeAsync(key!, address!, ct);
+        return r.Ok
+            ? Results.Ok(ApiResponse<object>.Ok(new { lat = r.Lat, lng = r.Lng, formattedAddress = r.FormattedAddress }, "Geocoded"))
+            : Results.Ok(ApiResponse<object>.Fail(r.Message));
+    }
+
+    // ── GET /api/maps/directions?origin=...&destination=... ────────────────────────
+    private static async Task<IResult> MapsDirections(HttpContext http, Database db,
+        Opstrax.Api.Services.Connectors.GoogleMapsService maps, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var origin = http.Request.Query["origin"].FirstOrDefault();
+        var destination = http.Request.Query["destination"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(destination))
+            return Results.BadRequest(ApiResponse<object>.Fail("origin and destination are required"));
+        var key = await maps.ResolveKeyAsync(db, companyId, ct);
+        if (string.IsNullOrWhiteSpace(key))
+            return Results.Ok(ApiResponse<object>.Fail("Google Maps is not connected. Configure the Google Maps Platform connector with an API key first."));
+        var r = await maps.DirectionsAsync(key!, origin!, destination!, ct);
+        return r.Ok
+            ? Results.Ok(ApiResponse<object>.Ok(new { distanceMeters = r.DistanceMeters, durationSeconds = r.DurationSeconds, distanceMiles = r.DistanceMeters / 1609.344, durationMinutes = r.DurationSeconds / 60, polyline = r.Polyline, summary = r.Summary }, "Route"))
+            : Results.Ok(ApiResponse<object>.Fail(r.Message));
     }
 
     private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)

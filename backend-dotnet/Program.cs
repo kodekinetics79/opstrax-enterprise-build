@@ -167,8 +167,13 @@ builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstra
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SlackConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SendGridConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.GoogleMapsConnector>();
+// Samsara — deep integration: real GPS/telemetry sync into latest_vehicle_positions.
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SamsaraConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GenericHttpConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>();
+// Server-side Google Maps (geocoding/routing) using the tenant's stored Maps key.
+// Map tiles stay on free Leaflet; Google is used only where it adds capability.
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GoogleMapsService>();
 builder.Services.AddSingleton<Batch1SchemaService>();
 builder.Services.AddSingleton<Batch2SchemaService>();
 builder.Services.AddSingleton<Batch3SchemaService>();
