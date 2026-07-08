@@ -42,6 +42,10 @@ export type IntegrationRecord = {
   // True for tenant-created connectors (fully editable/deletable). Built-in catalog
   // connectors are is_custom=false and are reset rather than deleted.
   isCustom?: boolean;
+  // Connector health from the last real handshake (test-connection).
+  lastTestedAt?: string | null;
+  lastTestOk?: boolean | null;
+  lastTestMessage?: string | null;
 };
 
 export type IntegrationActivity = {

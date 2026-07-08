@@ -39,6 +39,12 @@ public sealed class Batch7SchemaService(Database db)
         // is_custom distinguishes tenant-created connectors (fully deletable) from
         // built-in catalog connectors (reset-to-default on delete). Drives CRUD.
         new("integrations", "is_custom",              "BOOLEAN NOT NULL DEFAULT false"),
+        // Connector health: when the last real handshake ran and what it returned.
+        // Distinct from last_sync_at (a data sync) so operators see "credentials
+        // verified 2m ago" independently of data flow.
+        new("integrations", "last_tested_at",         "TIMESTAMPTZ NULL"),
+        new("integrations", "last_test_ok",           "BOOLEAN NULL"),
+        new("integrations", "last_test_message",      "TEXT NULL"),
         // Enrich audit_logs with severity + module context
         new("audit_logs", "severity",     "VARCHAR(40) NOT NULL DEFAULT 'Info'"),
         new("audit_logs", "module_key",   "VARCHAR(100) NULL"),

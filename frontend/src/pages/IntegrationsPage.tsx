@@ -140,6 +140,18 @@ function categoryFields(category: IntegrationCategory): ConfigField[] {
   }
 }
 
+// Compact relative time for the connector health line (e.g. "2m ago", "just now").
+function formatRelativeTime(iso?: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const diffSec = Math.round((Date.now() - then) / 1000);
+  if (diffSec < 45) return "just now";
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
+  return `${Math.round(diffSec / 86400)}d ago`;
+}
+
 function categoryText(category: IntegrationCategory) {
   switch (category) {
     case "ERP & Accounting":
@@ -858,6 +870,23 @@ function ConnectorCard({
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last sync</span>
         <span className="text-[11px] font-semibold text-slate-600">{integration.sync}</span>
       </div>
+
+      {/* Connector health from the last real handshake (credentials verified vs failed). */}
+      {integration.lastTestedAt ? (
+        <div
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 ${
+            integration.lastTestOk
+              ? "border-emerald-200/70 bg-emerald-50 text-emerald-700"
+              : "border-red-200/70 bg-red-50 text-red-700"
+          }`}
+          title={integration.lastTestMessage ?? undefined}
+        >
+          {integration.lastTestOk ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+          <span className="truncate text-[11px] font-semibold">
+            {integration.lastTestOk ? "Verified" : "Failed"} {formatRelativeTime(integration.lastTestedAt)}
+          </span>
+        </div>
+      ) : null}
 
       {canManage ? (
         <div className="flex gap-1.5">

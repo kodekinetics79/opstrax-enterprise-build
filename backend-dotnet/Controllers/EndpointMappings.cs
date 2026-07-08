@@ -5996,7 +5996,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         @"id, provider_name, category, status, integration_key,
           description, logo, sync_label, last_sync_at, related_systems_json,
           connected_to_json, managed_by, scope, config_json,
-          COALESCE(is_custom,false) is_custom, updated_at";
+          COALESCE(is_custom,false) is_custom, updated_at,
+          last_tested_at, last_test_ok, last_test_message";
 
     private static async Task<IResult> IntegrationsList(HttpContext http, Database db, CancellationToken ct)
     {
@@ -6114,6 +6115,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // Lets the UI show edit/delete only on tenant-created (custom) connectors;
             // built-in catalog connectors are reset, not deleted.
             isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b,
+            // Connector health signal from the last real handshake.
+            lastTestedAt = row.GetValueOrDefault("lastTestedAt"),
+            lastTestOk = row.TryGetValue("lastTestOk", out var lto) && lto is bool tb ? tb : (bool?)null,
+            lastTestMessage = row.GetValueOrDefault("lastTestMessage")?.ToString(),
         };
     }
 
@@ -6327,10 +6332,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             @"UPDATE integrations SET status=@status,
                   last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
                   sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
+                  last_tested_at = NOW(), last_test_ok = @ok, last_test_message = @msg,
                   updated_at = NOW()
               WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                   c.Parameters.AddWithValue("@status", newStatus); c.Parameters.AddWithValue("@ok", result.Success); }, ct);
+                   c.Parameters.AddWithValue("@status", newStatus); c.Parameters.AddWithValue("@ok", result.Success);
+                   c.Parameters.AddWithValue("@msg", (object?)result.Message ?? DBNull.Value); }, ct);
         await audit.LogAsync(http, result.Success ? "integration.test.passed" : "integration.test.failed", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = row.GetValueOrDefault("providerName"), message = result.Message }), ct: ct);
 
