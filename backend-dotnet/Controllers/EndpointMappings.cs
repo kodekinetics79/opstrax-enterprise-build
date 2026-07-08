@@ -622,6 +622,10 @@ public static partial class EndpointMappings
         app.MapPost("/api/integrations/{id:long}/disconnect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Disconnected", "integration.disconnected", db, audit, ct));
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
+        // Real connectivity: performs an actual handshake with the provider and only
+        // marks the connector Connected when the provider accepts the credentials.
+        app.MapPost("/api/integrations/{id:long}/test-connection", IntegrationTestConnection);
+        app.MapPost("/api/integrations/{id:long}/run-action", IntegrationRunAction);
 
         // ── Vehicle Assignments / Owners ──
         app.MapGet("/api/vehicle-assignments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
@@ -6103,7 +6107,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             managedBy = string.IsNullOrWhiteSpace(Str("managedBy")) ? "Operations" : Str("managedBy"),
             scope = string.IsNullOrWhiteSpace(Str("scope")) ? "tenant" : Str("scope"),
             tenantId = companyId,
-            config = ParseJsonObject(row.GetValueOrDefault("configJson")),
+            // Redact secret values (authToken/apiKey/…) so decrypted credentials never
+            // leave the API. Non-secret config is returned as-is; a present secret shows
+            // as "••••••••" so the UI can indicate "configured" without exposing it.
+            config = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson")),
             // Lets the UI show edit/delete only on tenant-created (custom) connectors;
             // built-in catalog connectors are reset, not deleted.
             isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b,
@@ -6272,13 +6279,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
         => await SetIntegrationStatus(http, id, "Connected", "integration.synced", db, audit, ct);
 
-    private static async Task<IResult> ConfigureIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> ConfigureIntegration(HttpContext http, long id, System.Text.Json.JsonElement body, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        // Merge the posted config object over the stored config; move a disconnected
-        // connector to Pending once it has been configured.
-        var configJson = System.Text.Json.JsonSerializer.Serialize(body ?? new Dictionary<string, object?>());
+        // Encrypt sensitive keys (authToken/apiKey/…) BEFORE persisting so provider
+        // secrets never sit in the DB as plaintext. Merge over the stored config; move a
+        // disconnected connector to Pending once it has been configured.
+        var configJson = connectors.EncryptConfigForStorage(body);
         var affected = await db.ExecuteAsync(
             @"UPDATE integrations SET
                   config_json = COALESCE(config_json,'{}'::jsonb) || @config::jsonb,
@@ -6289,6 +6298,73 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, ct);
+    }
+
+    // ── POST /api/integrations/{id}/test-connection ────────────────────────────────
+    // Real handshake: resolves the connector for this integration_key, decrypts its
+    // stored credentials, calls the provider, and records the true result. Status
+    // becomes Connected ONLY on a genuine provider success; Error on failure.
+    private static async Task<IResult> IntegrationTestConnection(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var row = await db.QuerySingleAsync(
+            "SELECT integration_key, provider_name, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+
+        var key = row.GetValueOrDefault("integrationKey")?.ToString();
+        var connector = connectors.Resolve(key);
+        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+
+        var result = await connector.TestConnectionAsync(config, ct);
+
+        // Persist the verdict as real status; keep a disconnected connector disconnected
+        // on failure rather than faking progress.
+        var newStatus = result.Success ? "Connected" : "Error";
+        await db.ExecuteAsync(
+            @"UPDATE integrations SET status=@status,
+                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
+                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
+                  updated_at = NOW()
+              WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
+                   c.Parameters.AddWithValue("@status", newStatus); c.Parameters.AddWithValue("@ok", result.Success); }, ct);
+        await audit.LogAsync(http, result.Success ? "integration.test.passed" : "integration.test.failed", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = row.GetValueOrDefault("providerName"), message = result.Message }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            success = result.Success,
+            status = newStatus,
+            message = result.Message,
+            details = result.Details,
+        }, result.Success ? "Connection verified" : "Connection failed"));
+    }
+
+    // ── POST /api/integrations/{id}/run-action ─────────────────────────────────────
+    // Runs a provider-specific live action (e.g. Twilio send-test). Body: { action, ... }.
+    private static async Task<IResult> IntegrationRunAction(HttpContext http, long id, System.Text.Json.JsonElement body, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var a) ? a.GetString() : null;
+        if (string.IsNullOrWhiteSpace(action)) return Results.BadRequest(ApiResponse<object>.Fail("An 'action' is required."));
+
+        var row = await db.QuerySingleAsync(
+            "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+
+        var connector = connectors.Resolve(row.GetValueOrDefault("integrationKey")?.ToString());
+        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+        var result = await connector.RunActionAsync(action!, config, body, ct);
+        await audit.LogAsync(http, $"integration.action.{action}", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { action, ok = result.Success, message = result.Message }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { success = result.Success, message = result.Message, details = result.Details },
+            result.Success ? "Action completed" : "Action failed"));
     }
 
     private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)

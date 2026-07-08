@@ -158,6 +158,17 @@ builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
 builder.Services.AddScoped<AuditService>();
+
+// ── Integration connector framework (real, testable third-party connectivity) ──
+// Provider-specific connectors do a genuine API handshake; anything without a specific
+// connector falls back to GenericHttpConnector (probes the configured URL). All are
+// live-testable via POST /api/integrations/{id}/test-connection.
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.TwilioConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SlackConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SendGridConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.GoogleMapsConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GenericHttpConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>();
 builder.Services.AddSingleton<Batch1SchemaService>();
 builder.Services.AddSingleton<Batch2SchemaService>();
 builder.Services.AddSingleton<Batch3SchemaService>();

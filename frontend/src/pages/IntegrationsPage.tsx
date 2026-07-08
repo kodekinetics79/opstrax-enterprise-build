@@ -40,6 +40,7 @@ import {
   type IntegrationCategory,
   type IntegrationRecord,
   type IntegrationsPayload,
+  type IntegrationTestResult,
   type IntegrationWriteInput,
 } from "@/services/integrationsApi";
 
@@ -50,6 +51,19 @@ type ConfigField = {
   placeholder?: string;
   note?: string;
 };
+
+// Sensitive config values come back from the API redacted (never the real secret).
+// An empty submit for a field that is already set must NOT overwrite the stored value.
+const REDACTED_MARKER = "••••••••";
+
+// Heuristic: which config keys hold secrets the API redacts (apiKey, token, secret, password...).
+function isSecretField(key: string): boolean {
+  return /(key|token|secret|password|apikey|auth|credential)/i.test(key);
+}
+
+function isRedactedValue(value: string | number | boolean | null | undefined): boolean {
+  return typeof value === "string" && value.trim() === REDACTED_MARKER;
+}
 
 const CATEGORY_ORDER: IntegrationCategory[] = [
   "ERP & Accounting",
@@ -172,13 +186,34 @@ function formatConfigValue(value: string | number | boolean | null | undefined) 
 
 function buildFormState(record: IntegrationRecord) {
   const fields = categoryFields(record.category);
-  return Object.fromEntries(fields.map((field) => [field.key, formatConfigValue(record.config[field.key])])) as Record<string, string>;
+  return Object.fromEntries(
+    fields.map((field) => {
+      // Redacted secret → start the input empty (blank = keep the stored secret).
+      if (isSecretField(field.key) && isRedactedValue(record.config[field.key])) {
+        return [field.key, ""];
+      }
+      return [field.key, formatConfigValue(record.config[field.key])];
+    }),
+  ) as Record<string, string>;
 }
 
 function buildConfigPayload(record: IntegrationRecord, form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | null> = {};
   for (const field of categoryFields(record.category)) {
     const raw = String(form[field.key] ?? "").trim();
+    const secret = isSecretField(field.key);
+    const storedRedacted = isRedactedValue(record.config[field.key]);
+
+    // Secret already set (API returns "••••••••"): the user left the field blank or
+    // untouched (still the redacted marker) → omit the key so the stored secret is kept.
+    if (secret && storedRedacted && (raw === "" || raw === REDACTED_MARKER)) {
+      continue;
+    }
+    // Never send the placeholder marker itself as a real value.
+    if (raw === REDACTED_MARKER) {
+      continue;
+    }
+
     if (!raw) {
       payload[field.key] = null;
     } else if (field.type === "number") {
@@ -206,10 +241,13 @@ function ConfigDrawer({
   const qc = useQueryClient();
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState<Record<string, string>>(() => buildFormState(integration));
+  // Local result of the real provider handshake, surfaced inside the drawer.
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     setForm(buildFormState(integration));
     setSaved(false);
+    setTestResult(null);
   }, [integration]);
 
   useEffect(() => {
@@ -227,6 +265,21 @@ function ConfigDrawer({
       setSaved(true);
       await qc.invalidateQueries({ queryKey: ["integrations"] });
       setTimeout(() => setSaved(false), 2200);
+    },
+  });
+
+  const testMut = useMutation({
+    mutationFn: () => integrationsApi.testConnection(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setTestResult({ success: result.success, message: result.message });
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error) => {
+      setTestResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Connection test failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
     },
   });
 
@@ -314,20 +367,27 @@ function ConfigDrawer({
               <Settings2 className="h-4 w-4 text-slate-400" />
             </div>
 
-            {fields.map((field) => (
-              <div key={field.key}>
-                <label className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
-                <input
-                  type={field.type}
-                  className="field mt-1 w-full"
-                  value={form[field.key] ?? ""}
-                  onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                  placeholder={field.placeholder}
-                  disabled={!canManage}
-                />
-                {field.note && <p className="mt-1 text-xs text-slate-400">{field.note}</p>}
-              </div>
-            ))}
+            {fields.map((field) => {
+              const secretSet = isSecretField(field.key) && isRedactedValue(integration.config[field.key]);
+              return (
+                <div key={field.key}>
+                  <label className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
+                  <input
+                    type={field.type}
+                    className="field mt-1 w-full"
+                    value={form[field.key] ?? ""}
+                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                    placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
+                    disabled={!canManage}
+                  />
+                  {secretSet ? (
+                    <p className="mt-1 text-xs text-slate-400">Stored secret is set. Leave blank to keep it, or type a new value to replace it.</p>
+                  ) : (
+                    field.note && <p className="mt-1 text-xs text-slate-400">{field.note}</p>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {integration.category === "Messaging & Notifications" && (
@@ -340,10 +400,45 @@ function ConfigDrawer({
             </div>
           )}
 
+          {testResult && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${
+                testResult.success
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
+              {testResult.success ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+              )}
+              <span className="font-medium">{testResult.message}</span>
+            </div>
+          )}
+
           {canManage ? (
-            <div className="flex items-center gap-3 border-t border-slate-100 pt-3">
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
               <button type="submit" className="btn-primary flex-1" disabled={saveMut.isPending}>
                 {saveMut.isPending ? "Saving..." : "Save configuration"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={testMut.isPending}
+                onClick={() => {
+                  setTestResult(null);
+                  testMut.mutate();
+                }}
+              >
+                {testMut.isPending ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Zap className="h-3.5 w-3.5" />
+                )}
+                {testMut.isPending ? "Testing..." : "Test connection"}
               </button>
               <button type="button" className="btn-ghost" onClick={onClose}>
                 Cancel
@@ -382,7 +477,11 @@ function configToRows(config: IntegrationRecord["config"] | undefined): ConfigRo
   if (!config) return [];
   return Object.entries(config)
     .filter(([key]) => key.trim().length > 0)
-    .map(([key, value]) => ({ id: nextConfigRowId(), key, value: formatConfigValue(value) }));
+    .map(([key, value]) => {
+      // Redacted secret → start the value blank so an untouched save keeps the stored secret.
+      const redactedSecret = isSecretField(key) && isRedactedValue(value);
+      return { id: nextConfigRowId(), key, value: redactedSecret ? "" : formatConfigValue(value) };
+    });
 }
 
 function coerceConfigValue(raw: string): string | number | boolean | null {
@@ -456,6 +555,11 @@ function CustomConnectorDialog({
     for (const row of configRows) {
       const key = row.key.trim();
       if (!key) continue;
+      // A redacted secret left untouched must not be written back as the literal
+      // "••••••••" placeholder — omit it so the stored secret is preserved.
+      if (isSecretField(key) && (row.value.trim() === REDACTED_MARKER || row.value.trim() === "")) {
+        continue;
+      }
       config[key] = coerceConfigValue(row.value);
     }
 
@@ -637,7 +741,9 @@ function CustomConnectorDialog({
                       onChange={(event) =>
                         setConfigRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))
                       }
-                      placeholder="value"
+                      placeholder={
+                        isEdit && isSecretField(row.key) ? `${REDACTED_MARKER} (set — leave blank to keep)` : "value"
+                      }
                       aria-label="Config value"
                     />
                     <button
@@ -684,9 +790,11 @@ function ConnectorCard({
   integration,
   canManage,
   busy,
+  testing,
   onConnect,
   onDisconnect,
   onSync,
+  onTest,
   onConfigure,
   onEdit,
   onDelete,
@@ -694,9 +802,11 @@ function ConnectorCard({
   integration: IntegrationRecord;
   canManage: boolean;
   busy: boolean;
+  testing: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
   onSync: () => void;
+  onTest: () => void;
   onConfigure: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -782,6 +892,17 @@ function ConnectorCard({
               {primaryLabel}
             </button>
           )}
+
+          <button
+            type="button"
+            title="Test connection"
+            aria-label={`Test connection for ${integration.name}`}
+            disabled={testing}
+            onClick={onTest}
+            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+          >
+            {testing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+          </button>
 
           <button
             type="button"
@@ -912,6 +1033,8 @@ export function IntegrationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
+  // Live "Test Connection" result banner — surfaces the REAL provider handshake result.
+  const [testResult, setTestResult] = useState<{ id: number; success: boolean; message: string } | null>(null);
   // Custom-connector create/edit dialog. { mode: "create" } opens an empty form;
   // { mode: "edit", record } prefills from an existing custom connector.
   const [connectorDialog, setConnectorDialog] = useState<
@@ -1008,6 +1131,30 @@ export function IntegrationsPage() {
     },
   });
 
+  // Real provider handshake. Surface the TRUE result (never fabricate success) and
+  // refresh the list so the card's status reflects the server-side Connected/Error update.
+  const testMut = useMutation({
+    mutationFn: (id: number) => integrationsApi.testConnection(id),
+    onSuccess: async (result: IntegrationTestResult, id: number) => {
+      setTestResult({ id, success: result.success, message: result.message });
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error, id: number) => {
+      setTestResult({
+        id,
+        success: false,
+        message: error instanceof Error ? error.message : "Connection test failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
+  function handleTest(id: number) {
+    if (!canManage) return;
+    setTestResult(null);
+    testMut.mutate(id);
+  }
+
   const deleteMut = useMutation({
     mutationFn: (id: number) => integrationsApi.remove(id),
     onSuccess: async () => {
@@ -1086,6 +1233,44 @@ export function IntegrationsPage() {
           <p className="text-sm font-medium text-red-700">
             {summary.errors} connector{summary.errors > 1 ? "s" : ""} need attention. Filter by <b>Error</b> status to triage and reconnect.
           </p>
+        </div>
+      )}
+
+      {testResult && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
+            testResult.success
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          {testResult.success ? (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          ) : (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em]">
+              {(() => {
+                const name = integrations.find((item) => item.id === testResult.id)?.name;
+                const label = testResult.success ? "Connection successful" : "Connection failed";
+                return name ? `${label} · ${name}` : label;
+              })()}
+            </p>
+            <p className="mt-0.5 text-sm font-medium">{testResult.message}</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss connection test result"
+            className={`shrink-0 rounded-lg p-1 transition ${
+              testResult.success ? "hover:bg-emerald-100" : "hover:bg-red-100"
+            }`}
+            onClick={() => setTestResult(null)}
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -1182,9 +1367,11 @@ export function IntegrationsPage() {
                         integration={integration}
                         canManage={canManage}
                         busy={busy}
+                        testing={testMut.isPending && testMut.variables === integration.id}
                         onConnect={() => connectMut.mutate(integration.id)}
                         onDisconnect={() => disconnectMut.mutate(integration.id)}
                         onSync={() => syncMut.mutate(integration.id)}
+                        onTest={() => handleTest(integration.id)}
                         onConfigure={() => setConfigTarget(integration)}
                         onEdit={() => setConnectorDialog({ mode: "edit", record: integration })}
                         onDelete={() => handleDelete(integration)}
