@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
+import { Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Sparkles, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
 import {
@@ -17,7 +17,7 @@ import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBat
 import { adminApi } from "@/services/adminApi";
 import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, Select, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, Select, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "settings" | "audit";
@@ -263,33 +263,58 @@ export function AdminPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Governance"
-        title="Admin Console"
-        description="Manage users, roles, permissions, settings and audit posture from a single commercial-grade control surface."
-        actions={
-          <>
-            <button className="btn-ghost" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
-              <KeyRound className="h-4 w-4" />
-              Audit Logs
-            </button>
-            <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
-              <ShieldCheck className="h-4 w-4" />
-              Settings
-            </button>
-            <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
-              <LayoutDashboard className="h-4 w-4" />
-              Open Users
-            </button>
-          </>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── Hero ── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ShieldCheck className="h-3 w-3" /> Governance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Users · Roles · Permissions · Settings</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">Admin Console</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Manage users, roles, permissions, settings and audit posture from a single commercial-grade control surface.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}><KeyRound className="h-4 w-4" /> Audit Logs</button>
+              <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}><ShieldCheck className="h-4 w-4" /> Settings</button>
+              <button className="fh-btn-primary cursor-pointer" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}><LayoutDashboard className="h-4 w-4" /> Open Users</button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Admin control signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {overviewQ.data ? `${overviewQ.data.activeUsers ?? 0} active users · ${overviewQ.data.roles ?? 0} roles · ${overviewQ.data.recentAuditEvents ?? 0} audit events today` : "Loading admin overview..."}
+            </p>
+          </div>
+        </div>
+        <button className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto" onClick={() => setTab("users")} disabled={!canViewUsers}>
+          Review users <Users className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* ── KPIs ── */}
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {[
             { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, status: "Active", icon: <Users className="h-4 w-4" /> },
             { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, status: "Healthy", icon: <Users className="h-4 w-4" /> },
@@ -298,54 +323,45 @@ export function AdminPage() {
             { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, status: "Info", icon: <ShieldCheck className="h-4 w-4" /> },
             { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, status: "Active", icon: <ShieldCheck className="h-4 w-4" /> },
           ].map((card) => (
-            <div key={card.label} className="panel p-5">
-              <div className="flex items-start justify-between">
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{card.label}</p>
-                <div className="rounded-xl border border-slate-200 bg-slate-100 p-2 text-teal-600">{card.icon}</div>
-              </div>
-              <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
-              <div className="mt-3"><StatusBadge status={card.status} /></div>
-            </div>
+            <KpiCard key={card.label} label={card.label} value={String(card.value)} status={card.status} />
           ))}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-px">
-        {TAB_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            onClick={() => setTab(option.key)}
-            disabled={
+      {/* ── Tab navigation ── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+          {TAB_OPTIONS.map((option) => {
+            const disabled =
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
               (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
               (option.key === "settings" && !canViewSettings) ||
-              (option.key === "audit" && !canViewAudit)
-            }
-            title={
-              (option.key === "users" && !canViewUsers) ||
-              (option.key === "roles" && !canViewRoles) ||
-              (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
-              (option.key === "settings" && !canViewSettings) ||
-              (option.key === "audit" && !canViewAudit)
-                ? "You do not have permission to perform this action."
-                : undefined
-            }
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${
-              tab === option.key ? "border border-b-0 border-teal-300 bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"
-            } disabled:cursor-not-allowed disabled:opacity-40`}
-          >
-            {option.label}
-          </button>
-        ))}
+              (option.key === "audit" && !canViewAudit);
+            return (
+              <button
+                key={option.key}
+                onClick={() => !disabled && setTab(option.key)}
+                disabled={disabled}
+                title={disabled ? "You do not have permission to perform this action." : undefined}
+                className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                  tab === option.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{option.label}</span>
+                <span className={`mt-0.5 text-sm font-bold ${tab === option.key ? "text-teal-700" : "text-slate-900"}`}>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {tab === "dashboard" && (
         <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="panel space-y-3 p-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-slate-900">Admin Activity</h2>
-                <button className="btn-ghost h-9 px-3" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
+                <h2 className="section-title">Admin Activity</h2>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
               </div>
             {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 6).map((entry: AnyRecord) => (
               <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
@@ -359,16 +375,16 @@ export function AdminPage() {
           </div>
           <div className="space-y-4">
             <div className="panel p-5">
-              <h3 className="font-bold text-slate-900">Quick Actions</h3>
+              <h3 className="section-title">Quick Actions</h3>
               <div className="mt-4 grid gap-2">
-                <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
-                <button className="btn-ghost" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
-                <button className="btn-ghost" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
-                <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
+                <button className="fh-btn-primary cursor-pointer" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
               </div>
             </div>
             <div className="panel p-5">
-              <h3 className="font-bold text-slate-900">Current Tenant</h3>
+              <h3 className="section-title">Current Tenant</h3>
               <p className="mt-2 text-sm text-slate-600">{String(session?.company?.name ?? "Tenant")}</p>
               <p className="mt-1 text-xs text-slate-500">Role: {String(session?.role ?? "Unknown")}</p>
             </div>
@@ -391,15 +407,15 @@ export function AdminPage() {
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
             </Select>
-            <button className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
               <X className="h-4 w-4" />
               Clear
             </button>
-            <button className="btn-ghost" onClick={exportUsers} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>
+            <button className="fh-btn-ghost cursor-pointer" onClick={exportUsers} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>
               <Download className="h-4 w-4" />
               Export
             </button>
-            <button className="btn-primary" onClick={openCreateUser} disabled={!canCreateUsers}>
+            <button className="fh-btn-primary cursor-pointer" onClick={openCreateUser} disabled={!canCreateUsers}>
               <Plus className="h-4 w-4" />
               Add User
             </button>
@@ -408,18 +424,18 @@ export function AdminPage() {
           {usersQ.isLoading ? <LoadingState /> : usersQ.isError ? <ErrorState message="Could not load users." /> : users.length === 0 ? (
             <EmptyState title="No users found" subtitle="Try another filter or add a new user for this tenant." />
           ) : (
-            <div className="panel overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200">
+                  <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     {["User", "Company", "Role", "Status", "Last Login", "Actions"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                      <th key={header} className="px-4 py-2.5 text-left">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredUsers.map((user: AnyRecord) => (
-                    <tr key={String(user.id)} className="transition hover:bg-slate-50">
+                    <tr key={String(user.id)} className="cursor-pointer transition-colors hover:bg-slate-50">
                       <td className="px-4 py-3">
                         <button className="text-left" onClick={() => setSelectedUser(user)}>
                           <p className="font-semibold text-slate-900">{String(user.fullName ?? user.full_name ?? "User")}</p>
@@ -432,10 +448,10 @@ export function AdminPage() {
                       <td className="px-4 py-3 text-xs text-slate-400">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "—"}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button className="btn-ghost h-8 px-3" onClick={() => setSelectedUser(user)}>View</button>
-                          <button className="btn-ghost h-8 px-3" onClick={() => openEditUser(user)} disabled={!canUpdateUsers}>Edit</button>
+                          <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => setSelectedUser(user)}>View</button>
+                          <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => openEditUser(user)} disabled={!canUpdateUsers}>Edit</button>
                           <button
-                            className="btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700"
+                            className="fh-btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700 cursor-pointer"
                             onClick={async () => {
                               if (!window.confirm(`Deactivate ${String(user.fullName ?? user.email)}?`)) return;
                               await deleteUser.mutateAsync(Number(user.id));
@@ -462,7 +478,7 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-slate-400">Roles list and permission bundles.</p>
-            <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
+            <button className="fh-btn-ghost cursor-pointer" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
           </div>
           {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : (
             <div className="grid gap-4 xl:grid-cols-2">
@@ -473,7 +489,7 @@ export function AdminPage() {
                       <h3 className="font-bold text-slate-900">{String(role.name)}</h3>
                       <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
                     </div>
-                    <button className="btn-ghost h-8 px-3" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles}>Edit</button>
+                    <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles}>Edit</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {permissionList(role.permissions ?? role.permissions_json).slice(0, 8).map((permission) => (
@@ -498,7 +514,7 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm text-slate-400">Canonical permission catalog used by the RBAC layer.</p>
-            <button className="btn-ghost" onClick={async () => {
+            <button className="fh-btn-ghost cursor-pointer" onClick={async () => {
               await adminApi.auditLog({ actionName: "permissions.viewed", entityName: "Permissions", detailsJson: JSON.stringify({ total: permissions.length }) });
             }}>
               Audit view
@@ -529,7 +545,7 @@ export function AdminPage() {
               <h2 className="text-lg font-bold text-slate-900">Tenant Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Locale and operational preferences for this tenant.</p>
             </div>
-            <button className="btn-ghost" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {Object.entries((localeQ.data as AnyRecord | undefined) ?? []).slice(0, 6).map(([key, value]) => (
@@ -539,7 +555,7 @@ export function AdminPage() {
               </div>
             ))}
           </div>
-          <button className="btn-primary w-fit" onClick={() => window.location.assign("/settings")} disabled={!canViewSettings || !canUpdateSettings}>
+          <button className="fh-btn-primary cursor-pointer w-fit" onClick={() => window.location.assign("/settings")} disabled={!canViewSettings || !canUpdateSettings}>
             <ShieldCheck className="h-4 w-4" />
             Update settings
           </button>
@@ -550,15 +566,15 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-slate-400">Recent audit activity and export requests.</p>
-            <button className="btn-ghost" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="panel overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200">
+                  <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     {["Action", "Actor", "Entity", "Severity"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                      <th key={header} className="px-4 py-2.5 text-left">{header}</th>
                     ))}
                   </tr>
                 </thead>
@@ -575,7 +591,7 @@ export function AdminPage() {
               </table>
             </div>
             <div className="panel p-5 space-y-3">
-              <h3 className="font-bold text-slate-900">Export Requests</h3>
+              <h3 className="section-title">Export Requests</h3>
               {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
                 <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-sm font-semibold text-slate-900">{String(entry.requested_by_name ?? "Admin")}</p>
@@ -583,7 +599,7 @@ export function AdminPage() {
                 </div>
               ))}
               <button
-                className="btn-ghost w-full"
+                className="fh-btn-ghost w-full cursor-pointer"
                 onClick={() => createAuditExport.mutate({ requestedByName: "Admin", exportFormat: "CSV" })}
                 disabled={!canExportReports}
                 title={!canExportReports ? "You do not have permission to perform this action." : undefined}
@@ -596,29 +612,35 @@ export function AdminPage() {
       )}
 
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedUser(null)}>
-          <aside className="h-full w-full max-w-lg overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelectedUser(null)}><X className="h-4 w-4" /></button>
-            <p className="section-title text-teal-300">User Detail</p>
-            <h2 className="mt-3 text-2xl font-bold text-white">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
-            <div className="mt-6 space-y-2">
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setSelectedUser(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-lg flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="section-title text-teal-700">User Detail</p>
+                <button className="icon-btn cursor-pointer" onClick={() => setSelectedUser(null)}><X className="h-4 w-4" /></button>
+              </div>
+              <h2 className="mt-1 text-2xl font-bold text-slate-900">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
+            </div>
+            <div className="space-y-4 px-6 py-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
               {Object.entries(selectedUser).slice(0, 20).map(([key, value]) => (
-                <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2.5">
+                <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-2.5">
                   <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{key.replace(/_/g, " ")}</p>
-                  <p className="text-right text-sm text-slate-200 break-all">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
+                  <p className="text-right text-sm font-medium text-slate-800 break-all">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
                 </div>
               ))}
+              </div>
             </div>
           </aside>
         </div>
       )}
 
       {userModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-2xl space-y-4 p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
-              <button className="icon-btn" onClick={() => setUserModal(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setUserModal(null)}><X className="h-4 w-4" /></button>
             </div>
               <div className="grid gap-3 md:grid-cols-2">
               <div><label className="label">Full Name</label><input className="field w-full" value={String(userForm.fullName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, fullName: e.target.value }))} /></div>
@@ -644,9 +666,9 @@ export function AdminPage() {
                 <input className="field w-full" type="number" value={Number(userForm.companyId ?? 1)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
               </div>
             </div>
-            <div className="flex gap-2 pt-2">
-              <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers : !canUpdateUsers}>
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setUserModal(null)}>Cancel</button>
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers : !canUpdateUsers}>
                 Save User
               </button>
             </div>
@@ -655,11 +677,11 @@ export function AdminPage() {
       )}
 
       {roleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-3xl space-y-4 p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">Edit Role</h2>
-              <button className="icon-btn" onClick={() => setRoleModal(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">Edit Role</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setRoleModal(null)}><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div><label className="label">Role Name</label><input className="field w-full" value={String(roleForm.name ?? "")} onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} /></div>
@@ -694,9 +716,9 @@ export function AdminPage() {
                 </div>
               ))}
             </div>
-            <div className="flex gap-2 pt-2">
-              <button type="button" className="btn-ghost flex-1" onClick={() => setRoleModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveRole} disabled={!canUpdateRoles}>Save Role</button>
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setRoleModal(null)}>Cancel</button>
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={saveRole} disabled={!canUpdateRoles}>Save Role</button>
             </div>
           </div>
         </div>

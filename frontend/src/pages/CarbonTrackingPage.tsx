@@ -5,9 +5,10 @@ import {
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import { exportCsv, LoadingState, PageHeader } from "@/components/ui";
+import { exportCsv, LoadingState, KpiCard } from "@/components/ui";
 import { vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
+import { Download, Leaf, TrendingDown, Sparkles, Activity, Target } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -110,46 +111,103 @@ export function CarbonTrackingPage() {
   if (q.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
-      <PageHeader
-        eyebrow="Reports"
-        title="Carbon Tracking"
-        description="Fleet CO₂ emissions, sustainability KPIs, Scope 1/2/3 breakdown and reduction targets"
-        actions={
-          <button type="button" className="btn-primary text-sm" onClick={() => exportCsv("carbon-emissions", vehicles)}>Export CSV</button>
-        }
-      />
+    <div className="space-y-6 pb-10">
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "CO₂ This Month",    val: `${totalCo2.toLocaleString()} kg`,  accent: totalCo2 < targetCo2 * 1000 ? "text-teal-600" : "text-amber-600" },
-          { label: "Intensity (kg/km)", val: avgIntensity.toFixed(2),             accent: avgIntensity < 0.65 ? "text-teal-600" : "text-amber-600" },
-          { label: "Idling CO₂",        val: `${idlingCo2.toLocaleString()} kg`, accent: "text-amber-600" },
-          { label: "vs Target",         val: `${((totalCo2 / (targetCo2 * 1000) - 1) * 100).toFixed(1)}%`, accent: totalCo2 < targetCo2 * 1000 ? "text-teal-600" : "text-red-600" },
-          { label: "Monthly Target",    val: `${targetCo2}t CO₂` },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{val}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+      {/* ── Hero header ─────────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Leaf className="h-3 w-3" /> Reports
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Fleet CO₂ emissions and sustainability KPIs</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Carbon Tracking
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Fleet CO₂ emissions, sustainability KPIs, Scope 1/2/3 breakdown and reduction targets
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={() => exportCsv("carbon-emissions", vehicles)}>
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
           </div>
-        ))}
+        </div>
+      </header>
+
+      {/* ── Ops intelligence bar ────────────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-emerald-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Sustainability signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-400">
+              {totalCo2 < targetCo2 * 1000
+                ? `Fleet emissions are ${((1 - totalCo2 / (targetCo2 * 1000)) * 100).toFixed(1)}% below target — on track for 2026 goals.`
+                : `Fleet emissions exceed target by ${((totalCo2 / (targetCo2 * 1000) - 1) * 100).toFixed(1)}% — review idling and route optimisation.`}
+            </p>
+          </div>
+        </div>
+        {totalCo2 >= targetCo2 * 1000 && (
+          <button type="button" onClick={() => setActiveView("targets")} className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto">
+            Review reduction targets <Target className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* View tabs */}
-      <div className="flex gap-1.5 p-2">
-        {(["overview", "vehicles", "targets"] as const).map((v) => (
-          <button key={v} type="button" onClick={() => setActiveView(v)}
-            className={`control-tab ${activeView === v ? "control-tab-active" : ""}`}>{v === "overview" ? "Overview" : v === "vehicles" ? "By Vehicle" : "Targets"}</button>
-        ))}
+      {/* ── KPI cards ───────────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <KpiCard label="CO₂ This Month" value={`${totalCo2.toLocaleString()} kg`} icon={<Leaf className="h-4 w-4" />} status={totalCo2 < targetCo2 * 1000 ? undefined : "review"} />
+        <KpiCard label="Intensity (kg/km)" value={avgIntensity.toFixed(2)} icon={<TrendingDown className="h-4 w-4" />} status={avgIntensity < 0.65 ? undefined : "review"} />
+        <KpiCard label="Idling CO₂" value={`${idlingCo2.toLocaleString()} kg`} icon={<Activity className="h-4 w-4" />} status="review" />
+        <KpiCard label="vs Target" value={`${((totalCo2 / (targetCo2 * 1000) - 1) * 100).toFixed(1)}%`} icon={<Target className="h-4 w-4" />} status={totalCo2 < targetCo2 * 1000 ? undefined : "review"} />
+        <KpiCard label="Monthly Target" value={`${targetCo2}t CO₂`} icon={<Target className="h-4 w-4" />} />
+      </div>
+
+      {/* ── View tabs ───────────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+          {(["overview", "vehicles", "targets"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setActiveView(v)}
+              className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                activeView === v
+                  ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {v === "overview" ? "View" : v === "vehicles" ? "Fleet" : "Goals"}
+              </span>
+              <span className={`mt-0.5 text-base font-bold ${activeView === v ? "text-teal-700" : "text-slate-900"}`}>
+                {v === "overview" ? "Overview" : v === "vehicles" ? "By Vehicle" : "Targets"}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Overview ── */}
       {activeView === "overview" && (
         <div className="flex flex-col gap-4">
           {/* Monthly trend chart */}
-          <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-4">Monthly CO₂ Emissions vs Target (tonnes)</p>
+          <div className="panel p-5">
+            <p className="section-title mb-0.5">Monthly CO₂ Emissions vs Target</p>
+            <p className="text-xs text-slate-400 mb-4">Tonnes of CO₂ emitted compared to monthly reduction target</p>
             <ResponsiveContainer width="100%" height={220}>
               <AreaChart data={MONTHLY_TREND} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                 <defs>
@@ -171,8 +229,9 @@ export function CarbonTrackingPage() {
 
           {/* Scope breakdown + intensity chart side by side */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="panel">
-              <p className="text-sm font-semibold text-slate-700 mb-4">Scope Breakdown (GHG Protocol)</p>
+            <div className="panel p-5">
+              <p className="section-title mb-0.5">Scope Breakdown</p>
+              <p className="text-xs text-slate-400 mb-4">GHG Protocol categorisation</p>
               <div className="flex flex-col gap-3">
                 {SCOPE_DATA.map((s) => (
                   <div key={s.scope}>
@@ -186,8 +245,9 @@ export function CarbonTrackingPage() {
               </div>
             </div>
 
-            <div className="panel">
-              <p className="text-sm font-semibold text-slate-700 mb-4">CO₂ Intensity (kg/km) by Month</p>
+            <div className="panel p-5">
+              <p className="section-title mb-0.5">CO₂ Intensity</p>
+              <p className="text-xs text-slate-400 mb-4">kg CO₂ per km driven by month</p>
               <ResponsiveContainer width="100%" height={140}>
                 <BarChart data={MONTHLY_TREND} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
@@ -203,43 +263,45 @@ export function CarbonTrackingPage() {
 
       {/* ── By Vehicle ── */}
       {activeView === "vehicles" && (
-        <div className="panel overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Vehicle", "Type", "CO₂ This Month (kg)", "km Driven", "CO₂ Intensity (kg/km)", "Idling CO₂ (kg)", "Trend"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[800px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5">Vehicle</th>
+                <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">CO₂ This Month (kg)</th>
+                <th className="px-4 py-2.5">km Driven</th>
+                <th className="px-4 py-2.5">CO₂ Intensity (kg/km)</th>
+                <th className="px-4 py-2.5">Idling CO₂ (kg)</th>
+                <th className="px-4 py-2.5">Trend</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {vehicles.map((v, i) => (
+                <tr key={String(v.id ?? i)} className="cursor-pointer transition-colors hover:bg-slate-50">
+                  <td className="px-4 py-2.5 font-medium text-slate-900">{String(v.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">{String(v.vehicleType ?? "—")}</td>
+                  <td className="px-4 py-2.5 font-semibold text-slate-800">{Number(v.co2ThisMonth ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{Number(v.kmThisMonth ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs font-medium ${Number(v.co2PerKm ?? 0) > 0.7 ? "text-red-600" : Number(v.co2PerKm ?? 0) > 0.5 ? "text-amber-600" : "text-teal-600"}`}>
+                      {Number(v.co2PerKm ?? 0).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-amber-600 text-xs font-medium">{Number(v.idlingCo2 ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5"><TrendBadge trend={String(v.trend ?? "Stable")} /></td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {vehicles.map((v, i) => (
-                  <tr key={String(v.id ?? i)} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(v.vehicleCode ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(v.vehicleType ?? "—")}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-800">{Number(v.co2ThisMonth ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-slate-600">{Number(v.kmThisMonth ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-medium ${Number(v.co2PerKm ?? 0) > 0.7 ? "text-red-600" : Number(v.co2PerKm ?? 0) > 0.5 ? "text-amber-600" : "text-teal-600"}`}>
-                        {Number(v.co2PerKm ?? 0).toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-amber-600 text-xs font-medium">{Number(v.idlingCo2 ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3"><TrendBadge trend={String(v.trend ?? "Stable")} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {/* ── Targets ── */}
       {activeView === "targets" && (
         <div className="flex flex-col gap-4">
-          <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-1">2026 Reduction Targets</p>
+          <div className="panel p-5">
+            <p className="section-title mb-0.5">2026 Reduction Targets</p>
             <p className="text-xs text-slate-400 mb-5">Percentage reduction vs 2024 baseline</p>
             <div className="flex flex-col gap-5">
               {REDUCTION_TARGETS.map((t) => {
@@ -266,8 +328,8 @@ export function CarbonTrackingPage() {
             </div>
           </div>
 
-          <div className="panel">
-            <p className="text-sm font-semibold text-slate-700 mb-1">Improvement Opportunities</p>
+          <div className="panel p-5">
+            <p className="section-title mb-0.5">Improvement Opportunities</p>
             <p className="text-xs text-slate-400 mb-4">AI-identified actions to close the gap to target</p>
             <div className="flex flex-col gap-3">
               {[

@@ -1,46 +1,48 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { Download, Sparkles, Wrench } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, EmptyState, KpiCard } from "@/components/ui";
-import { maintenance as seedMaintenance, vehicles as seedVehicles } from "@/data/mockOperatingData";
+import { serviceHistory as seedServiceHistory, downtimeEvents as seedDowntimeEvents, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
 // ── Seed builders ─────────────────────────────────────────────────────────────
 
 function buildServiceHistorySeed(): AnyRecord[] {
-  return (seedMaintenance as AnyRecord[]).map((m, i) => ({
-    id: i + 1,
-    workOrderCode: String(m.workOrderId ?? `WO-${7100 + i}`),
-    title: String(m.issueType ?? "Service"),
-    vehicleCode: String(m.vehicle ?? ""),
-    vendorName: String(m.assignedWorkshop ?? "Internal"),
-    status: "Completed",
-    priority: String(m.priority ?? "Normal"),
-    cost: Number(m.estimatedCost ?? 0),
-    currency: String(m.currency ?? "USD"),
-    downtimeHours: [3.5, 6.0][i % 2],
-    completedAt: String(m.dueDate ?? "2026-05-28"),
-    issueType: String(m.issueType ?? ""),
+  return (seedServiceHistory as AnyRecord[]).map((r) => ({
+    id: Number(r.id),
+    workOrderCode: String(r.workOrderCode),
+    vehicleCode: String(r.vehicleCode),
+    serviceType: String(r.serviceType),
+    vendorName: String(r.vendorName),
+    priority: String(r.priority),
+    cost: Number(r.cost ?? 0),
+    currency: String(r.currency ?? "USD"),
+    downtimeHours: Number(r.downtimeHours ?? 0),
+    completedAt: String(r.completedAt),
+    issueType: String(r.issueType),
+    technicianName: String(r.technicianName ?? "—"),
+    partsReplaced: String(r.partsReplaced ?? "—"),
   }));
 }
 
 function buildDowntimeSeed(): AnyRecord[] {
-  const vehicles = seedVehicles as AnyRecord[];
-  return vehicles.map((v, i) => ({
-    id: i + 1,
-    workOrderCode: `WO-DT-${i + 1}`,
-    vehicleCode: String(v.vehicleId ?? ""),
-    title: (["Brake Repair", "Reefer Calibration", "Tire Replacement", "Engine Diagnostic"] as const)[i % 4],
-    downtimeHours: [3.5, 6.0, 1.5, 0][i % 4],
-    cost: [1800, 2400, 420, 0][i % 4],
-    priority: (["Critical", "High", "Normal", "Normal"] as const)[i % 4],
-    status: (["In Progress", "Completed", "Completed", "N/A"] as const)[i % 4],
-    completedAt: i < 2 ? "2026-05-28" : "—",
-    vendorName: (["DC Fleet Repair", "Jeddah Cold Service", "Internal", "—"] as const)[i % 4],
-  })).filter((r) => Number(r.downtimeHours) > 0);
+  return (seedDowntimeEvents as AnyRecord[]).map((r) => ({
+    id: Number(r.id),
+    vehicleCode: String(r.vehicleCode),
+    downtimeReason: String(r.downtimeReason),
+    startDate: String(r.startDate),
+    endDate: String(r.endDate),
+    durationHours: Number(r.durationHours ?? 0),
+    affectedSystem: String(r.affectedSystem),
+    resolutionDescription: String(r.resolutionDescription),
+    costImpact: Number(r.costImpact ?? 0),
+    revenueLoss: Number(r.revenueLoss ?? 0),
+    priority: String(r.priority),
+    status: String(r.status),
+  }));
 }
 
 function buildPMSeed(): AnyRecord[] {
@@ -141,20 +143,22 @@ function ServiceHistoryTab() {
   const rows = (q.data ?? []) as AnyRecord[];
   const totalCost = rows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
   const totalDowntime = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
+  const uniqueVehicles = new Set(rows.map((r) => String(r.vehicleCode))).size;
   if (q.isLoading) return <LoadingState />;
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Completed Services" value={String(rows.length)} status="Active" />
         <KpiCard label="Total Cost" value={`$${totalCost.toLocaleString()}`} status={totalCost > 10000 ? "Warning" : "Active"} />
         <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 20 ? "Critical" : "Active"} />
+        <KpiCard label="Vehicles Serviced" value={String(uniqueVehicles)} status="Active" />
       </div>
       {rows.length === 0 ? <EmptyState title="No completed service records" /> : (
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
-                {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
+                {["Work Order", "Vehicle", "Service Type", "Issue", "Vendor / Technician", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
                   <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
               </tr>
@@ -164,8 +168,12 @@ function ServiceHistoryTab() {
                 <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                   <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
                   <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.serviceType ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.issueType ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    <div>{String(r.vendorName ?? "Internal")}</div>
+                    <div className="text-slate-400">{String(r.technicianName ?? "")}</div>
+                  </td>
                   <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
                   <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
                   <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
@@ -183,21 +191,24 @@ function ServiceHistoryTab() {
 function DowntimeTab() {
   const q = useQuery({ queryKey: ["downtime"], queryFn: downtimeApi });
   const rows = (q.data ?? []) as AnyRecord[];
-  const totalHours = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
+  const totalHours = rows.reduce((s, r) => s + Number(r.durationHours ?? r.downtimeHours ?? 0), 0);
+  const totalRevenueLoss = rows.reduce((s, r) => s + Number(r.revenueLoss ?? 0), 0);
+  const uniqueSystems = new Set(rows.map((r) => String(r.affectedSystem))).size;
   if (q.isLoading) return <LoadingState />;
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Downtime Events" value={String(rows.length)} status={rows.length > 5 ? "Warning" : "Active"} />
-        <KpiCard label="Total Hours" value={`${totalHours.toFixed(1)}h`} status={totalHours > 15 ? "Critical" : "Active"} />
-        <KpiCard label="Est. Revenue Loss" value={`$${(totalHours * 280).toLocaleString()}`} status={totalHours > 10 ? "Warning" : "Active"} />
+        <KpiCard label="Total Hours Off-Road" value={`${totalHours.toFixed(1)}h`} status={totalHours > 20 ? "Critical" : "Active"} />
+        <KpiCard label="Est. Revenue Loss" value={`$${totalRevenueLoss.toLocaleString()}`} status={totalRevenueLoss > 5000 ? "Warning" : "Active"} />
+        <KpiCard label="Systems Affected" value={String(uniqueSystems)} status="Active" />
       </div>
       {rows.length === 0 ? <EmptyState title="No downtime events recorded" /> : (
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
-                {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status"].map((h) => (
+                {["Vehicle", "Downtime Reason", "Affected System", "Duration", "Start", "Resolved", "Cost Impact", "Revenue Loss", "Priority"].map((h) => (
                   <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
               </tr>
@@ -205,14 +216,20 @@ function DowntimeTab() {
             <tbody className="divide-y divide-slate-100">
               {rows.map((r, i) => (
                 <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
-                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
-                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.title ?? "—")}</td>
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    <div>{String(r.downtimeReason ?? r.title ?? "—")}</div>
+                    <div className="mt-0.5 text-slate-400">{String(r.resolutionDescription ?? "")}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex text-xs px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 font-medium text-slate-600">{String(r.affectedSystem ?? "—")}</span>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-red-700">{Number(r.durationHours ?? r.downtimeHours ?? 0).toFixed(1)}h</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.startDate ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.endDate ?? "—")}</td>
+                  <td className="px-4 py-3 font-medium text-slate-700">${Number(r.costImpact ?? r.cost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs font-medium text-amber-700">${Number(r.revenueLoss ?? 0).toLocaleString()}</td>
                   <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                  <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
-                  <td className="px-4 py-3 text-slate-700 text-xs">${Number(r.cost ?? 0).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
                 </tr>
               ))}
             </tbody>
@@ -278,6 +295,12 @@ export function MaintenancePlanningPage() {
   const { pathname } = useLocation();
   const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "history";
   const [tab, setTab] = useState<Tab>(defaultTab);
+
+  // Sync tab with route when navigating between /service-history, /downtime, /preventive-maintenance
+  useEffect(() => {
+    const routeTab = ROUTE_TAB[pathname] as Tab | undefined;
+    if (routeTab) setTab(routeTab);
+  }, [pathname]);
 
   const exportFns: Record<Tab, () => void> = {
     history: () => exportCsv("service-history", buildServiceHistorySeed()),

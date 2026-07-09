@@ -157,7 +157,7 @@ export function AppShell() {
       </div>
 
       {/* Navigation */}
-      <nav className="sb-scroll flex-1 space-y-1 overflow-y-auto pb-2">
+      <nav className="sb-scroll flex-1 space-y-1 overflow-y-auto overflow-x-hidden pb-2">
         {visibleSections.map((section) => {
           const isOpen = !collapsed.has(section.label);
 

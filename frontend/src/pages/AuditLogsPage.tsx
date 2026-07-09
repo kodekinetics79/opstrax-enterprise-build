@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Bot, CheckCircle2, Download, Filter, Search, Shield, X,
+  Bot, CheckCircle2, Download, Filter, Search, Shield, Sparkles, X,
 } from "lucide-react";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -70,22 +70,37 @@ export function AuditLogsPage() {
   const createExport = useCreateAuditExport();
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900">Audit Logs</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Immutable record of all system actions across all modules</p>
+    <div className="space-y-6 pb-10">
+      {/* ── Hero ── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Shield className="h-3 w-3" /> Compliance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Immutable system activity record</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">Audit Logs</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Immutable record of all system actions across all modules</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="fh-btn-primary cursor-pointer flex items-center gap-2"
+                onClick={() => setExportOpen(true)}
+                disabled={!canExportReports}
+                title={!canExportReports ? "You do not have permission to perform this action." : undefined}
+              >
+                <Download className="h-4 w-4" /> Export Audit Log
+              </button>
+            </div>
+          </div>
         </div>
-        <button
-          className="btn-primary flex items-center gap-2"
-          onClick={() => setExportOpen(true)}
-          disabled={!canExportReports}
-          title={!canExportReports ? "You do not have permission to perform this action." : undefined}
-        >
-          <Download className="h-4 w-4" /> Export Audit Log
-        </button>
-      </div>
+      </header>
 
       {/* Compliance disclaimer */}
       <div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
@@ -98,17 +113,40 @@ export function AuditLogsPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 pb-px">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-50 text-teal-700 border border-b-0 border-teal-300" : "text-slate-500 hover:text-slate-700"}`}
-          >
-            {t}
-          </button>
-        ))}
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Audit signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {logs.length > 0 ? `${logs.length} audit entries captured · ${exports_.length} export requests` : "No audit entries match current filters."}
+            </p>
+          </div>
+        </div>
+        <button className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto" onClick={() => setExportOpen(true)} disabled={!canExportReports}>
+          Request export <Download className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* ── Tab navigation ── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-3 gap-1.5">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${tab === t ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t}</span>
+              <span className={`mt-0.5 text-sm font-bold ${tab === t ? "text-teal-700" : "text-slate-900"}`}>{t === "Audit Trail" ? logs.length : t === "Export Requests" ? exports_.length : aiRecs.length}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Audit Trail */}
@@ -143,12 +181,12 @@ export function AuditLogsPage() {
             )}
           </div>
 
-          <div className="panel overflow-x-auto">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200">
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   {["Timestamp", "Actor", "Action", "Entity", "Module", "Severity"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
+                    <th key={h} className="px-4 py-2.5 text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -156,7 +194,7 @@ export function AuditLogsPage() {
                 {logs.map((log, i) => (
                   <tr
                     key={i}
-                    className="cursor-pointer transition hover:bg-slate-50"
+                    className="cursor-pointer transition-colors hover:bg-slate-50"
                     onClick={() => setDrawerLog(log)}
                   >
                     <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
@@ -189,18 +227,18 @@ export function AuditLogsPage() {
       {/* Export Requests */}
       {tab === "Export Requests" && (
         <div className="space-y-3">
-          <div className="panel overflow-x-auto">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200">
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   {["Requested By", "Date Range", "Format", "Status", "Requested At"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
+                    <th key={h} className="px-4 py-2.5 text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {exports_.map((e, i) => (
-                  <tr key={i} className="transition hover:bg-slate-50">
+                  <tr key={i} className="transition-colors hover:bg-slate-50">
                     <td className="px-4 py-3 text-slate-700">{String(e.requested_by_name ?? "")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {e.date_range_start ? new Date(String(e.date_range_start)).toLocaleDateString() : "—"}
@@ -240,31 +278,35 @@ export function AuditLogsPage() {
 
       {/* Log detail drawer */}
       {drawerLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm" onClick={() => setDrawerLog(null)}>
-          <div className="h-full w-full max-w-md overflow-y-auto border-s border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-bold text-white">Audit Log Detail</h2>
-              <button className="icon-btn" onClick={() => setDrawerLog(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setDrawerLog(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="section-title text-teal-700">Audit Log Detail</p>
+                <button className="icon-btn cursor-pointer" onClick={() => setDrawerLog(null)}><X className="h-4 w-4" /></button>
+              </div>
             </div>
-            <div className="space-y-4 text-sm">
+            <div className="space-y-4 px-6 py-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-4 text-sm">
               {Object.entries(drawerLog).map(([k, v]) => (
-                <div key={k}>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{k.replace(/_/g, " ")}</p>
-                  <p className="mt-0.5 break-all text-slate-200">{v == null ? "—" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v)}</p>
+                <div key={k} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 mt-0.5">{k.replace(/_/g, " ")}</p>
+                  <p className="text-right text-sm font-medium text-slate-800 break-all">{v == null ? "—" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v)}</p>
                 </div>
               ))}
+              </div>
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
       {/* Export request modal */}
       {exportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">Export Audit Log</h2>
-              <button className="icon-btn" onClick={() => setExportOpen(false)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-md overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">Export Audit Log</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setExportOpen(false)}><X className="h-4 w-4" /></button>
             </div>
             <form
               onSubmit={(e) => {
@@ -289,9 +331,9 @@ export function AuditLogsPage() {
                   {["CSV", "PDF", "Excel", "JSON"].map((f) => <option key={f}>{f}</option>)}
                 </Select>
               </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" className="btn-ghost flex-1" onClick={() => setExportOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-primary flex-1" disabled={!canExportReports}>
+              <div className="mt-6 flex gap-2 border-t border-slate-200 pt-4">
+                <button type="button" className="fh-btn-ghost flex-1 cursor-pointer" onClick={() => setExportOpen(false)}>Cancel</button>
+                <button type="submit" className="fh-btn-primary flex-1 cursor-pointer" disabled={!canExportReports}>
                   Request Export
                 </button>
               </div>

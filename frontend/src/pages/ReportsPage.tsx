@@ -2,9 +2,9 @@ import { useState, useMemo } from "react";
 import {
   Download, Play, Plus, RefreshCw, Trash2, BookOpen,
   Eye, EyeOff, Users, Clock, Filter, SortAsc, Save, Calendar,
-  X, ChevronDown, ChevronRight,
+  X, ChevronDown, ChevronRight, Sparkles, Database,
 } from "lucide-react";
-import { LoadingState, EmptyState, PageHeader, Select } from "@/components/ui";
+import { LoadingState, EmptyState, Select } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   useDatasets,
@@ -119,11 +119,11 @@ function SaveModal({
   const [sharedRole, setSharedRole] = useState(initial?.sharedRole ?? "");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-slate-800">Save Report</h3>
-          <button type="button" title="Close" onClick={onClose}><X className="h-4 w-4 text-slate-400" /></button>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <div className="panel max-h-[90vh] w-full max-w-md overflow-y-auto p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+          <h3 className="text-2xl font-bold text-slate-900">Save Report</h3>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="space-y-3">
           <div>
@@ -152,15 +152,15 @@ function SaveModal({
             Dataset: <strong>{dataset.label}</strong> · {fields.length} field{fields.length !== 1 ? "s" : ""} · {filters.length} filter{filters.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="btn-sm btn-ghost" onClick={onClose}>Cancel</button>
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
           <button
             type="button"
-            className="btn-sm btn-primary"
+            className="fh-btn-primary cursor-pointer"
             disabled={!name.trim()}
             onClick={() => onSave({ name, description, datasetKey: dataset.key, fields, filters, sort: sort ?? undefined, visibility, sharedRole: sharedRole || undefined })}
           >
-            <Save className="h-3.5 w-3.5 mr-1" />Save
+            <Save className="h-4 w-4 mr-1" />Save
           </button>
         </div>
       </div>
@@ -186,11 +186,11 @@ function ScheduleModal({ savedReportId, onClose }: { savedReportId: number; onCl
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-slate-800">Schedule Report</h3>
-          <button type="button" title="Close" onClick={onClose}><X className="h-4 w-4 text-slate-400" /></button>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <div className="panel max-h-[90vh] w-full max-w-md overflow-y-auto p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+          <h3 className="text-2xl font-bold text-slate-900">Schedule Report</h3>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="space-y-3">
           <div>
@@ -222,10 +222,10 @@ function ScheduleModal({ savedReportId, onClose }: { savedReportId: number; onCl
           </div>
           <p className="text-[11px] text-slate-400">Delivery via in-app notification. Recipients are resolved server-side.</p>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="btn-sm btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn-sm btn-primary" disabled={!recipients.trim() || create.isPending} onClick={submit}>
-            <Calendar className="h-3.5 w-3.5 mr-1" />
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
+          <button type="button" className="fh-btn-primary cursor-pointer" disabled={!recipients.trim() || create.isPending} onClick={submit}>
+            <Calendar className="h-4 w-4 mr-1" />
             {create.isPending ? "Scheduling…" : "Schedule"}
           </button>
         </div>
@@ -247,20 +247,20 @@ function ResultsTable({ rows, fields, dataset }: { rows: Record<string, unknown>
   });
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-slate-200">
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <table className="w-full min-w-[620px] text-left text-sm">
+        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <tr>
             {headers.map((h, i) => (
-              <th key={i} className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
+              <th key={i} className="px-4 py-2.5">{h}</th>
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-slate-100 hover:bg-slate-50">
+            <tr key={ri} className="hover:bg-slate-50 cursor-pointer transition-colors">
               {keys.map((k, ki) => (
-                <td key={ki} className="px-3 py-2 text-slate-700">{String(row[k] ?? "")}</td>
+                <td key={ki} className="px-4 py-2.5 text-slate-600">{String(row[k] ?? "")}</td>
               ))}
             </tr>
           ))}
@@ -353,8 +353,8 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-slate-700">Fields ({selectedFields.length} selected)</h3>
               <div className="flex gap-2">
-                <button type="button" className="btn-xs btn-ghost" onClick={() => setSelectedFields(dataset.fields.map((f) => f.key))}>All</button>
-                <button type="button" className="btn-xs btn-ghost" onClick={() => setSelectedFields([])}>None</button>
+                <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setSelectedFields(dataset.fields.map((f) => f.key))}>All</button>
+                <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setSelectedFields([])}>None</button>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -363,10 +363,10 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
                   type="button"
                   key={f.key}
                   onClick={() => toggleField(f.key)}
-                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer ${
                     selectedFields.includes(f.key)
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300"
+                      ? "bg-teal-50 border-teal-200 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-teal-300 hover:bg-teal-50/50"
                   }`}
                 >
                   {f.sensitive && <EyeOff className="h-2.5 w-2.5 text-amber-500" />}
@@ -382,8 +382,8 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
               <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
                 <Filter className="h-3.5 w-3.5" />Filters
               </h3>
-              <button type="button" className="btn-xs btn-ghost" onClick={addFilter} disabled={filters.length >= 10}>
-                <Plus className="h-3.5 w-3.5 mr-0.5" />Add
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={addFilter} disabled={filters.length >= 10}>
+                <Plus className="h-4 w-4 mr-1" />Add
               </button>
             </div>
             {filters.length === 0 && (
@@ -432,34 +432,34 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              className="btn-sm btn-primary"
+              className="fh-btn-primary cursor-pointer"
               disabled={selectedFields.length === 0 || queryResult.isFetching}
               onClick={() => { setPage(1); setRunBody({ ...queryBody!, page: 1 }); }}
             >
-              <Play className="h-3.5 w-3.5 mr-1" />
+              <Play className="h-4 w-4 mr-1" />
               {queryResult.isFetching ? "Running…" : "Run Report"}
             </button>
             {canExport && (
               <button
                 type="button"
-                className="btn-sm btn-ghost"
+                className="fh-btn-ghost cursor-pointer"
                 disabled={selectedFields.length === 0 || exportCsv.isPending}
                 onClick={() => queryBody && exportCsv.mutate(queryBody)}
               >
-                <Download className="h-3.5 w-3.5 mr-1" />
+                <Download className="h-4 w-4 mr-1" />
                 {exportCsv.isPending ? "Exporting…" : "Export CSV"}
               </button>
             )}
             <button
               type="button"
-              className="btn-sm btn-ghost"
+              className="fh-btn-ghost cursor-pointer"
               disabled={selectedFields.length === 0}
               onClick={() => setSaveOpen(true)}
             >
-              <Save className="h-3.5 w-3.5 mr-1" />Save
+              <Save className="h-4 w-4 mr-1" />Save
             </button>
-            <button type="button" className="btn-sm btn-ghost" onClick={() => { setRunBody(null); setSelectedFields([]); setFilters([]); setSort(null); }}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" />Reset
+            <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => { setRunBody(null); setSelectedFields([]); setFilters([]); setSort(null); }}>
+              <RefreshCw className="h-4 w-4 mr-1" />Reset
             </button>
           </div>
 
@@ -480,9 +480,9 @@ function DatasetBuilder({ datasets }: { datasets: ReportDatasetMeta[] }) {
                 </h3>
                 {meta && totalPages > 1 && (
                   <div className="flex items-center gap-2 text-xs">
-                    <button type="button" className="btn-xs btn-ghost" disabled={page <= 1} onClick={() => { setPage((p) => p - 1); setRunBody({ ...runBody, page: page - 1 }); }}>Prev</button>
+                    <button type="button" className="fh-btn-ghost cursor-pointer" disabled={page <= 1} onClick={() => { setPage((p) => p - 1); setRunBody({ ...runBody, page: page - 1 }); }}>Prev</button>
                     <span className="text-slate-500">{page}/{totalPages}</span>
-                    <button type="button" className="btn-xs btn-ghost" disabled={page >= totalPages} onClick={() => { setPage((p) => p + 1); setRunBody({ ...runBody, page: page + 1 }); }}>Next</button>
+                    <button type="button" className="fh-btn-ghost cursor-pointer" disabled={page >= totalPages} onClick={() => { setPage((p) => p + 1); setRunBody({ ...runBody, page: page + 1 }); }}>Next</button>
                   </div>
                 )}
               </div>
@@ -552,38 +552,38 @@ function SavedReportsList({ datasets }: { datasets: ReportDatasetMeta[] }) {
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
-                  className="btn-xs btn-ghost"
+                  className="fh-btn-ghost cursor-pointer"
                   title="Expand details"
                   onClick={() => setExpanded(isOpen ? null : r.id)}
                 >
-                  {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 </button>
                 {canExport && (
                   <button
                     type="button"
-                    className="btn-xs btn-ghost"
+                    className="fh-btn-ghost cursor-pointer"
                     title="Export CSV"
                     disabled={exportMut.isPending}
                     onClick={() => exportMut.mutate(r.id)}
                   >
-                    <Download className="h-3.5 w-3.5" />
+                    <Download className="h-4 w-4" />
                   </button>
                 )}
                 <button
                   type="button"
-                  className="btn-xs btn-ghost"
+                  className="fh-btn-ghost cursor-pointer"
                   title="Schedule"
                   onClick={() => setSchedId(r.id)}
                 >
-                  <Calendar className="h-3.5 w-3.5" />
+                  <Calendar className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
-                  className="btn-xs btn-ghost text-red-400 hover:text-red-600"
+                  className="fh-btn-ghost text-red-500 hover:text-red-600 cursor-pointer"
                   title="Delete"
                   onClick={() => { if (confirm("Delete this saved report?")) deleteMut.mutate(r.id); }}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -616,30 +616,70 @@ export function ReportsPage() {
   if (datasetsQ.isLoading) return <LoadingState />;
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <PageHeader
-        eyebrow="Analytics"
-        title="Reports"
-        description="Build, save, and export reports from live fleet data. All queries are validated server-side against a whitelisted dataset registry."
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── Hero header ─────────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Database className="h-3 w-3" /> Analytics
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Build, save, and export reports from live fleet data</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Reports & Analytics
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Build, save, and export reports from live fleet data. All queries are validated server-side against a whitelisted dataset registry.
+              </p>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      {/* Tabs */}
-      <div className="flex gap-1.5 p-2">
-        {(["builder", "saved"] as Tab[]).map((t) => (
-          <button
-            type="button"
-            key={t}
-            onClick={() => setTab(t)}
-            className={`control-tab ${tab === t ? "control-tab-active" : ""}`}
-          >
-            {t === "builder" ? (
-              <><BookOpen className="inline h-3.5 w-3.5 mr-1.5" />Report Builder</>
-            ) : (
-              <><Save className="inline h-3.5 w-3.5 mr-1.5" />Saved Reports</>
-            )}
-          </button>
-        ))}
+      {/* ── Ops intelligence bar ────────────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Report builder ready</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-400">
+              Query live fleet data with validated filters and export to CSV.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tabs ────────────────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-2">
+          {(["builder", "saved"] as Tab[]).map((t) => (
+            <button
+              type="button"
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                tab === t
+                  ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t === "builder" ? "Build" : "Saved"}</span>
+              <span className={`mt-0.5 flex items-center gap-2 text-base font-bold ${tab === t ? "text-teal-700" : "text-slate-900"}`}>
+                {t === "builder" ? <><BookOpen className="h-4 w-4" />Report Builder</> : <><Save className="h-4 w-4" />Saved Reports</>}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {datasetsQ.isError && (

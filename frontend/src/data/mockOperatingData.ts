@@ -101,6 +101,30 @@ export const maintenance = [
   { workOrderId: "WO-7102", vehicle: "KSA-REEFER-119", issueType: "Reefer calibration", priority: "High", assignedWorkshop: "Jeddah Cold Service", estimatedCost: 2400, currency: "SAR", status: "Scheduled", createdDate: "2026-05-25", dueDate: "2026-05-29" },
 ];
 
+export const serviceHistory = [
+  { id: 1, workOrderCode: "WO-6801", vehicleCode: "BOX-106", serviceType: "Brake pad replacement", vendorName: "DC Fleet Repair", priority: "Critical", cost: 1820, currency: "USD", downtimeHours: 6.0, completedAt: "2026-05-10", issueType: "Worn brake pads detected during DVIR", technicianName: "James Holden", partsReplaced: "Brake pads (front axle)" },
+  { id: 2, workOrderCode: "WO-6802", vehicleCode: "KSA-REEFER-119", serviceType: "Reefer unit calibration", vendorName: "Jeddah Cold Service", priority: "High", cost: 2400, currency: "SAR", downtimeHours: 4.5, completedAt: "2026-05-12", issueType: "Temperature deviation on cold chain run", technicianName: "Tariq Al-Saud", partsReplaced: "Thermostat sensor" },
+  { id: 3, workOrderCode: "WO-6803", vehicleCode: "DXB-VAN-045", serviceType: "Oil change + filter", vendorName: "Internal", priority: "Normal", cost: 180, currency: "AED", downtimeHours: 1.5, completedAt: "2026-05-14", issueType: "Scheduled 10K service", technicianName: "Ravi Kumar", partsReplaced: "Oil filter, engine oil" },
+  { id: 4, workOrderCode: "WO-6804", vehicleCode: "KSA-REEFER-214", serviceType: "Tire rotation and alignment", vendorName: "Riyadh Tire Center", priority: "Medium", cost: 640, currency: "SAR", downtimeHours: 2.0, completedAt: "2026-05-16", issueType: "Uneven tire wear noticed on inspection", technicianName: "Khalid Omar", partsReplaced: "—" },
+  { id: 5, workOrderCode: "WO-6805", vehicleCode: "BOX-106", serviceType: "Transmission fluid flush", vendorName: "DC Fleet Repair", priority: "Medium", cost: 420, currency: "USD", downtimeHours: 3.0, completedAt: "2026-05-18", issueType: "Hard shifting reported by driver", technicianName: "James Holden", partsReplaced: "Transmission fluid" },
+  { id: 6, workOrderCode: "WO-6806", vehicleCode: "KSA-REEFER-119", serviceType: "Reefer compressor overhaul", vendorName: "Jeddah Cold Service", priority: "Critical", cost: 4800, currency: "SAR", downtimeHours: 8.0, completedAt: "2026-05-20", issueType: "Compressor failure mid-route", technicianName: "Tariq Al-Saud", partsReplaced: "Compressor clutch, relay" },
+  { id: 7, workOrderCode: "WO-6807", vehicleCode: "DXB-VAN-045", serviceType: "Battery replacement", vendorName: "Internal", priority: "High", cost: 320, currency: "AED", downtimeHours: 1.0, completedAt: "2026-05-21", issueType: "Slow crank, battery voltage low", technicianName: "Ravi Kumar", partsReplaced: "12V battery" },
+  { id: 8, workOrderCode: "WO-6808", vehicleCode: "KSA-REEFER-214", serviceType: "AC system recharge", vendorName: "Riyadh Tire Center", priority: "Normal", cost: 280, currency: "SAR", downtimeHours: 1.5, completedAt: "2026-05-22", issueType: "Cabin AC not cooling adequately", technicianName: "Khalid Omar", partsReplaced: "Refrigerant R134a" },
+  { id: 9, workOrderCode: "WO-6809", vehicleCode: "BOX-106", serviceType: "Engine diagnostic scan", vendorName: "DC Fleet Repair", priority: "High", cost: 350, currency: "USD", downtimeHours: 2.5, completedAt: "2026-05-23", issueType: "Check engine light on", technicianName: "James Holden", partsReplaced: "—" },
+  { id: 10, workOrderCode: "WO-6810", vehicleCode: "KSA-REEFER-119", serviceType: "Coolant system flush", vendorName: "Jeddah Cold Service", priority: "Medium", cost: 520, currency: "SAR", downtimeHours: 2.0, completedAt: "2026-05-24", issueType: "Coolant level dropping slowly", technicianName: "Tariq Al-Saud", partsReplaced: "Coolant, hose clamp" },
+];
+
+export const downtimeEvents = [
+  { id: 1, vehicleCode: "BOX-106", downtimeReason: "Brake failure — rear axle", startDate: "2026-05-10 06:00", endDate: "2026-05-10 12:00", durationHours: 6.0, affectedSystem: "Braking", resolutionDescription: "Replaced rear brake pads and resurfaced rotors", costImpact: 1820, revenueLoss: 1680, priority: "Critical", status: "Resolved" },
+  { id: 2, vehicleCode: "KSA-REEFER-119", downtimeReason: "Reefer compressor malfunction", startDate: "2026-05-12 08:30", endDate: "2026-05-12 16:30", durationHours: 8.0, affectedSystem: "Refrigeration", resolutionDescription: "Overhauled compressor, replaced clutch and relay", costImpact: 4800, revenueLoss: 4200, priority: "Critical", status: "Resolved" },
+  { id: 3, vehicleCode: "DXB-VAN-045", downtimeReason: "Battery depletion", startDate: "2026-05-14 07:00", endDate: "2026-05-14 08:30", durationHours: 1.5, affectedSystem: "Electrical", resolutionDescription: "Replaced 12V battery and tested charging system", costImpact: 320, revenueLoss: 420, priority: "High", status: "Resolved" },
+  { id: 4, vehicleCode: "KSA-REEFER-214", downtimeReason: "Tire blowout — steer axle", startDate: "2026-05-16 14:00", endDate: "2026-05-16 16:00", durationHours: 2.0, affectedSystem: "Tires / Wheels", resolutionDescription: "Replaced steer tire, checked alignment", costImpact: 640, revenueLoss: 560, priority: "High", status: "Resolved" },
+  { id: 5, vehicleCode: "BOX-106", downtimeReason: "Transmission slipping", startDate: "2026-05-18 09:00", endDate: "2026-05-18 12:00", durationHours: 3.0, affectedSystem: "Powertrain", resolutionDescription: "Flushed transmission fluid, replaced filter", costImpact: 420, revenueLoss: 840, priority: "Medium", status: "Resolved" },
+  { id: 6, vehicleCode: "KSA-REEFER-119", downtimeReason: "Engine overheating", startDate: "2026-05-20 11:00", endDate: "2026-05-20 13:00", durationHours: 2.0, affectedSystem: "Cooling", resolutionDescription: "Flushed coolant system, replaced thermostat", costImpact: 520, revenueLoss: 1100, priority: "High", status: "Resolved" },
+  { id: 7, vehicleCode: "BOX-106", downtimeReason: "Electrical short — tail lights", startDate: "2026-05-23 07:30", endDate: "2026-05-23 10:00", durationHours: 2.5, affectedSystem: "Electrical", resolutionDescription: "Repaired wiring harness, replaced fuse", costImpact: 350, revenueLoss: 700, priority: "Medium", status: "Resolved" },
+  { id: 8, vehicleCode: "KSA-REEFER-214", downtimeReason: "GPS module failure", startDate: "2026-05-24 10:00", endDate: "2026-05-24 11:30", durationHours: 1.5, affectedSystem: "Telematics", resolutionDescription: "Replaced GPS antenna and rebooted module", costImpact: 180, revenueLoss: 420, priority: "Normal", status: "Resolved" },
+];
+
 export const supportTickets = [
   { ticketId: "TCK-2201", customer: "Al Noor Pharma Distribution", shipment: "SHP-6202", issueType: "Temperature Breach", priority: "Critical", slaTimer: "01:42 remaining", assignedTeam: "Cold Chain Support", status: "Open", createdDate: "2026-05-26" },
   { ticketId: "TCK-2202", customer: "DesertCart Fulfillment", shipment: "SHP-6203", issueType: "Missing POD", priority: "Medium", slaTimer: "05:10 remaining", assignedTeam: "Customer Ops", status: "In Progress", createdDate: "2026-05-26" },
@@ -123,5 +147,7 @@ export const mockData: Record<string, AnyRecord[]> = {
   invoices,
   incidents,
   maintenance,
+  serviceHistory,
+  downtimeEvents,
   supportTickets,
 };

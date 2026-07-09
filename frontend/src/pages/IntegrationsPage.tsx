@@ -7,6 +7,7 @@ import {
   Building2,
   CheckCircle2,
   Cloud,
+  Download,
   Fuel,
   Link2,
   MapPinned,
@@ -16,11 +17,12 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Warehouse,
   X,
   Zap,
 } from "lucide-react";
-import { exportCsv, EmptyState, ErrorState, LoadingState, PageHeader, Select, StatusBadge } from "@/components/ui";
+import { exportCsv, EmptyState, ErrorState, KpiCard, LoadingState, Select, StatusBadge } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import {
   integrationsApi,
@@ -276,10 +278,10 @@ function ConfigDrawer({
           )}
 
           <div className="flex items-center gap-3 border-t border-slate-100 pt-2">
-            <button type="submit" className="btn-primary flex-1" disabled={saveMut.isPending}>
+            <button type="submit" className="fh-btn-primary flex-1 cursor-pointer" disabled={saveMut.isPending}>
               {saveMut.isPending ? "Saving..." : "Save configuration"}
             </button>
-            <button type="button" className="btn-ghost" onClick={onClose}>
+            <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>
               Cancel
             </button>
             {saved && (
@@ -376,60 +378,84 @@ export function IntegrationsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 py-6">
-      <PageHeader
-        eyebrow="Connector hub"
-        title="Integrations"
-        description="Live connector hub for ERP, accounting, telematics, fuel cards, routing, messaging, WMS, IoT, and compliance. Unrelated categories have been removed."
-        actions={
-          <>
-            <button
-              type="button"
-              className="btn-ghost text-sm"
-              onClick={() => exportCsv("integrations", integrations)}
-            >
-              Export CSV
-            </button>
-            <button
-              type="button"
-              className="btn-ghost text-sm"
-              onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}
-            >
-              Refresh
-            </button>
-          </>
-        }
-      />
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          { label: "Connectors", val: summary.total, accent: "text-slate-900" },
-          { label: "Connected", val: summary.connected, accent: "text-teal-600" },
-          { label: "Pending", val: summary.pending, accent: summary.pending > 0 ? "text-amber-600" : "text-slate-400" },
-          { label: "Errors", val: summary.errors, accent: summary.errors > 0 ? "text-red-600" : "text-slate-400" },
-          { label: "Categories", val: summary.categories, accent: "text-slate-600" },
-        ].map((item) => (
-          <div key={item.label} className="panel flex flex-col gap-1">
-            <span className={`text-xl font-bold ${item.accent}`}>{item.val}</span>
-            <span className="text-xs font-medium text-slate-500">{item.label}</span>
+    <div className="space-y-6 pb-10">
+      {/* ── Hero ── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Zap className="h-3 w-3" /> Connector Hub
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">ERP · Telematics · Fuel · Maps · Messaging · WMS · IoT · Compliance</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">Integrations</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Live connector hub for ERP, accounting, telematics, fuel cards, routing, messaging, WMS, IoT, and compliance.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => exportCsv("integrations", integrations)}><Download className="h-4 w-4" /> Export CSV</button>
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}><RefreshCw className="h-4 w-4" /> Refresh</button>
+            </div>
           </div>
+        </div>
+      </header>
+
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Connector health</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {summary.connected} of {summary.total} connectors live{summary.errors > 0 ? ` · ${summary.errors} need attention` : ""}{summary.pending > 0 ? ` · ${summary.pending} pending` : ""}
+            </p>
+          </div>
+        </div>
+        {summary.errors > 0 && (
+          <button className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto" onClick={() => setStatusFilter("Error")}>
+            Review errors <AlertTriangle className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* ── KPIs ── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {[
+          { label: "Connectors", value: summary.total, status: "Active" },
+          { label: "Connected", value: summary.connected, status: "Healthy" },
+          { label: "Pending", value: summary.pending, status: summary.pending > 0 ? "Review" : "Active" },
+          { label: "Errors", value: summary.errors, status: summary.errors > 0 ? "Critical" : "Active" },
+          { label: "Categories", value: summary.categories, status: "Info" },
+        ].map((item) => (
+          <KpiCard key={item.label} label={item.label} value={String(item.value)} status={item.status} />
         ))}
       </div>
 
-      <div className="flex gap-1 self-start rounded-xl border border-slate-200 bg-slate-50 p-1">
-        {(["Connectors", "Activity Log"] as Tab[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => setTab(item)}
-            className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition ${
-              tab === item ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {item === "Connectors" ? <Link2 className="h-3.5 w-3.5" /> : <Activity className="h-3.5 w-3.5" />}
-            {item}
-          </button>
-        ))}
+      {/* ── Tab navigation ── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-2 gap-1.5">
+          {(["Connectors", "Activity Log"] as Tab[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setTab(item)}
+              className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                tab === item ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item}</span>
+              <span className={`mt-0.5 text-sm font-bold ${tab === item ? "text-teal-700" : "text-slate-900"}`}>{item === "Connectors" ? filtered.length : activity.length}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "Connectors" && (
@@ -590,25 +616,23 @@ export function IntegrationsPage() {
           {activity.length === 0 ? (
             <EmptyState title="No activity yet" subtitle="Connect or sync a connector to populate the live event feed." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     {["Connector", "Event", "Records", "Timestamp", "Status"].map((header) => (
-                      <th key={header} className="pb-2 pr-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {header}
-                      </th>
+                      <th key={header} className="px-4 py-2.5 text-left">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {activity.map((row) => (
-                    <tr key={row.id} className="transition hover:bg-slate-50">
-                      <td className="whitespace-nowrap py-2.5 pr-4 text-xs font-medium text-slate-800">{row.integration}</td>
-                      <td className="py-2.5 pr-4 text-xs text-slate-600">{row.event}</td>
-                      <td className="py-2.5 pr-4 text-xs font-mono text-slate-500">{row.records > 0 ? row.records.toLocaleString() : "—"}</td>
-                      <td className="whitespace-nowrap py-2.5 pr-4 text-xs text-slate-400">{row.ts}</td>
-                      <td className="py-2.5">
+                    <tr key={row.id} className="cursor-pointer transition-colors hover:bg-slate-50">
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs font-medium text-slate-800">{row.integration}</td>
+                      <td className="px-4 py-2.5 text-xs text-slate-600">{row.event}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-slate-500">{row.records > 0 ? row.records.toLocaleString() : "\u2014"}</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-slate-400">{row.ts}</td>
+                      <td className="px-4 py-2.5">
                         <StatusBadge status={row.status} />
                       </td>
                     </tr>

@@ -1,6 +1,10 @@
 import axios from "axios";
 import type { ApiEnvelope } from "@/types";
 import { getGlobalCsrfToken, setGlobalCsrfToken } from "@/hooks/useCsrf";
+import { createMockAdapter } from "@/services/devMockAdapter";
+
+// ── DEV MOCK: set to false when the backend is running ──
+export const DEV_MOCK_ENABLED = true;
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
@@ -25,6 +29,12 @@ export const apiClient = axios.create({
   timeout: 30000,
   withCredentials: true,
 });
+
+// Install mock adapter so all requests return seed data (no backend needed)
+if (DEV_MOCK_ENABLED) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiClient.defaults.adapter = createMockAdapter((axios.defaults.adapter ?? undefined) as any);
+}
 
 // Request interceptor: Add auth token and CSRF token
 apiClient.interceptors.request.use((config) => {
@@ -102,6 +112,11 @@ export const nodeApiClient = axios.create({
   headers: { Accept: "application/json" },
   timeout: 15000,
 });
+
+if (DEV_MOCK_ENABLED) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodeApiClient.defaults.adapter = createMockAdapter((axios.defaults.adapter ?? undefined) as any);
+}
 
 nodeApiClient.interceptors.request.use((config) => {
   const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
