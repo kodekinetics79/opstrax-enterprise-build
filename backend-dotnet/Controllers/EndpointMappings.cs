@@ -10032,10 +10032,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             try
             {
+                // Great-circle (Haversine) distance in METRES, in pure SQL — Postgres has
+                // no MySQL ST_Distance_Sphere/POINT(x,y). Earth radius 6371000 m. A row is
+                // returned when the vehicle is farther from the geofence centre than its
+                // radius (i.e. outside it). Guards against null centre/radius.
                 var breached = await db.QuerySingleAsync(
                     @"SELECT g.id, g.name FROM geofences g
                       WHERE g.company_id=@cid AND g.status='Active'
-                        AND ST_Distance_Sphere(POINT(g.center_lng, g.center_lat), POINT(@lng, @lat)) > g.radius_meters
+                        AND g.center_lat IS NOT NULL AND g.center_lng IS NOT NULL AND g.radius_meters IS NOT NULL
+                        AND (2 * 6371000 * ASIN(SQRT(
+                              POWER(SIN(RADIANS(@lat - g.center_lat) / 2), 2)
+                              + COS(RADIANS(g.center_lat)) * COS(RADIANS(@lat))
+                                * POWER(SIN(RADIANS(@lng - g.center_lng) / 2), 2)
+                            ))) > g.radius_meters
                       LIMIT 1",
                     c =>
                     {
