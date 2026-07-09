@@ -114,9 +114,15 @@ public sealed class TelemetrySimulatorBackgroundService(
 
               -- Wake a realistic majority of assigned units so the board reads as an
               -- active fleet; keep ~25% idle/off for honesty. Deterministic by id.
+              -- Match ANY non-active state (Off, NULL, '', or any legacy value that isn't
+              -- Moving/Idle) — earlier this only caught 'Off', so vehicles seeded with a
+              -- NULL/empty engine_status stayed frozen and the map looked dead. This makes
+              -- the demo self-heal to a lively fleet on any DB state, in every environment.
               UPDATE latest_vehicle_positions SET engine_status='Moving',
-                     speed_mph=GREATEST(speed_mph, 28), received_at=NOW(), event_time=NOW()
-              WHERE engine_status='Off' AND (vehicle_id % 4) <> 0;", ct: ct);
+                     speed_mph=GREATEST(COALESCE(speed_mph,0), 28), received_at=NOW(), event_time=NOW()
+              WHERE COALESCE(NULLIF(TRIM(engine_status), ''), 'Off') NOT IN ('Moving','Idle')
+                AND lat IS NOT NULL AND lng IS NOT NULL
+                AND (vehicle_id % 4) <> 0;", ct: ct);
 
         // Step 1 — advance the fleet. Moving units glide along their heading and drift
         // speed/heading for life; idle units stay parked but fresh; any unit that

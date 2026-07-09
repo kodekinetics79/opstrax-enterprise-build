@@ -68,7 +68,13 @@ public class CsrfMiddleware
             !string.Equals(path, "/api/platform/auth/logout", StringComparison.OrdinalIgnoreCase) &&
             // Pre-session like login: the invited operator has no bearer/cookie yet.
             // Token-gated + lockout-limited inside the handler.
-            !string.Equals(path, "/api/platform/auth/accept-invite", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(path, "/api/platform/auth/accept-invite", StringComparison.OrdinalIgnoreCase) &&
+            // Device-authenticated machine-to-machine ingest (native GPS/OBD/telemetry).
+            // These carry NO cookie — they authenticate with X-Device-Key + HMAC-SHA256
+            // signature + nonce (stronger than CSRF). A physical device/tracker cannot
+            // hold a CSRF cookie, so requiring one here would break every real device.
+            !string.Equals(path, "/api/telemetry/ingest", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(path, "/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase))
         {
             var headerToken = context.Request.Headers[CSRF_TOKEN_HEADER].ToString();
 

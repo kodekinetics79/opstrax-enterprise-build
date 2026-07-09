@@ -9890,7 +9890,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                  client_generated_id, idempotency_key, event_time, received_at)
               VALUES
                 (@companyId, @vehicleId, @deviceId, @driverId, @lat, @lng, @speedMph, @heading,
-                 @acc, @eventType, @eng, @fuel, @odo, @batt, @nonce, 'device', NOW(), NOW())",
+                 @acc, @eventType, @eng, @fuel, @odo, @batt, @nonce, 'device', @sourceChannel,
+                 @correlationId, @causationId, @clientGeneratedId, @idempotencyKey, NOW(), NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -9927,8 +9928,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      open_alert_count, next_action, summary_json, updated_at)
                   VALUES
                     (@companyId, @vehicleId, @deviceId, @driverId, @lat, @lng, @speedMph, @heading,
-                     @acc, @eng, @fuel, @odo, @batt, @nonce, 'device', @sourceChannel, @correlationId,
-                     @causationId, @clientGeneratedId, @idempotencyKey, NOW(), NOW())
+                     @acc, @eng, @fuel, @odo, @batt, NOW(), NOW(), 1, @sourceEventId, @correlationId,
+                     @causationId, @sourceChannel, @telemetryStatus, @riskLevel, @alertCount,
+                     @openAlertCount, @nextAction, @summaryJson::jsonb, NOW())
                   ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                     device_id=EXCLUDED.device_id, driver_id=EXCLUDED.driver_id,
                     lat=EXCLUDED.lat, lng=EXCLUDED.lng, speed_mph=EXCLUDED.speed_mph,
