@@ -11853,9 +11853,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (string.IsNullOrEmpty(rawKey))
             return Results.BadRequest(ApiResponse<object>.Fail("X-Device-Key header required"));
 
-        // Resolve device from hashed key — same pattern as telemetry ingest.
+        // Resolve device from hashed key — same pattern as telemetry ingest. eld_devices
+        // has NO device_id column; the device identifier is device_serial (which is also
+        // what fault_codes.device_id, a VARCHAR, stores). Alias it as deviceSerial.
         var device = (await db.QueryAsync(
-            @"SELECT d.id, d.company_id, d.vehicle_id, d.device_id, d.status
+            @"SELECT d.id, d.company_id, d.vehicle_id, d.device_serial, d.status
               FROM eld_devices d
               WHERE encode(sha256(@key::bytea), 'hex') = d.api_key_hash AND d.deleted_at IS NULL LIMIT 1",
             c => c.Parameters.AddWithValue("@key", rawKey), ct)).FirstOrDefault();
@@ -11865,7 +11867,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var companyId = Convert.ToInt64(device["companyId"]);
         var vehicleId = device["vehicleId"] is null ? (long?)null : Convert.ToInt64(device["vehicleId"]);
-        var deviceId  = device["deviceId"]?.ToString() ?? "";
+        var deviceId  = device["deviceSerial"]?.ToString() ?? "";
 
         // Read body.
         var body = await http.Request.ReadFromJsonAsync<FaultCodeIngestBody>(ct);
@@ -11881,7 +11883,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     (company_id, device_id, vehicle_id, code_type, code, description,
                      severity, occurrence_count, status)
                   VALUES (@cid, @did, @vid, @ctype, @code, @desc, @sev, 1, 'active')
-                  ON CONFLICT (company_id, device_id, code_type, code) DO UPDATE SET
+                  ON CONFLICT (device_id, code, status) DO UPDATE SET
                     last_seen_at=NOW(),
                     occurrence_count=fault_codes.occurrence_count+1,
                     description=COALESCE(EXCLUDED.description, fault_codes.description),

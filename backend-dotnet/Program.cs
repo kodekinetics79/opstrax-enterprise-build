@@ -466,6 +466,9 @@ app.UseWhen(
                 path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
                 // Telemetry ingest — device-authenticated via X-Device-Key header, not user session
                 path.StartsWith("/api/telemetry/ingest", StringComparison.OrdinalIgnoreCase) ||
+                // OBD/J1939 fault-code ingest — same device (X-Device-Key + HMAC) auth as
+                // telemetry ingest; a physical diagnostics device has no user bearer token.
+                path.StartsWith("/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
                 // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
