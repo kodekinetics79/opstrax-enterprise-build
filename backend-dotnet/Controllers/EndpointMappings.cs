@@ -452,13 +452,18 @@ public static partial class EndpointMappings
         app.MapPost("/api/geofences", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
             if (IsBlank(Get(body, "name"))) return Results.BadRequest(ApiResponse<object>.Fail("Name is required"));
-            var id = await db.InsertAsync("INSERT INTO geofences (company_id,name,geofence_type,center_lat,center_lng,radius_meters,status) VALUES (@companyId,@name,COALESCE(@type,'Circle'),@lat,@lng,COALESCE(@radius,500),'Active')", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@name", Get(body,"name")); c.Parameters.AddWithValue("@type", Get(body,"geofenceType")); c.Parameters.AddWithValue("@lat", Get(body,"centerLat")); c.Parameters.AddWithValue("@lng", Get(body,"centerLng")); c.Parameters.AddWithValue("@radius", Get(body,"radiusMeters")); }, ct);
+            // Polygon geofences carry a polygon_json array of [lat,lng] vertices; circle
+            // geofences carry center + radius. Type defaults to Circle for back-compat.
+            // Pass the polygon's literal JSON text to ::jsonb (Get() would double-encode it).
+            var polygon = GeofencePolygonJson(body);
+            var id = await db.InsertAsync("INSERT INTO geofences (company_id,name,geofence_type,center_lat,center_lng,radius_meters,polygon_json,status) VALUES (@companyId,@name,COALESCE(@type,'Circle'),@lat,@lng,COALESCE(@radius,500),@polygon::jsonb,'Active')", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@name", Get(body,"name")); c.Parameters.AddWithValue("@type", Get(body,"geofenceType")); c.Parameters.AddWithValue("@lat", Get(body,"centerLat")); c.Parameters.AddWithValue("@lng", Get(body,"centerLng")); c.Parameters.AddWithValue("@radius", Get(body,"radiusMeters")); c.Parameters.AddWithValue("@polygon", (object?)polygon ?? DBNull.Value); }, ct);
             await audit.LogAsync(http, "geofence.created", "Geofence", id, ct: ct);
             return Results.Created($"/api/geofences/{id}", ApiResponse<object>.Ok(new { id }, "Geofence created"));
         });
         app.MapPut("/api/geofences/{id:long}", async (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
-            await db.ExecuteAsync("UPDATE geofences SET name=COALESCE(@name,name), radius_meters=COALESCE(@radius,radius_meters), status=COALESCE(@status,status), center_lat=COALESCE(@lat,center_lat), center_lng=COALESCE(@lng,center_lng) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@name", Get(body,"name")); c.Parameters.AddWithValue("@radius", Get(body,"radiusMeters")); c.Parameters.AddWithValue("@status", Get(body,"status")); c.Parameters.AddWithValue("@lat", Get(body,"centerLat")); c.Parameters.AddWithValue("@lng", Get(body,"centerLng")); }, ct);
+            var polygon = GeofencePolygonJson(body);
+            await db.ExecuteAsync("UPDATE geofences SET name=COALESCE(@name,name), geofence_type=COALESCE(@type,geofence_type), radius_meters=COALESCE(@radius,radius_meters), status=COALESCE(@status,status), center_lat=COALESCE(@lat,center_lat), center_lng=COALESCE(@lng,center_lng), polygon_json=COALESCE(@polygon::jsonb,polygon_json) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@name", Get(body,"name")); c.Parameters.AddWithValue("@type", Get(body,"geofenceType")); c.Parameters.AddWithValue("@radius", Get(body,"radiusMeters")); c.Parameters.AddWithValue("@status", Get(body,"status")); c.Parameters.AddWithValue("@lat", Get(body,"centerLat")); c.Parameters.AddWithValue("@lng", Get(body,"centerLng")); c.Parameters.AddWithValue("@polygon", (object?)polygon ?? DBNull.Value); }, ct);
             await audit.LogAsync(http, "geofence.updated", "Geofence", id, ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Geofence updated"));
         });
@@ -6511,6 +6516,75 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { geocoded = updated, candidates = stale.Count }, $"Reverse-geocoded {updated} position(s)"));
     }
 
+    // Extract a geofence polygon (array of [lat,lng] vertices) from the request body as
+    // literal JSON text for the ::jsonb cast. Body values arrive as JsonElement; Get()
+    // would stringify+double-encode an array, so read the raw element directly.
+    private static string? GeofencePolygonJson(Dictionary<string, object?> body)
+    {
+        if (!body.TryGetValue("polygonJson", out var raw) && !body.TryGetValue("polygon", out raw)) return null;
+        if (raw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array && je.GetArrayLength() >= 3)
+            return je.GetRawText();
+        return null;
+    }
+
+    // Returns the first active POLYGON geofence the point is OUTSIDE of (a breach), or
+    // null. polygon_json is an array of [lat,lng] vertices. Point-in-polygon uses the
+    // standard ray-casting (even-odd) test in C# — accurate for arbitrary simple polygons
+    // and avoids a PostGIS dependency.
+    private static async Task<Dictionary<string, object?>?> FindPolygonBreachAsync(
+        Database db, long companyId, double lat, double lng, CancellationToken ct)
+    {
+        var polys = await db.QueryAsync(
+            "SELECT id, name, polygon_json FROM geofences WHERE company_id=@cid AND status='Active' AND polygon_json IS NOT NULL",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        foreach (var g in polys)
+        {
+            var verts = ParsePolygon(g.GetValueOrDefault("polygonJson"));
+            if (verts.Count < 3) continue;
+            if (!PointInPolygon(lat, lng, verts))
+                return new Dictionary<string, object?> { ["id"] = g.GetValueOrDefault("id"), ["name"] = g.GetValueOrDefault("name") };
+        }
+        return null;
+    }
+
+    private static List<(double Lat, double Lng)> ParsePolygon(object? raw)
+    {
+        var result = new List<(double, double)>();
+        var json = raw as string ?? raw?.ToString();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return result;
+            foreach (var v in doc.RootElement.EnumerateArray())
+            {
+                if (v.ValueKind == System.Text.Json.JsonValueKind.Array && v.GetArrayLength() >= 2
+                    && v[0].TryGetDouble(out var la) && v[1].TryGetDouble(out var ln))
+                    result.Add((la, ln));
+                else if (v.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && v.TryGetProperty("lat", out var laEl) && v.TryGetProperty("lng", out var lnEl)
+                    && laEl.TryGetDouble(out var la2) && lnEl.TryGetDouble(out var ln2))
+                    result.Add((la2, ln2));
+            }
+        }
+        catch { /* malformed → empty (treated as no polygon) */ }
+        return result;
+    }
+
+    private static bool PointInPolygon(double lat, double lng, List<(double Lat, double Lng)> poly)
+    {
+        bool inside = false;
+        for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
+        {
+            var (yi, xi) = (poly[i].Lat, poly[i].Lng);
+            var (yj, xj) = (poly[j].Lat, poly[j].Lng);
+            if (((yi > lat) != (yj > lat)) &&
+                (lng < (xj - xi) * (lat - yi) / ((yj - yi) == 0 ? 1e-12 : (yj - yi)) + xi))
+                inside = !inside;
+        }
+        return inside;
+    }
+
     private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)
     {
         object? Str(string k) => Get(body, k) is { } v && v is not DBNull ? v : DBNull.Value;
@@ -10083,13 +10157,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             try
             {
-                // Great-circle (Haversine) distance in METRES, in pure SQL — Postgres has
-                // no MySQL ST_Distance_Sphere/POINT(x,y). Earth radius 6371000 m. A row is
-                // returned when the vehicle is farther from the geofence centre than its
-                // radius (i.e. outside it). Guards against null centre/radius.
+                // CIRCLE geofences — great-circle (Haversine) distance in METRES, pure SQL
+                // (Postgres has no MySQL ST_Distance_Sphere/POINT). Earth radius 6371000 m.
+                // A row is returned when the vehicle is OUTSIDE the circle. Only circle
+                // geofences (polygon_json IS NULL); polygons are checked separately below.
                 var breached = await db.QuerySingleAsync(
                     @"SELECT g.id, g.name FROM geofences g
-                      WHERE g.company_id=@cid AND g.status='Active'
+                      WHERE g.company_id=@cid AND g.status='Active' AND g.polygon_json IS NULL
                         AND g.center_lat IS NOT NULL AND g.center_lng IS NOT NULL AND g.radius_meters IS NOT NULL
                         AND (2 * 6371000 * ASIN(SQRT(
                               POWER(SIN(RADIANS(@lat - g.center_lat) / 2), 2)
@@ -10103,6 +10177,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                         c.Parameters.AddWithValue("@lat", (double)body.Lat);
                         c.Parameters.AddWithValue("@lng", (double)body.Lng);
                     }, ct);
+
+                // POLYGON geofences — a vehicle OUTSIDE a polygon geofence is a breach.
+                // Point-in-polygon (ray casting) is done in C# for correctness/clarity.
+                if (breached is null)
+                    breached = await FindPolygonBreachAsync(db, companyId, (double)body.Lat, (double)body.Lng, ct);
                 if (breached is not null)
                 {
                     var gfId   = Convert.ToInt64(breached["id"]);

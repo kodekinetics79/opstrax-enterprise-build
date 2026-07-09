@@ -65,14 +65,37 @@ function entityKey(entity: AnyRecord, index: number): string {
 }
 
 function makeGeofenceCircle(zone: AnyRecord, index: number): L.Circle | null {
-  const lat = Number(zone.lat ?? zone.latitude ?? zone.center_lat);
-  const lng = Number(zone.lng ?? zone.longitude ?? zone.center_lng);
+  const lat = Number(zone.lat ?? zone.latitude ?? zone.center_lat ?? zone.centerLat);
+  const lng = Number(zone.lng ?? zone.longitude ?? zone.center_lng ?? zone.centerLng);
   if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return null;
   return L.circle([lat, lng], {
-    radius: Number(zone.radius_meters ?? 8000),
+    radius: Number(zone.radius_meters ?? zone.radiusMeters ?? 8000),
     color: "#14b8a6",
     fillColor: "#14b8a6",
     fillOpacity: 0.06,
+    weight: 1.5,
+  });
+}
+
+// Arbitrary-shape geofence: polygonJson is an array of [lat,lng] vertices (or {lat,lng}).
+// Returns a Leaflet polygon, or null if the shape has fewer than 3 valid vertices.
+function makeGeofencePolygon(zone: AnyRecord): L.Polygon | null {
+  const raw = zone.polygonJson ?? zone.polygon_json;
+  let verts: unknown[] = [];
+  if (Array.isArray(raw)) verts = raw;
+  else if (typeof raw === "string") { try { verts = JSON.parse(raw); } catch { return null; } }
+  const points = verts
+    .map((v) => {
+      if (Array.isArray(v) && v.length >= 2) return [Number(v[0]), Number(v[1])] as [number, number];
+      if (v && typeof v === "object" && "lat" in v && "lng" in v) return [Number((v as AnyRecord).lat), Number((v as AnyRecord).lng)] as [number, number];
+      return null;
+    })
+    .filter((p): p is [number, number] => p !== null && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (points.length < 3) return null;
+  return L.polygon(points, {
+    color: "#7c3aed",
+    fillColor: "#7c3aed",
+    fillOpacity: 0.07,
     weight: 1.5,
   });
 }
@@ -117,7 +140,7 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const coordsRef = useRef<Map<string, [number, number]>>(new Map());
   const hasFitRef = useRef(false);
-  const geofenceLayersRef = useRef<L.Circle[]>([]);
+  const geofenceLayersRef = useRef<(L.Circle | L.Polygon)[]>([]);
   const routeLayersRef = useRef<L.Polyline[]>([]);
   // Store onSelect in a ref so markers don't need to be recreated when it changes
   const onSelectRef = useRef(onSelect);
@@ -272,10 +295,13 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
     geofenceLayersRef.current = [];
 
     geofences.forEach((zone, index) => {
-      const circle = makeGeofenceCircle(zone, index);
-      if (circle) {
-        circle.addTo(map).bindTooltip(String(zone.name ?? "Zone"), { permanent: false, direction: "center" });
-        geofenceLayersRef.current.push(circle);
+      // Polygon geofences (polygonJson present) render as arbitrary shapes; everything
+      // else falls back to the circle (center + radius) rendering.
+      const hasPolygon = zone.polygonJson ?? zone.polygon_json;
+      const layer = hasPolygon ? makeGeofencePolygon(zone) : makeGeofenceCircle(zone, index);
+      if (layer) {
+        layer.addTo(map).bindTooltip(String(zone.name ?? "Zone"), { permanent: false, direction: "center" });
+        geofenceLayersRef.current.push(layer);
       }
     });
   }, [geofences]);
