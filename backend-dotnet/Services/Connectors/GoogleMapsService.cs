@@ -58,6 +58,30 @@ public sealed class GoogleMapsService(
         }
     }
 
+    // Reverse geocode a coordinate → a human street address. Used to label live vehicle
+    // positions with "106 W 1st St, Los Angeles" instead of raw lat/lng.
+    public async Task<GeoResult> ReverseGeocodeAsync(string apiKey, double lat, double lng, CancellationToken ct)
+    {
+        try
+        {
+            var client = httpFactory.CreateClient("connector-http");
+            client.Timeout = TimeSpan.FromSeconds(10);
+            var url = $"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}&key={Uri.EscapeDataString(apiKey)}";
+            using var resp = await client.GetAsync(url, ct);
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() : "UNKNOWN";
+            if (status != "OK" || !doc.RootElement.TryGetProperty("results", out var results) || results.GetArrayLength() == 0)
+                return new GeoResult(false, $"Reverse geocode failed ({status})");
+            var addr = results[0].TryGetProperty("formatted_address", out var fa) ? fa.GetString() : null;
+            return new GeoResult(true, "OK", lat, lng, addr);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Reverse geocode failed for {Lat},{Lng}", lat, lng);
+            return new GeoResult(false, $"Reverse geocode error: {ex.Message}");
+        }
+    }
+
     public async Task<RouteResult> DirectionsAsync(string apiKey, string origin, string destination, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(destination))

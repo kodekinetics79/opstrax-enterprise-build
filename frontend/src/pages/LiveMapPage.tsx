@@ -140,6 +140,25 @@ export function LiveMapPage() {
   const telemetry = useLiveTelemetry();
   const qc = useQueryClient();
 
+  // Reverse-geocode live positions to street addresses (server-side, cached + billing-
+  // aware: only geocodes positions with no address or that moved >~55 m). Runs once on
+  // mount and every 60s; best-effort — a missing/undconfigured Maps key just no-ops and
+  // the map falls back to coordinates. After a pass, refresh positions so labels appear.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        await apiClient.post("/api/maps/reverse-geocode-positions?limit=40");
+        if (!cancelled) await telemetry.refresh();
+      } catch { /* no Maps key / transient — map still works on coordinates */ }
+    };
+    void run();
+    const timer = window.setInterval(run, 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+    // telemetry.refresh is stable; run once on mount + interval.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const detail = useQuery({
     queryKey: ["live-map", "entity", selected?.vehicleId ?? selected?.id],
     queryFn: () => controlTowerApi.entity("vehicle", (selected?.vehicleId ?? selected?.id) as string | number),
@@ -207,6 +226,9 @@ export function LiveMapPage() {
         heading: live.heading,
         secondsSincePing: live.secondsSincePing,
         isStale: live.isStale,
+        // Reverse-geocoded street address for the map popup (may be undefined until the
+        // reverse-geocode pass has run for this position).
+        address: (live as { address?: string }).address,
       };
     });
   }, [baseEntities, telemetry.positions]);

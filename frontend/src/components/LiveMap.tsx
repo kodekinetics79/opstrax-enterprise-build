@@ -198,12 +198,15 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       const camStatus = String(entity.cameraStatus ?? entity.camera_status ?? "--");
       const connectivity = String(entity.connectivityStatus ?? entity.connectivity_status ?? "--");
       const connectivityIssues = String(entity.connectivityIssues ?? entity.connectivity_issues ?? "None");
+      // Reverse-geocoded street address (cached server-side); shown instead of raw coords.
+      const address = String(entity.address ?? "").trim();
 
       const popupHtml =
         `<div style="font-family:system-ui;font-size:12px;min-width:190px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
           <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${isStale ? "Offline" : status}</p>
+          ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
           <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Device: ${deviceStatus} &bull; Cam: ${camStatus}</p>
           <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Connectivity: ${connectivity} &bull; ${connectivityIssues}</p>
         </div>`;

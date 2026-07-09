@@ -629,6 +629,8 @@ public static partial class EndpointMappings
         // Server-side Google Maps (uses the tenant's stored, encrypted Maps key).
         app.MapGet("/api/maps/geocode", MapsGeocode);
         app.MapGet("/api/maps/directions", MapsDirections);
+        // Batch reverse-geocode live vehicle positions → cached street addresses.
+        app.MapPost("/api/maps/reverse-geocode-positions", MapsReverseGeocodePositions);
 
         // ── Vehicle Assignments / Owners ──
         app.MapGet("/api/vehicle-assignments", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
@@ -6460,6 +6462,55 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : Results.Ok(ApiResponse<object>.Fail(r.Message));
     }
 
+    // ── POST /api/maps/reverse-geocode-positions ───────────────────────────────────
+    // Labels live vehicle positions with street addresses. Reverse-geocodes only rows
+    // that NEED it — no cached address, or the vehicle has moved >~50 m from where it
+    // was last geocoded — so we don't hit Google (or its billing) on every position
+    // tick. The address is cached on latest_vehicle_positions and returned by the
+    // positions read API. Bounded per call (?limit=, default 25) to control cost.
+    private static async Task<IResult> MapsReverseGeocodePositions(HttpContext http, Database db,
+        Opstrax.Api.Services.Connectors.GoogleMapsService maps, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.live_state.read") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var limit = int.TryParse(http.Request.Query["limit"].FirstOrDefault(), out var l) ? Math.Clamp(l, 1, 100) : 25;
+        var key = await maps.ResolveKeyAsync(db, companyId, ct);
+        if (string.IsNullOrWhiteSpace(key))
+            return Results.Ok(ApiResponse<object>.Fail("Google Maps is not connected. Configure the Google Maps Platform connector with an API key first."));
+
+        // Candidates: no address yet, OR moved noticeably (~0.0005° ≈ 55 m) since last geocode.
+        var stale = await db.QueryAsync(
+            @"SELECT vehicle_id, lat, lng FROM latest_vehicle_positions
+              WHERE company_id=@cid AND lat IS NOT NULL AND lng IS NOT NULL
+                AND (address IS NULL
+                     OR geocoded_lat IS NULL
+                     OR ABS(lat - geocoded_lat) > 0.0005
+                     OR ABS(lng - geocoded_lng) > 0.0005)
+              ORDER BY updated_at DESC NULLS LAST
+              LIMIT @lim",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@lim", limit); }, ct);
+
+        var updated = 0;
+        foreach (var row in stale)
+        {
+            if (ct.IsCancellationRequested) break;
+            var vid = Convert.ToInt64(row["vehicleId"]);
+            var lat = Convert.ToDouble(row["lat"]);
+            var lng = Convert.ToDouble(row["lng"]);
+            var g = await maps.ReverseGeocodeAsync(key!, lat, lng, ct);
+            if (!g.Ok || string.IsNullOrWhiteSpace(g.FormattedAddress)) continue;
+            await db.ExecuteAsync(
+                @"UPDATE latest_vehicle_positions
+                  SET address=@addr, geocoded_at=NOW(), geocoded_lat=@lat, geocoded_lng=@lng
+                  WHERE company_id=@cid AND vehicle_id=@vid",
+                c => { c.Parameters.AddWithValue("@addr", g.FormattedAddress!); c.Parameters.AddWithValue("@lat", (decimal)lat);
+                       c.Parameters.AddWithValue("@lng", (decimal)lng); c.Parameters.AddWithValue("@cid", companyId);
+                       c.Parameters.AddWithValue("@vid", vid); }, ct);
+            updated++;
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { geocoded = updated, candidates = stale.Count }, $"Reverse-geocoded {updated} position(s)"));
+    }
+
     private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)
     {
         object? Str(string k) => Get(body, k) is { } v && v is not DBNull ? v : DBNull.Value;
@@ -10189,7 +10240,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
                      lvp.accuracy_meters, lvp.engine_status, lvp.fuel_level,
                      lvp.odometer_miles, lvp.battery_voltage, lvp.event_time,
-                     lvp.event_count,
+                     lvp.event_count, lvp.address,
                      v.vehicle_code, v.make, v.model, v.year, v.status vehicle_status,
                      d.full_name driver_name,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,

@@ -21,6 +21,7 @@ export type VehiclePosition = {
   driverName: string | null;
   secondsSincePing: number | null;
   isStale: boolean;
+  address: string | null;
 };
 
 
@@ -46,6 +47,7 @@ function toPosition(r: AnyRecord): VehiclePosition {
     driverName:       r["driverName"]    != null ? String(r["driverName"])    : null,
     secondsSincePing: ssp,
     isStale:          ssp !== null ? ssp > 900 : false,
+    address:          r["address"] != null ? String(r["address"]) : null,
   };
 }
 
