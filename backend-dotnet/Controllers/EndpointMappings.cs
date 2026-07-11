@@ -124,6 +124,8 @@ public static partial class EndpointMappings
         app.MapGet("/api/telemetry/stream", TelemetryStream);
         // Latest position snapshot — uses latest_vehicle_positions table
         app.MapGet("/api/telemetry/positions", TelemetryPositions);
+        // Historical breadcrumb trail for a vehicle over a time window (replay).
+        app.MapGet("/api/telemetry/breadcrumbs", TelemetryBreadcrumbs);
         // Observability counters — RBAC gated
         app.MapGet("/api/telemetry/metrics", TelemetryMetrics);
         // Telemetry-native live state and fleet summary surfaces
@@ -10331,6 +10333,61 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(positions, "Positions"));
+    }
+
+    // ── GET /api/telemetry/breadcrumbs?vehicleId=&from=&to=&limit= ─────────────────
+    // Ordered historical position trail for a vehicle over a time window — powers the
+    // live-map "replay" (where did this truck go?). Tenant-scoped; defaults to the last
+    // 24h; capped at 1000 points (evenly sampled when the raw trail is larger) so a busy
+    // vehicle's replay stays responsive.
+    private static async Task<IResult> TelemetryBreadcrumbs(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.live_state.read") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        if (!long.TryParse(http.Request.Query["vehicleId"].FirstOrDefault(), out var vehicleId) || vehicleId <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("vehicleId is required"));
+
+        // Time window: explicit from/to (ISO), else last 24h. Cap span at 7 days.
+        var toStr = http.Request.Query["to"].FirstOrDefault();
+        var fromStr = http.Request.Query["from"].FirstOrDefault();
+        var to = DateTime.TryParse(toStr, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out var t) ? t : DateTime.UtcNow;
+        var from = DateTime.TryParse(fromStr, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out var f) ? f : to.AddHours(-24);
+        if (to <= from) return Results.BadRequest(ApiResponse<object>.Fail("'to' must be after 'from'"));
+        if ((to - from).TotalDays > 7) from = to.AddDays(-7);
+        var limit = int.TryParse(http.Request.Query["limit"].FirstOrDefault(), out var l) ? Math.Clamp(l, 2, 2000) : 1000;
+
+        // Even-sample when the raw trail exceeds the limit: row_number() % stride keeps
+        // a representative shape without pulling every point.
+        var total = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM location_events
+              WHERE company_id=@cid AND vehicle_id=@vid AND lat IS NOT NULL AND lng IS NOT NULL
+                AND event_time BETWEEN @from AND @to",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vehicleId);
+                   c.Parameters.AddWithValue("@from", from); c.Parameters.AddWithValue("@to", to); }, ct);
+        var stride = total > limit ? (int)Math.Ceiling((double)total / limit) : 1;
+
+        var points = await db.QueryAsync(
+            @"SELECT lat, lng, speed_mph, heading, engine_status, event_time, source, address
+              FROM (
+                SELECT lat, lng, speed_mph, heading, engine_status, event_time, source,
+                       NULL::text address,
+                       ROW_NUMBER() OVER (ORDER BY event_time ASC) rn
+                FROM location_events
+                WHERE company_id=@cid AND vehicle_id=@vid AND lat IS NOT NULL AND lng IS NOT NULL
+                  AND event_time BETWEEN @from AND @to
+              ) s
+              WHERE (@stride = 1 OR (s.rn - 1) % @stride = 0)
+              ORDER BY s.event_time ASC",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vehicleId);
+                   c.Parameters.AddWithValue("@from", from); c.Parameters.AddWithValue("@to", to);
+                   c.Parameters.AddWithValue("@stride", stride); }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            vehicleId, from, to,
+            totalPoints = total, returnedPoints = points.Count, sampledEvery = stride,
+            points,
+        }, "Breadcrumbs"));
     }
 
     // ── GET /api/telemetry/metrics ────────────────────────────────────────────────
