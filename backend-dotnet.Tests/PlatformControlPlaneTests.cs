@@ -105,6 +105,7 @@ public class PlatformControlPlaneTests
     {
         var db = CreateDatabase();
         await new PlatformSchemaService(db).EnsureAsync();
+        await new SecuritySchemaService(db).EnsureAsync();
         var (adminId, _, email) = await SeedAdminSessionAsync(db, "platform_super_admin");
         try
         {
@@ -310,14 +311,14 @@ public class PlatformControlPlaneTests
 
             // UPDATE (limits/quota) + 404 for unknown tenant
             var update = await PlatformEndpoints.TenantUpdate(companyId, Http(token),
-                new Dictionary<string, object?> { ["seatLimit"] = 42L }, db, CancellationToken.None);
+                new Dictionary<string, object?> { ["seatLimit"] = 42L }, db, countries, CancellationToken.None);
             Assert.Equal(200, StatusOf(update));
             var seats = await db.ScalarLongAsync("SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@id",
                 c => c.Parameters.AddWithValue("@id", companyId));
             Assert.Equal(42, seats);
 
             var missing = await PlatformEndpoints.TenantUpdate(999_999_999, Http(token),
-                new Dictionary<string, object?> { ["seatLimit"] = 5L }, db, CancellationToken.None);
+                new Dictionary<string, object?> { ["seatLimit"] = 5L }, db, countries, CancellationToken.None);
             Assert.Equal(404, StatusOf(missing));
 
             // TENANT ADMIN INVITE — creates an Invited user without any credential
@@ -453,6 +454,7 @@ public class PlatformControlPlaneTests
     {
         var db = CreateDatabase();
         await new PlatformSchemaService(db).EnsureAsync();
+        await new SecuritySchemaService(db).EnsureAsync();
         var code = $"CPT-{Unique()}";
         var companyId = await db.InsertAsync(
             "INSERT INTO companies (company_code, name, industry, status) VALUES (@c, 'Seat Cap Co', 'Logistics', 'Active') RETURNING id",

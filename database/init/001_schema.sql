@@ -13,9 +13,14 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE TABLE IF NOT EXISTS roles (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  name VARCHAR(100) NOT NULL UNIQUE,
-  permissions_json JSONB NULL
+  company_id BIGINT NULL,
+  name VARCHAR(100) NOT NULL,
+  permissions_json JSONB NULL,
+  is_system BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT fk_roles_company FOREIGN KEY (company_id) REFERENCES companies(id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS ux_roles_system_name ON roles (LOWER(name)) WHERE company_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_roles_tenant_name ON roles (company_id, LOWER(name)) WHERE company_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

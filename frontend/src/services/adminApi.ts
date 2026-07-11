@@ -39,6 +39,17 @@ export type AdminOverview = {
   permissionCoverage: number;
 };
 
+export type AccessReview = AnyRecord & {
+  id: number;
+  title: string;
+  status: string;
+  totalItems: number;
+  itemsApproved: number;
+  itemsRevoked: number;
+  itemsPending: number;
+  dueDate?: string | null;
+};
+
 async function get<T>(path: string) {
   const response = await apiClient.get(path);
   return unwrap<T>(Promise.resolve(response));
@@ -72,7 +83,13 @@ export const adminApi = {
   updateUser: async (id: number, body: Record<string, unknown>) => put<{ id: number }>(`/api/admin/users/${id}`, body),
   deleteUser: async (id: number) => del<{ id: number }>(`/api/admin/users/${id}`),
   roles: async (): Promise<AdminRole[]> => get<AdminRole[]>("/api/admin/roles"),
+  createRole: async (body: Record<string, unknown>) => post<{ id: number }>("/api/admin/roles", body),
   updateRole: async (id: number, body: Record<string, unknown>) => put<{ id: number }>(`/api/admin/roles/${id}`, body),
   permissions: async (): Promise<string[]> => get<string[]>("/api/admin/permissions"),
-  auditLog: async (body: Record<string, unknown>) => post<{ id?: number }>("/api/admin/audit-events", body),
+  accessReviews: async (): Promise<AccessReview[]> => get<AccessReview[]>("/api/security/access-reviews"),
+  accessReview: async (id: number): Promise<AccessReview> => get<AccessReview>(`/api/security/access-reviews/${id}`),
+  createAccessReview: async (body: Record<string, unknown>) => post<{ id: number }>("/api/security/access-reviews", body),
+  decideAccessReviewItem: async (reviewId: number, itemId: number, decision: "approve" | "revoke", notes?: string) =>
+    post<{ itemId: number; status: string }>(`/api/security/access-reviews/${reviewId}/items/${itemId}/${decision}`, { notes: notes ?? "" }),
+  completeAccessReview: async (id: number) => post<{ id: number; status: string }>(`/api/security/access-reviews/${id}/complete`),
 };

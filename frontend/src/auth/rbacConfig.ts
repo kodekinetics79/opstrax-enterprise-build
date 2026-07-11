@@ -88,6 +88,7 @@ export const PERMISSIONS = {
   USERS_DELETE: "users:delete",
 
   ROLES_VIEW: "roles:view",
+  ROLES_CREATE: "roles:create",
   ROLES_UPDATE: "roles:update",
 
   SETTINGS_VIEW: "settings:view",
@@ -235,6 +236,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.USERS_DELETE]: ["users.manage", "users:manage"],
 
   [P.ROLES_VIEW]: ["roles.view", "roles:view", "users.manage", "users:manage"],
+  [P.ROLES_CREATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
   [P.ROLES_UPDATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
 
   [P.SETTINGS_VIEW]: ["settings.view", "settings:view", "settings.manage", "settings:manage"],
@@ -311,7 +313,7 @@ const TENANT_ADMIN_PERMISSIONS = [
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE, P.ALERTS_CLOSE,
   P.REPORTS_VIEW, P.REPORTS_EXPORT,
   P.USERS_VIEW, P.USERS_CREATE, P.USERS_UPDATE, P.USERS_DELETE,
-  P.ROLES_VIEW, P.ROLES_UPDATE,
+  P.ROLES_VIEW, P.ROLES_CREATE, P.ROLES_UPDATE,
   P.SETTINGS_VIEW, P.SETTINGS_UPDATE,
   P.AUDIT_VIEW,
   P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,

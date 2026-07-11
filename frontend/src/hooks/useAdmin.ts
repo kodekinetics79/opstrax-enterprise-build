@@ -70,6 +70,52 @@ export function useUpdateAdminRole() {
   });
 }
 
+export function useCreateAdminRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => adminApi.createRole(body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin-roles"] });
+      await qc.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
+  });
+}
+
 export function useAdminPermissions() {
   return useQuery({ queryKey: ["admin-permissions"], queryFn: adminApi.permissions, staleTime: 60_000 });
+}
+
+export function useAccessReviews(enabled = true) {
+  return useQuery({ queryKey: ["access-reviews"], queryFn: adminApi.accessReviews, enabled, staleTime: 10_000 });
+}
+
+export function useAccessReview(id: number | null) {
+  return useQuery({ queryKey: ["access-review", id], queryFn: () => adminApi.accessReview(Number(id)), enabled: Number.isFinite(Number(id)) });
+}
+
+export function useCreateAccessReview() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (body: Record<string, unknown>) => adminApi.createAccessReview(body), onSuccess: () => qc.invalidateQueries({ queryKey: ["access-reviews"] }) });
+}
+
+export function useDecideAccessReviewItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ reviewId, itemId, decision, notes }: { reviewId: number; itemId: number; decision: "approve" | "revoke"; notes?: string }) => adminApi.decideAccessReviewItem(reviewId, itemId, decision, notes),
+    onSuccess: async (_, variables) => {
+      await qc.invalidateQueries({ queryKey: ["access-review", variables.reviewId] });
+      await qc.invalidateQueries({ queryKey: ["access-reviews"] });
+    },
+  });
+}
+
+export function useCompleteAccessReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => adminApi.completeAccessReview(id),
+    onSuccess: async (_, id) => {
+      await qc.invalidateQueries({ queryKey: ["access-review", id] });
+      await qc.invalidateQueries({ queryKey: ["access-reviews"] });
+    },
+  });
 }

@@ -35,6 +35,8 @@ services:
       Cors__AllowedOrigins: http://localhost:10000
       Jwt__Key: ${JWT_KEY}
       Telemetry__DeviceSecret: ${TELEMETRY_DEVICE_SECRET}
+      Telemetry__GatewaySecret: ${TELEMETRY_GATEWAY_SECRET}
+      Telemetry__Simulator__Enabled: ${TELEMETRY_SIMULATOR_ENABLED:-false}
       Sse__TicketKey: ${SSE_TICKET_KEY}
       PLATFORM_SUPERADMIN_PASSWORD: ${PLATFORM_SUPERADMIN_PASSWORD}
       PLATFORM_SUPERADMIN_EMAIL: ${PLATFORM_SUPERADMIN_EMAIL:-platform@opstrax.local}

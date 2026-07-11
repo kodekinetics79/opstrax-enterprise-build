@@ -53,6 +53,28 @@ public sealed class EndpointMappingsSecurityHardeningTests
         Assert.False(TelemetryHmacHelper.ConstantTimeEquals(signature, string.Empty));
     }
 
+    [Theory]
+    [InlineData("1700000000", 1700000000L)]
+    [InlineData("1700000000000", 1700000000L)]
+    [InlineData("2023-11-14T22:13:20Z", 1700000000L)]
+    public void TrackerTimestamp_ParsesSecondsMillisecondsAndIso8601(string raw, long expectedSeconds)
+    {
+        Assert.True(EndpointMappings.TryParseTrackerTimestamp(raw, out var parsed));
+        Assert.Equal(expectedSeconds, parsed.ToUnixTimeSeconds());
+    }
+
+    [Fact]
+    public void GpsGatewayIngest_UsesGatewayAsCredentialAndDoesNotReturnDeviceIdentifiers()
+    {
+        var ingest = MethodSource("GpsTrackerIngest(", "// ── GET /api/telemetry/metrics");
+
+        Assert.Contains("Telemetry:GatewaySecret", ingest, StringComparison.Ordinal);
+        Assert.Contains("FixedTimeEquals", ingest, StringComparison.Ordinal);
+        Assert.Contains("last_heartbeat_at=NOW()", ingest, StringComparison.Ordinal);
+        Assert.Contains("latest_vehicle_positions.event_time <= EXCLUDED.event_time", ingest, StringComparison.Ordinal);
+        Assert.DoesNotContain("new { imei", ingest, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AiFallback_DoesNotExposeExceptionMessages()
     {

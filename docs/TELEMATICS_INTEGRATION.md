@@ -25,12 +25,18 @@ health history) is intentionally empty until a real feed is wired — that is th
 The platform HAS the ingest plumbing already:
 - `POST /api/telemetry/ingest` — device-authenticated (HMAC-SHA256 over
   `X-Device-Key + X-Timestamp + X-Nonce + X-Signature`)
+- `POST /api/telemetry/gps-ingest` — trusted protocol-gateway forwarding for
+  PT40/GT06-class trackers. It sends `X-Gateway-Timestamp` (Unix seconds) and
+  `X-Gateway-Signature` (hex HMAC-SHA256 of `<timestamp>.<raw-json>`) using
+  `Telemetry__GatewaySecret`; IMEI is only a provisioned lookup key, never a credential.
+  Freshness/replay checks, globally unique IMEI registration, tenant-bound device/vehicle
+  resolution, timestamp bounds, and ordered latest-position updates are enforced.
 - SSE stream (`/api/telemetry/stream` via short-lived ticket), positions snapshot,
   live-state and alert endpoints (see `EndpointMappings.cs` ~lines 107-145)
 - Tables: `location_events`, `latest_vehicle_positions`, `telemetry_live_asset_states`,
   `telemetry_alerts`, `telemetry_rules`
 
-What's missing is a **producer**: something actually POSTing device data into that ingest
+What's missing is a **configured producer**: something actually POSTing device data into an ingest
 endpoint. Today only the demo seeder writes a handful of `location_events`, so positions
 decay to "Offline" within ~15 min and there is no engine/diagnostic stream at all.
 
@@ -57,6 +63,15 @@ without any credentials from you.
 
 **C. Leave as-is.** Device registry, HOS, DVIR, work orders, safety, scorecards are all
 real DB-backed already; only continuous GPS/engine *streams* are absent.
+
+## PT40 field commissioning gate
+
+Do not call a PT40 device live based on registry presence or simulated movement. Production
+commissioning requires a protocol gateway/forwarder, configured APN and destination, a secret
+of at least 32 random characters, and one valid signed packet observed end-to-end. A valid
+signed fix updates both device heartbeat fields and advances only `Provisioning`/`Pending` to
+`Active`; suspended, revoked, inactive, or unknown states fail closed. Never put the gateway
+secret on the tracker, in a URL, in logs, or in source control.
 
 ## Recommendation
 

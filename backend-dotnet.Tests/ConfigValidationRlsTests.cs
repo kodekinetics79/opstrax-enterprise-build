@@ -37,6 +37,7 @@ public sealed class ConfigValidationRlsTests
             ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
             ["Cors:AllowedOrigins"] = "https://app.example.test",
             ["Rls:EnforceTenantContext"] = "true",
+            ["Telemetry:GatewaySecret"] = new string('g', 48),
         };
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
@@ -112,6 +113,7 @@ public sealed class ConfigValidationRlsTests
             ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
             ["Cors:AllowedOrigins"] = "https://app.example.test",
             ["Rls:EnforceTenantContext"] = rlsValue,
+            ["Telemetry:GatewaySecret"] = new string('g', 48),
         };
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(values)

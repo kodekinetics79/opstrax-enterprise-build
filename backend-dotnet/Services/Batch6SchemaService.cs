@@ -37,6 +37,7 @@ public sealed class Batch6SchemaService(Database db)
         new("hos_logs",     "duration_minutes",      "INT NOT NULL DEFAULT 0"),
         new("hos_logs",     "location",              "VARCHAR(200) NULL"),
         new("hos_logs",     "is_certified",          "BOOLEAN NOT NULL DEFAULT false"),
+        new("hos_logs",     "company_id",            "BIGINT NULL"),
         new("ai_recommendations", "description",     "TEXT NULL"),
         new("ai_recommendations", "priority",        "VARCHAR(40) NULL"),
         new("ai_recommendations", "action_label",      "VARCHAR(160) NULL"),
@@ -50,24 +51,29 @@ public sealed class Batch6SchemaService(Database db)
         new("compliance_rules",    "threshold_value",  "DECIMAL(12,2) NULL"),
         new("compliance_rules",    "threshold_unit",   "VARCHAR(40) NULL"),
         new("hos_clocks",               "hos_warning",           "TEXT NULL"),
+        new("hos_clocks",               "company_id",            "BIGINT NULL"),
         new("eld_devices",              "last_sync_at",          "TIMESTAMPTZ NULL"),
         new("driver_compliance_status", "license_expiry",        "TIMESTAMPTZ NULL"),
         new("driver_compliance_status", "medical_cert_expiry",   "TIMESTAMPTZ NULL"),
         new("driver_compliance_status", "drug_test_valid",       "BOOLEAN NOT NULL DEFAULT true"),
         new("driver_compliance_status", "drug_test_expiry",      "TIMESTAMPTZ NULL"),
+        new("driver_compliance_status", "company_id",            "BIGINT NULL"),
         new("vehicle_compliance_status","registration_expiry",   "TIMESTAMPTZ NULL"),
         new("vehicle_compliance_status","insurance_valid",       "BOOLEAN NOT NULL DEFAULT true"),
         new("vehicle_compliance_status","insurance_expiry",      "TIMESTAMPTZ NULL"),
         new("vehicle_compliance_status","inspection_expiry",     "TIMESTAMPTZ NULL"),
         new("vehicle_compliance_status","eld_installed",         "BOOLEAN NOT NULL DEFAULT false"),
         new("vehicle_compliance_status","eld_device_id",         "BIGINT NULL"),
+        new("vehicle_compliance_status","company_id",            "BIGINT NULL"),
         new("compliance_violations",    "category",              "VARCHAR(80) NULL"),
+        new("compliance_violations",    "company_id",            "BIGINT NULL"),
         new("compliance_audit_packages","included_drivers",      "INT NULL"),
         new("compliance_audit_packages","included_vehicles",     "INT NULL"),
         new("compliance_audit_packages","included_documents",    "INT NULL"),
         new("compliance_audit_packages","included_violations",   "INT NULL"),
         new("compliance_audit_packages","hos_logs_count",        "INT NOT NULL DEFAULT 0"),
-        new("compliance_audit_packages","notes",                 "TEXT NULL")
+        new("compliance_audit_packages","notes",                 "TEXT NULL"),
+        new("compliance_audit_packages","company_id",            "BIGINT NULL")
     ];
 
     private static readonly string[] Tables =
@@ -288,12 +294,15 @@ public sealed class Batch6SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_driver ON compliance_violations(driver_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_vehicle ON compliance_violations(vehicle_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_country ON compliance_violations(country_code)",
+        "CREATE INDEX IF NOT EXISTS idx_compliance_violations_company ON compliance_violations(company_id)",
         "CREATE INDEX IF NOT EXISTS idx_hos_logs_driver ON hos_logs(driver_id)",
         "CREATE INDEX IF NOT EXISTS idx_hos_logs_date ON hos_logs(log_date)",
         "CREATE INDEX IF NOT EXISTS idx_hos_clocks_driver ON hos_clocks(driver_id)",
+        "CREATE INDEX IF NOT EXISTS idx_hos_clocks_company ON hos_clocks(company_id)",
         "CREATE INDEX IF NOT EXISTS idx_eld_devices_vehicle ON eld_devices(vehicle_id)",
         "CREATE INDEX IF NOT EXISTS idx_driver_compliance_driver ON driver_compliance_status(driver_id)",
         "CREATE INDEX IF NOT EXISTS idx_vehicle_compliance_vehicle ON vehicle_compliance_status(vehicle_id)",
+        "CREATE INDEX IF NOT EXISTS idx_compliance_audit_packages_company ON compliance_audit_packages(company_id)",
     ];
 
     private static readonly string[] Seeds =

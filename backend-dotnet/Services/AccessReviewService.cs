@@ -13,7 +13,8 @@ namespace Opstrax.Api.Services;
 // Design:
 //   - All operations tenant-scoped via company_id
 //   - Permissions snapshot is taken at creation time (not live)
-//   - Revoke actions write to audit log; actual role changes are manual/separate
+//   - Revoke decisions create an explicit remediation requirement; they do not
+//     silently disable an operational user without a separately approved action
 //   - Completing a review auto-sets remaining pending items to status 'pending'
 //     (reviewer must make explicit decisions before completing)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +32,15 @@ public sealed class AccessReviewService(Database db, AuditService audit)
     {
         if (string.IsNullOrWhiteSpace(title))
             throw new ArgumentException("title is required");
+
+        var reviewer = await db.QuerySingleAsync(
+            @"SELECT id FROM users
+              WHERE id = @uid AND company_id = @cid
+                AND status IN ('Active','active')
+              LIMIT 1",
+            c => { c.Parameters.AddWithValue("@uid", reviewerUserId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (reviewer is null)
+            throw new ArgumentException("reviewer must be an active user in this tenant");
 
         var createdBy = http.Items.TryGetValue("opstrax.auth.user_id", out var uid)
             ? $"user:{uid}"
@@ -55,12 +65,10 @@ public sealed class AccessReviewService(Database db, AuditService audit)
 
         // Snapshot all active users and their roles for this review
         var users = await db.QueryAsync(
-            @"SELECT id, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')) full_name,
-                     email, role_name
+            @"SELECT id, full_name, email, role_name
               FROM users
               WHERE company_id = @cid
                 AND status IN ('Active', 'active')
-                AND deleted_at IS NULL
               ORDER BY role_name, email
               LIMIT 500",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
@@ -75,8 +83,8 @@ public sealed class AccessReviewService(Database db, AuditService audit)
 
             // Snapshot permissions from role_permissions table
             var perms = await db.QueryAsync(
-                "SELECT permission_key FROM role_permissions WHERE role_id IN (SELECT role_id FROM users WHERE id=@uid) LIMIT 100",
-                c => c.Parameters.AddWithValue("@uid", userId), ct);
+                "SELECT permission_key FROM role_permissions WHERE role_id IN (SELECT role_id FROM users WHERE id=@uid AND company_id=@cid) LIMIT 100",
+                c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
             var permSnapshot = perms.Select(p => p.GetValueOrDefault("permissionKey")?.ToString())
                                     .Where(p => !string.IsNullOrWhiteSpace(p))
                                     .ToArray();
@@ -156,7 +164,7 @@ public sealed class AccessReviewService(Database db, AuditService audit)
     {
         var actorId = GetActorId(http);
         await SetItemStatus(companyId, reviewId, itemId, "approved", actorId, notes, ct);
-        await UpdateReviewCounts(reviewId, ct);
+        await UpdateReviewCounts(companyId, reviewId, ct);
         await audit.LogAsync(http, "access_review.item.approved", "access_review_items", itemId, null, ct);
     }
 
@@ -168,7 +176,7 @@ public sealed class AccessReviewService(Database db, AuditService audit)
     {
         var actorId = GetActorId(http);
         await SetItemStatus(companyId, reviewId, itemId, "revoked", actorId, notes, ct);
-        await UpdateReviewCounts(reviewId, ct);
+        await UpdateReviewCounts(companyId, reviewId, ct);
         await audit.LogAsync(http, "access_review.item.revoked", "access_review_items", itemId,
             System.Text.Json.JsonSerializer.Serialize(new { notes }), ct);
     }
@@ -185,6 +193,8 @@ public sealed class AccessReviewService(Database db, AuditService audit)
 
         if (review is null) throw new InvalidOperationException("Review not found");
         if (review["status"]?.ToString() == "completed") throw new InvalidOperationException("Review is already completed");
+        if (Convert.ToInt32(review.GetValueOrDefault("itemsPending") ?? 0) > 0)
+            throw new InvalidOperationException("Every access item requires an explicit decision before completion");
 
         await db.ExecuteAsync(
             "UPDATE access_reviews SET status = 'completed', completed_at = NOW() WHERE id = @rid AND company_id = @cid",
@@ -193,13 +203,18 @@ public sealed class AccessReviewService(Database db, AuditService audit)
         await audit.LogAsync(http, "access_review.completed", "access_reviews", reviewId, null, ct);
     }
 
-    private Task SetItemStatus(
+    private async Task SetItemStatus(
         long companyId, long reviewId, long itemId,
-        string status, string actorId, string? notes, CancellationToken ct) =>
-        db.ExecuteAsync(
+        string status, string actorId, string? notes, CancellationToken ct)
+    {
+        var affected = await db.ExecuteAsync(
             @"UPDATE access_review_items
               SET status = @status, completed_at = NOW(), completed_by = @actor, notes = @notes
-              WHERE id = @iid AND review_id = @rid AND company_id = @cid",
+              WHERE id = @iid AND review_id = @rid AND company_id = @cid
+                AND status = 'pending'
+                AND EXISTS (SELECT 1 FROM access_reviews r
+                            WHERE r.id = @rid AND r.company_id = @cid
+                              AND r.status = 'in_progress')",
             c =>
             {
                 c.Parameters.AddWithValue("@status", status);
@@ -209,15 +224,18 @@ public sealed class AccessReviewService(Database db, AuditService audit)
                 c.Parameters.AddWithValue("@rid",    reviewId);
                 c.Parameters.AddWithValue("@cid",    companyId);
             }, ct);
+        if (affected != 1)
+            throw new InvalidOperationException("Pending access review item not found");
+    }
 
-    private Task UpdateReviewCounts(long reviewId, CancellationToken ct) =>
+    private Task UpdateReviewCounts(long companyId, long reviewId, CancellationToken ct) =>
         db.ExecuteAsync(
             @"UPDATE access_reviews
-              SET items_approved = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND status = 'approved'),
-                  items_revoked  = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND status = 'revoked'),
-                  items_pending  = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND status = 'pending')
-              WHERE id = @rid",
-            c => c.Parameters.AddWithValue("@rid", reviewId), ct);
+              SET items_approved = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND company_id = @cid AND status = 'approved'),
+                  items_revoked  = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND company_id = @cid AND status = 'revoked'),
+                  items_pending  = (SELECT COUNT(*) FROM access_review_items WHERE review_id = @rid AND company_id = @cid AND status = 'pending')
+              WHERE id = @rid AND company_id = @cid",
+            c => { c.Parameters.AddWithValue("@rid", reviewId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
     private static string GetActorId(Microsoft.AspNetCore.Http.HttpContext http)
     {

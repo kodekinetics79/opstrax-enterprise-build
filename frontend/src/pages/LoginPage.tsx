@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
-import { AlertCircle, ArrowRight } from "lucide-react";
+import { AlertCircle, ArrowRight, ClipboardCheck, Route, ShieldCheck, Wrench } from "lucide-react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
@@ -35,7 +35,74 @@ function getLoginErrorMessage(error: unknown): string {
   return String(error.response?.data?.message ?? "We could not complete sign-in. Please try again.");
 }
 
-/* ── Telemetry particle canvas ──────────────────────────────────────────── */
+/* ── Pointer-driven parallax tilt for the 3D scene ──────────────────────────
+   Rotates the scene element a few degrees toward the pointer. Transform-only,
+   rAF-throttled with lerp smoothing, passive listeners, and fully disabled
+   under prefers-reduced-motion. */
+function usePointerTilt(maxTiltX = 2.4, maxTiltY = 3.2) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const scene = sceneRef.current;
+    if (!panel || !scene) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    let raf = 0;
+    let running = false;
+    let rect: DOMRect | null = null;
+    let targetX = 0;
+    let targetY = 0;
+    let curX = 0;
+    let curY = 0;
+
+    const step = () => {
+      curX += (targetX - curX) * 0.08;
+      curY += (targetY - curY) * 0.08;
+      scene.style.transform = `rotateX(${curX.toFixed(3)}deg) rotateY(${curY.toFixed(3)}deg)`;
+      if (Math.abs(targetX - curX) > 0.005 || Math.abs(targetY - curY) > 0.005) {
+        raf = requestAnimationFrame(step);
+      } else {
+        running = false;
+      }
+    };
+    const kick = () => {
+      if (!running) {
+        running = true;
+        raf = requestAnimationFrame(step);
+      }
+    };
+
+    const onEnter = () => { rect = panel.getBoundingClientRect(); };
+    const onMove = (e: PointerEvent) => {
+      if (!rect) rect = panel.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;  // -1..1
+      const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;  // -1..1
+      targetY = nx * maxTiltY;
+      targetX = -ny * maxTiltX;
+      kick();
+    };
+    const onLeave = () => { targetX = 0; targetY = 0; kick(); };
+    const onResize = () => { rect = null; };
+
+    panel.addEventListener("pointerenter", onEnter, { passive: true });
+    panel.addEventListener("pointermove", onMove, { passive: true });
+    panel.addEventListener("pointerleave", onLeave, { passive: true });
+    window.addEventListener("resize", onResize, { passive: true });
+    return () => {
+      panel.removeEventListener("pointerenter", onEnter);
+      panel.removeEventListener("pointermove", onMove);
+      panel.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(raf);
+    };
+  }, [maxTiltX, maxTiltY]);
+
+  return { panelRef, sceneRef };
+}
+
+/* ── Telemetry particle canvas (decorative) ─────────────────────────────── */
 function TelemetryCanvas() {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -45,9 +112,16 @@ function TelemetryCanvas() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const W = canvas.offsetWidth;
+    const H = canvas.offsetHeight;
+    if (!W || !H) return; // panel hidden (below lg) — skip the loop entirely
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
+
     let raf = 0;
-    const W = canvas.width  = canvas.offsetWidth;
-    const H = canvas.height = canvas.offsetHeight;
 
     type Particle = { x: number; y: number; speed: number; size: number; opacity: number; color: string; burst: boolean };
 
@@ -62,7 +136,7 @@ function TelemetryCanvas() {
       burst:   Math.random() < 0.08,
     }));
 
-    function draw() {
+    function drawFrame() {
       ctx!.clearRect(0, 0, W, H);
       for (const p of particles) {
         ctx!.beginPath();
@@ -95,10 +169,19 @@ function TelemetryCanvas() {
         }
       }
       ctx!.globalAlpha = 1;
-      raf = requestAnimationFrame(draw);
     }
 
-    draw();
+    // Reduced motion: paint one static frame instead of animating.
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      drawFrame();
+      return;
+    }
+
+    function loop() {
+      drawFrame();
+      raf = requestAnimationFrame(loop);
+    }
+    loop();
     return () => cancelAnimationFrame(raf);
   }, []);
 
@@ -112,50 +195,54 @@ function TelemetryCanvas() {
   );
 }
 
-/* ── Floating live vehicle cards ────────────────────────────────────────── */
+/* ── Floating vehicle status cards (ambient product illustration) ───────── */
 const vehicleEvents = [
-  { code: "TRK-114", status: "On Route", detail: "87 mph · Dubai–Abu Dhabi E11", color: "#2dd4bf", dot: "●" },
-  { code: "BOX-106", status: "Arrived",  detail: "Manassas Depot · 09:44 AM",   color: "#4ade80", dot: "✓" },
-  { code: "VAN-211", status: "Alert",    detail: "Speed event · Jeddah Ring Rd", color: "#fbbf24", dot: "⚠" },
-  { code: "KSA-119", status: "En Route", detail: "ETA 14 min · Riyadh N Gate",   color: "#7dd3fc", dot: "●" },
+  { code: "LIVE FLEET", status: "Connected", detail: "Tenant-isolated operational visibility", color: "#2dd4bf", dot: "●" },
+  { code: "DISPATCH", status: "Coordinated", detail: "Assignments, routes and exceptions", color: "#4ade80", dot: "✓" },
+  { code: "SAFETY", status: "Monitored", detail: "Policy-driven alerts and coaching", color: "#fbbf24", dot: "●" },
+  { code: "MAINTENANCE", status: "Planned", detail: "Readiness, diagnostics and service", color: "#7dd3fc", dot: "●" },
 ];
 
 function FloatingStatusCards() {
   return (
-    <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-none" aria-hidden="true">
+    <div className="login-card-rail absolute right-10 top-1/2 flex flex-col gap-3" aria-hidden="true">
       {vehicleEvents.map((v, i) => (
         <div
           key={v.code}
-          className="login-float-card rounded-xl border px-3.5 py-2.5"
-          style={{
-            animationDelay: `${i * 0.9}s`,
-            borderColor: `${v.color}30`,
-            background: `rgba(12,21,38,0.72)`,
-            backdropFilter: "blur(8px)",
-            minWidth: 188,
-          }}
+          className="login-float-wrap"
+          style={{ "--z": `${22 + i * 16}px`, animationDelay: `${0.8 + i * 0.3}s` } as React.CSSProperties}
         >
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-[11px] font-bold text-white/80">{v.code}</span>
-            <span className="text-[10px] font-semibold" style={{ color: v.color }}>
-              {v.dot} {v.status}
-            </span>
+          <div
+            className="login-float-card rounded-xl border px-3.5 py-2.5"
+            style={{
+              animationDelay: `${i * 1.3}s`,
+              borderColor: `${v.color}30`,
+              background: "rgba(12,21,38,0.78)",
+              backdropFilter: "blur(8px)",
+              minWidth: 188,
+              boxShadow: `0 14px 34px -14px ${v.color}40, 0 3px 10px rgba(2,8,20,.5)`,
+            }}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[11px] font-bold text-white/80">{v.code}</span>
+              <span className="text-[10px] font-semibold" style={{ color: v.color }}>
+                {v.dot} {v.status}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-500">{v.detail}</p>
           </div>
-          <p className="mt-0.5 text-[10px] text-slate-500">{v.detail}</p>
         </div>
       ))}
     </div>
   );
 }
 
-/* ── Live event ticker ──────────────────────────────────────────────────── */
+/* ── Event ticker (decorative flavor) ───────────────────────────────────── */
 const tickerItems = [
-  "TRK-114 · En route Dubai–Abu Dhabi · ETA 14 min",
-  "BOX-106 · Arrived Manassas Depot · 09:44 AM",
-  "VAN-211 · Speed alert · 87 mph Jeddah Ring Rd",
-  "KSA-REEFER-119 · Departed Riyadh North · Load confirmed",
-  "KSA-REEFER-214 · Checkpoint clear · Jubail Gate 3",
-  "DISPATCH · JOB-0520 assigned to TRK-114 · Priority High",
+  "LIVE OPERATIONS · GPS visibility and exception awareness",
+  "DISPATCH · Assignment, route and delivery coordination",
+  "SAFETY · Evidence, coaching and compliance workflows",
+  "MAINTENANCE · Diagnostics, readiness and service planning",
 ];
 
 function LiveTicker() {
@@ -282,13 +369,13 @@ function RouteMap() {
 
       {/* Waypoint labels */}
       <circle cx="20" cy="400" r="3" fill="#2dd4bf" opacity="0.5" />
-      <text x="28" y="404" fill="#2dd4bf" fontSize="8" opacity="0.45" fontFamily="Inter, sans-serif">Riyadh</text>
+      <text x="28" y="404" fill="#2dd4bf" fontSize="8" opacity="0.45" fontFamily="Inter, sans-serif">Origin</text>
 
       <circle cx="50" cy="450" r="2.5" fill="#7dd3fc" opacity="0.4" />
-      <text x="58" y="454" fill="#7dd3fc" fontSize="8" opacity="0.35" fontFamily="Inter, sans-serif">Jeddah</text>
+      <text x="58" y="454" fill="#7dd3fc" fontSize="8" opacity="0.35" fontFamily="Inter, sans-serif">Hub</text>
 
       <circle cx="10" cy="190" r="2.5" fill="#a5f3fc" opacity="0.35" />
-      <text x="18" y="194" fill="#a5f3fc" fontSize="7" opacity="0.3" fontFamily="Inter, sans-serif">Dubai</text>
+      <text x="18" y="194" fill="#a5f3fc" fontSize="7" opacity="0.3" fontFamily="Inter, sans-serif">Waypoint</text>
 
       {/* ── Horizontal scanning sweep ── */}
       <rect x="0" y="0" width="600" height="2" fill="url(#scanGrad)" className="login-scan-line" />
@@ -296,12 +383,13 @@ function RouteMap() {
   );
 }
 
-/* ── Live metrics ───────────────────────────────────────────────────────── */
-const metrics = [
-  { value: "12",  label: "vehicles active" },
-  { value: "94%", label: "on-time rate"    },
-  { value: "3",   label: "open exceptions" },
-];
+/* ── Product pillars (non-numeric product statements) ───────────────────── */
+const PLATFORM_PILLARS = [
+  { icon: Route,          label: "Dispatch" },
+  { icon: ShieldCheck,    label: "Safety" },
+  { icon: ClipboardCheck, label: "Compliance" },
+  { icon: Wrench,         label: "Maintenance" },
+] as const;
 
 const ACCESS_GUIDANCE = [
   {
@@ -329,6 +417,7 @@ export function LoginPage() {
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
+  const { panelRef, sceneRef } = usePointerTilt();
 
   const login = useMutation({
     mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
@@ -347,28 +436,47 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen">
 
-      {/* ── LEFT — animated brand panel ───────────────────── */}
-      <div className="login-brand-panel login-panel-enter relative hidden lg:flex lg:w-[58%] xl:w-[62%] flex-col overflow-hidden">
+      {/* ── LEFT — 3D command-center brand panel ───────────── */}
+      <div
+        ref={panelRef}
+        className="login-brand-panel login-panel-enter login-persp relative hidden lg:flex lg:w-[58%] xl:w-[62%] flex-col overflow-hidden"
+      >
+        {/* 3D decorative scene — layers on separate translateZ planes,
+            rotated toward the pointer. Purely ambient product illustration. */}
+        <div ref={sceneRef} className="login-scene pointer-events-none absolute inset-0" aria-hidden="true">
 
-        {/* Dot-grid texture */}
-        <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle,rgba(255,255,255,0.05) 1px,transparent 1px)", backgroundSize: "32px 32px", opacity: 0.45 }} />
+          {/* Layer: dot-grid texture (deepest) */}
+          <div
+            className="login-layer-grid absolute inset-0"
+            style={{ backgroundImage: "radial-gradient(circle,rgba(255,255,255,0.05) 1px,transparent 1px)", backgroundSize: "32px 32px", opacity: 0.45 }}
+          />
 
-        {/* Ambient glow — breathing */}
-        <div className="login-glow-1 absolute -left-32 top-1/4 h-80 w-80 rounded-full bg-teal-500/12 blur-[96px]" />
-        <div className="login-glow-2 absolute right-0 bottom-1/3 h-64 w-64 rounded-full bg-sky-500/8 blur-[80px]"  />
-        <div className="login-glow-1 absolute left-1/3 bottom-0  h-48 w-48 rounded-full bg-teal-400/7 blur-[60px]"  style={{ animationDelay: "2s" }} />
+          {/* Layer: ambient breathing glows */}
+          <div className="login-layer-glow absolute inset-0">
+            <div className="login-glow-1 absolute -left-32 top-1/4 h-80 w-80 rounded-full bg-teal-500/12 blur-[96px]" />
+            <div className="login-glow-2 absolute right-0 bottom-1/3 h-64 w-64 rounded-full bg-sky-500/8 blur-[80px]"  />
+            <div className="login-glow-1 absolute left-1/3 bottom-0  h-48 w-48 rounded-full bg-teal-400/7 blur-[60px]"  style={{ animationDelay: "2s" }} />
+          </div>
 
-        {/* Canvas particle stream */}
-        <TelemetryCanvas />
+          {/* Layer: telemetry particle stream */}
+          <div className="login-layer-canvas absolute inset-0">
+            <TelemetryCanvas />
+          </div>
 
-        {/* Animated route map */}
-        <RouteMap />
+          {/* Layer: route map — tilted plane, reads like a holo map table */}
+          <div className="login-layer-map absolute inset-0">
+            <RouteMap />
+          </div>
 
-        {/* Floating live vehicle cards */}
-        <FloatingStatusCards />
+          {/* Slow diagonal light sweep across the scene */}
+          <div className="login-light-sweep" />
 
-        {/* Content layer */}
-        <div className="relative flex h-full flex-col px-12 py-10 xl:px-16">
+          {/* Layer: floating vehicle status cards (nearest, angled rail) */}
+          <FloatingStatusCards />
+        </div>
+
+        {/* Content layer — flat, crisp text above the 3D scene */}
+        <div className="relative z-10 flex h-full flex-col px-12 py-10 xl:px-16">
 
           {/* Logo */}
           <div className="flex items-center gap-3">
@@ -379,37 +487,38 @@ export function LoginPage() {
           {/* Hero */}
           <div className="flex flex-1 flex-col justify-center">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-teal-400">Fleet Management Platform</p>
-            <h1 className="mt-4 text-5xl font-bold leading-[1.08] tracking-tight text-white xl:text-6xl">
+            <h1 className="login-hero-title mt-4 text-5xl font-bold leading-[1.08] tracking-tight text-white xl:text-6xl">
               Fleet intelligence,
               <br />
               <span className="text-teal-400">live.</span>
             </h1>
             <p className="mt-5 max-w-sm text-base leading-7 text-slate-400">
-              Dispatch, safety, compliance, and maintenance — unified for operations teams.
+              One command center for the entire operation — from job assignment to proof of delivery.
             </p>
 
-            {/* Live metrics */}
-            <div className="mt-10 flex items-start gap-10">
-              {metrics.map((m, i) => (
-                <div key={m.label} className={`${i !== 0 ? "border-l border-white/10 pl-10" : ""} login-metric-${i + 1}`}>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-bold text-white">{m.value}</span>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-teal-400">live</span>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500">{m.label}</p>
+            {/* Product pillars */}
+            <div className="mt-10 flex max-w-md flex-wrap gap-2.5">
+              {PLATFORM_PILLARS.map(({ icon: Icon, label }, i) => (
+                <div
+                  key={label}
+                  className="login-pillar flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 backdrop-blur-sm"
+                  style={{ animationDelay: `${1.1 + i * 0.15}s` }}
+                >
+                  <Icon className="h-3.5 w-3.5 text-teal-400" />
+                  <span className="text-xs font-semibold tracking-wide text-slate-200">{label}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Live ticker strip */}
+          {/* Decorative event ticker */}
           <div className="mb-3">
             <LiveTicker />
           </div>
 
           {/* Bottom bar */}
           <div className="flex items-end justify-between gap-4">
-            <p className="text-xs text-slate-700">Northshore Fleet Logistics · Enterprise</p>
+            <p className="text-xs text-slate-600">Multi-tenant fleet operations platform</p>
             <div className="text-right">
               <p className="text-[11px] text-slate-600">Engineered by</p>
               <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"
@@ -423,82 +532,92 @@ export function LoginPage() {
       </div>
 
       {/* ── RIGHT — sign-in form ───────────────────────────── */}
-      <div className="flex flex-1 flex-col items-center justify-center bg-gradient-to-br from-white via-slate-50 to-teal-50/40 px-8 py-12 lg:px-12">
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-white via-slate-50 to-teal-50/40 px-8 py-12 lg:px-12">
+
+        {/* Perspective floor grid + soft glow (decorative) */}
+        <div className="login-floor" aria-hidden="true" />
+        <div className="pointer-events-none absolute -top-28 right-[-10%] h-72 w-72 rounded-full bg-teal-200/35 blur-[110px]" aria-hidden="true" />
 
         {/* Mobile logo */}
-        <div className="mb-10 flex items-center gap-2.5 lg:hidden">
+        <div className="relative z-10 mb-10 flex items-center gap-2.5 lg:hidden">
           <OpsTraxLogo size={32} />
           <span className="text-lg font-bold text-slate-900">OpsTrax</span>
         </div>
 
-        <div className="login-form-enter w-full max-w-sm">
+        <div className="login-form-enter relative z-10 w-full max-w-sm">
 
-          <div className="mb-8">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600">Secure access</p>
-            <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
-            <p className="mt-1.5 text-sm leading-6 text-slate-500">Access your fleet operations dashboard with a real seeded account or your own credentials.</p>
+          {/* 3D stage — ghost plates float behind the glass card */}
+          <div className="login-card-stage relative">
+            <div className="login-card-plate login-card-plate-2" aria-hidden="true" />
+            <div className="login-card-plate login-card-plate-1" aria-hidden="true" />
+
+            <div className="login-card3d relative rounded-[26px] border border-white/70 bg-white/75 p-7 backdrop-blur-xl">
+              <div className="mb-7">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600">Secure access</p>
+                <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
+                <p className="mt-1.5 text-sm leading-6 text-slate-500">Sign in to your fleet operations workspace.</p>
+              </div>
+
+              {login.isError && (
+                <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {getLoginErrorMessage(login.error)}
+                </div>
+              )}
+
+              <form onSubmit={submit} className="space-y-4">
+                <div>
+                  <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Email</label>
+                  <input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
+                    placeholder="you@company.com"
+                    className="w-full rounded-lg border border-slate-300 bg-white/85 px-3.5 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/15" />
+                </div>
+
+                <div>
+                  <label htmlFor="login-password" className="mb-1.5 block text-sm font-medium text-slate-700">Password</label>
+                  <div className="relative">
+                    <input id="login-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                      placeholder="••••••••"
+                      className="w-full rounded-lg border border-slate-300 bg-white/85 px-3.5 py-2.5 pr-14 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/15" />
+                    <button type="button" onClick={() => setShowPass((v) => !v)}
+                      aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 transition hover:text-slate-700">
+                      {showPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+
+                <button type="submit" disabled={login.isPending || !email.trim() || !password}
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-teal-500 to-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_-8px_rgba(13,148,136,.55),inset_0_1px_0_rgba(255,255,255,.25)] transition hover:from-teal-400 hover:to-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50">
+                  {login.isPending
+                    ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
+                    : <>Sign in <ArrowRight className="h-4 w-4" /></>}
+                </button>
+              </form>
+
+              <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+                <ShieldCheck className="h-3.5 w-3.5 text-teal-600/70" aria-hidden="true" />
+                Secure tenant access
+              </p>
+            </div>
           </div>
 
-          {login.isError && (
-            <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              {getLoginErrorMessage(login.error)}
-            </div>
-          )}
-
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
-                placeholder="you@company.com"
-                className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Password</label>
-              <div className="relative">
-                <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-                  placeholder="••••••••"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 pr-14 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" />
-                <button type="button" onClick={() => setShowPass((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 transition hover:text-slate-700">
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" disabled={login.isPending || !email.trim() || !password}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-500/30 disabled:cursor-not-allowed disabled:opacity-50">
-              {login.isPending
-                ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
-                : <>Sign in <ArrowRight className="h-4 w-4" /></>}
-            </button>
-          </form>
-
-          <div className="mt-6 rounded-[20px] border border-slate-200 bg-white/85 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Quick access</p>
-                <p className="mt-1 text-sm font-semibold text-slate-800">Use your tenant-issued credentials</p>
-              </div>
-              <span className="badge badge-info">Wired to auth</span>
-            </div>
+          {/* Role guidance */}
+          <div className="mt-6 rounded-[20px] border border-slate-200/80 bg-white/60 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur-md">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Workspace roles</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">Sign in with the credentials issued by your organization</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {ACCESS_GUIDANCE.map((account) => (
                 <div key={account.title} className="role-card flex flex-col items-start gap-1.5 px-3 py-3 text-left">
                   <span className="text-sm font-bold text-slate-900">{account.title}</span>
                   <span className="text-[11px] text-slate-500">{account.note}</span>
-                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-700">
-                    Tenant RBAC
-                  </span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* Footer */}
-          <div className="mt-8 space-y-1.5 text-center">
-            <p className="text-[11px] text-slate-500">Protected by CSRF · RBAC · Session isolation</p>
+          <div className="mt-8 text-center">
             <p className="text-[11px] text-slate-300">
               Built by{" "}
               <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"

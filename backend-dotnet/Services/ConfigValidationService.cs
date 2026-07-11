@@ -48,6 +48,21 @@ public sealed class ConfigValidationService(IConfiguration config)
         else
             issues.Add(new("device_hmac_secret", "pass", "Device HMAC secret present"));
 
+        // Vendor/field trackers terminate at a trusted protocol gateway. This separate
+        // secret authenticates that gateway; an IMEI is an identifier, not a credential.
+        var gatewaySecret = config["Telemetry:GatewaySecret"];
+        var gatewayIsProduction = string.Equals(
+            config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
+            "Production", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(gatewaySecret))
+            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
+                "Trusted telemetry gateway secret is not configured — hardware tracker forwarding is unavailable"));
+        else if (gatewaySecret.Length < 32)
+            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
+                "Trusted telemetry gateway secret is too short; minimum 32 characters"));
+        else
+            issues.Add(new("telemetry_gateway_secret", "pass", "Trusted telemetry gateway secret is present"));
+
         // SSE ticket key
         var sseKey = config["Telemetry:SseTicketKey"] ?? config["Sse:TicketKey"] ?? config["SseTicketKey"];
         if (string.IsNullOrWhiteSpace(sseKey))
@@ -91,11 +106,18 @@ public sealed class ConfigValidationService(IConfiguration config)
             issues.Add(new("platform_superadmin_password", "pass", "Platform superadmin password is configured (value redacted)"));
 
         // Demo / seed data guard
-        var seedEnabled = config["Demo:SeedDataEnabled"] ?? config["SeedDataEnabled"];
-        if (string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase))
-            issues.Add(new("demo_seed_data", "warn", "Demo seed data is enabled — disable in production"));
+        var seedEnabled = config["DemoSeed:Enabled"]
+            ?? config["Demo:SeedDataEnabled"]
+            ?? config["SeedDataEnabled"];
+        var fleetSeedEnabled = Environment.GetEnvironmentVariable("ENABLE_FLEET_DEMO_SEED")
+            ?? config["Fleet:EnableDemoSeed"]
+            ?? config["ENABLE_FLEET_DEMO_SEED"];
+        if (string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fleetSeedEnabled, "true", StringComparison.OrdinalIgnoreCase))
+            issues.Add(new("demo_seed_data", isProduction ? "fail" : "warn",
+                "Demo seed data is enabled — disable DemoSeed:Enabled and Fleet:EnableDemoSeed in production"));
         else
-            issues.Add(new("demo_seed_data", "pass", "Demo seed data flag is not 'true'"));
+            issues.Add(new("demo_seed_data", "pass", "Demo seed data flags are disabled"));
 
         // External email provider
         var smtpHost = config["Email:SmtpHost"] ?? config["Smtp:Host"];

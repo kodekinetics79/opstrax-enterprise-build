@@ -34,6 +34,10 @@ services:
         sync: false
       - key: Telemetry__DeviceSecret
         sync: false
+      - key: Telemetry__GatewaySecret
+        sync: false
+      - key: Telemetry__Simulator__Enabled
+        value: "false"
       - key: Sse__TicketKey
         sync: false
       # Production startup fails closed unless tenant context is applied to every

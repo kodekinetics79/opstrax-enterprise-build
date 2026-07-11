@@ -16,7 +16,7 @@ namespace Opstrax.Api.Services;
 // needed for live movement. No external device feed required.
 //
 // Gated by config so it never runs in a real deployment:
-//   Telemetry:Simulator:Enabled          (bool,   default true)
+//   Telemetry:Simulator:Enabled          (bool,   default false)
 //   Telemetry:Simulator:IntervalSeconds  (int,    default 4)
 //   Telemetry:Simulator:SpeedMultiplier  (double, default 20  — exaggerates ground
 //                                          distance so motion is visible at city zoom)
@@ -30,7 +30,7 @@ public sealed class TelemetrySimulatorBackgroundService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var enabled = config.GetValue("Telemetry:Simulator:Enabled", true);
+        var enabled = config.GetValue("Telemetry:Simulator:Enabled", false);
         if (!enabled)
         {
             logger.LogInformation("{Svc} disabled by configuration", SvcName);

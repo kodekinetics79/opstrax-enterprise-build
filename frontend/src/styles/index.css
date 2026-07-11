@@ -722,9 +722,11 @@ th.sort-active { color: var(--text-primary); }
   background: #ffffff;
 }
 
-/* Login brand panel — dark surface, exempt from light-mode overrides */
+/* Login brand panel — dark surface, exempt from light-mode overrides.
+   Layered radial vignette gives the panel physical depth. */
 .login-brand-panel {
-  background: #0c1526 !important;
+  background:
+    radial-gradient(110% 85% at 72% 8%, #16263f 0%, #0c1526 52%, #070e1b 100%) !important;
 }
 .login-brand-panel .text-white     { color: #ffffff !important; }
 .login-brand-panel .text-slate-400 { color: #94a3b8 !important; }
@@ -806,9 +808,8 @@ th.sort-active { color: var(--text-primary); }
 .login-panel-enter {
   animation: loginPanelEnter 0.8s ease-out both;
 }
-.login-metric-1 { animation: metricCount 0.5s ease-out 1.2s both; }
-.login-metric-2 { animation: metricCount 0.5s ease-out 1.4s both; }
-.login-metric-3 { animation: metricCount 0.5s ease-out 1.6s both; }
+/* Product pillar chips — staggered via inline animation-delay */
+.login-pillar { animation: metricCount 0.5s ease-out both; }
 
 /* Scanning sweep line */
 @keyframes scanLine {
@@ -821,14 +822,24 @@ th.sort-active { color: var(--text-primary); }
   will-change: transform, opacity;
 }
 
-/* Floating vehicle status cards — stagger via inline animationDelay */
+/* Floating vehicle status cards — 3D rail. The wrapper carries the entry
+   animation plus per-card depth (--z, set inline); the inner card carries the
+   infinite bob, so the two transforms never fight over the same property. */
 @keyframes floatCardIn {
-  from { opacity: 0; transform: translateX(14px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateZ(var(--z, 0px)) translateX(26px); }
+  to   { opacity: 1; transform: translateZ(var(--z, 0px)) translateX(0); }
+}
+@keyframes floatCardBob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-5px); }
+}
+.login-float-wrap {
+  opacity: 0;
+  transform: translateZ(var(--z, 0px));
+  animation: floatCardIn 0.7s cubic-bezier(0.22,1,0.36,1) forwards;
 }
 .login-float-card {
-  opacity: 0;
-  animation: floatCardIn 0.65s cubic-bezier(0.22,1,0.36,1) forwards;
+  animation: floatCardBob 5.5s ease-in-out infinite;
 }
 
 /* Live ticker horizontal scroll */
@@ -843,6 +854,141 @@ th.sort-active { color: var(--text-primary); }
 }
 .login-ticker-track:hover {
   animation-play-state: paused;
+}
+
+/* ── Login 3D command-center scene ─────────────────────────────────
+   The brand panel is a perspective viewport; .login-scene is rotated a few
+   degrees toward the pointer (JS, transform-only) and its layers sit on
+   separate translateZ planes so they parallax against each other.
+   Back layers are scaled up to compensate for perspective shrink so no
+   edges are exposed while the scene tilts. */
+.login-persp { perspective: 1400px; }
+
+.login-scene {
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.login-layer-grid   { transform: translateZ(-120px) scale(1.18); }
+.login-layer-glow   { transform: translateZ(-90px)  scale(1.12); }
+.login-layer-canvas { transform: translateZ(-60px)  scale(1.08); }
+.login-layer-map    {
+  transform: rotateX(9deg) translateZ(-24px) scale(1.22);
+  transform-origin: 50% 62%;
+}
+.login-card-rail {
+  transform: translateY(-50%) translateZ(56px) rotateY(-7deg);
+  transform-style: preserve-3d;
+}
+
+/* Slow diagonal light sweep across the brand panel */
+@keyframes loginSweep {
+  0%   { transform: translateX(-90%) skewX(-14deg); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(260%) skewX(-14deg); opacity: 0; }
+}
+.login-light-sweep {
+  position: absolute;
+  top: -12%;
+  bottom: -12%;
+  left: 0;
+  width: 42%;
+  background: linear-gradient(100deg,
+    transparent 0%,
+    rgba(125,211,252,.05) 42%,
+    rgba(45,212,191,.10) 50%,
+    rgba(125,211,252,.05) 58%,
+    transparent 100%);
+  animation: loginSweep 9s ease-in-out infinite;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.login-hero-title {
+  text-shadow: 0 1px 2px rgba(2,8,20,.55), 0 6px 32px rgba(45,212,191,.16);
+}
+
+/* ── Sign-in card — 3D stage with ghost plates behind the glass ──── */
+.login-card-stage {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+.login-card-plate {
+  position: absolute;
+  inset: 0;
+  border-radius: 26px;
+  pointer-events: none;
+}
+.login-card-plate-1 {
+  transform: translateZ(-34px) translateY(16px) scale(.965);
+  background: linear-gradient(180deg, rgba(13,148,136,.14), rgba(37,99,235,.08));
+  filter: blur(1.5px);
+  opacity: .8;
+}
+.login-card-plate-2 {
+  transform: translateZ(-68px) translateY(32px) scale(.925);
+  background: linear-gradient(180deg, rgba(100,116,139,.16), rgba(100,116,139,.05));
+  filter: blur(3px);
+  opacity: .7;
+}
+.login-card3d {
+  transform: translateZ(0);
+  box-shadow:
+    0 1px 2px rgba(15,23,42,.05),
+    0 10px 28px -6px rgba(15,23,42,.10),
+    0 30px 70px -28px rgba(13,148,136,.28),
+    inset 0 1px 0 rgba(255,255,255,.85);
+  transition: transform .4s cubic-bezier(.22,1,.36,1), box-shadow .4s cubic-bezier(.22,1,.36,1);
+}
+/* Hairline sheen along the top edge of the glass */
+.login-card3d::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), transparent);
+  pointer-events: none;
+}
+@media (hover: hover) {
+  /* Gentle lift + tilt on hover; settles flat while a field has focus */
+  .login-card-stage:hover .login-card3d:not(:focus-within) {
+    transform: translateZ(16px) rotateX(.8deg);
+    box-shadow:
+      0 2px 4px rgba(15,23,42,.05),
+      0 16px 40px -8px rgba(15,23,42,.13),
+      0 44px 90px -30px rgba(13,148,136,.34),
+      inset 0 1px 0 rgba(255,255,255,.9);
+  }
+}
+
+/* Perspective floor grid under the form side */
+.login-floor {
+  position: absolute;
+  left: -18%;
+  right: -18%;
+  bottom: -4%;
+  height: 44%;
+  background-image:
+    linear-gradient(rgba(13,148,136,.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13,148,136,.09) 1px, transparent 1px);
+  background-size: 46px 46px;
+  transform: perspective(720px) rotateX(62deg);
+  transform-origin: 50% 100%;
+  -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,.85), transparent 76%);
+  mask-image: linear-gradient(to top, rgba(0,0,0,.85), transparent 76%);
+  pointer-events: none;
+}
+
+/* Reduced motion — static depth is fine, moving depth is not.
+   (The global reduced-motion block already collapses keyframe animations;
+   these make the login-specific motion inert explicitly.) */
+@media (prefers-reduced-motion: reduce) {
+  .login-light-sweep { display: none; }
+  .login-scene { transform: none !important; }
+  .login-float-card { animation: none; }
+  .login-card-stage:hover .login-card3d { transform: none; }
 }
 
 .from-slate-900 {

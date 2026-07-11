@@ -237,6 +237,8 @@ if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || o
 }
 // P10 Security + Compliance
 builder.Services.AddSingleton<SecuritySchemaService>();
+// Tenant API access — per-company hashed API keys + webhook subscriptions (Settings → API & Webhooks)
+builder.Services.AddSingleton<TenantApiSchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
 // Country profiles — platform-managed market/localization defaults + tenant cascade
@@ -383,6 +385,7 @@ using (var scope = app.Services.CreateScope())
         await RunSchemaStep(app, "Stage9", () => scope.ServiceProvider.GetRequiredService<Stage9SchemaService>().EnsureAsync());
     }
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "TenantApi",         () => scope.ServiceProvider.GetRequiredService<TenantApiSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "CountryProfiles",    () => scope.ServiceProvider.GetRequiredService<CountryProfileSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
@@ -535,8 +538,8 @@ app.UseWhen(
             var sessionSql =
                 @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id, u.permissions_json, r.permissions_json role_permissions_json
                   FROM user_sessions s
-                  JOIN users u ON u.id = s.user_id
-                  LEFT JOIN roles r ON r.id = u.role_id
+                  JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
+                  LEFT JOIN roles r ON r.id = u.role_id AND (r.company_id IS NULL OR r.company_id=u.company_id)
                   WHERE s.session_token=@token
                     AND s.expires_at > NOW()
                     AND u.status='Active'
@@ -559,8 +562,11 @@ app.UseWhen(
             var roleName = session["roleName"]?.ToString() ?? string.Empty;
             var roleId = session.TryGetValue("roleId", out var rid) && rid is not null && rid is not DBNull ? Convert.ToInt64(rid) : 0;
 
-            var permissions = ParsePermissions(session.GetValueOrDefault("permissionsJson"))
-                .Concat(ParsePermissions(session.GetValueOrDefault("rolePermissionsJson")))
+            // Role membership is authoritative. Legacy user-level JSON is consulted
+            // only for accounts without a role, so removed role grants cannot linger.
+            var permissions = (roleId > 0
+                    ? ParsePermissions(session.GetValueOrDefault("rolePermissionsJson"))
+                    : ParsePermissions(session.GetValueOrDefault("permissionsJson")))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             if (roleId > 0)

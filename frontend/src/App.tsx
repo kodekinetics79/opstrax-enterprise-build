@@ -293,8 +293,8 @@ export default function App() {
 
         {/* ── Settings / Platform (accessible to all authenticated users) ── */}
         <Route path="/settings" element={<RequirePermission permission="settings:view"><SettingsPage /></RequirePermission>} />
-        <Route path="/admin" element={<RequirePermission permission="users:view"><AdminPage /></RequirePermission>} />
-        <Route path="/user-management" element={<RequirePermission permission="users:view"><AdminPage /></RequirePermission>} />
+        <Route path="/admin" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
+        <Route path="/user-management" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
         <Route path="/ops" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
         <Route path="/platform/operations" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
           <Route path="/about" element={<RequirePermission permission="settings:view"><AboutPage /></RequirePermission>} />

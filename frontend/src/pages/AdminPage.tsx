@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
+import { Check, ClipboardCheck, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
 import {
@@ -7,19 +7,24 @@ import {
   useAdminPermissions,
   useAdminRoles,
   useAdminUsers,
+  useAccessReview,
+  useAccessReviews,
+  useCompleteAccessReview,
+  useCreateAdminRole,
   useCreateAdminUser,
+  useCreateAccessReview,
+  useDecideAccessReviewItem,
   useDeleteAdminUser,
   useUpdateAdminRole,
   useUpdateAdminUser,
 } from "@/hooks/useAdmin";
 import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/hooks/useBatch7";
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
-import { adminApi } from "@/services/adminApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "settings" | "audit";
+type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
 
 type UserFormState = {
   id?: number;
@@ -34,7 +39,6 @@ type UserFormState = {
 
 type RoleFormState = {
   name: string;
-  scope: string;
   permissions: string[];
 };
 
@@ -43,6 +47,7 @@ const TAB_OPTIONS: Array<{ key: AdminTab; label: string }> = [
   { key: "users", label: "Users" },
   { key: "roles", label: "Roles" },
   { key: "permissions", label: "Permissions" },
+  { key: "access", label: "Access Reviews" },
   { key: "settings", label: "Settings" },
   { key: "audit", label: "Audit Logs" },
 ];
@@ -114,11 +119,14 @@ export function AdminPage() {
   const canUpdateUsers = hasPermission(PERMISSIONS.USERS_UPDATE);
   const canDeleteUsers = hasPermission(PERMISSIONS.USERS_DELETE);
   const canViewRoles = hasPermission(PERMISSIONS.ROLES_VIEW);
+  const canCreateRoles = hasPermission(PERMISSIONS.ROLES_CREATE);
   const canUpdateRoles = hasPermission(PERMISSIONS.ROLES_UPDATE);
   const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
   const canUpdateSettings = hasPermission(PERMISSIONS.SETTINGS_UPDATE);
   const canViewAudit = hasPermission(PERMISSIONS.AUDIT_VIEW);
   const canExportReports = hasPermission(PERMISSIONS.REPORTS_EXPORT);
+  const canViewAccessReviews = hasPermission("access_review:view");
+  const canManageAccessReviews = hasPermission("access_review:manage");
 
   const [tab, setTab] = useState<AdminTab>("dashboard");
   const [search, setSearch] = useState("");
@@ -128,18 +136,19 @@ export function AdminPage() {
   const [userModal, setUserModal] = useState<"create" | "edit" | null>(null);
   const [roleModal, setRoleModal] = useState<AnyRecord | null>(null);
   const [permissionsExportNotice, setPermissionsExportNotice] = useState<string | null>(null);
+  const [selectedReviewId, setSelectedReviewId] = useState<number | null>(null);
+  const [reviewForm, setReviewForm] = useState({ title: "", description: "", dueDate: "" });
   const [userForm, setUserForm] = useState<UserFormState>({
     fullName: "",
     email: "",
-    companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 1),
+    companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
     roleId: "",
-    roleName: "Tenant Admin",
+    roleName: "",
     status: "Active",
     password: "",
   });
   const [roleForm, setRoleForm] = useState<RoleFormState>({
     name: "",
-    scope: "Tenant",
     permissions: [],
   });
 
@@ -147,6 +156,8 @@ export function AdminPage() {
   const usersQ = useAdminUsers({ search, role: roleFilter, status: statusFilter });
   const rolesQ = useAdminRoles();
   const permissionsQ = useAdminPermissions();
+  const accessReviewsQ = useAccessReviews(canViewAccessReviews);
+  const accessReviewQ = useAccessReview(selectedReviewId);
   const localeQ = useLocalizationSettings();
   const auditLogsQ = useAuditLogs(undefined, canViewAudit);
   const auditExportsQ = useAuditExportRequests(canViewAudit);
@@ -156,7 +167,11 @@ export function AdminPage() {
   const updateUser = useUpdateAdminUser();
   const deleteUser = useDeleteAdminUser();
   const updateRole = useUpdateAdminRole();
+  const createRole = useCreateAdminRole();
   const updateSettings = useUpdateLocaleSettings();
+  const createAccessReview = useCreateAccessReview();
+  const decideAccessReviewItem = useDecideAccessReviewItem();
+  const completeAccessReview = useCompleteAccessReview();
 
   const users = usersQ.data ?? [];
   const roles = rolesQ.data ?? [];
@@ -165,7 +180,7 @@ export function AdminPage() {
 
   const filteredUsers = useMemo(() => users, [users]);
 
-  if (!canViewUsers && !canViewRoles && !canViewSettings && !canViewAudit) {
+  if (!canViewUsers && !canViewRoles && !canViewSettings && !canViewAudit && !canViewAccessReviews) {
     return <PermissionDenied permission="users:view" />;
   }
 
@@ -173,9 +188,9 @@ export function AdminPage() {
     setUserForm({
       fullName: "",
       email: "",
-      companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 1),
+      companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
       roleId: "",
-      roleName: "Tenant Admin",
+      roleName: String(roleOptions[0]?.name ?? ""),
       status: "Active",
       password: "",
     });
@@ -187,7 +202,7 @@ export function AdminPage() {
       id: Number(user.id),
       fullName: String(user.fullName ?? user.full_name ?? ""),
       email: String(user.email ?? ""),
-      companyId: Number(user.companyId ?? user.company_id ?? session?.company?.id ?? 1),
+      companyId: Number(user.companyId ?? user.company_id ?? session?.company?.id ?? 0),
       roleId: String(user.roleId ?? user.role_id ?? ""),
       roleName: String(user.roleName ?? user.role_name ?? ""),
       status: String(user.status ?? "Active"),
@@ -204,61 +219,47 @@ export function AdminPage() {
       roleId: userForm.roleId ? Number(userForm.roleId) : undefined,
       roleName: userForm.roleName,
       status: userForm.status,
-      permissionsJson: JSON.stringify(permissionList(roleModal?.permissionsJson ?? [])),
     };
     if (userModal === "create") {
       body.password = userForm.password;
       await createUser.mutateAsync(body);
-      await adminApi.auditLog({ actionName: "user.created", entityName: "User", detailsJson: JSON.stringify({ email: userForm.email }) });
     } else if (userModal === "edit" && userForm.id) {
       if (userForm.password.trim()) body.password = userForm.password;
       await updateUser.mutateAsync({ id: Number(userForm.id), body });
-      await adminApi.auditLog({ actionName: "user.updated", entityName: "User", entityId: Number(userForm.id), detailsJson: JSON.stringify({ email: userForm.email }) });
     }
     setUserModal(null);
   };
 
   const saveRole = async () => {
-    if (!roleModal?.id) return;
-    await updateRole.mutateAsync({
-      id: Number(roleModal.id),
-      body: {
-        name: roleForm.name,
-        scope: roleForm.scope,
-        permissions: roleForm.permissions,
-      },
-    });
-    await adminApi.auditLog({ actionName: "role.updated", entityName: "Role", entityId: Number(roleModal.id), detailsJson: JSON.stringify({ permissions: roleForm.permissions }) });
+    if (roleModal?.id) {
+      await updateRole.mutateAsync({ id: Number(roleModal.id), body: roleForm });
+    } else {
+      await createRole.mutateAsync(roleForm);
+    }
     setRoleModal(null);
   };
 
   const exportUsers = async () => {
     downloadCsv("admin-users.csv", filteredUsers, ["fullName", "email", "companyName", "roleName", "status"]);
-    await adminApi.auditLog({
-      actionName: "export.action",
-      entityName: "Users",
-      detailsJson: JSON.stringify({ rows: filteredUsers.length, format: "CSV" }),
-    });
     setPermissionsExportNotice(`Exported ${filteredUsers.length} user rows to CSV.`);
     window.setTimeout(() => setPermissionsExportNotice(null), 3500);
   };
 
   const exportRoles = async () => {
     downloadCsv("admin-roles.csv", roles, ["name", "scope", "userCount"]);
-    await adminApi.auditLog({
-      actionName: "export.action",
-      entityName: "Roles",
-      detailsJson: JSON.stringify({ rows: roles.length, format: "CSV" }),
-    });
   };
 
   const openRoleEditor = (role: AnyRecord) => {
     setRoleModal(role);
     setRoleForm({
       name: String(role.name ?? ""),
-      scope: String(role.scope ?? "Tenant"),
       permissions: permissionList(role.permissions ?? role.permissions_json),
     });
+  };
+
+  const openCreateRole = () => {
+    setRoleModal({});
+    setRoleForm({ name: "", permissions: [] });
   };
 
   return (
@@ -318,6 +319,7 @@ export function AdminPage() {
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
               (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
+              (option.key === "access" && !canViewAccessReviews) ||
               (option.key === "settings" && !canViewSettings) ||
               (option.key === "audit" && !canViewAudit)
             }
@@ -325,6 +327,7 @@ export function AdminPage() {
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
               (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
+              (option.key === "access" && !canViewAccessReviews) ||
               (option.key === "settings" && !canViewSettings) ||
               (option.key === "audit" && !canViewAudit)
                 ? "You do not have permission to perform this action."
@@ -438,7 +441,6 @@ export function AdminPage() {
                             onClick={async () => {
                               if (!window.confirm(`Deactivate ${String(user.fullName ?? user.email)}?`)) return;
                               await deleteUser.mutateAsync(Number(user.id));
-                              await adminApi.auditLog({ actionName: "user.deleted", entityName: "User", entityId: Number(user.id), detailsJson: JSON.stringify({ status: "Inactive" }) });
                             }}
                             disabled={!canDeleteUsers}
                             title={!canDeleteUsers ? "You do not have permission to perform this action." : "Deactivate user"}
@@ -461,7 +463,12 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-slate-400">Roles list and permission bundles.</p>
-            <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
+              <button className="btn-primary" onClick={openCreateRole} disabled={!canCreateRoles}>
+                <Plus className="h-4 w-4" /> Create role
+              </button>
+            </div>
           </div>
           {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : (
             <div className="grid gap-4 xl:grid-cols-2">
@@ -472,7 +479,9 @@ export function AdminPage() {
                       <h3 className="font-bold text-slate-900">{String(role.name)}</h3>
                       <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
                     </div>
-                    <button className="btn-ghost h-8 px-3" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles}>Edit</button>
+                    <button className="btn-ghost h-8 px-3" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
+                      {Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}
+                    </button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {permissionList(role.permissions ?? role.permissions_json).slice(0, 8).map((permission) => (
@@ -506,11 +515,6 @@ export function AdminPage() {
             <>
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm text-slate-400">Canonical permission catalog used by the RBAC layer.</p>
-            <button className="btn-ghost" onClick={async () => {
-              await adminApi.auditLog({ actionName: "permissions.viewed", entityName: "Permissions", detailsJson: JSON.stringify({ total: permissions.length }) });
-            }}>
-              Audit view
-            </button>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             {permissionsByGroup(permissions).map((group) => (
@@ -529,6 +533,63 @@ export function AdminPage() {
           </div>
             </>
           )}
+        </div>
+      )}
+
+      {tab === "access" && (
+        <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
+          <div className="space-y-4">
+            {canManageAccessReviews && (
+              <div className="panel space-y-3 p-5">
+                <div>
+                  <h2 className="font-bold text-slate-900">Start access certification</h2>
+                  <p className="mt-1 text-xs text-slate-500">Snapshots every active user and their current role permissions for this tenant.</p>
+                </div>
+                <input className="field w-full" value={reviewForm.title} onChange={(e) => setReviewForm((f) => ({ ...f, title: e.target.value }))} placeholder="Quarterly privileged access review" />
+                <textarea className="field min-h-20 w-full" value={reviewForm.description} onChange={(e) => setReviewForm((f) => ({ ...f, description: e.target.value }))} placeholder="Purpose and reviewer guidance" />
+                <div><label className="label">Due date</label><input className="field w-full" type="date" value={reviewForm.dueDate} onChange={(e) => setReviewForm((f) => ({ ...f, dueDate: e.target.value }))} /></div>
+                <button
+                  className="btn-primary w-full"
+                  disabled={!reviewForm.title.trim() || createAccessReview.isPending}
+                  onClick={async () => {
+                    const result = await createAccessReview.mutateAsync({ ...reviewForm, reviewerUserId: Number(session?.user?.id) });
+                    setReviewForm({ title: "", description: "", dueDate: "" });
+                    setSelectedReviewId(Number(result.id));
+                  }}
+                ><Plus className="h-4 w-4" />{createAccessReview.isPending ? "Creating…" : "Create review"}</button>
+              </div>
+            )}
+            <div className="panel overflow-hidden">
+              <div className="border-b border-slate-200 px-5 py-4"><h2 className="font-bold text-slate-900">Review campaigns</h2></div>
+              {accessReviewsQ.isLoading ? <LoadingState /> : accessReviewsQ.isError ? <ErrorState message="Could not load access reviews." /> : (accessReviewsQ.data ?? []).length === 0 ? (
+                <div className="p-5"><EmptyState title="No access reviews" subtitle="Create the first tenant access certification campaign." /></div>
+              ) : (accessReviewsQ.data ?? []).map((review) => (
+                <button key={review.id} className={`w-full border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50 ${selectedReviewId === Number(review.id) ? "bg-teal-50" : ""}`} onClick={() => setSelectedReviewId(Number(review.id))}>
+                  <div className="flex items-start justify-between gap-3"><p className="font-semibold text-slate-900">{String(review.title)}</p><StatusBadge status={String(review.status)} /></div>
+                  <p className="mt-2 text-xs text-slate-500">{Number(review.itemsPending ?? review.items_pending ?? 0)} pending · {Number(review.itemsApproved ?? review.items_approved ?? 0)} approved · {Number(review.itemsRevoked ?? review.items_revoked ?? 0)} revoked</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="panel min-h-80 overflow-hidden">
+            {!selectedReviewId ? (
+              <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><ClipboardCheck className="h-10 w-10 text-teal-500" /><h2 className="mt-3 font-bold text-slate-900">Select a review</h2><p className="mt-1 text-sm text-slate-500">Inspect each user’s snapshotted role and make an explicit retain or revoke decision.</p></div>
+            ) : accessReviewQ.isLoading ? <LoadingState /> : accessReviewQ.isError ? <ErrorState message="Could not load this access review." /> : (
+              <div>
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
+                  <div><h2 className="text-lg font-bold text-slate-900">{String(accessReviewQ.data?.title ?? "Access review")}</h2><p className="mt-1 text-sm text-slate-500">{String(accessReviewQ.data?.description ?? "Tenant access certification")}</p></div>
+                  <button className="btn-primary" disabled={!canManageAccessReviews || Number(accessReviewQ.data?.itemsPending ?? accessReviewQ.data?.items_pending ?? 0) > 0 || String(accessReviewQ.data?.status) === "completed" || completeAccessReview.isPending} onClick={() => completeAccessReview.mutateAsync(selectedReviewId)}><Check className="h-4 w-4" />Complete review</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm"><thead><tr className="border-b border-slate-200">{["User", "Role", "Permissions", "Decision"].map((h) => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>)}</tr></thead>
+                    <tbody className="divide-y divide-slate-100">{(((accessReviewQ.data?.items as AnyRecord[] | undefined) ?? [])).map((item) => {
+                      const pending = String(item.status) === "pending";
+                      return <tr key={String(item.id)}><td className="px-4 py-3"><p className="font-semibold text-slate-900">{String(item.targetUserName ?? item.target_user_name ?? "User")}</p><p className="text-xs text-slate-500">{String(item.targetUserEmail ?? item.target_user_email ?? "")}</p></td><td className="px-4 py-3 text-slate-700">{String(item.roleName ?? item.role_name ?? "—")}</td><td className="px-4 py-3 text-xs text-slate-500">{permissionList(item.permissionsSnapshot ?? item.permissions_snapshot).length} granted</td><td className="px-4 py-3">{pending ? <div className="flex gap-2"><button className="btn-ghost h-8 px-3" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "approve" })}>Retain</button><button className="btn-ghost h-8 px-3 text-rose-600" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "revoke", notes: "Access removal required by reviewer" })}>Revoke</button></div> : <StatusBadge status={String(item.status)} />}</td></tr>;
+                    })}</tbody></table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -588,13 +649,16 @@ export function AdminPage() {
               <h3 className="font-bold text-slate-900">Export Requests</h3>
               {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
                 <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-semibold text-slate-900">{String(entry.requested_by_name ?? "Admin")}</p>
+                  <p className="text-sm font-semibold text-slate-900">{String(entry.requested_by_name ?? "—")}</p>
                   <p className="text-xs text-slate-500">{String(entry.status ?? "Pending")}</p>
                 </div>
               ))}
               <button
                 className="btn-ghost w-full"
-                onClick={() => createAuditExport.mutate({ requestedByName: "Admin", exportFormat: "CSV" })}
+                onClick={() => createAuditExport.mutate({
+                  requestedByName: String(session?.user?.fullName ?? session?.user?.full_name ?? session?.user?.email ?? ""),
+                  exportFormat: "CSV",
+                })}
                 disabled={!canExportReports}
                 title={!canExportReports ? "You do not have permission to perform this action." : undefined}
               >
@@ -612,9 +676,17 @@ export function AdminPage() {
             <p className="section-title text-teal-300">User Detail</p>
             <h2 className="mt-3 text-2xl font-bold text-white">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
             <div className="mt-6 space-y-2">
-              {Object.entries(selectedUser).slice(0, 20).map(([key, value]) => (
+              {([
+                ["Email", selectedUser.email],
+                ["Company", selectedUser.companyName ?? selectedUser.company_name],
+                ["Role", selectedUser.roleDisplayName ?? selectedUser.roleName ?? selectedUser.role_name],
+                ["Status", selectedUser.status],
+                ["Last login", selectedUser.lastLoginAt ?? selectedUser.last_login_at],
+                ["MFA", selectedUser.mfaStatus ?? selectedUser.mfa_status],
+                ["Created", selectedUser.createdAt ?? selectedUser.created_at],
+              ] as Array<[string, unknown]>).map(([key, value]) => (
                 <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2.5">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{key.replace(/_/g, " ")}</p>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{key}</p>
                   <p className="text-right text-sm text-slate-200 break-all">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
                 </div>
               ))}
@@ -635,8 +707,12 @@ export function AdminPage() {
               <div><label className="label">Email</label><input className="field w-full" value={String(userForm.email ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, email: e.target.value }))} /></div>
               <div>
                 <label className="label">Role</label>
-                <select className="field w-full" value={String(userForm.roleName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, roleName: e.target.value, roleId: "" }))}>
-                  {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+                <select className="field w-full" value={String(userForm.roleId ?? "")} onChange={(e) => {
+                  const role = roleOptions.find((option) => String(option.id) === e.target.value);
+                  setUserForm((f) => ({ ...f, roleId: e.target.value, roleName: String(role?.name ?? "") }));
+                }}>
+                  <option value="" disabled>Select a role</option>
+                  {roleOptions.map((role) => <option key={role.id} value={String(role.id)}>{role.name}</option>)}
                 </select>
               </div>
               <div>
@@ -651,12 +727,12 @@ export function AdminPage() {
               </div>
               <div>
                 <label className="label">Company ID</label>
-                <input className="field w-full" type="number" value={Number(userForm.companyId ?? 1)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
+                <input className="field w-full" type="number" value={Number(userForm.companyId || 0)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
               </div>
             </div>
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers || !String(userForm.password ?? "").trim() : !canUpdateUsers}>
+              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || (userModal === "create" ? !canCreateUsers || !String(userForm.password ?? "").trim() : !canUpdateUsers)}>
                 Save User
               </button>
             </div>
@@ -668,17 +744,11 @@ export function AdminPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="panel w-full max-w-3xl space-y-4 p-6">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">Edit Role</h2>
+              <h2 className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
               <button className="icon-btn" onClick={() => setRoleModal(null)}><X className="h-4 w-4" /></button>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div>
               <div><label className="label">Role Name</label><input className="field w-full" value={String(roleForm.name ?? "")} onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} /></div>
-              <div>
-                <label className="label">Scope</label>
-                <select className="field w-full" value={String(roleForm.scope ?? "Tenant")} onChange={(e) => setRoleForm((f) => ({ ...f, scope: e.target.value }))}>
-                  {["Platform", "Tenant", "Customer", "Partner"].map((scope) => <option key={scope} value={scope}>{scope}</option>)}
-                </select>
-              </div>
             </div>
             <div className="max-h-[48vh] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
               {permissionsByGroup(permissions).map((group) => (
@@ -706,7 +776,7 @@ export function AdminPage() {
             </div>
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setRoleModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveRole} disabled={!canUpdateRoles}>Save Role</button>
+              <button type="button" className="btn-primary flex-1" onClick={saveRole} disabled={!roleForm.name.trim() || (roleModal.id ? !canUpdateRoles : !canCreateRoles)}>{roleModal.id ? "Save Role" : "Create Role"}</button>
             </div>
           </div>
         </div>
