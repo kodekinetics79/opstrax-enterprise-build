@@ -60,7 +60,7 @@ public sealed class AuthenticationMfaTests
     {
         var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var loginStart = source.IndexOf("private static async Task<IResult> Login(", StringComparison.Ordinal);
-        var loginEnd = source.IndexOf("private static string BearerToken", loginStart, StringComparison.Ordinal);
+        var loginEnd = source.IndexOf("private static IResult InvalidCredentials", loginStart, StringComparison.Ordinal);
         var login = source[loginStart..loginEnd];
 
         var mfaGate = login.IndexOf("IsMfaRequiredForRole", StringComparison.Ordinal);

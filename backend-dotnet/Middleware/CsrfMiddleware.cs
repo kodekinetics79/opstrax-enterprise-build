@@ -64,6 +64,10 @@ public class CsrfMiddleware
         if (!SAFE_METHODS.Contains(context.Request.Method) &&
             !bearerOnly &&
             !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            // Public account-recovery endpoints are pre-session, rate-limited, and
+            // use opaque one-time tokens; there is no authenticated cookie to forge.
+            !string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(path, "/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/platform/auth/login", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/platform/auth/logout", StringComparison.OrdinalIgnoreCase) &&
             // Pre-session like login: the invited operator has no bearer/cookie yet.

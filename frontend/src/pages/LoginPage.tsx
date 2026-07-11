@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertCircle, ArrowRight, ClipboardCheck, Route, ShieldCheck, Wrench } from "lucide-react";
 import { flushSync } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
@@ -574,7 +574,7 @@ export function LoginPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="login-password" className="mb-1.5 block text-sm font-medium text-slate-700">Password</label>
+                  <div className="mb-1.5 flex items-center justify-between"><label htmlFor="login-password" className="block text-sm font-medium text-slate-700">Password</label><Link to="/forgot-password" className="text-xs font-semibold text-teal-700 hover:text-teal-600">Forgot password?</Link></div>
                   <div className="relative">
                     <input id="login-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
                       placeholder="••••••••"

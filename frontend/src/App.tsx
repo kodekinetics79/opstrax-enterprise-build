@@ -7,6 +7,7 @@ import { GCC_COUNTRIES, RequireRegion } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { modules } from "@/modules/moduleConfig";
 import { LoginPage } from "@/pages/LoginPage";
+import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
 import { LoadingState } from "@/components/ui";
 
 const operatingRoutes = [
@@ -137,6 +138,8 @@ export default function App() {
         <Route path="/platform/*" element={<PlatformApp />} />
 
         <Route path="/login" element={session ? <Navigate to={getLandingRouteForSession(session)} replace /> : <LoginPage />} />
+        <Route path="/forgot-password" element={<ResetPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
 

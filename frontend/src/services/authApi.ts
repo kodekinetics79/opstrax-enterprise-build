@@ -27,4 +27,8 @@ export const authApi = {
     unwrap<{ changed: boolean }>(
       apiClient.post("/api/auth/change-password", { currentPassword, newPassword })
     ),
+  forgotPassword: async (email: string) =>
+    unwrap<{ accepted: boolean }>(apiClient.post("/api/auth/forgot-password", { email: resolveEmail(email) })),
+  resetPassword: async (email: string, token: string, newPassword: string) =>
+    unwrap<{ changed: boolean }>(apiClient.post("/api/auth/reset-password", { email: resolveEmail(email), token, newPassword })),
 };

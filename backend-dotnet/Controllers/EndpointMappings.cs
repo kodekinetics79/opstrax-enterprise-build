@@ -55,6 +55,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/auth/login", (HttpContext http, LoginRequest request, Database db, AuditService audit,
                 SecuritySettingsService securitySettings, PasswordPolicyService passwordPolicy, CancellationToken ct) =>
             Login(http, request, db, audit, securitySettings, passwordPolicy, ct));
+        app.MapPost("/api/auth/forgot-password", ForgotPassword);
+        app.MapPost("/api/auth/reset-password", ResetPassword);
         app.MapGet("/api/auth/me", AuthMe);
         app.MapPost("/api/auth/refresh", AuthRefresh);
         app.MapPost("/api/auth/logout", AuthLogout);
@@ -2376,6 +2378,92 @@ public static partial class EndpointMappings
         Results.Json(
             ApiResponse<object>.Fail("Invalid credentials"),
             statusCode: StatusCodes.Status401Unauthorized);
+
+    private static async Task<IResult> ForgotPassword(HttpContext http, ForgotPasswordRequest request, Database db, CancellationToken ct)
+    {
+        const string genericMessage = "If an active account matches that email, password reset instructions will be sent.";
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        if (email.Length is > 0 and <= 320)
+        {
+            var user = await db.QuerySingleAsync(
+                @"SELECT u.id, u.company_id, u.email, u.full_name
+                  FROM users u JOIN companies c ON c.id=u.company_id
+                  WHERE LOWER(u.email)=@email AND u.status='Active'
+                    AND LOWER(COALESCE(c.status,'active')) NOT IN ('suspended','cancelled','canceled','disabled')
+                  LIMIT 1",
+                c => c.Parameters.AddWithValue("@email", email), ct);
+            if (user is not null)
+            {
+                var userId = Convert.ToInt64(user["id"]);
+                var companyId = Convert.ToInt64(user["companyId"]);
+                var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                    .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                var tokenHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
+                await db.ExecuteAsync(
+                    @"INSERT INTO password_reset_tokens (user_id, company_id, token_hash, expires_at, request_ip_hash)
+                      VALUES (@uid,@cid,@hash,NOW()+INTERVAL '30 minutes',@ip)
+                      ON CONFLICT (user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash, expires_at=EXCLUDED.expires_at,
+                        consumed_at=NULL, request_ip_hash=EXCLUDED.request_ip_hash, created_at=NOW()",
+                    c => {
+                        c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@hash", tokenHash);
+                        c.Parameters.AddWithValue("@ip", HashRequestMetadata(http.Connection.RemoteIpAddress?.ToString()));
+                    }, ct);
+
+                var frontend = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+                    ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
+                var link = $"{frontend}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}";
+                var sent = frontend.Length > 0 && await PlatformMailService.TrySendAsync(email, "Reset your OpsTrax password",
+                    $"Hello {user["fullName"]},\n\nUse this one-time link within 30 minutes to reset your OpsTrax password:\n{link}\n\nIf you did not request this, you can ignore this message.", ct);
+                await db.ExecuteAsync(
+                    @"INSERT INTO security_events (company_id,user_id,event_type,severity,source_ip_truncated,user_agent_hash,success,safe_message,metadata_json)
+                      VALUES (@cid,@uid,'password.reset.requested','info',NULL,@ua,true,'Password reset requested',jsonb_build_object('emailSent',@sent))",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@ua", HashRequestMetadata(http.Request.Headers.UserAgent.FirstOrDefault())); c.Parameters.AddWithValue("@sent", sent); }, ct);
+            }
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { accepted = true }, genericMessage));
+    }
+
+    private static async Task<IResult> ResetPassword(HttpContext http, ResetPasswordRequest request, Database db,
+        SecuritySettingsService securitySettings, CancellationToken ct)
+    {
+        const string invalidMessage = "This password reset link is invalid or has expired.";
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var rawToken = request.Token ?? string.Empty;
+        if (email.Length == 0 || rawToken.Length < 32 || request.NewPassword is null)
+            return Results.BadRequest(ApiResponse<object>.Fail(invalidMessage));
+        var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
+        var match = await db.QuerySingleAsync(
+            @"SELECT t.user_id, t.company_id FROM password_reset_tokens t JOIN users u ON u.id=t.user_id
+              WHERE LOWER(u.email)=@email AND t.token_hash=@hash AND t.consumed_at IS NULL AND t.expires_at>NOW()
+                AND u.status='Active' LIMIT 1",
+            c => { c.Parameters.AddWithValue("@email", email); c.Parameters.AddWithValue("@hash", hash); }, ct);
+        if (match is null) return Results.BadRequest(ApiResponse<object>.Fail(invalidMessage));
+
+        var userId = Convert.ToInt64(match["userId"]); var companyId = Convert.ToInt64(match["companyId"]);
+        var policy = await securitySettings.GetAsync(companyId, ct);
+        var validation = PasswordPolicyService.ValidatePassword(request.NewPassword, policy);
+        if (!validation.valid) return Results.BadRequest(ApiResponse<object>.Fail(string.Join(". ", validation.failures)));
+
+        var changed = await db.ExecuteAsync(
+            @"WITH consumed AS (
+                UPDATE password_reset_tokens SET consumed_at=NOW()
+                WHERE user_id=@uid AND token_hash=@token AND consumed_at IS NULL AND expires_at>NOW() RETURNING user_id)
+              UPDATE users SET password_hash=@password, demo_password='', password_changed_at=NOW(),
+                failed_login_attempts=0, locked_until=NULL
+              WHERE id IN (SELECT user_id FROM consumed)",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@token", hash); c.Parameters.AddWithValue("@password", HashPassword(request.NewPassword)); }, ct);
+        if (changed == 0) return Results.BadRequest(ApiResponse<object>.Fail(invalidMessage));
+        await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@uid", c => c.Parameters.AddWithValue("@uid", userId), ct);
+        await db.ExecuteAsync(
+            @"INSERT INTO security_events (company_id,user_id,event_type,severity,source_ip_truncated,user_agent_hash,success,safe_message)
+              VALUES (@cid,@uid,'password.reset.completed','medium',NULL,@ua,true,'Password reset completed; sessions revoked')",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@ua", HashRequestMetadata(http.Request.Headers.UserAgent.FirstOrDefault())); }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { changed = true }, "Password updated. Sign in with your new password."));
+    }
+
+    private static string HashRequestMetadata(string? value) =>
+        Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value ?? string.Empty)))[..16];
 
     private static void LogSafeEndpointFailure(HttpContext http, Exception exception, string operation)
     {
@@ -8751,6 +8839,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     private sealed record LoginRequest(string Email, string Password);
+    private sealed record ForgotPasswordRequest(string? Email);
+    private sealed record ResetPasswordRequest(string? Email, string? Token, string? NewPassword);
     private sealed record ToggleBody(bool Enabled);
     private sealed record DigitalFormSubmissionBody(string FormKey, object? Answers, string? Notes);
     private sealed record WorkforceAssignRequest(int DriverId, string Day, string Shift);

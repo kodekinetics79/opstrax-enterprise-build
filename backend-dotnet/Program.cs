@@ -88,11 +88,14 @@ builder.Services.AddRateLimiter(options =>
 
     static bool IsLogin(PathString path) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);
 
     var generalApiLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        if (!context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) ||
+        if (HttpMethods.IsOptions(context.Request.Method) ||
+            !context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) ||
             IsHealthProbe(context.Request.Path))
         {
             return RateLimitPartition.GetNoLimiter("unlimited");
@@ -111,7 +114,7 @@ builder.Services.AddRateLimiter(options =>
 
     var loginLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        if (!IsLogin(context.Request.Path))
+        if (HttpMethods.IsOptions(context.Request.Method) || !IsLogin(context.Request.Path))
             return RateLimitPartition.GetNoLimiter("not-login");
 
         return RateLimitPartition.GetFixedWindowLimiter(
@@ -422,9 +425,9 @@ app.Use(async (context, next) =>
 });
 
 app.UseMiddleware<ErrorHandlingMiddleware>();
+app.UseCors("OpsTraxCors");
 app.UseRateLimiter();
 app.UseMiddleware<CsrfMiddleware>();
-app.UseCors("OpsTraxCors");
 app.UseSwagger();
 
 // RLS enforcement (Option A1). Production startup requires this to be explicitly
@@ -459,6 +462,8 @@ app.UseWhen(
                 finally { scopes.Current = null; }
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/ready", StringComparison.OrdinalIgnoreCase) ||
                 // Platform Admin — self-authenticates against platform_sessions (separate
