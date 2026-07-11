@@ -4,10 +4,14 @@ import {
   Camera,
   CheckCircle,
   Gauge,
+  History,
   Layers,
   MapPin,
   Navigation,
+  Pause,
+  Play,
   Route,
+  RotateCcw,
   Satellite,
   Search,
   ShieldAlert,
@@ -29,6 +33,45 @@ const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "F
 
 type LayerKey = "vehicles" | "geofences";
 type StatusBucket = "Moving" | "Idle" | "Offline";
+
+/** Breadcrumb-replay time-window presets (hours back from now). */
+const REPLAY_WINDOWS = [
+  { key: "1h", label: "Last 1h", hours: 1 },
+  { key: "6h", label: "Last 6h", hours: 6 },
+  { key: "24h", label: "Last 24h", hours: 24 },
+] as const;
+type ReplayWindowKey = (typeof REPLAY_WINDOWS)[number]["key"];
+
+/** Playback speeds — ticks/sec multiplier so long trails replay fast. */
+const REPLAY_SPEEDS = [1, 4, 16] as const;
+type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];
+
+type BreadcrumbPoint = {
+  lat: number;
+  lng: number;
+  speed_mph?: number | null;
+  heading?: number | null;
+  engine_status?: string | null;
+  event_time?: string | null;
+  source?: string | null;
+};
+type BreadcrumbResponse = {
+  vehicleId: string | number;
+  from: string;
+  to: string;
+  totalPoints: number;
+  returnedPoints: number;
+  sampledEvery: number;
+  points: BreadcrumbPoint[];
+};
+
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 type RouteTrail = {
   id: string;
   label: string;
@@ -122,6 +165,14 @@ export function LiveMapPage() {
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
 
+  // ── Breadcrumb replay ─────────────────────────────────────────────────────────
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replayVehicleId, setReplayVehicleId] = useState<string | null>(null);
+  const [replayWindow, setReplayWindow] = useState<ReplayWindowKey>("24h");
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState<ReplaySpeed>(4);
+
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["telemetry", "live-map-summary"],
     queryFn: telemetryApi.liveMapSummary,
@@ -164,6 +215,77 @@ export function LiveMapPage() {
     queryFn: () => controlTowerApi.entity("vehicle", (selected?.vehicleId ?? selected?.id) as string | number),
     enabled: Boolean(selected?.vehicleId ?? selected?.id),
   });
+
+  // Breadcrumb replay: fetch the chronological GPS trail for the replay vehicle over the
+  // chosen time window. from/to are computed here so preset changes refetch a fresh window.
+  const replayRange = useMemo(() => {
+    const hours = REPLAY_WINDOWS.find((w) => w.key === replayWindow)?.hours ?? 24;
+    const to = new Date();
+    const from = new Date(to.getTime() - hours * 3600_000);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, [replayWindow]);
+
+  const breadcrumbsQ = useQuery({
+    queryKey: ["telemetry", "breadcrumbs", replayVehicleId, replayWindow],
+    queryFn: () =>
+      unwrap<BreadcrumbResponse>(
+        apiClient.get("/api/telemetry/breadcrumbs", {
+          params: { vehicleId: replayVehicleId, from: replayRange.from, to: replayRange.to, limit: 2000 },
+        }),
+      ),
+    enabled: replayOpen && Boolean(replayVehicleId),
+  });
+
+  const replayPoints = useMemo<BreadcrumbPoint[]>(() => breadcrumbsQ.data?.points ?? [], [breadcrumbsQ.data]);
+  const replayTrail = useMemo<Array<[number, number]>>(
+    () =>
+      replayPoints
+        .map((p) => [Number(p.lat), Number(p.lng)] as [number, number])
+        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0),
+    [replayPoints],
+  );
+
+  // Reset playback to the start whenever a new trail loads (new vehicle or window).
+  useEffect(() => {
+    setReplayIndex(0);
+    setReplayPlaying(false);
+  }, [replayVehicleId, replayWindow, breadcrumbsQ.dataUpdatedAt]);
+
+  // Playback timer: advance the index through the trail while playing. Speed scales the
+  // number of points consumed per tick so a 2000-point trail replays quickly at 16x.
+  useEffect(() => {
+    if (!replayPlaying || replayTrail.length < 2) return;
+    const timer = window.setInterval(() => {
+      setReplayIndex((i) => {
+        const next = i + replaySpeed;
+        if (next >= replayTrail.length - 1) {
+          setReplayPlaying(false);
+          return replayTrail.length - 1;
+        }
+        return next;
+      });
+    }, 120);
+    return () => window.clearInterval(timer);
+  }, [replayPlaying, replaySpeed, replayTrail.length]);
+
+  const clampedReplayIndex = Math.min(replayIndex, Math.max(0, replayTrail.length - 1));
+  const replayMarker = replayTrail.length > 0 ? replayTrail[clampedReplayIndex] : null;
+  const replayCurrentPoint = replayPoints.length > 0 ? replayPoints[clampedReplayIndex] : null;
+
+  const openReplay = () => {
+    const vid = selected?.vehicleId ?? selected?.id;
+    if (vid == null) return;
+    setReplayVehicleId(String(vid));
+    setReplayIndex(0);
+    setReplayPlaying(false);
+    setReplayOpen(true);
+  };
+  const closeReplay = () => {
+    setReplayOpen(false);
+    setReplayPlaying(false);
+    setReplayVehicleId(null);
+    setReplayIndex(0);
+  };
 
   const alerts = useQuery({
     queryKey: ["telemetry-alerts"],
@@ -462,6 +584,22 @@ export function LiveMapPage() {
               <span className="mx-1 h-5 w-px bg-slate-200" />
               <LayerToggle label="Vehicles" icon={<Truck className="h-3.5 w-3.5" />} active={layers.vehicles} onClick={() => setLayers((l) => ({ ...l, vehicles: !l.vehicles }))} />
               <LayerToggle label="Geofences" icon={<Layers className="h-3.5 w-3.5" />} active={layers.geofences} onClick={() => setLayers((l) => ({ ...l, geofences: !l.geofences }))} />
+              {selected ? (
+                <>
+                  <span className="mx-1 h-5 w-px bg-slate-200" />
+                  <button
+                    type="button"
+                    onClick={replayOpen ? closeReplay : openReplay}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                      replayOpen ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:text-amber-700"
+                    }`}
+                    title={`Replay where ${String(selected.label ?? selected.vehicleCode ?? "this vehicle")} went`}
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    {replayOpen ? "Close replay" : "Replay trail"}
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
           <div className="mt-1 flex justify-end">
@@ -471,7 +609,15 @@ export function LiveMapPage() {
           </div>
 
           <div className="map-surface live-map-canvas relative mt-2 min-h-[400px] flex-1 overflow-hidden sm:min-h-[500px] xl:min-h-[560px]">
-            <LiveMap entities={mapEntities} geofences={geofences} routeTrails={routeTrail} onSelect={setSelected} focusId={focusId} />
+            <LiveMap
+              entities={mapEntities}
+              geofences={geofences}
+              routeTrails={routeTrail}
+              onSelect={setSelected}
+              focusId={focusId}
+              replayTrail={replayOpen ? replayTrail : []}
+              replayMarker={replayOpen ? replayMarker : null}
+            />
             {locatedEntityCount === 0 ? (
               <div className="pointer-events-none absolute inset-x-4 top-4 z-[500] rounded-2xl border border-amber-300 bg-amber-50/95 p-4 shadow-lg backdrop-blur">
                 <div className="flex items-start gap-3">
@@ -484,6 +630,27 @@ export function LiveMapPage() {
                   </div>
                 </div>
               </div>
+            ) : null}
+
+            {replayOpen ? (
+              <ReplayPanel
+                vehicleLabel={String(selected?.label ?? selected?.vehicleCode ?? selected?.vehicle_code ?? "Vehicle")}
+                window={replayWindow}
+                onWindow={setReplayWindow}
+                loading={breadcrumbsQ.isLoading || breadcrumbsQ.isFetching}
+                error={breadcrumbsQ.isError}
+                totalPoints={replayTrail.length}
+                index={clampedReplayIndex}
+                playing={replayPlaying}
+                speed={replaySpeed}
+                currentPoint={replayCurrentPoint}
+                onPlayPause={() => setReplayPlaying((p) => !p)}
+                onRestart={() => { setReplayIndex(0); setReplayPlaying(true); }}
+                onScrub={(i) => { setReplayIndex(i); setReplayPlaying(false); }}
+                onSpeed={setReplaySpeed}
+                onClose={closeReplay}
+                onRetry={() => void breadcrumbsQ.refetch()}
+              />
             ) : null}
           </div>
         </section>
@@ -584,6 +751,114 @@ export function LiveMapPage() {
       )}
 
       <VehicleDetailDrawer detail={detail.data} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
+    </div>
+  );
+}
+
+function ReplayPanel({
+  vehicleLabel, window: win, onWindow, loading, error, totalPoints, index, playing, speed, currentPoint,
+  onPlayPause, onRestart, onScrub, onSpeed, onClose, onRetry,
+}: {
+  vehicleLabel: string;
+  window: ReplayWindowKey;
+  onWindow: (key: ReplayWindowKey) => void;
+  loading: boolean;
+  error: boolean;
+  totalPoints: number;
+  index: number;
+  playing: boolean;
+  speed: ReplaySpeed;
+  currentPoint: BreadcrumbPoint | null;
+  onPlayPause: () => void;
+  onRestart: () => void;
+  onScrub: (index: number) => void;
+  onSpeed: (speed: ReplaySpeed) => void;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const hasTrail = totalPoints > 0;
+  const speedMph = currentPoint ? Number(currentPoint.speed_mph ?? 0) : 0;
+  return (
+    <div className="pointer-events-auto absolute inset-x-3 bottom-3 z-[500] rounded-2xl border border-amber-300 bg-white/95 p-3 shadow-xl backdrop-blur sm:inset-x-4 sm:bottom-4 sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <History className="h-4 w-4 text-amber-600" />
+          <p className="text-sm font-bold text-slate-900">Breadcrumb replay · {vehicleLabel}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {REPLAY_WINDOWS.map((w) => (
+            <button
+              type="button"
+              key={w.key}
+              onClick={() => onWindow(w.key)}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                w.key === win ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-500 hover:border-amber-300"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+          <button type="button" onClick={onClose} className="btn-ghost ml-1 flex items-center gap-1 px-2 py-1 text-xs">
+            <X className="h-3.5 w-3.5" /> Close
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="mt-3 text-sm text-slate-500">Loading breadcrumbs…</p>
+      ) : error ? (
+        <div className="mt-3 flex items-center gap-3">
+          <p className="text-sm text-rose-600">Failed to load breadcrumb history.</p>
+          <button type="button" onClick={onRetry} className="btn-ghost px-2 py-1 text-xs">Retry</button>
+        </div>
+      ) : !hasTrail ? (
+        <p className="mt-3 text-sm text-slate-500">No history for this vehicle in this window.</p>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onPlayPause} className="btn-primary flex items-center gap-1.5 py-1.5 text-xs">
+              {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {playing ? "Pause" : "Play"}
+            </button>
+            <button type="button" onClick={onRestart} className="btn-ghost flex items-center gap-1.5 py-1.5 text-xs">
+              <RotateCcw className="h-3.5 w-3.5" /> Restart
+            </button>
+            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <div className="flex items-center gap-1">
+              {REPLAY_SPEEDS.map((s) => (
+                <button
+                  type="button"
+                  key={s}
+                  onClick={() => onSpeed(s)}
+                  className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
+                    s === speed ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-500 hover:border-amber-300"
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, totalPoints - 1)}
+            value={index}
+            onChange={(e) => onScrub(Number(e.target.value))}
+            className="mt-3 w-full accent-amber-500"
+            aria-label="Replay position"
+          />
+
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-slate-500">
+            <span className="tabular-nums text-slate-700">point {index + 1} / {totalPoints}</span>
+            <span>·</span>
+            <span>{formatClock(currentPoint?.event_time)}</span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speedMph)} mph</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

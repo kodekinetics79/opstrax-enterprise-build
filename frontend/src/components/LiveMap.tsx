@@ -60,6 +60,20 @@ function makeVehicleIcon(risk: string, status: string, speed: number, heading: n
   });
 }
 
+// Amber puck that rides along the breadcrumb-replay trail.
+function makeReplayIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "opstrax-replay-marker",
+    html: `<div style="
+      width:16px;height:16px;border-radius:50%;
+      background:#f59e0b;border:3px solid white;
+      box-shadow:0 1px 8px rgba(0,0,0,0.45);
+    "></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+}
+
 function entityKey(entity: AnyRecord, index: number): string {
   return String(entity.id ?? entity.vehicleId ?? entity.vehicle_id ?? entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? `idx-${index}`);
 }
@@ -132,9 +146,13 @@ interface LiveMapProps {
   onSelect: (entity: AnyRecord) => void;
   /** When set, the map pans/zooms to this vehicle (matched by id/label). */
   focusId?: string | null;
+  /** Breadcrumb-replay trail: the full route the map fits to and draws as an amber polyline. */
+  replayTrail?: Array<[number, number]>;
+  /** Playback marker position along the replay trail; null hides it. */
+  replayMarker?: [number, number] | null;
 }
 
-export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focusId }: LiveMapProps) {
+export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focusId, replayTrail = [], replayMarker = null }: LiveMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
@@ -142,6 +160,11 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
   const hasFitRef = useRef(false);
   const geofenceLayersRef = useRef<(L.Circle | L.Polygon)[]>([]);
   const routeLayersRef = useRef<L.Polyline[]>([]);
+  const replayLineRef = useRef<L.Polyline | null>(null);
+  const replayMarkerRef = useRef<L.Marker | null>(null);
+  // Fingerprint of the currently-drawn trail, so we only re-fit bounds when the trail
+  // actually changes (a new fetch) — not on every playback-marker move.
+  const replayTrailKeyRef = useRef<string>("");
   // Store onSelect in a ref so markers don't need to be recreated when it changes
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -187,6 +210,9 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       markersRef.current.clear();
       coordsRef.current.clear();
       routeLayersRef.current = [];
+      replayLineRef.current = null;
+      replayMarkerRef.current = null;
+      replayTrailKeyRef.current = "";
       hasFitRef.current = false;
     };
   }, []);
@@ -340,6 +366,64 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       }
     }
   }, [routeTrails]);
+
+  // Breadcrumb-replay trail: draw the whole fetched route as an amber polyline and fit
+  // the view to it whenever the trail changes (a fresh fetch / new time window). Playback
+  // marker moves are handled separately so scrubbing doesn't yank the viewport.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const trailKey = replayTrail.length > 0
+      ? `${replayTrail.length}:${replayTrail[0][0]},${replayTrail[0][1]}:${replayTrail[replayTrail.length - 1][0]},${replayTrail[replayTrail.length - 1][1]}`
+      : "";
+
+    if (trailKey === replayTrailKeyRef.current) return;
+    replayTrailKeyRef.current = trailKey;
+
+    if (replayLineRef.current) {
+      replayLineRef.current.remove();
+      replayLineRef.current = null;
+    }
+
+    if (replayTrail.length < 2) return;
+
+    const line = L.polyline(replayTrail, {
+      color: "#f59e0b",
+      weight: 4,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(map);
+    replayLineRef.current = line;
+
+    try {
+      const bounds = line.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.2), { maxZoom: 15, animate: true });
+    } catch {
+      // identical coords → invalid bounds; leave the current view
+    }
+  }, [replayTrail]);
+
+  // Move (or hide) the playback marker along the replay trail.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!replayMarker) {
+      if (replayMarkerRef.current) {
+        replayMarkerRef.current.remove();
+        replayMarkerRef.current = null;
+      }
+      return;
+    }
+
+    if (replayMarkerRef.current) {
+      replayMarkerRef.current.setLatLng(replayMarker);
+    } else {
+      replayMarkerRef.current = L.marker(replayMarker, { icon: makeReplayIcon(), zIndexOffset: 1000 }).addTo(map);
+    }
+  }, [replayMarker]);
 
   return (
     <div
