@@ -126,6 +126,10 @@ public static partial class EndpointMappings
         app.MapGet("/api/telemetry/positions", TelemetryPositions);
         // Historical breadcrumb trail for a vehicle over a time window (replay).
         app.MapGet("/api/telemetry/breadcrumbs", TelemetryBreadcrumbs);
+        // GT06/PT40-style GPS tracker ingest — IMEI-keyed HTTP forwarding (no HMAC).
+        // For hardware trackers (Concox/Jimi PT40 etc.) that POST their location to a
+        // configurable server URL. Resolves the device by IMEI and lands it on the map.
+        app.MapPost("/api/telemetry/gps-ingest", GpsTrackerIngest);
         // Observability counters — RBAC gated
         app.MapGet("/api/telemetry/metrics", TelemetryMetrics);
         // Telemetry-native live state and fleet summary surfaces
@@ -10388,6 +10392,139 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             totalPoints = total, returnedPoints = points.Count, sampledEvery = stride,
             points,
         }, "Breadcrumbs"));
+    }
+
+    // ── POST /api/telemetry/gps-ingest ─────────────────────────────────────────────
+    // IMEI-keyed GPS ingest for hardware trackers (GT06/Concox/Jimi PT40-class) that
+    // POST their location to a configurable server URL. These devices cannot compute
+    // OpsTrax's HMAC, so the device is authenticated by its IMEI (a provisioned
+    // eld_devices row). Accepts a flexible payload (common field aliases) and lands the
+    // fix on the live map — the same latest_vehicle_positions/location_events tables the
+    // map reads. Tolerant of the field-name variety across tracker firmwares/forwarders.
+    //
+    // Minimal payload: { "imei": "862464068456321", "lat": 34.05, "lng": -118.24 }
+    // Aliases accepted: latitude/lng/longitude, speed/speedKmh/speedMph, heading/course/
+    // bearing, alt/altitude, ts/timestamp/gpsTime, fuel, odometer.
+    private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, CancellationToken ct)
+    {
+        // Header override (X-Device-IMEI) OR body imei/deviceId/id.
+        string? Str(params string[] keys)
+        {
+            foreach (var k in keys)
+                if (body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty(k, out var v))
+                    return v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : v.ToString();
+            return null;
+        }
+        double? Num(params string[] keys)
+        {
+            foreach (var k in keys)
+                if (body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty(k, out var v))
+                {
+                    if (v.ValueKind == System.Text.Json.JsonValueKind.Number && v.TryGetDouble(out var d)) return d;
+                    if (v.ValueKind == System.Text.Json.JsonValueKind.String && double.TryParse(v.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var ds)) return ds;
+                }
+            return null;
+        }
+
+        var imei = http.Request.Headers["X-Device-IMEI"].FirstOrDefault()?.Trim() ?? Str("imei", "IMEI", "deviceId", "device_id", "id");
+        if (string.IsNullOrWhiteSpace(imei))
+            return Results.BadRequest(ApiResponse<object>.Fail("imei is required (body 'imei' or header X-Device-IMEI)"));
+
+        var lat = Num("lat", "latitude", "Lat", "Latitude");
+        var lng = Num("lng", "lon", "long", "longitude", "Lng", "Longitude");
+        if (lat is null || lng is null || !TelemetryTicketHelper.IsCoordinateValid((decimal)lat.Value, (decimal)lng.Value))
+            return Results.BadRequest(ApiResponse<object>.Fail("valid lat/lng are required"));
+
+        // Resolve the device by IMEI (or by device_serial == imei, so a serial-registered
+        // device also works). Binds company/vehicle from the record — never from the body.
+        var device = await db.QuerySingleAsync(
+            @"SELECT id, company_id, vehicle_id, driver_id, status
+              FROM eld_devices
+              WHERE (imei=@imei OR device_serial=@imei) AND deleted_at IS NULL
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@imei", imei), ct);
+        if (device is null)
+            return Results.Json(ApiResponse<object>.Fail($"Unknown device IMEI {imei}. Provision it in OpsTrax first."), statusCode: 404);
+        var devStatus = device.GetValueOrDefault("status")?.ToString() ?? "";
+        if (devStatus.Contains("revoked", StringComparison.OrdinalIgnoreCase) || devStatus.Contains("suspended", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail("Device is revoked or suspended"), statusCode: 403);
+
+        var deviceId  = Convert.ToInt64(device["id"]);
+        var companyId = Convert.ToInt64(device["companyId"]);
+        long? vehicleId = device["vehicleId"] is null or DBNull ? null : Convert.ToInt64(device["vehicleId"]);
+        long? driverId  = device["driverId"]  is null or DBNull ? null : Convert.ToInt64(device["driverId"]);
+
+        // Speed: accept mph directly, or convert km/h. Heading from several aliases.
+        var speedMph = Num("speedMph", "speed_mph");
+        if (speedMph is null && Num("speedKmh", "speed_kmh", "speed") is { } kmh) speedMph = kmh * 0.621371;
+        var heading = Num("heading", "course", "bearing", "direction") ?? 0;
+        var engine  = Str("engineStatus", "engine", "ignition") ?? "Running";
+        var fuel    = Num("fuel", "fuelLevel", "fuel_level");
+        var odo     = Num("odometer", "odometerMiles", "mileage");
+
+        await db.RunInSystemScopeAsync(async () =>
+        {
+            var eventId = await db.InsertAsync(
+                @"INSERT INTO location_events
+                    (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
+                     event_type, engine_status, fuel_level, odometer_miles, source, source_channel,
+                     event_time, received_at)
+                  VALUES (@cid, @vid, @did, @drid, @lat, @lng, @spd, @hdg, 'ping', @eng, @fuel, @odo,
+                          'gps-tracker', 'gt06', NOW(), NOW())
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@vid", (object?)vehicleId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@did", deviceId);
+                    c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@lat", (decimal)lat.Value);
+                    c.Parameters.AddWithValue("@lng", (decimal)lng.Value);
+                    c.Parameters.AddWithValue("@spd", (decimal)(speedMph ?? 0));
+                    c.Parameters.AddWithValue("@hdg", (short)Math.Clamp((int)heading, 0, 359));
+                    c.Parameters.AddWithValue("@eng", engine);
+                    c.Parameters.AddWithValue("@fuel", (object?)(fuel is { } fv ? (decimal)fv : (object?)null) ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@odo", (object?)(odo is { } ov ? (decimal)ov : (object?)null) ?? DBNull.Value);
+                }, ct);
+
+            if (vehicleId is not null)
+            {
+                await db.ExecuteAsync(
+                    @"INSERT INTO latest_vehicle_positions
+                        (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
+                         engine_status, fuel_level, odometer_miles, event_time, received_at, event_count,
+                         source_event_id, source_channel, telemetry_status, risk_level, updated_at)
+                      VALUES (@cid, @vid, @did, @drid, @lat, @lng, @spd, @hdg, @eng, @fuel, @odo, NOW(), NOW(), 1,
+                              @eid, 'gt06', 'healthy', 'low', NOW())
+                      ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
+                        device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+                        speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
+                        engine_status=EXCLUDED.engine_status, fuel_level=EXCLUDED.fuel_level,
+                        odometer_miles=EXCLUDED.odometer_miles, event_time=NOW(), received_at=NOW(),
+                        event_count=latest_vehicle_positions.event_count+1, source_event_id=EXCLUDED.source_event_id,
+                        source_channel='gt06', telemetry_status='healthy', risk_level='low', updated_at=NOW()",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@vid", vehicleId.Value);
+                        c.Parameters.AddWithValue("@did", deviceId);
+                        c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@lat", (decimal)lat.Value);
+                        c.Parameters.AddWithValue("@lng", (decimal)lng.Value);
+                        c.Parameters.AddWithValue("@spd", (decimal)(speedMph ?? 0));
+                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp((int)heading, 0, 359));
+                        c.Parameters.AddWithValue("@eng", engine);
+                        c.Parameters.AddWithValue("@fuel", (object?)(fuel is { } fv ? (decimal)fv : (object?)null) ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@odo", (object?)(odo is { } ov ? (decimal)ov : (object?)null) ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@eid", eventId);
+                    }, ct);
+            }
+
+            await db.ExecuteAsync("UPDATE eld_devices SET last_seen_at=NOW() WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", deviceId), ct);
+        }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new { imei, deviceId, vehicleId, mapped = vehicleId is not null }, "GPS fix recorded"));
     }
 
     // ── GET /api/telemetry/metrics ────────────────────────────────────────────────

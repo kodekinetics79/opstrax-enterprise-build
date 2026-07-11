@@ -74,6 +74,7 @@ public class CsrfMiddleware
             // signature + nonce (stronger than CSRF). A physical device/tracker cannot
             // hold a CSRF cookie, so requiring one here would break every real device.
             !string.Equals(path, "/api/telemetry/ingest", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(path, "/api/telemetry/gps-ingest", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase))
         {
             var headerToken = context.Request.Headers[CSRF_TOKEN_HEADER].ToString();

@@ -466,6 +466,8 @@ app.UseWhen(
                 path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
                 // Telemetry ingest — device-authenticated via X-Device-Key header, not user session
                 path.StartsWith("/api/telemetry/ingest", StringComparison.OrdinalIgnoreCase) ||
+                // GT06/PT40 GPS-tracker ingest — IMEI-authenticated hardware webhook, no bearer.
+                path.StartsWith("/api/telemetry/gps-ingest", StringComparison.OrdinalIgnoreCase) ||
                 // OBD/J1939 fault-code ingest — same device (X-Device-Key + HMAC) auth as
                 // telemetry ingest; a physical diagnostics device has no user bearer token.
                 path.StartsWith("/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase) ||
