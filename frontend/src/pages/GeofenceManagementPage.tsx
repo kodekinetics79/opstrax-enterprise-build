@@ -22,22 +22,49 @@ const geoApi = {
 
 const US_CENTER: [number, number] = [38.8, -77.2];
 
+// Parse a zone's polygonJson into an array of [lat, lng] pairs (or null if not a polygon).
+function parsePolygon(z: AnyRecord): [number, number][] | null {
+  const raw = z.polygonJson ?? z.polygon_json;
+  if (!raw) return null;
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try { arr = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(arr) || arr.length < 3) return null;
+  const pts: [number, number][] = [];
+  for (const p of arr) {
+    if (!Array.isArray(p) || p.length < 2) return null;
+    const lat = Number(p[0]);
+    const lng = Number(p[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    pts.push([lat, lng]);
+  }
+  return pts.length >= 3 ? pts : null;
+}
+
 function GeofenceMap({
   zones,
   selected,
   onSelect,
   onMapClick,
   placing,
+  drawingPolygon,
+  polygonPoints,
+  onAddVertex,
 }: {
   zones: AnyRecord[];
   selected: AnyRecord | null;
   onSelect: (z: AnyRecord) => void;
   onMapClick: (lat: number, lng: number) => void;
   placing: boolean;
+  drawingPolygon: boolean;
+  polygonPoints: [number, number][];
+  onAddVertex: (lat: number, lng: number) => void;
 }) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const circleLayerRef = useRef<L.LayerGroup | null>(null);
+  const draftLayerRef = useRef<L.LayerGroup | null>(null);
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
@@ -48,6 +75,7 @@ function GeofenceMap({
     }).addTo(map);
     map.setView(US_CENTER, 9);
     circleLayerRef.current = L.layerGroup().addTo(map);
+    draftLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
   }, []);
 
@@ -55,23 +83,40 @@ function GeofenceMap({
     const map = mapRef.current;
     if (!map) return;
     const handler = (e: L.LeafletMouseEvent) => {
-      if (placing) onMapClick(e.latlng.lat, e.latlng.lng);
+      if (drawingPolygon) onAddVertex(e.latlng.lat, e.latlng.lng);
+      else if (placing) onMapClick(e.latlng.lat, e.latlng.lng);
     };
     map.on("click", handler);
     return () => { map.off("click", handler); };
-  }, [placing, onMapClick]);
+  }, [placing, drawingPolygon, onMapClick, onAddVertex]);
 
   useEffect(() => {
     const layer = circleLayerRef.current;
     if (!layer) return;
     layer.clearLayers();
     for (const z of zones) {
+      const isSelected = selected && Number(selected.id) === Number(z.id);
+      const isActive = String(z.status) === "Active";
+
+      const polygon = parsePolygon(z);
+      if (polygon) {
+        const color = isSelected ? chart.teal600 : chart.violet500;
+        const poly = L.polygon(polygon, {
+          color,
+          weight: isSelected ? 3 : 2,
+          fillColor: color,
+          fillOpacity: isSelected ? 0.25 : isActive ? 0.12 : 0.06,
+        });
+        poly.bindTooltip(String(z.name), { permanent: false, direction: "top" });
+        poly.on("click", () => onSelect(z));
+        layer.addLayer(poly);
+        continue;
+      }
+
       const lat = Number(z.centerLat ?? z.center_lat);
       const lng = Number(z.centerLng ?? z.center_lng);
       const radius = Number(z.radiusMeters ?? z.radius_meters ?? 500);
       if (!lat || !lng) continue;
-      const isSelected = selected && Number(selected.id) === Number(z.id);
-      const isActive = String(z.status) === "Active";
       const circle = L.circle([lat, lng], {
         radius,
         color: isSelected ? chart.teal600 : isActive ? chart.indigo500 : chart.slate400,
@@ -92,12 +137,49 @@ function GeofenceMap({
     }
   }, [zones, selected, onSelect]);
 
+  // Render the in-progress polygon as the user clicks.
+  useEffect(() => {
+    const layer = draftLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!drawingPolygon || polygonPoints.length === 0) return;
+    if (polygonPoints.length >= 3) {
+      layer.addLayer(L.polygon(polygonPoints, {
+        color: chart.violet500,
+        weight: 2,
+        dashArray: "4 4",
+        fillColor: chart.violet500,
+        fillOpacity: 0.15,
+      }));
+    } else if (polygonPoints.length === 2) {
+      layer.addLayer(L.polyline(polygonPoints, {
+        color: chart.violet500,
+        weight: 2,
+        dashArray: "4 4",
+      }));
+    }
+    polygonPoints.forEach(([lat, lng]) => {
+      layer.addLayer(L.circleMarker([lat, lng], {
+        radius: 5,
+        color: chart.violet500,
+        fillColor: "#fff",
+        fillOpacity: 1,
+        weight: 2,
+      }));
+    });
+  }, [drawingPolygon, polygonPoints]);
+
   return (
     <div className="relative">
       <div ref={containerRef} className="w-full rounded-xl overflow-hidden" style={{ height: 440 }} />
-      {placing && (
+      {placing && !drawingPolygon && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow pointer-events-none z-10">
           Click on the map to place geofence center
+        </div>
+      )}
+      {drawingPolygon && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow pointer-events-none z-10">
+          Click on the map to add polygon vertices ({polygonPoints.length})
         </div>
       )}
     </div>
@@ -111,13 +193,16 @@ function GeofenceModal({
   onClose,
   onSave,
   pending,
+  polygonPoints,
 }: {
   initial: Partial<AnyRecord> | null;
   onClose: () => void;
   onSave: (payload: AnyRecord) => void;
   pending: boolean;
+  polygonPoints?: [number, number][];
 }) {
   const isEdit = !!initial?.id;
+  const isPolygon = !!polygonPoints && polygonPoints.length >= 3;
   const [name, setName] = useState(String(initial?.name ?? ""));
   const [lat, setLat] = useState(String(initial?.centerLat ?? initial?.center_lat ?? ""));
   const [lng, setLng] = useState(String(initial?.centerLng ?? initial?.center_lng ?? ""));
@@ -126,35 +211,47 @@ function GeofenceModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ name, centerLat: parseFloat(lat), centerLng: parseFloat(lng), radiusMeters: parseInt(radius), status, geofenceType: "Circle" });
+    if (isPolygon) {
+      onSave({ name, geofenceType: "Polygon", polygonJson: polygonPoints, status });
+    } else {
+      onSave({ name, centerLat: parseFloat(lat), centerLng: parseFloat(lng), radiusMeters: parseInt(radius), status, geofenceType: "Circle" });
+    }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
       <form className="panel w-full max-w-md mx-4 flex flex-col gap-4" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">{isEdit ? "Edit Geofence" : "Create Geofence"}</h3>
+          <h3 className="text-base font-semibold text-slate-900">{isEdit ? "Edit Geofence" : isPolygon ? "Create Polygon Geofence" : "Create Geofence"}</h3>
           <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
           <input required className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={name} onChange={(e) => setName(e.target.value)} placeholder="Zone name" />
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-700">Center Latitude</label>
-            <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="38.75" />
+        {isPolygon ? (
+          <div className="rounded-lg bg-violet-50 border border-violet-200 px-3 py-2 text-xs text-violet-700">
+            Polygon zone with {polygonPoints!.length} vertices. Boundary is defined by the points you drew on the map.
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-700">Center Longitude</label>
-            <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-77.47" />
-          </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-700">Radius (meters)</label>
-          <input type="number" min={50} max={50000} className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={radius} onChange={(e) => setRadius(e.target.value)} />
-        </div>
-        {isEdit && (
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-700">Center Latitude</label>
+                <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="38.75" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-slate-700">Center Longitude</label>
+                <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-77.47" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-700">Radius (meters)</label>
+              <input type="number" min={50} max={50000} className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={radius} onChange={(e) => setRadius(e.target.value)} />
+            </div>
+          </>
+        )}
+        {(isEdit || isPolygon) && (
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-700">Status</label>
             <select className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -236,6 +333,9 @@ export function GeofenceManagementPage() {
   const [modalData, setModalData] = useState<Partial<AnyRecord> | null>(null);
   const [showEvents, setShowEvents] = useState<AnyRecord | null>(null);
   const [placing, setPlacing] = useState(false);
+  const [drawingPolygon, setDrawingPolygon] = useState(false);
+  const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
+  const [pendingPolygon, setPendingPolygon] = useState<[number, number][] | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Inactive">("All");
   const [toast, setToast] = useState<string | null>(null);
@@ -245,7 +345,14 @@ export function GeofenceManagementPage() {
 
   const createMutation = useMutation({
     mutationFn: (payload: AnyRecord) => geoApi.create(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["geofences"] }); setModalData(null); showToast("Geofence created"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["geofences"] });
+      setModalData(null);
+      setPendingPolygon(null);
+      setPolygonPoints([]);
+      setDrawingPolygon(false);
+      showToast("Geofence created");
+    },
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: AnyRecord }) => geoApi.update(id, payload),
@@ -261,6 +368,32 @@ export function GeofenceManagementPage() {
   function handleMapClick(lat: number, lng: number) {
     setPlacing(false);
     setModalData({ centerLat: lat.toFixed(6), centerLng: lng.toFixed(6) });
+  }
+
+  function startPolygonDraw() {
+    setPlacing(false);
+    setPolygonPoints([]);
+    setDrawingPolygon(true);
+  }
+
+  function cancelPolygonDraw() {
+    setDrawingPolygon(false);
+    setPolygonPoints([]);
+  }
+
+  function handleAddVertex(lat: number, lng: number) {
+    setPolygonPoints((prev) => [...prev, [Number(lat.toFixed(6)), Number(lng.toFixed(6))]]);
+  }
+
+  function undoLastVertex() {
+    setPolygonPoints((prev) => prev.slice(0, -1));
+  }
+
+  function finishPolygon() {
+    if (polygonPoints.length < 3) return;
+    setPendingPolygon(polygonPoints);
+    setDrawingPolygon(false);
+    setModalData({});
   }
 
   const zones = (listQ.data ?? []) as AnyRecord[];
@@ -291,13 +424,22 @@ export function GeofenceManagementPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("geofences", zones)}>Export CSV</button>
           {canEdit && (
-            <button
-              type="button"
-              className={`text-sm px-4 py-2 rounded-lg font-medium border transition-colors ${placing ? "bg-violet-100 border-violet-300 text-violet-700" : "bg-violet-600 text-white border-violet-600 hover:bg-violet-700"}`}
-              onClick={() => setPlacing(!placing)}
-            >
-              {placing ? "Cancel placement" : "+ Create Zone"}
-            </button>
+            <>
+              <button
+                type="button"
+                className={`text-sm px-4 py-2 rounded-lg font-medium border transition-colors ${placing ? "bg-violet-100 border-violet-300 text-violet-700" : "bg-violet-600 text-white border-violet-600 hover:bg-violet-700"}`}
+                onClick={() => { setDrawingPolygon(false); setPolygonPoints([]); setPlacing(!placing); }}
+              >
+                {placing ? "Cancel placement" : "+ Create Zone"}
+              </button>
+              <button
+                type="button"
+                className={`text-sm px-4 py-2 rounded-lg font-medium border transition-colors ${drawingPolygon ? "bg-violet-100 border-violet-300 text-violet-700" : "bg-white border-violet-300 text-violet-700 hover:bg-violet-50"}`}
+                onClick={() => (drawingPolygon ? cancelPolygonDraw() : startPolygonDraw())}
+              >
+                {drawingPolygon ? "Cancel drawing" : "⬡ Draw Polygon"}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -326,12 +468,47 @@ export function GeofenceManagementPage() {
             <h2 className="text-sm font-semibold text-slate-900">Zone Map</h2>
             <span className="text-xs text-slate-400">{zones.filter((z) => z.status === "Active").length} active zones · click a zone to see events</span>
           </div>
+          {drawingPolygon && (
+            <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg bg-violet-50 border border-violet-200 px-3 py-2">
+              <span className="text-xs font-semibold text-violet-700">Drawing polygon · {polygonPoints.length} {polygonPoints.length === 1 ? "point" : "points"}</span>
+              <span className="text-xs text-violet-600">Click the map to add vertices (min 3)</span>
+              <div className="ml-auto flex gap-1.5">
+                <button
+                  type="button"
+                  disabled={polygonPoints.length === 0}
+                  className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  onClick={undoLastVertex}
+                >
+                  Undo last point
+                </button>
+                <button
+                  type="button"
+                  disabled={polygonPoints.length === 0}
+                  className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  onClick={() => setPolygonPoints([])}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  disabled={polygonPoints.length < 3}
+                  className="text-xs px-2.5 py-1 rounded-lg font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"
+                  onClick={finishPolygon}
+                >
+                  Finish polygon
+                </button>
+              </div>
+            </div>
+          )}
           <GeofenceMap
             zones={zones}
             selected={selectedZone}
             onSelect={(z) => { setSelectedZone(z); setShowEvents(z); }}
             onMapClick={handleMapClick}
             placing={placing}
+            drawingPolygon={drawingPolygon}
+            polygonPoints={polygonPoints}
+            onAddVertex={handleAddVertex}
           />
         </div>
 
@@ -359,6 +536,7 @@ export function GeofenceManagementPage() {
               {filtered.map((zone) => {
                 const isActive = zone.status === "Active";
                 const isSel = selectedZone && Number(selectedZone.id) === Number(zone.id);
+                const zonePoly = parsePolygon(zone);
                 return (
                   <div
                     key={String(zone.id)}
@@ -369,7 +547,9 @@ export function GeofenceManagementPage() {
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-slate-900 text-sm truncate">{String(zone.name)}</p>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          {Number(zone.radiusMeters ?? zone.radius_meters ?? 0).toLocaleString()} m radius · {String(zone.eventsToday ?? 0)} events today
+                          {zonePoly
+                            ? `${zonePoly.length}-vertex polygon`
+                            : `${Number(zone.radiusMeters ?? zone.radius_meters ?? 0).toLocaleString()} m radius`} · {String(zone.eventsToday ?? 0)} events today
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -403,7 +583,8 @@ export function GeofenceManagementPage() {
       {modalData !== null && (
         <GeofenceModal
           initial={modalData}
-          onClose={() => setModalData(null)}
+          polygonPoints={pendingPolygon ?? undefined}
+          onClose={() => { setModalData(null); setPendingPolygon(null); }}
           pending={createMutation.isPending || updateMutation.isPending}
           onSave={(payload) => {
             if (modalData.id) {
