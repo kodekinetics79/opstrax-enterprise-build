@@ -6,6 +6,19 @@ function resolveEmail(usernameOrEmail: string): string {
   return usernameOrEmail.toLowerCase().trim();
 }
 
+export type SsoConnection = {
+  displayName: string;
+  protocol: "saml" | "oidc";
+  /** Absolute https IdP entry URL. Treat as a full-page navigation target only. */
+  redirectUrl: string;
+};
+
+export type SsoDiscovery = {
+  ssoConfigured: boolean;
+  usePassword: boolean;
+  connection: SsoConnection | null;
+};
+
 export const authApi = {
   bootstrap: async () => {
     try { await apiClient.get("/api/health"); } catch { /* warm-up only — never block login */ }
@@ -20,6 +33,15 @@ export const authApi = {
     }
     return response;
   },
+  /**
+   * Identifier-first routing hint. Given an email, asks the backend whether the
+   * tenant that owns the email's domain has an enabled SSO connection. Returns
+   * `usePassword: true` for every domain with no SSO (the honest default while the
+   * admin-provisioned `sso_connections` table is empty), so the UI simply reveals
+   * the password field. Never reveals whether a *user* exists (enumeration-safe).
+   */
+  ssoDiscover: async (email: string) =>
+    unwrap<SsoDiscovery>(apiClient.post("/api/auth/sso/discover", { email: resolveEmail(email) })),
   me: async () => unwrap<UserSession>(apiClient.get("/api/auth/me")),
   refresh: async () => unwrap<UserSession>(apiClient.post("/api/auth/refresh")),
   logout: async () => unwrap<{ loggedOut: boolean }>(apiClient.post("/api/auth/logout")),

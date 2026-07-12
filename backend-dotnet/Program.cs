@@ -88,6 +88,10 @@ builder.Services.AddRateLimiter(options =>
 
     static bool IsLogin(PathString path) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        // Identifier-first SSO discovery is the entry point to every login, so it
+        // shares the strict login rate-limit bucket (domain-harvesting burns the
+        // same budget as password guessing).
+        path.Equals("/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);
@@ -462,6 +466,10 @@ app.UseWhen(
                 finally { scopes.Current = null; }
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                // Pre-login SSO discovery: no tenant context exists at email-entry
+                // time, so it reads the RLS-forced sso_connections table under the
+                // platform-admin bypass scope, exactly like /api/auth/login.
+                string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||

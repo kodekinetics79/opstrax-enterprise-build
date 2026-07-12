@@ -991,6 +991,257 @@ th.sort-active { color: var(--text-primary); }
   .login-card-stage:hover .login-card3d { transform: none; }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   Login v6 — identifier-first surface · Clay · Neumorphic · Skeuomorphic
+   All rules namespaced under `.login2*` so they never leak into the app's
+   .panel / .btn primitives. Values reuse the repo tokens (--teal, --fc-hi/lo,
+   --surface-sunken, --focus-ring-*) so a future brand retune propagates.
+   ══════════════════════════════════════════════════════════════════════════ */
+.login2 {
+  /* Clay radius scale — puffier than app default; never nest larger in smaller */
+  --l-r-card:  28px;
+  --l-r-field: 16px;
+  --l-r-btn:   16px;
+
+  /* Warm-neutral clay surface (skeuomorphic warmth over the cool teal brand) */
+  --l-clay-bg: linear-gradient(150deg, #ffffff 0%, #f4f8fc 52%, #eaf1f8 100%);
+
+  /* DOUBLE-shadow clay: inset light rim + inset floor shade + neutral lift +
+     wide colored teal ground bleed. Two stacked drop shadows = the double shadow. */
+  --l-clay:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    inset 0 -10px 18px rgba(148,163,184,.14),
+    0 2px 4px rgba(15,23,42,.05),
+    0 18px 34px -12px rgba(15,23,42,.16),
+    0 34px 74px -30px rgba(13,148,136,.30);
+  --l-clay-hover:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    inset 0 -10px 18px rgba(148,163,184,.12),
+    0 3px 6px rgba(15,23,42,.06),
+    0 24px 44px -14px rgba(15,23,42,.20),
+    0 48px 96px -34px rgba(13,148,136,.36);
+
+  /* Neumorphic OUTSET (resting secondary buttons / toggle knob) — extruded */
+  --l-neu-out:
+    -7px -7px 16px var(--fc-hi),
+     9px 12px 24px var(--fc-lo),
+     inset 0 1px 0 rgba(255,255,255,.9);
+  /* Neumorphic INSET (fields at rest, pressed buttons, trust chips) — pressed in */
+  --l-neu-in:
+    inset 3px 3px 7px rgba(141,157,184,.34),
+    inset -4px -4px 9px rgba(255,255,255,.92);
+  /* Inset + teal focus glow */
+  --l-neu-in-focus:
+    inset 3px 3px 7px rgba(141,157,184,.28),
+    inset -4px -4px 9px rgba(255,255,255,.95),
+    0 0 0 3px rgba(13,148,136,.18);
+}
+
+/* ── Auth card — clay hero object ─────────────────────────────────────────── */
+.login2-card {
+  position: relative;
+  border-radius: var(--l-r-card);
+  padding: 30px 28px;
+  background: var(--l-clay-bg);
+  border: 1.5px solid rgba(255,255,255,.85);
+  box-shadow: var(--l-clay);
+  transition: box-shadow .4s cubic-bezier(.22,1,.36,1),
+              transform  .4s cubic-bezier(.22,1,.36,1);
+}
+@media (hover: hover) {
+  .login2-card:not(:focus-within):hover {
+    transform: translateY(-2px);
+    box-shadow: var(--l-clay-hover);
+  }
+}
+/* Skeuomorphic top-edge sheen */
+.login2-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
+  pointer-events: none;
+}
+
+/* ── Fields — neumorphic INSET ────────────────────────────────────────────── */
+.login2-field {
+  width: 100%;
+  border-radius: var(--l-r-field);
+  border: 1px solid rgba(203,213,225,.6);
+  background: var(--surface-sunken);
+  padding: 13px 15px;
+  font-size: 14px;
+  color: var(--text-primary);
+  box-shadow: var(--l-neu-in);
+  outline: none;
+  transition: box-shadow .2s ease, background .2s ease, border-color .2s ease;
+}
+.login2-field::placeholder { color: #94a3b8; }
+.login2-field:hover { border-color: rgba(148,163,184,.8); }
+.login2-field:focus {
+  background: #f3f8fc;
+  border-color: var(--teal);
+  box-shadow: var(--l-neu-in-focus);
+}
+.login2-field[aria-invalid="true"] {
+  border-color: #ef4444;
+  box-shadow: inset 3px 3px 7px rgba(141,157,184,.28), inset -4px -4px 9px rgba(255,255,255,.95), 0 0 0 3px rgba(239,68,68,.16);
+}
+
+/* Read-only identity chip (step 2) — engraved neumorphic pill */
+.login2-idchip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: var(--l-r-field);
+  padding: 10px 14px;
+  background: var(--surface-sunken);
+  box-shadow: var(--l-neu-in);
+  animation: idSettle .35s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes idSettle {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Show/Hide pill inside the password field — neumorphic outset */
+.login2-eye {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  background: var(--l-clay-bg);
+  box-shadow: var(--l-neu-out);
+  transition: box-shadow .15s ease, transform .1s ease;
+}
+.login2-eye:active { box-shadow: var(--l-neu-in); transform: translateY(.5px); }
+.login2-eye:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* ── Primary CTA — clay + skeuomorphic teal ──────────────────────────────── */
+.login2-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--l-r-btn);
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, #2dd4bf 0%, #14b8a6 46%, #0d9488 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.45),
+    inset 0 -2px 6px rgba(2,44,40,.35),
+    0 10px 22px -8px rgba(13,148,136,.60),
+    0 20px 44px -18px rgba(13,148,136,.45);
+  transition: transform .12s ease, box-shadow .2s ease, filter .2s ease;
+}
+.login2-cta:hover:not(:disabled) { filter: brightness(1.04); }
+.login2-cta:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 6px rgba(2,44,40,.4),
+    0 6px 14px -6px rgba(13,148,136,.5);
+}
+.login2-cta:disabled { opacity: .5; cursor: not-allowed; filter: grayscale(.15); }
+.login2-cta:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.45),
+    0 10px 22px -8px rgba(13,148,136,.60),
+    0 0 0 3px rgba(13,148,136,.30);
+}
+
+/* ── SSO button — neumorphic secondary (only rendered for a real connection) ─ */
+.login2-sso {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: var(--l-r-btn);
+  padding: 13px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--teal);
+  background: var(--l-clay-bg);
+  border: 1px solid rgba(13,148,136,.22);
+  box-shadow: var(--l-neu-out);
+  transition: box-shadow .15s ease, transform .1s ease;
+}
+.login2-sso:active { box-shadow: var(--l-neu-in); transform: translateY(.5px); }
+.login2-sso:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* Engraved skeuomorphic divider */
+.login2-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+  box-shadow: 0 1px 0 rgba(255,255,255,.8);
+}
+
+/* ── Trust chips — honest capability statements, neumorphic inset ─────────── */
+.login2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: var(--surface-sunken);
+  box-shadow: var(--l-neu-in);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+/* Dark-panel variant — double-shadow clay, matches the brand-side material */
+.login2-chip-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: rgba(12,21,38,.72);
+  border: 1px solid rgba(45,212,191,.20);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.06),
+    0 10px 26px -12px rgba(45,212,191,.30),
+    0 2px 6px rgba(2,8,20,.5);
+}
+
+/* Role guidance tiles — neumorphic outset */
+.login2-role {
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: var(--l-clay-bg);
+  box-shadow: var(--l-neu-out);
+}
+
+/* ── Identifier-first reveal (grid-rows technique, no max-height guessing) ── */
+.login2-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .38s cubic-bezier(.22,1,.36,1), opacity .3s ease .06s;
+}
+.login2-reveal[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.login2-reveal > div { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .login2-card { transition: none; }
+  .login2-reveal { transition: none; }
+  .login2-reveal[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+  .login2-idchip { animation: none; }
+}
+
 .from-slate-900 {
   --tw-gradient-from: #f8fafc var(--tw-gradient-from-position);
   --tw-gradient-to: rgb(248 250 252 / 0) var(--tw-gradient-to-position);

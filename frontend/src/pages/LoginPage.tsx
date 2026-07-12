@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
-import { AlertCircle, ArrowRight, ClipboardCheck, Route, ShieldCheck, Wrench } from "lucide-react";
+import { AlertCircle, ArrowRight, Building2, ClipboardCheck, Lock, Route, ShieldCheck, Wrench } from "lucide-react";
 import { flushSync } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
-import { authApi } from "@/services/authApi";
+import { authApi, type SsoConnection } from "@/services/authApi";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
+
+/** Minimal structural email check — mirrors the backend's non-revealing validation. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function getLoginErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) {
@@ -410,6 +413,14 @@ const ACCESS_GUIDANCE = [
   },
 ] as const;
 
+/* ── Trust signals — all truthful of the platform (tenant isolation, TLS, the
+   SSO route this page now supports). No fabricated certs, seals, or metrics. ── */
+const TRUST_SIGNALS = [
+  { icon: ShieldCheck, label: "Tenant-isolated access" },
+  { icon: Lock,        label: "Encrypted in transit" },
+  { icon: Building2,   label: "SSO / SAML ready" },
+] as const;
+
 /* ── Main component ─────────────────────────────────────────────────────── */
 export function LoginPage() {
   const { setSession } = useAuth();
@@ -417,7 +428,27 @@ export function LoginPage() {
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
+  const [emailError, setEmailError] = useState("");
+  // Identifier-first: "identify" collects the email; "authenticate" reveals the
+  // password field OR the SSO button depending on the domain's SSO config.
+  const [step, setStep]             = useState<"identify" | "authenticate">("identify");
+  const [ssoConn, setSsoConn]       = useState<SsoConnection | null>(null);
   const { panelRef, sceneRef } = usePointerTilt();
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  // Resolve whether the email's domain routes to SSO. Fails OPEN to the password
+  // field so a discovery outage never blocks a password login.
+  const identify = useMutation({
+    mutationFn: async (e: string) => authApi.ssoDiscover(e),
+    onSuccess: (result) => {
+      setSsoConn(result.ssoConfigured && result.connection ? result.connection : null);
+      setStep("authenticate");
+    },
+    onError: () => {
+      setSsoConn(null);
+      setStep("authenticate");
+    },
+  });
 
   const login = useMutation({
     mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
@@ -432,7 +463,39 @@ export function LoginPage() {
     },
   });
 
-  const submit = (e: React.FormEvent) => { e.preventDefault(); if (email.trim() && password) login.mutate({ email: email.trim(), password }); };
+  // Move focus to the password field the moment it is revealed (a11y + speed).
+  useEffect(() => {
+    if (step === "authenticate" && !ssoConn) passwordRef.current?.focus();
+  }, [step, ssoConn]);
+
+  const continueWithEmail = () => {
+    const value = email.trim();
+    if (!EMAIL_RE.test(value)) { setEmailError("Enter a valid work email address."); return; }
+    setEmailError("");
+    identify.mutate(value);
+  };
+
+  const editEmail = () => {
+    setStep("identify");
+    setSsoConn(null);
+    setPassword("");
+    login.reset();
+  };
+
+  const goToSso = () => {
+    // Full-page navigation to the third-party IdP. redirectUrl is validated
+    // absolute-https server-side; treat it strictly as a navigation target.
+    if (ssoConn?.redirectUrl) window.location.assign(ssoConn.redirectUrl);
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (step === "identify") { continueWithEmail(); return; }
+    if (ssoConn) { goToSso(); return; }
+    if (email.trim() && password) login.mutate({ email: email.trim(), password });
+  };
+
+  const identifying = identify.isPending;
   return (
     <div className="flex min-h-screen">
 
@@ -516,6 +579,16 @@ export function LoginPage() {
             <LiveTicker />
           </div>
 
+          {/* Trust strip — honest capability statements, shared clay material */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {TRUST_SIGNALS.map(({ icon: Icon, label }) => (
+              <span key={label} className="login2-chip-dark">
+                <Icon className="h-3.5 w-3.5 text-teal-400" aria-hidden="true" />
+                {label}
+              </span>
+            ))}
+          </div>
+
           {/* Bottom bar */}
           <div className="flex items-end justify-between gap-4">
             <p className="text-xs text-slate-600">Multi-tenant fleet operations platform</p>
@@ -544,18 +617,24 @@ export function LoginPage() {
           <span className="text-lg font-bold text-slate-900">OpsTrax</span>
         </div>
 
-        <div className="login-form-enter relative z-10 w-full max-w-sm">
+        <div className="login2 login-form-enter relative z-10 flex w-full max-w-[400px] flex-col gap-6">
 
-          {/* 3D stage — ghost plates float behind the glass card */}
+          {/* 3D stage — ghost plates float behind the clay card */}
           <div className="login-card-stage relative">
             <div className="login-card-plate login-card-plate-2" aria-hidden="true" />
             <div className="login-card-plate login-card-plate-1" aria-hidden="true" />
 
-            <div className="login-card3d relative rounded-[26px] border border-white/70 bg-white/75 p-7 backdrop-blur-xl">
-              <div className="mb-7">
+            <div className="login2-card relative">
+              <div className="mb-6">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600">Secure access</p>
                 <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
-                <p className="mt-1.5 text-sm leading-6 text-slate-500">Sign in to your fleet operations workspace.</p>
+                <p className="mt-1.5 text-sm leading-6 text-slate-500">
+                  {step === "identify"
+                    ? "Enter your work email to continue."
+                    : ssoConn
+                      ? "Single sign-on is available for your organization."
+                      : "Enter your password to sign in."}
+                </p>
               </div>
 
               {login.isError && (
@@ -565,52 +644,109 @@ export function LoginPage() {
                 </div>
               )}
 
-              <form onSubmit={submit} className="space-y-4">
-                <div>
-                  <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Email</label>
-                  <input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
-                    placeholder="you@company.com"
-                    className="w-full rounded-lg border border-slate-300 bg-white/85 px-3.5 py-2.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/15" />
-                </div>
-
-                <div>
-                  <div className="mb-1.5 flex items-center justify-between"><label htmlFor="login-password" className="block text-sm font-medium text-slate-700">Password</label><Link to="/forgot-password" className="text-xs font-semibold text-teal-700 hover:text-teal-600">Forgot password?</Link></div>
-                  <div className="relative">
-                    <input id="login-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-                      placeholder="••••••••"
-                      className="w-full rounded-lg border border-slate-300 bg-white/85 px-3.5 py-2.5 pr-14 text-sm text-slate-900 outline-none placeholder:text-slate-400 transition focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/15" />
-                    <button type="button" onClick={() => setShowPass((v) => !v)}
-                      aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 transition hover:text-slate-700">
-                      {showPassword ? "Hide" : "Show"}
+              <form onSubmit={submit} className="space-y-4" noValidate>
+                {/* Identity: editable email (step 1) → read-only chip (step 2) */}
+                {step === "identify" ? (
+                  <div>
+                    <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
+                    <input
+                      id="login-email" type="email" inputMode="email" value={email}
+                      onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
+                      autoComplete="username" autoFocus placeholder="you@company.com"
+                      aria-invalid={emailError ? true : undefined}
+                      aria-describedby={emailError ? "login-email-error" : undefined}
+                      className="login2-field" />
+                    {emailError && (
+                      <p id="login-email-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{emailError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="login2-idchip">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
+                      <span className="truncate text-sm font-medium text-slate-700">{email.trim()}</span>
+                    </span>
+                    <button type="button" onClick={editEmail}
+                      className="shrink-0 text-xs font-semibold text-teal-700 transition hover:text-teal-600 focus-visible:outline-2 focus-visible:outline-teal-600">
+                      Change
                     </button>
+                  </div>
+                )}
+
+                {/* Reveal block — password OR SSO, animated open on step 2 */}
+                <div className="login2-reveal" data-open={step === "authenticate"} aria-hidden={step !== "authenticate"}>
+                  <div>
+                    <div className="space-y-4 pt-1" aria-live="polite">
+                      {step !== "authenticate" ? null : ssoConn ? (
+                        <>
+                          <button type="button" onClick={goToSso} className="login2-sso">
+                            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                            Continue with {ssoConn.displayName}
+                          </button>
+                          <p className="text-center text-[11px] leading-5 text-slate-500">
+                            You’ll continue to your organization’s identity provider to finish signing in.
+                          </p>
+                        </>
+                      ) : (
+                        <div>
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <label htmlFor="login-password" className="block text-sm font-medium text-slate-700">Password</label>
+                            <Link to="/forgot-password" className="text-xs font-semibold text-teal-700 hover:text-teal-600">Forgot password?</Link>
+                          </div>
+                          <div className="relative">
+                            <input
+                              ref={passwordRef} id="login-password" type={showPassword ? "text" : "password"}
+                              value={password} onChange={(e) => setPassword(e.target.value)}
+                              autoComplete="current-password" placeholder="••••••••"
+                              className="login2-field pr-20" />
+                            <button type="button" onClick={() => setShowPass((v) => !v)}
+                              aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
+                              className="login2-eye absolute right-2.5 top-1/2 -translate-y-1/2">
+                              {showPassword ? "Hide" : "Show"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <button type="submit" disabled={login.isPending || !email.trim() || !password}
-                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-teal-500 to-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_-8px_rgba(13,148,136,.55),inset_0_1px_0_rgba(255,255,255,.25)] transition hover:from-teal-400 hover:to-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50">
-                  {login.isPending
-                    ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
-                    : <>Sign in <ArrowRight className="h-4 w-4" /></>}
-                </button>
+                {/* Primary CTA — hidden in SSO mode where the SSO button is the action */}
+                {!ssoConn && (
+                  <button type="submit" className="login2-cta"
+                    disabled={step === "identify" ? (identifying || !email.trim()) : (login.isPending || !password)}>
+                    {step === "identify"
+                      ? (identifying
+                          ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Checking…</>
+                          : <>Continue <ArrowRight className="h-4 w-4" /></>)
+                      : (login.isPending
+                          ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
+                          : <>Sign in <ArrowRight className="h-4 w-4" /></>)}
+                  </button>
+                )}
               </form>
 
-              <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-                <ShieldCheck className="h-3.5 w-3.5 text-teal-600/70" aria-hidden="true" />
-                Secure tenant access
-              </p>
+              {/* Trust row — truthful capability statements, no fabricated seals */}
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
+                {TRUST_SIGNALS.map(({ icon: Icon, label }) => (
+                  <span key={label} className="login2-chip">
+                    <Icon className="h-3.5 w-3.5 text-teal-600" aria-hidden="true" />
+                    {label}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Role guidance */}
-          <div className="mt-6 rounded-[20px] border border-slate-200/80 bg-white/60 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur-md">
+          {/* Role guidance — clay tiles */}
+          <div className="rounded-[20px] border border-slate-200/80 bg-white/60 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur-md">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Workspace roles</p>
             <p className="mt-1 text-sm font-semibold text-slate-800">Sign in with the credentials issued by your organization</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {ACCESS_GUIDANCE.map((account) => (
-                <div key={account.title} className="role-card flex flex-col items-start gap-1.5 px-3 py-3 text-left">
+                <div key={account.title} className="login2-role flex flex-col items-start gap-1.5 text-left">
                   <span className="text-sm font-bold text-slate-900">{account.title}</span>
-                  <span className="text-[11px] text-slate-500">{account.note}</span>
+                  <span className="text-[11px] leading-5 text-slate-500">{account.note}</span>
                 </div>
               ))}
             </div>

@@ -55,6 +55,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/auth/login", (HttpContext http, LoginRequest request, Database db, AuditService audit,
                 SecuritySettingsService securitySettings, PasswordPolicyService passwordPolicy, CancellationToken ct) =>
             Login(http, request, db, audit, securitySettings, passwordPolicy, ct));
+        app.MapPost("/api/auth/sso/discover", SsoDiscover);
         app.MapPost("/api/auth/forgot-password", ForgotPassword);
         app.MapPost("/api/auth/reset-password", ResetPassword);
         app.MapGet("/api/auth/me", AuthMe);
@@ -2378,6 +2379,76 @@ public static partial class EndpointMappings
         Results.Json(
             ApiResponse<object>.Fail("Invalid credentials"),
             statusCode: StatusCodes.Status401Unauthorized);
+
+    // POST /api/auth/sso/discover — identifier-first login routing hint.
+    //
+    // Given an email, resolves whether the tenant that owns the email's DOMAIN has
+    // an admin-provisioned, ENABLED SSO connection. If so, returns the IdP redirect
+    // target so the client can route to SSO; otherwise it returns the uniform
+    // "use password" body and the client reveals the password field.
+    //
+    // Enumeration-safe by construction: it keys ONLY on domain-level SSO config and
+    // never reads the users table, so the response shape/latency does not reveal
+    // whether a *user* with that address exists. Blank/malformed input returns the
+    // same "use password" body (never a 4xx) so probing input validity yields
+    // nothing. Runs under the platform-admin bypass scope (pre-login, no tenant
+    // context) and issues NO session — it is purely a routing hint.
+    private static async Task<IResult> SsoDiscover(
+        HttpContext http, SsoDiscoverRequest request, Database db, AuditService audit, CancellationToken ct)
+    {
+        // Uniform fallback: returned for blank/invalid input AND for every domain
+        // with no enabled SSO connection. Identical either way so the client cannot
+        // infer domain/user existence from the response.
+        static IResult Password() => Results.Ok(ApiResponse<object>.Ok(
+            new { ssoConfigured = false, usePassword = true, connection = (object?)null }));
+
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        // Cheap structural validation only; never reveals whether the address is real.
+        var at = email.LastIndexOf('@');
+        if (email.Length is 0 or > 320 || at <= 0 || at == email.Length - 1)
+            return Password();
+
+        var domain = email[(at + 1)..];
+        if (domain.Length is 0 or > 253 || domain.Contains(' '))
+            return Password();
+
+        // Runs under the platform-admin bypass scope (Program.cs pre-tenant branch),
+        // so this reads across tenants without a session — same as the login handler.
+        // Keyed ONLY on domain + enabled status; the users table is never touched.
+        var row = await db.QuerySingleAsync(
+            @"SELECT company_id, display_name, protocol, idp_entry_url
+              FROM sso_connections
+              WHERE LOWER(email_domain) = @d AND status = 'enabled'
+              LIMIT 1",
+            cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
+
+        if (row is null)
+            return Password();
+
+        // Read-time open-redirect guard: only an absolute https URL is ever handed
+        // to the browser, even if a malformed row slipped past the DB CHECK.
+        var idpUrl = row.GetValueOrDefault("idpEntryUrl")?.ToString() ?? string.Empty;
+        if (!Uri.TryCreate(idpUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            return Password();
+
+        // Audit the DOMAIN routing decision (no user id — there is no authenticated
+        // principal here). company_id is known from the connection row.
+        await audit.LogAsync(http, "auth.sso.discover", "SsoConnection",
+            Convert.ToInt64(row["companyId"]),
+            JsonSerializer.Serialize(new { domain, protocol = row.GetValueOrDefault("protocol")?.ToString() }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            ssoConfigured = true,
+            usePassword   = false,
+            connection = new
+            {
+                displayName = row.GetValueOrDefault("displayName"),
+                protocol    = row.GetValueOrDefault("protocol"),
+                redirectUrl = uri.ToString(),
+            }
+        }));
+    }
 
     private static async Task<IResult> ForgotPassword(HttpContext http, ForgotPasswordRequest request, Database db, CancellationToken ct)
     {
@@ -8850,6 +8921,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     private sealed record LoginRequest(string Email, string Password);
+    private sealed record SsoDiscoverRequest(string? Email);
     private sealed record ForgotPasswordRequest(string? Email);
     private sealed record ResetPasswordRequest(string? Email, string? Token, string? NewPassword);
     private sealed record ToggleBody(bool Enabled);

@@ -64,6 +64,9 @@ public class CsrfMiddleware
         if (!SAFE_METHODS.Contains(context.Request.Method) &&
             !bearerOnly &&
             !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            // Identifier-first SSO discovery is pre-session (no bearer/CSRF cookie
+            // yet, same as login) and read-only apart from an audit log entry.
+            !string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) &&
             // Public account-recovery endpoints are pre-session, rate-limited, and
             // use opaque one-time tokens; there is no authenticated cookie to forge.
             !string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) &&
