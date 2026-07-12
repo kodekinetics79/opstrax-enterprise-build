@@ -2415,12 +2415,25 @@ public static partial class EndpointMappings
         // Runs under the platform-admin bypass scope (Program.cs pre-tenant branch),
         // so this reads across tenants without a session — same as the login handler.
         // Keyed ONLY on domain + enabled status; the users table is never touched.
-        var row = await db.QuerySingleAsync(
-            @"SELECT company_id, display_name, protocol, idp_entry_url
-              FROM sso_connections
-              WHERE LOWER(email_domain) = @d AND status = 'enabled'
-              LIMIT 1",
-            cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
+        //
+        // A discovery lookup must NEVER block login, so any failure (table not yet
+        // provisioned by the DB owner, transient DB error, cancellation) fails OPEN
+        // to the password field rather than surfacing a 500. This mirrors the
+        // client-side fail-open and keeps the honest empty-state path a clean 200.
+        Dictionary<string, object?>? row;
+        try
+        {
+            row = await db.QuerySingleAsync(
+                @"SELECT company_id, display_name, protocol, idp_entry_url
+                  FROM sso_connections
+                  WHERE LOWER(email_domain) = @d AND status = 'enabled'
+                  LIMIT 1",
+                cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
+        }
+        catch (Exception)
+        {
+            return Password();
+        }
 
         if (row is null)
             return Password();
