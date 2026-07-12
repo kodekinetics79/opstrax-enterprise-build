@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Bot, Calendar, CheckCircle2, Clock, Download, Moon,
-  Plus, Sun, Users, X,
+  Sun, Users, X,
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState } from "@/components/ui";
@@ -24,8 +24,23 @@ const SHIFT_META: Record<ShiftType, { label: string; bg: string; text: string; h
 
 // ── Live data ─────────────────────────────────────────────────────────────────
 
-function buildDriverPool(): AnyRecord[] {
-  return [];
+// The schedule grid columns are generic Mon–Sun (not tied to specific dates from
+// the API), so the header always describes the current calendar week.
+function currentWeekLabel(): string {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + mondayOffset);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const fmtDay = (d: Date) => d.getDate();
+  const fmtMonth = (d: Date) => d.toLocaleDateString(undefined, { month: "short" });
+  const sameMonth = monday.getMonth() === sunday.getMonth();
+  const range = sameMonth
+    ? `${fmtDay(monday)}–${fmtDay(sunday)} ${fmtMonth(sunday)}`
+    : `${fmtDay(monday)} ${fmtMonth(monday)} – ${fmtDay(sunday)} ${fmtMonth(sunday)}`;
+  return `Week of ${range} ${sunday.getFullYear()}`;
 }
 
 function normalizeDrivers(rows: AnyRecord[]): AnyRecord[] {
@@ -188,9 +203,6 @@ export function WorkforceManagementPage() {
           <button type="button" className="btn-secondary flex items-center gap-2 text-sm" onClick={() => exportCsv("workforce-schedule", schedule)}>
             <Download className="h-4 w-4" />Export Schedule
           </button>
-          <button type="button" className="btn-primary flex items-center gap-2 text-sm">
-            <Plus className="h-4 w-4" />Add Driver
-          </button>
         </div>
       </div>
 
@@ -234,7 +246,7 @@ export function WorkforceManagementPage() {
         <div className="panel overflow-x-auto">
           <div className="min-w-[720px]">
             <div className="p-4 pb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-700">Week of 16–22 Jun 2026 <span className="text-xs text-slate-400 ml-2">Click any cell to reassign</span></p>
+              <p className="text-sm font-semibold text-slate-700">{currentWeekLabel()} <span className="text-xs text-slate-400 ml-2">Click any cell to reassign</span></p>
               <div className="flex gap-2">
                 {(Object.entries(SHIFT_META) as [ShiftType, typeof SHIFT_META[ShiftType]][]).map(([key, meta]) => (
                   <span key={key} className={`text-[10px] px-2 py-0.5 rounded-full ${meta.bg} ${meta.text} font-semibold`}>{meta.label}</span>

@@ -95,13 +95,26 @@ export function useLiveTelemetry(): UseLiveTelemetryReturn {
     let cancelled = false;
     let renewTimer: ReturnType<typeof setTimeout> | null = null;
 
-    async function openStream() {
-      if (cancelled) return;
-
+    function clearRenewTimer() {
       if (renewTimer !== null) {
         clearTimeout(renewTimer);
         renewTimer = null;
       }
+    }
+
+    // A dropped connection or a failed ticket fetch must always lead back here —
+    // otherwise one transient hiccup (cold backend, brief 401) permanently kills
+    // the live map until the component remounts.
+    function scheduleRetry(delayMs: number) {
+      if (cancelled) return;
+      clearRenewTimer();
+      renewTimer = setTimeout(() => { void openStream(); }, delayMs);
+    }
+
+    async function openStream() {
+      if (cancelled) return;
+
+      clearRenewTimer();
       if (sourceRef.current) {
         sourceRef.current.close();
         sourceRef.current = null;
@@ -114,7 +127,8 @@ export function useLiveTelemetry(): UseLiveTelemetryReturn {
       if (cancelled) return;
 
       if (!sst) {
-        setError("Failed to obtain stream ticket");
+        setError("Failed to obtain stream ticket — retrying");
+        scheduleRetry(5_000);
         return;
       }
 
@@ -143,10 +157,16 @@ export function useLiveTelemetry(): UseLiveTelemetryReturn {
       });
 
       source.onerror = () => {
-        if (!cancelled) {
-          setConnected(false);
-          setError("Live stream disconnected — retrying");
+        if (cancelled) return;
+        setConnected(false);
+        setError("Live stream disconnected — retrying");
+        // Close rather than let EventSource auto-reconnect: it would keep hitting
+        // the same (soon-expiring) ticket URL. Re-ticket and reopen instead.
+        if (sourceRef.current) {
+          sourceRef.current.close();
+          sourceRef.current = null;
         }
+        scheduleRetry(5_000);
       };
 
       // Renew 15s before the 90s ticket expires to avoid mid-stream expiry
@@ -161,7 +181,7 @@ export function useLiveTelemetry(): UseLiveTelemetryReturn {
         sourceRef.current.close();
         sourceRef.current = null;
       }
-      if (renewTimer !== null) clearTimeout(renewTimer);
+      clearRenewTimer();
       setConnected(false);
     };
   }, [fetchSnapshot]);

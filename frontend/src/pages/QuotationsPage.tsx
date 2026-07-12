@@ -109,7 +109,6 @@ export function QuotationsPage() {
 
   const listQ = useQuery({ queryKey: ["quotations", "list"], queryFn: quotationsApi.list });
   const quotes = (listQ.data ?? []) as AnyRecord[];
-  const qc = useQueryClient();
 
   const sent = quotes.filter((q) => q.status === "Sent").length;
   const accepted = quotes.filter((q) => q.status === "Accepted").length;
@@ -199,7 +198,7 @@ export function QuotationsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Quote", "Customer", "Route", "Cargo", "Amount", "Margin", "Valid Until", "Status", ""].map((h) => (
+                  {["Quote", "Customer", "Route", "Cargo", "Amount", "Margin", "Valid Until", "Status"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -216,20 +215,6 @@ export function QuotationsPage() {
                     <td className="px-4 py-3"><MarginBar pct={Number(q.marginPct ?? 0)} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(q.validUntil ?? "—")}</td>
                     <td className="px-4 py-3"><StatusBadge status={String(q.status ?? "Draft")} /></td>
-                    <td className="px-4 py-3">
-                      {String(q.status) === "Accepted" && (
-                        <button type="button" className="text-xs px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 font-medium whitespace-nowrap"
-                          onClick={(e) => { e.stopPropagation(); void qc.invalidateQueries({ queryKey: ["contracts"] }); }}>
-                          → Contract
-                        </button>
-                      )}
-                      {String(q.status) === "Draft" && (
-                        <button type="button" className="text-xs px-2 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 font-medium"
-                          onClick={(e) => { e.stopPropagation(); void qc.invalidateQueries({ queryKey: ["quotations"] }); }}>
-                          Send
-                        </button>
-                      )}
-                    </td>
                   </tr>
                 ))}
               </tbody>

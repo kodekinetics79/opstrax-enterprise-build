@@ -2,8 +2,8 @@ import { useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, ReferenceLine, Cell,
 } from "recharts";
 import {
   AlertTriangle, Bot, BrainCircuit, Download, Shield, Truck, TrendingDown,
@@ -12,96 +12,6 @@ import {
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
-
-// ── Live data ─────────────────────────────────────────────────────────────────
-
-const VEHICLE_NAMES = ["BOX-104", "REF-209", "TRK-316", "VAN-512", "BOX-218", "REF-401", "TRK-107", "VAN-303"];
-const DRIVER_NAMES  = ["Marcus J.", "Sofia R.", "Liam P.", "Aisha W.", "Ethan K.", "Priya S.", "Jordan M.", "Elena V."];
-const FAILURE_TYPES = ["Engine Warning", "Brake Wear", "Tyre Pressure", "Battery Low", "Oil Level", "Coolant Leak", "Transmission", "Air Filter"];
-const RISK_FACTORS  = ["Harsh braking trend ×3", "Speed events ×5", "Mobile use alert ×2", "Following distance ×4", "Lane departure ×1"];
-
-function buildMaintenanceSeed(): AnyRecord[] {
-  return VEHICLE_NAMES.map((code, i) => ({
-    id: i + 1,
-    vehicleCode:    code,
-    vehicleType:    (["Box Truck","Reefer","Truck","Van"] as const)[i % 4],
-    failureType:    FAILURE_TYPES[i],
-    confidencePct:  [96, 91, 88, 84, 79, 74, 68, 61][i],
-    daysUntilRisk:  [3, 5, 7, 9, 11, 14, 18, 22][i],
-    estimatedCost:  [4200, 3100, 2800, 1900, 1500, 950, 750, 620][i],
-    revenueAtRisk:  [8400, 6200, 5600, 3800, 3000, 1900, 1500, 1240][i],
-    lastService:    `2026-05-${String(10 + i * 2).padStart(2, "0")}`,
-    priority:       (["Critical","Critical","High","High","High","Medium","Medium","Low"] as const)[i],
-    aiRecommendation: [
-      "Schedule brake inspection immediately. Pattern matches pre-failure signature from 3 comparable vehicles.",
-      "Coolant level dropping at 0.8L/week. Likely slow internal leak — pressure test before next long haul.",
-      "Tyre tread depth below 3mm on rear axle. Replace before next reefer run to meet compliance threshold.",
-      "Battery discharge events increasing. Cold-weather reefer cycles accelerating drain. Swap recommended.",
-      "Oil sample shows metal particulate spike — potential bearing wear. Drain and inspect before week end.",
-      "Air filter restriction above 90% threshold. Fuel efficiency dropping. Service during next scheduled stop.",
-      "Transmission slip events detected on uphill segments. Fluid change and inspection recommended.",
-      "Air filter service overdue by 4,200 km. Low urgency — schedule at next PM interval.",
-    ][i],
-  }));
-}
-
-function buildDriverRiskSeed(): AnyRecord[] {
-  return DRIVER_NAMES.map((name, i) => ({
-    id: i + 1,
-    driverName:      name,
-    driverCode:      `DRV-${String(i + 1).padStart(3, "0")}`,
-    currentScore:    [94, 89, 83, 79, 74, 68, 63, 57][i],
-    predictedScore:  [93, 86, 79, 72, 66, 58, 51, 43][i],
-    scoreDelta:      [-1, -3, -4, -7, -8, -10, -12, -14][i],
-    harshEvents:     [1, 3, 5, 7, 9, 12, 14, 18][i],
-    riskFactor:      RISK_FACTORS[i % RISK_FACTORS.length],
-    coachingStatus:  (["None Needed","Scheduled","Recommended","Urgent","Urgent","Critical","Critical","Critical"] as const)[i],
-    revenueImpact:   [0, 0, 800, 1200, 2100, 3400, 4800, 6200][i],
-    aiRecommendation: [
-      "Driver is performing well. No coaching required this week.",
-      "Minor harsh braking trend. Review with driver at next check-in.",
-      "Speed events increasing. Schedule defensive driving module by Friday.",
-      "Patterns suggest fatigue — review shift schedule and HOS logs.",
-      "Mobile use events in restricted zones. Mandatory phone-policy coaching required.",
-      "Safety score trajectory at -10pt/week. Immediate coaching and incident review.",
-      "High incident correlation risk. Recommend temporary route reassignment pending coaching.",
-      "Critical pattern — 3 near-miss events in 10 days. Suspend high-risk routes pending review.",
-    ][i],
-  }));
-}
-
-function buildSlaRiskSeed(): AnyRecord[] {
-  return Array.from({ length: 6 }, (_, i) => ({
-    id: i + 1,
-    jobNumber:        `JOB-${String(2001 + i * 7).padStart(5, "0")}`,
-    customerName:     ["Al-Futtaim Logistics","Emirates Transport","Abu Dhabi Ports","Agility MEA","DSV UAE","Aramex"][i],
-    route:            ["DXB→AUH","SHJ→DXB","ABU→DXB","DXB→SHJ","FUJ→DXB","AUH→RKT"][i],
-    delayProbability: [87, 74, 68, 61, 48, 34][i],
-    currentEta:       ["14:30","15:45","16:00","13:15","17:30","12:00"][i],
-    slaDeadline:      ["14:00","15:30","15:45","13:00","17:00","11:45"][i],
-    revenueAtRisk:    [12400, 8700, 6300, 4200, 2800, 1500][i],
-    delayReason:      ["Traffic congestion on E311","Vehicle running 18 min late","Customs clearance delay","Loading dock backlog","Driver HOS approaching limit","Route deviation detected"][i],
-    aiRecommendation: [
-      "Reroute via E611 — saves 14 min. Alert customer with revised ETA now.",
-      "Assign backup vehicle VAN-305 from depot. Customer notification required immediately.",
-      "Contact customs liaison. Pre-clearance for next 3 shipments recommended.",
-      "Reassign stop 3 to another active route. Customer SLA breach in 30 min.",
-      "Driver at HOS limit in 45 min. Hand-off to DRV-019 at Al Quoz depot.",
-      "Route correction auto-suggested. Driver acknowledging update via app.",
-    ][i],
-  }));
-}
-
-const RISK_TREND = [
-  { week: "W−7", maintenance: 3, safety: 8, sla: 2 },
-  { week: "W−6", maintenance: 4, safety: 7, sla: 3 },
-  { week: "W−5", maintenance: 3, safety: 9, sla: 2 },
-  { week: "W−4", maintenance: 5, safety: 10, sla: 4 },
-  { week: "W−3", maintenance: 6, safety: 8, sla: 3 },
-  { week: "W−2", maintenance: 7, safety: 11, sla: 5 },
-  { week: "W−1", maintenance: 8, safety: 12, sla: 6 },
-  { week: "This wk", maintenance: 8, safety: 14, sla: 6 },
-];
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
@@ -229,31 +139,27 @@ export function PredictiveAnalyticsPage() {
       {/* Charts row */}
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
 
-        {/* Risk trend */}
+        {/* Open risk items right now, by category (live snapshot — no historical trend data is collected yet) */}
         <div className="panel p-5">
-          <p className="section-title mb-0.5">Prediction Risk Trend (Weekly)</p>
-          <p className="text-xs text-slate-400 mb-4">Open predictive risk items by category — maintenance, safety and SLA</p>
+          <p className="section-title mb-0.5">Open Risk Items by Category</p>
+          <p className="text-xs text-slate-400 mb-4">Current predictive risk items — maintenance, safety and SLA</p>
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={RISK_TREND} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <defs>
-                <linearGradient id="maintGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={chart.amber500} stopOpacity={0.3} /><stop offset="95%" stopColor={chart.amber500} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="safetyGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={chart.red600} stopOpacity={0.2} /><stop offset="95%" stopColor={chart.red600} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="slaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={chart.teal600} stopOpacity={0.2} /><stop offset="95%" stopColor={chart.teal600} stopOpacity={0} />
-                </linearGradient>
-              </defs>
+            <BarChart
+              data={[
+                { cat: "Maintenance", value: maintenance.length, color: chart.amber500 },
+                { cat: "Safety",      value: driverRisk.length,  color: chart.red600 },
+                { cat: "SLA",         value: slaRisk.length,     color: chart.teal600 },
+              ]}
+              margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
-              <XAxis dataKey="week" tick={{ fontSize: 10, fill: chart.slate400 }} />
-              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} allowDecimals={false} />
               <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
-              <Area type="monotone" dataKey="maintenance" name="Maintenance" stroke={chart.amber500} fill="url(#maintGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="safety"      name="Safety"      stroke={chart.red600} fill="url(#safetyGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="sla"         name="SLA"         stroke={chart.teal600} fill="url(#slaGrad)" strokeWidth={2} />
-            </AreaChart>
+              <Bar dataKey="value" name="Open items" radius={[4, 4, 0, 0]}>
+                {[chart.amber500, chart.red600, chart.teal600].map((c, i) => <Cell key={i} fill={c} />)}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
         </div>
 
@@ -336,11 +242,6 @@ export function PredictiveAnalyticsPage() {
                       <span>Last service: <strong>{String(r.lastService)}</strong></span>
                       <span>Revenue at risk: <strong className="text-amber-600">AED {Number(r.revenueAtRisk).toLocaleString()}</strong></span>
                     </div>
-                    <div className="mt-3 flex gap-2">
-                      <button type="button" className="btn-primary text-xs">Schedule Service</button>
-                      <button type="button" className="btn-secondary text-xs">Create Work Order</button>
-                      <button type="button" className="btn-ghost text-xs">Dismiss</button>
-                    </div>
                   </div>
                 )}
               </div>
@@ -394,11 +295,6 @@ export function PredictiveAnalyticsPage() {
                     {Number(r.revenueImpact) > 0 && (
                       <p className="mt-2 text-xs text-slate-500">Revenue impact if unaddressed: <strong className="text-amber-600">AED {Number(r.revenueImpact).toLocaleString()}</strong></p>
                     )}
-                    <div className="mt-3 flex gap-2">
-                      <button type="button" className="btn-primary text-xs">Assign Coaching</button>
-                      <button type="button" className="btn-secondary text-xs">View Scorecards</button>
-                      <button type="button" className="btn-ghost text-xs">Dismiss</button>
-                    </div>
                   </div>
                 )}
               </div>
@@ -447,12 +343,6 @@ export function PredictiveAnalyticsPage() {
                     <div className="flex items-start gap-2">
                       <Bot className="h-4 w-4 text-violet-500 shrink-0 mt-0.5" />
                       <p className="text-sm text-slate-700 leading-relaxed">{String(r.aiRecommendation)}</p>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button type="button" className="btn-primary text-xs">Alert Customer</button>
-                      <button type="button" className="btn-secondary text-xs">Reroute</button>
-                      <button type="button" className="btn-secondary text-xs">Reassign Vehicle</button>
-                      <button type="button" className="btn-ghost text-xs">Dismiss</button>
                     </div>
                   </div>
                 )}

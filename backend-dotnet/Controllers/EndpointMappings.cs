@@ -5498,7 +5498,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             evidence,
             recommendedActions  = actions,
             suggestedNextSteps  = new[] { "Send proactive ETA updates", "Pull delayed jobs into dispatch review", "Schedule high-priority maintenance", "Coach drivers with repeated safety signals" },
-            actionButtons    = new[] { "Create Dispatch Review", "Send ETA Updates", "Generate Executive Brief", "Open Evidence" }
         }));
     }
 

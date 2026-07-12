@@ -5,7 +5,7 @@ import {
   useExecutiveSummary, useExecutiveSnapshots, useExecutiveAiRecs,
 } from "@/hooks/useBatch7";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { useNavigate } from "react-router-dom";
@@ -236,23 +236,23 @@ export function ExecutivePage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Revenue vs Cost */}
-        <div className="panel p-5">
-          <p className="section-title mb-0.5">Revenue vs Cost (AED '000)</p>
-          <p className="text-xs text-slate-400 mb-4">6-month P&L trend with gross margin %</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={[]} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#94a3b8" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }}
-                formatter={(v: unknown, name: unknown) => [`AED ${Number(v ?? 0)}K`, String(name)]} />
-              <Legend wrapperStyle={{ color: "#64748b", fontSize: 12 }} />
-              <Bar dataKey="revenue" name="Revenue" fill="#0d9488" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="cost"    name="Cost"    fill="#e2e8f0" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Profitability — no monthly P&L trend endpoint exists yet, so this
+            links to the real, tenant-scoped profitability data instead of
+            rendering an empty chart under a "6-month trend" label. */}
+        <button
+          type="button"
+          className="panel flex flex-col items-start gap-3 p-5 text-left transition hover:border-slate-300"
+          onClick={() => navigate("/profitability")}
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+            <DollarSign className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="section-title mb-0.5">Profitability</p>
+            <p className="text-xs text-slate-400">Revenue, cost, and gross margin by customer and vehicle</p>
+          </div>
+          <span className="mt-auto text-xs font-semibold text-teal-600">Open Profitability →</span>
+        </button>
       </div>
 
       {/* AI Recommendations */}
@@ -275,9 +275,9 @@ export function ExecutivePage() {
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">{String(rec.body ?? rec.description ?? "")}</p>
                 {rec.action_label ? (
-                  <button type="button" className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition">
-                    {String(rec.action_label)} →
-                  </button>
+                  <p className="mt-2 text-xs font-semibold text-teal-700">
+                    Recommended: {String(rec.action_label)}
+                  </p>
                 ) : null}
               </div>
             </div>

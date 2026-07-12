@@ -16,7 +16,6 @@ interface Message {
   summary?: string;
   evidence?: AnyRecord[];
   suggestedNextSteps?: string[];
-  actionButtons?: string[];
   timestamp: Date;
 }
 
@@ -32,16 +31,6 @@ const STARTERS: { label: string; category: string; prompt: string }[] = [
   { label: "Executive brief",      category: "Executive Summary",   prompt: "Give me an executive operations briefing covering fleet performance, cost posture, safety, and top 3 priorities." },
   { label: "Compliance audit",     category: "Compliance Audit",    prompt: "What compliance items are expiring or overdue across HOS, DVIR, and regulatory documents?" },
 ];
-
-// ── Action button → real action mapping ──────────────────────────────────────
-
-const ACTION_HANDLERS: Record<string, { label: string; description: string }> = {
-  "Create Dispatch Review": { label: "Create Dispatch Review", description: "Dispatch review created and assigned to operations manager." },
-  "Send ETA Updates":       { label: "Send ETA Updates",       description: "Proactive ETA updates queued for all at-risk customer jobs." },
-  "Schedule Maintenance":   { label: "Schedule Maintenance",   description: "High-priority maintenance flagged and scheduled for next available slot." },
-  "Generate Executive Brief":{ label: "Generate Executive Brief", description: "Executive brief exported to Reports module." },
-  "Open Evidence":          { label: "Open Evidence",          description: "Evidence package flagged for review in Safety module." },
-};
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
@@ -63,13 +52,7 @@ function UserBubble({ message }: { message: Message }) {
   );
 }
 
-function AssistantBubble({
-  message,
-  onAction,
-}: {
-  message: Message;
-  onAction: (label: string) => void;
-}) {
+function AssistantBubble({ message }: { message: Message }) {
   return (
     <div className="flex gap-3 mb-6">
       <div className="w-7 h-7 rounded-full bg-violet-100 flex items-center justify-center shrink-0 mt-0.5">
@@ -105,23 +88,6 @@ function AssistantBubble({
           </div>
         )}
 
-        {/* Action buttons */}
-        {message.actionButtons && message.actionButtons.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {message.actionButtons.map((btn) => (
-              <button
-                key={btn}
-                type="button"
-                className="text-xs px-3 py-1.5 rounded-lg bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 transition-colors font-medium"
-                onClick={() => onAction(btn)}
-              >
-                <Sparkles className="inline w-3 h-3 mr-1 -mt-0.5" />
-                {btn}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="mt-1.5">
           <span className="text-xs text-slate-400">{message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         </div>
@@ -136,7 +102,6 @@ export function AiCopilotPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("Where should operations focus in the next 4 hours?");
   const [category, setCategory] = useState(STARTERS[0].category);
-  const [actionToast, setActionToast] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const insights = useQuery({ queryKey: ["ai-insights"], queryFn: aiApi.insights });
@@ -158,7 +123,6 @@ export function AiCopilotPage() {
         summary: String(resp.summary ?? ""),
         evidence: (resp.evidence as AnyRecord[]) ?? [],
         suggestedNextSteps: (resp.suggestedNextSteps as string[]) ?? [],
-        actionButtons: (resp.actionButtons as string[]) ?? [],
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -169,13 +133,6 @@ export function AiCopilotPage() {
   function handleStarterClick(starter: (typeof STARTERS)[0]) {
     setCategory(starter.category);
     setPrompt(starter.prompt);
-  }
-
-  function handleActionClick(label: string) {
-    const info = ACTION_HANDLERS[label];
-    const feedback = info?.description ?? `${label} action executed.`;
-    setActionToast(feedback);
-    setTimeout(() => setActionToast(null), 4000);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -197,13 +154,6 @@ export function AiCopilotPage() {
 
   return (
     <div className="flex h-[calc(100vh-96px)] gap-4">
-      {/* Action toast */}
-      {actionToast && (
-        <div className="fixed top-4 right-4 z-50 bg-violet-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg max-w-sm">
-          {actionToast}
-        </div>
-      )}
-
       {/* Left sidebar */}
       <aside className="w-72 shrink-0 flex flex-col gap-4 overflow-y-auto py-4">
         {/* Quick starters */}
@@ -296,7 +246,7 @@ export function AiCopilotPage() {
                 msg.role === "user" ? (
                   <UserBubble key={msg.id} message={msg} />
                 ) : (
-                  <AssistantBubble key={msg.id} message={msg} onAction={handleActionClick} />
+                  <AssistantBubble key={msg.id} message={msg} />
                 )
               )}
               {ask.isPending && (
