@@ -65,7 +65,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
               VALUES
                 (@cid, @type, @name, @issuer,
                  @clientId, @secretRef, @certThumb,
-                 @enabled, @hints::jsonb, @metaUrl, @createdBy, NOW(), NOW())",
+                 @enabled, @hints, @metaUrl, @createdBy, NOW(), NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",       companyId);
@@ -75,7 +75,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
                 c.Parameters.AddWithValue("@clientId",  dto.ClientId);
                 c.Parameters.AddWithValue("@secretRef", (object?)dto.ClientSecretRef ?? DBNull.Value);
                 c.Parameters.AddWithValue("@certThumb", (object?)dto.CertificateThumbprint ?? DBNull.Value);
-                c.Parameters.AddWithValue("@enabled",   dto.Enabled);
+                c.Parameters.AddWithValue("@enabled",   dto.Enabled ? 1 : 0);
                 c.Parameters.AddWithValue("@hints",     (object?)dto.DomainHintsJson ?? DBNull.Value);
                 c.Parameters.AddWithValue("@metaUrl",   (object?)dto.MetadataUrl ?? DBNull.Value);
                 c.Parameters.AddWithValue("@createdBy", createdBy);
@@ -111,7 +111,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
                   issuer_or_entity_id = @issuer, client_id = @clientId,
                   client_secret_ref = COALESCE(@secretRef, client_secret_ref),
                   certificate_thumbprint = COALESCE(@certThumb, certificate_thumbprint),
-                  enabled = @enabled, domain_hints = @hints::jsonb,
+                  enabled = @enabled, domain_hints = @hints,
                   metadata_url = @metaUrl, updated_at = NOW()
               WHERE id = @id AND company_id = @cid",
             c =>
@@ -140,7 +140,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
         CancellationToken ct = default)
     {
         var rows = await db.ExecuteAsync(
-            "UPDATE sso_connections SET enabled = false, updated_at = NOW() WHERE id = @id AND company_id = @cid",
+            "UPDATE sso_connections SET enabled = 0, updated_at = NOW() WHERE id = @id AND company_id = @cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         if (rows == 0) throw new InvalidOperationException("SSO connection not found or access denied");

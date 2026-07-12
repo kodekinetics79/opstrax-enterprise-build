@@ -19,10 +19,4 @@ export const settingsApi = {
 
   securitySettingsGet: () => unwrap<AnyRecord>(apiClient.get("/api/security/settings")),
   securitySettingsPut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/security/settings", body)),
-
-  // SSO/SAML/OIDC connections (enterprise sign-on). Tenant-scoped, security:manage.
-  ssoConnectionsList: () => unwrap<AnyRecord[]>(apiClient.get("/api/security/sso-connections")),
-  ssoConnectionCreate: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.post("/api/security/sso-connections", body)),
-  ssoConnectionUpdate: (id: number, body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put(`/api/security/sso-connections/${id}`, body)),
-  ssoConnectionDisable: (id: number) => unwrap<AnyRecord>(apiClient.post(`/api/security/sso-connections/${id}/disable`, {})),
 };

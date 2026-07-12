@@ -7,10 +7,10 @@ function resolveEmail(usernameOrEmail: string): string {
 }
 
 export type SsoConnection = {
-  /** Connection id; the client initiates the flow via /api/auth/sso/start/{id}. */
-  id: number;
   displayName: string;
   protocol: "saml" | "oidc";
+  /** Absolute https IdP entry URL. Treat as a full-page navigation target only. */
+  redirectUrl: string;
 };
 
 export type SsoDiscovery = {
