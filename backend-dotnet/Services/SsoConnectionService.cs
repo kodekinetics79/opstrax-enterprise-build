@@ -65,7 +65,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
               VALUES
                 (@cid, @type, @name, @issuer,
                  @clientId, @secretRef, @certThumb,
-                 @enabled, @hints, @metaUrl, @createdBy, NOW(), NOW())",
+                 @enabled, @hints::jsonb, @metaUrl, @createdBy, NOW(), NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",       companyId);
@@ -111,7 +111,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
                   issuer_or_entity_id = @issuer, client_id = @clientId,
                   client_secret_ref = COALESCE(@secretRef, client_secret_ref),
                   certificate_thumbprint = COALESCE(@certThumb, certificate_thumbprint),
-                  enabled = @enabled, domain_hints = @hints,
+                  enabled = @enabled, domain_hints = @hints::jsonb,
                   metadata_url = @metaUrl, updated_at = NOW()
               WHERE id = @id AND company_id = @cid",
             c =>
@@ -140,7 +140,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
         CancellationToken ct = default)
     {
         var rows = await db.ExecuteAsync(
-            "UPDATE sso_connections SET enabled = FALSE, updated_at = NOW() WHERE id = @id AND company_id = @cid",
+            "UPDATE sso_connections SET enabled = false, updated_at = NOW() WHERE id = @id AND company_id = @cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         if (rows == 0) throw new InvalidOperationException("SSO connection not found or access denied");
