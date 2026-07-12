@@ -10,7 +10,7 @@ import {
   Wrench, Zap, Clock, DollarSign, Activity,
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── API ────────────────────────────────────────────────────────────────────────
@@ -90,6 +90,7 @@ export function PredictiveAnalyticsPage() {
   }
 
   if (isLoading) return <LoadingState />;
+  if (maintQ.isError) return <ErrorState message={(maintQ.error as Error)?.message} />;
 
   return (
     <div className="flex flex-col gap-6 py-6">

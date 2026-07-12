@@ -139,11 +139,6 @@ export function LastMileDeliveryPage() {
   const overviewQ = useQuery({ queryKey: ["last-mile", "overview"], queryFn: lastMileApi.overview });
   const routesQ = useQuery({ queryKey: ["last-mile", "routes"], queryFn: lastMileApi.routes, refetchInterval: 20_000 });
 
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3500);
-  }
-
   const routes = (routesQ.data?.items ?? []) as unknown as AnyRecord[];
   const s = (overviewQ.data?.summary ?? {}) as AnyRecord;
 

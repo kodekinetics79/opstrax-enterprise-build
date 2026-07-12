@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ClipboardList, XCircle } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { ErrorState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type ChecklistResult = "pass" | "fail" | "na";
@@ -116,6 +117,8 @@ export function DriverDvirPage() {
       </div>
     );
   }
+
+  if (templates.isError) return <ErrorState message={(templates.error as Error)?.message} />;
 
   return (
     <div className="space-y-4 p-4 pb-10">

@@ -5,7 +5,7 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, KpiCard, ClayCard } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, KpiCard, ClayCard } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Live data clients — every figure below is derived from real tenant data.
@@ -100,6 +100,7 @@ export function CarbonTrackingPage() {
   const maxVehCo2 = topEmitters.reduce((m, v) => Math.max(m, Number(v.co2ThisMonth ?? 0)), 0);
 
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={(q.error as Error)?.message} />;
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
