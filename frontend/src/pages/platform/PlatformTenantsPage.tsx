@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Building2, Search } from "lucide-react";
 import type { AnyRecord } from "@/types";
@@ -446,6 +446,43 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
 
   const reload = () => { qc.invalidateQueries({ queryKey: ["platform", "tenant", id] }); onChanged(); };
 
+  // Full company-profile edit form, hydrated once the tenant loads.
+  const [edit, setEdit] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const t = data?.tenant as AnyRecord | undefined;
+    if (!t) return;
+    setEdit({
+      name: String(t.name ?? ""),
+      legalName: String(t.legalName ?? ""),
+      industry: String(t.industry ?? ""),
+      website: String(t.website ?? ""),
+      fleetSize: t.fleetSize != null ? String(t.fleetSize) : "",
+      taxId: String(t.taxId ?? ""),
+      primaryContactName: String(t.primaryContactName ?? ""),
+      primaryContactEmail: String(t.primaryContactEmail ?? ""),
+      primaryContactPhone: String(t.primaryContactPhone ?? ""),
+      billingEmail: String(t.billingEmail ?? ""),
+      billingCycle: String(t.billingCycle ?? "monthly"),
+    });
+  }, [data]);
+  const setF = (k: string, v: string) => setEdit((f) => ({ ...f, [k]: v }));
+
+  // Tenant user directory + platform-initiated password reset.
+  const usersQ = useQuery({ queryKey: ["platform", "tenant", id, "users"], queryFn: () => platformApi.tenantUsers(id) });
+  const tenantUsers = (usersQ.data ?? []) as AnyRecord[];
+  const [resetBusyId, setResetBusyId] = useState<number | null>(null);
+  const [tempPw, setTempPw] = useState<AnyRecord | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const resetUserPassword = async (userId: number) => {
+    setResetBusyId(userId); setNotice(null); setTempPw(null); setCopied(false);
+    try {
+      setTempPw(await platformApi.resetTenantUserPassword(id, userId));
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Password reset failed");
+    } finally { setResetBusyId(null); }
+  };
+
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true); setNotice(null);
     try { await fn(); reload(); if (done) setNotice(done); }
@@ -488,6 +525,93 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
           {notice && (
             <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-2.5 text-sm text-teal-700">{notice}</div>
           )}
+
+          {canManage && (
+            <section>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Tenant details</h3>
+              <div className="space-y-3">
+                <PField label="Company name"><PInput value={edit.name ?? ""} onChange={(e) => setF("name", e.target.value)} /></PField>
+                <PField label="Legal entity name"><PInput value={edit.legalName ?? ""} onChange={(e) => setF("legalName", e.target.value)} /></PField>
+                <div className="grid grid-cols-2 gap-3">
+                  <PField label="Industry"><PInput value={edit.industry ?? ""} onChange={(e) => setF("industry", e.target.value)} /></PField>
+                  <PField label="Fleet size"><PInput type="number" min={0} value={edit.fleetSize ?? ""} onChange={(e) => setF("fleetSize", e.target.value)} /></PField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <PField label="Website"><PInput value={edit.website ?? ""} onChange={(e) => setF("website", e.target.value)} /></PField>
+                  <PField label="Tax / VAT ID"><PInput value={edit.taxId ?? ""} onChange={(e) => setF("taxId", e.target.value)} /></PField>
+                </div>
+                <PField label="Primary contact"><PInput value={edit.primaryContactName ?? ""} onChange={(e) => setF("primaryContactName", e.target.value)} /></PField>
+                <div className="grid grid-cols-2 gap-3">
+                  <PField label="Contact email"><PInput type="email" value={edit.primaryContactEmail ?? ""} onChange={(e) => setF("primaryContactEmail", e.target.value)} /></PField>
+                  <PField label="Contact phone"><PInput value={edit.primaryContactPhone ?? ""} onChange={(e) => setF("primaryContactPhone", e.target.value)} /></PField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <PField label="Billing email"><PInput type="email" value={edit.billingEmail ?? ""} onChange={(e) => setF("billingEmail", e.target.value)} /></PField>
+                  <PField label="Billing cycle">
+                    <PSelect value={edit.billingCycle ?? "monthly"} onChange={(e) => setF("billingCycle", e.target.value)}>
+                      <option value="monthly">Monthly</option>
+                      <option value="annual">Annual</option>
+                    </PSelect>
+                  </PField>
+                </div>
+                <PButton
+                  disabled={busy || !edit.name?.trim()}
+                  onClick={() => act(() => platformApi.updateTenant(id, {
+                    name: edit.name || undefined,
+                    legalName: edit.legalName || undefined,
+                    industry: edit.industry || undefined,
+                    website: edit.website || undefined,
+                    fleetSize: edit.fleetSize ? Number(edit.fleetSize) : undefined,
+                    taxId: edit.taxId || undefined,
+                    primaryContactName: edit.primaryContactName || undefined,
+                    primaryContactEmail: edit.primaryContactEmail || undefined,
+                    primaryContactPhone: edit.primaryContactPhone || undefined,
+                    billingEmail: edit.billingEmail || undefined,
+                    billingCycle: edit.billingCycle || undefined,
+                  }), "Tenant details saved")}
+                >
+                  Save details
+                </PButton>
+              </div>
+            </section>
+          )}
+
+          {/* Tenant users — directory + platform-initiated password reset (no SMTP needed) */}
+          <section>
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Tenant users</h3>
+            {tempPw && (
+              <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                <p className="text-xs font-bold text-amber-800">Temporary password — shown only once</p>
+                <p className="mt-1 text-[11px] text-amber-700">Give this to {String(tempPw.email)}. They should change it after signing in.</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="flex-1 truncate rounded-lg border border-amber-300 bg-white px-2 py-1.5 font-mono text-sm text-slate-900">{String(tempPw.temporaryPassword)}</code>
+                  <PButton variant="ghost" onClick={() => { void navigator.clipboard?.writeText(String(tempPw.temporaryPassword)); setCopied(true); }}>
+                    {copied ? "Copied" : "Copy"}
+                  </PButton>
+                </div>
+              </div>
+            )}
+            {usersQ.isLoading ? <p className="text-xs text-slate-500">Loading users…</p>
+              : tenantUsers.length === 0 ? <p className="text-xs text-slate-500">No users in this tenant yet.</p>
+              : (
+                <div className="space-y-2">
+                  {tenantUsers.map((u) => (
+                    <div key={String(u.id)} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-800">{String(u.fullName ?? "—")}</p>
+                        <p className="truncate text-[11px] text-slate-500">{String(u.email ?? "")} · {String(u.roleName ?? "—")} · {String(u.status ?? "")}</p>
+                      </div>
+                      {canManage && (
+                        <PButton variant="ghost" disabled={busy || resetBusyId === Number(u.id)}
+                          onClick={() => resetUserPassword(Number(u.id))}>
+                          {resetBusyId === Number(u.id) ? "Resetting…" : "Reset password"}
+                        </PButton>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+          </section>
 
           {canManage && (
             <section>

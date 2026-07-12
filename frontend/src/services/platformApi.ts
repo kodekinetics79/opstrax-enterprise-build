@@ -123,6 +123,10 @@ export const platformApi = {
   revokeSessions: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/revoke-sessions`)),
   deleteTenant: (id: number, confirm: string) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}`, { data: { confirm } })),
   bulkTenants: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/tenants/bulk", body)),
+  // Tenant user directory + platform-initiated password reset (returns a one-time password)
+  tenantUsers: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/users`)),
+  resetTenantUserPassword: (id: number, userId: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/reset-password`)),
 
   // Entitlements
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
@@ -137,6 +141,7 @@ export const platformApi = {
   packages: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/packages")),
   createPackage: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/packages", body)),
   updatePackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/packages/${id}`, body)),
+  deletePackage: (id: number) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/packages/${id}`)),
 
   // Billing
   invoices: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/invoices")),

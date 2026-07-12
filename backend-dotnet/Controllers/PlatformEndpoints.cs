@@ -45,6 +45,10 @@ public static class PlatformEndpoints
         // changing its subscription status (suspend/cancel also do this implicitly).
         app.MapPost("/api/platform/tenants/{id:long}/revoke-sessions", TenantRevokeSessions);
         app.MapGet("/api/platform/tenants/{id:long}/audit", TenantAudit);
+        // Tenant user directory + platform-initiated password reset (works without SMTP:
+        // returns a one-time temporary password for the operator to hand over).
+        app.MapGet("/api/platform/tenants/{id:long}/users", TenantUsers);
+        app.MapPost("/api/platform/tenants/{id:long}/users/{userId:long}/reset-password", TenantUserResetPassword);
         // Offboarding — schema-driven cascade delete of ALL tenant-owned rows + the company.
         app.MapDelete("/api/platform/tenants/{id:long}", TenantDelete);
         // Bulk operations for the Tenants table multi-select action bar. Routes each
@@ -66,6 +70,7 @@ public static class PlatformEndpoints
         app.MapGet("/api/platform/packages", PackagesList);
         app.MapPost("/api/platform/packages", PackageCreate);
         app.MapPut("/api/platform/packages/{id:long}", PackageUpdate);
+        app.MapDelete("/api/platform/packages/{id:long}", PackageDelete);
 
         // ── Billing & Invoices ──────────────────────────────────────────────────
         app.MapGet("/api/platform/invoices", InvoicesList);
@@ -769,6 +774,7 @@ public static class PlatformEndpoints
             @"UPDATE tenant_subscriptions SET
                 seat_limit = COALESCE(@seats, seat_limit),
                 billing_currency = COALESCE(@cur, billing_currency),
+                billing_cycle = COALESCE(@cycle, billing_cycle),
                 account_owner = COALESCE(@ao, account_owner),
                 support_owner = COALESCE(@so, support_owner),
                 contract_start = COALESCE(@cs, contract_start),
@@ -780,18 +786,42 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@seats", (object?)Long(body, "seatLimit") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@cur", (object?)Str(body, "billingCurrency") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@cycle", (object?)Str(body, "billingCycle") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@ao", (object?)Str(body, "accountOwner") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@so", (object?)Str(body, "supportOwner") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@cs", (object?)Str(body, "contractStart") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@ce", (object?)Str(body, "contractEnd") ?? DBNull.Value);
             }, ct);
 
-        var newName = Str(body, "name");
-        if (!string.IsNullOrWhiteSpace(newName))
-            await db.ExecuteAsync("UPDATE companies SET name=@n WHERE id=@id", c =>
+        // Full company-profile edit — every field the New Tenant form captures is now
+        // editable (previously only `name` could be changed). COALESCE keeps any field
+        // the caller omitted.
+        await db.ExecuteAsync(
+            @"UPDATE companies SET
+                name                  = COALESCE(@n, name),
+                industry              = COALESCE(@ind, industry),
+                legal_name            = COALESCE(@legal, legal_name),
+                website               = COALESCE(@web, website),
+                fleet_size            = COALESCE(@fleet, fleet_size),
+                tax_id                = COALESCE(@tax, tax_id),
+                primary_contact_name  = COALESCE(@pcn, primary_contact_name),
+                primary_contact_email = COALESCE(@pce, primary_contact_email),
+                primary_contact_phone = COALESCE(@pcp, primary_contact_phone),
+                billing_email         = COALESCE(@bill, billing_email)
+              WHERE id=@id",
+            c =>
             {
-                c.Parameters.AddWithValue("@n", newName!);
                 c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@n", (object?)Str(body, "name") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@ind", (object?)Str(body, "industry") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@legal", (object?)Str(body, "legalName") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@web", (object?)Str(body, "website") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@fleet", (object?)(int?)Long(body, "fleetSize") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@tax", (object?)Str(body, "taxId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pcn", (object?)Str(body, "primaryContactName") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pce", (object?)Str(body, "primaryContactEmail") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pcp", (object?)Str(body, "primaryContactPhone") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@bill", (object?)Str(body, "billingEmail") ?? DBNull.Value);
             }, ct);
 
         CountryProfileService.CascadeResult? cascade = null;
@@ -1011,6 +1041,71 @@ public static class PlatformEndpoints
 
         await AuditAsync(db, principal!, http, "tenant.sessions_revoked", "Tenant", id, id, new { sessionsRevoked = revoked }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Tenant sessions revoked"));
+    }
+
+    // Tenant user directory — who can actually sign in to this tenant.
+    private static async Task<IResult> TenantUsers(long id, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
+        if (error is not null) return error;
+        var rows = await db.QueryAsync(
+            @"SELECT id, full_name, email, role_name, status, last_login_at
+              FROM users
+              WHERE company_id=@id AND COALESCE(status,'') <> 'Deleted'
+              ORDER BY (role_name ILIKE '%admin%') DESC, full_name",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
+    }
+
+    // Platform-initiated password reset for a tenant user. Generates a strong one-time
+    // password, sets it, kills that user's sessions, and returns the password ONCE so the
+    // operator can hand it over. Deliberately does NOT depend on SMTP, and never changes
+    // the user's status (a disabled user stays disabled).
+    private static async Task<IResult> TenantUserResetPassword(long id, long userId, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var user = await db.QuerySingleAsync(
+            "SELECT id, email, full_name FROM users WHERE id=@uid AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
+        if (user is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
+                statusCode: StatusCodes.Status404NotFound);
+
+        var temp = GenerateTempPassword();
+        await db.ExecuteAsync(
+            "UPDATE users SET password_hash=@h, demo_password=NULL WHERE id=@uid AND company_id=@cid",
+            c =>
+            {
+                c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
+                c.Parameters.AddWithValue("@uid", userId);
+                c.Parameters.AddWithValue("@cid", id);
+            }, ct);
+        var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@uid",
+            c => c.Parameters.AddWithValue("@uid", userId), ct);
+
+        await AuditAsync(db, principal!, http, "tenant.user.password_reset", "User", userId, id,
+            new { email = user["email"], sessionsRevoked = revoked }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            userId,
+            email = user["email"],
+            fullName = user["fullName"],
+            temporaryPassword = temp,
+            sessionsRevoked = revoked,
+        }, "Temporary password generated — copy it now, it is shown only once"));
+    }
+
+    // Unambiguous alphabet (no O/0, I/l/1) so a handed-over password is easy to type.
+    private static string GenerateTempPassword()
+    {
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+        var bytes = RandomNumberGenerator.GetBytes(16);
+        var sb = new System.Text.StringBuilder(16);
+        foreach (var b in bytes) sb.Append(chars[b % chars.Length]);
+        return sb.ToString();
     }
 
     private static async Task<IResult> TenantAudit(long id, HttpContext http, Database db, CancellationToken ct)
@@ -1295,6 +1390,30 @@ public static class PlatformEndpoints
             }, ct);
         await AuditAsync(db, principal!, http, "package.updated", "Package", id, null, body.Keys, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Package updated"));
+    }
+
+    // Delete a package. Refuses while any tenant is still subscribed to it — reassign
+    // those tenants (or just deactivate the package) first, so a live subscription can
+    // never be orphaned by a delete.
+    private static async Task<IResult> PackageDelete(long id, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:packages:manage", ct);
+        if (error is not null) return error;
+
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM packages WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (exists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var inUse = await db.ScalarLongAsync("SELECT COUNT(*) FROM tenant_subscriptions WHERE package_id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (inUse > 0)
+            return Results.Json(ApiResponse<object>.Fail("Package in use",
+                $"{inUse} tenant(s) are on this package. Reassign them, or deactivate the package instead of deleting it."),
+                statusCode: StatusCodes.Status409Conflict);
+
+        await db.ExecuteAsync("DELETE FROM packages WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+        await AuditAsync(db, principal!, http, "package.deleted", "Package", id, null, null, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, deleted = true }, "Package deleted"));
     }
 
     // ════════════════════════════════════════════════════════════════════════════
