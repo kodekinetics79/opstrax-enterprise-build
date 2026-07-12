@@ -910,23 +910,66 @@ static string? ModuleKeyForPath(string path)
 {
     if (string.IsNullOrEmpty(path)) return null;
     // Order matters: most specific prefixes first.
+    // Every route surface a gated module actually owns. Previously this map was
+    // incomplete, so disabling e.g. `dispatch` still left /api/jobs open and
+    // disabling `crm` left /api/leads open — the toggle looked enforced but wasn't.
+    // Keep the most specific prefixes first.
     (string Prefix, string Module)[] map =
     [
+        ("/api/foundation/safety-maintenance", "dashboard"),
+
+        // Safety
         ("/api/safety",              "safety"),
         ("/api/dashcam",             "safety"),
-        ("/api/foundation/safety-maintenance", "dashboard"),
+        ("/api/incidents",           "safety"),
+        ("/api/coaching",            "safety"),
+        ("/api/traffic-violations",  "safety"),
+
+        // Maintenance
+        ("/api/preventive-maintenance", "maintenance"),
         ("/api/maintenance",         "maintenance"),
         ("/api/work-orders",         "maintenance"),
+        ("/api/workorders",          "maintenance"),
+        ("/api/service-history",     "maintenance"),
+        ("/api/downtime",            "maintenance"),
+        ("/api/dvir",                "maintenance"),
+
+        // Dispatch
         ("/api/dispatch",            "dispatch"),
+        ("/api/jobs",                "dispatch"),
         ("/api/trips",               "dispatch"),
+        ("/api/routes",              "dispatch"),
+        ("/api/smart-assign",        "dispatch"),
+        ("/api/last-mile",           "dispatch"),
+
+        // Telematics
         ("/api/telemetry",           "telematics"),
         ("/api/devices",             "telematics"),
+        ("/api/eld",                 "telematics"),
+        ("/api/geofences",           "telematics"),
+
+        // CRM  (customer-* prefixes below belong to the portal, not CRM)
         ("/api/customers",           "crm"),
         ("/api/contracts",           "crm"),
+        ("/api/leads",               "crm"),
+        ("/api/opportunities",       "crm"),
+        ("/api/campaigns",           "crm"),
+        ("/api/quotations",          "crm"),
+        ("/api/rate-cards",          "crm"),
+
+        // Customer portal
+        ("/api/portal",              "customer_portal"),
         ("/api/customer-eta",        "customer_portal"),
         ("/api/customer-visibility", "customer_portal"),
+
+        // Reports
         ("/api/reports",             "reports"),
+        ("/api/analytics",           "reports"),
+
+        // Compliance
+        ("/api/fleet-compliance",    "compliance"),
         ("/api/compliance",          "compliance"),
+        ("/api/hos",                 "compliance"),
     ];
     foreach (var (prefix, module) in map)
     {
