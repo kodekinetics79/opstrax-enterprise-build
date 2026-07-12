@@ -7764,29 +7764,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Fuel transaction updated"));
     }
 
-    private static Task<IResult> IdlingEvents(Database db, CancellationToken ct)
-        => OkRows(db,
+    private static Task<IResult> IdlingEvents(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT ie.*, v.vehicle_code, d.full_name driver_name, j.job_code
               FROM idling_events ie
               LEFT JOIN vehicles v ON v.id=ie.vehicle_id
               LEFT JOIN drivers d ON d.id=ie.driver_id
               LEFT JOIN jobs j ON j.id=ie.job_id
-              ORDER BY ie.started_at DESC", ct: ct);
+              WHERE ie.company_id=@cid
+              ORDER BY ie.started_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> IdlingEventDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "fuel:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
         var record = await db.QuerySingleAsync(
             @"SELECT ie.*, v.vehicle_code, d.full_name driver_name
               FROM idling_events ie
               LEFT JOIN vehicles v ON v.id=ie.vehicle_id
               LEFT JOIN drivers d ON d.id=ie.driver_id
-              WHERE ie.id=@id",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+              WHERE ie.id=@id AND ie.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Idling event not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "fuel-idling", ct),
+            recommendations = await TenantModuleRecommendations(db, companyId, "fuel-idling", ct),
         }));
     }
 
@@ -7841,14 +7848,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Idling event updated"));
     }
 
-    private static Task<IResult> FuelAnomalies(Database db, CancellationToken ct)
-        => OkRows(db,
+    private static Task<IResult> FuelAnomalies(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT fa.*, v.vehicle_code, d.full_name driver_name, ft.transaction_number
               FROM fuel_anomalies fa
               LEFT JOIN vehicles v ON v.id=fa.vehicle_id
               LEFT JOIN drivers d ON d.id=fa.driver_id
               LEFT JOIN fuel_transactions ft ON ft.id=fa.fuel_transaction_id
-              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], fa.severity), fa.created_at DESC", ct: ct);
+              WHERE fa.company_id=@cid
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], fa.severity), fa.created_at DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> FuelAnomalyReview(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
