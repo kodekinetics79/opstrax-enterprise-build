@@ -265,7 +265,7 @@ export function PlatformOperatorsPage() {
                       <PCheckbox
                         checked={sel.allVisibleSelected}
                         indeterminate={sel.someVisibleSelected}
-                        onChange={sel.toggleAllVisible}
+                        onToggle={() => sel.toggleAllVisible()}
                         ariaLabel="Select all operators"
                       />
                     </th>
@@ -285,7 +285,7 @@ export function PlatformOperatorsPage() {
                     <tr key={id} className={`transition hover:bg-slate-50 ${sel.isSelected(id) ? "bg-teal-50/50" : ""}`}>
                       {canManage && (
                         <td className="px-5 py-3.5">
-                          <PCheckbox checked={sel.isSelected(id)} onChange={() => sel.toggle(id)} ariaLabel={`Select ${String(a.fullName ?? a.email ?? id)}`} />
+                          <PCheckbox checked={sel.isSelected(id)} onToggle={(shift) => sel.toggle(id, shift)} ariaLabel={`Select ${String(a.fullName ?? a.email ?? id)}`} />
                         </td>
                       )}
                       <td className="px-5 py-3.5">

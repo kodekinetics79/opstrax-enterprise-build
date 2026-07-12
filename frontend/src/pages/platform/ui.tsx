@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 // Dark, executive-grade primitives for the Platform Admin control plane.
@@ -199,18 +199,35 @@ export function PConfirm({ open, title, body, confirmLabel = "Confirm", confirmT
 // while any selected id that scrolls out of the active filter is preserved.
 export function useRowSelection(visibleIds: unknown[]) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Anchor for shift-click / Shift+Space range selection (the last row toggled).
+  const anchorRef = useRef<string | null>(null);
   const ids = visibleIds.map(String);
   const allVisibleSelected = ids.length > 0 && ids.every((id) => selected.has(id));
   const someVisibleSelected = ids.some((id) => selected.has(id));
 
-  const toggle = (id: unknown) =>
+  // toggle(id, shiftKey): a plain toggle flips one row and sets the anchor. A
+  // shift-toggle selects the whole contiguous range between the anchor and this
+  // row (Gmail/Finder semantics), so you can pick many rows in two clicks/keys.
+  const toggle = (id: unknown, shiftKey = false) => {
+    const key = String(id);
+    const idx = ids.indexOf(key);
     setSelected((prev) => {
       const next = new Set(prev);
-      const key = String(id);
+      const anchor = anchorRef.current;
+      if (shiftKey && anchor !== null && idx !== -1) {
+        const aIdx = ids.indexOf(anchor);
+        if (aIdx !== -1) {
+          const [lo, hi] = aIdx <= idx ? [aIdx, idx] : [idx, aIdx];
+          for (let i = lo; i <= hi; i++) next.add(ids[i]);
+          return next;
+        }
+      }
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+    anchorRef.current = key;
+  };
 
   const toggleAllVisible = () =>
     setSelected((prev) => {
@@ -228,20 +245,24 @@ export function useRowSelection(visibleIds: unknown[]) {
     toggleAllVisible,
     allVisibleSelected,
     someVisibleSelected,
-    clear: () => setSelected(new Set()),
+    clear: () => { anchorRef.current = null; setSelected(new Set()); },
   };
 }
 
-export function PCheckbox({ checked, indeterminate, onChange, ariaLabel }: {
-  checked: boolean; indeterminate?: boolean; onChange: () => void; ariaLabel: string;
+// Native checkbox: fully keyboard-operable out of the box (Tab to focus, Space to
+// toggle, Shift+Space to range-select). We handle the toggle in onClick so we can
+// read `shiftKey` — which is set for both mouse clicks and keyboard Space — and
+// keep onChange as a no-op to satisfy React's controlled-input contract.
+export function PCheckbox({ checked, indeterminate, onToggle, ariaLabel }: {
+  checked: boolean; indeterminate?: boolean; onToggle: (shiftKey: boolean) => void; ariaLabel: string;
 }) {
   return (
     <input
       type="checkbox"
       checked={checked}
       ref={(el) => { if (el) el.indeterminate = Boolean(indeterminate) && !checked; }}
-      onChange={onChange}
-      onClick={(e) => e.stopPropagation()}
+      onChange={() => {}}
+      onClick={(e) => { e.stopPropagation(); onToggle(e.shiftKey); }}
       aria-label={ariaLabel}
       className="h-4 w-4 cursor-pointer rounded border-slate-300 text-teal-500 focus:ring-2 focus:ring-teal-400/30"
     />

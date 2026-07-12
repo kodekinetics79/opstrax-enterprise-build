@@ -121,7 +121,7 @@ export function PlatformTenantsPage() {
                       <PCheckbox
                         checked={sel.allVisibleSelected}
                         indeterminate={sel.someVisibleSelected}
-                        onChange={sel.toggleAllVisible}
+                        onToggle={() => sel.toggleAllVisible()}
                         ariaLabel="Select all tenants"
                       />
                     </th>
@@ -142,7 +142,7 @@ export function PlatformTenantsPage() {
                       <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                         <PCheckbox
                           checked={sel.isSelected(t.id)}
-                          onChange={() => sel.toggle(t.id)}
+                          onToggle={(shift) => sel.toggle(t.id, shift)}
                           ariaLabel={`Select ${String(t.name)}`}
                         />
                       </td>

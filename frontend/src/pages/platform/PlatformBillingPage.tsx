@@ -81,7 +81,7 @@ export function PlatformBillingPage() {
                       <PCheckbox
                         checked={sel.allVisibleSelected}
                         indeterminate={sel.someVisibleSelected}
-                        onChange={sel.toggleAllVisible}
+                        onToggle={() => sel.toggleAllVisible()}
                         ariaLabel="Select all invoices"
                       />
                     </th>
@@ -94,7 +94,7 @@ export function PlatformBillingPage() {
                   <tr key={String(r.id)} className={`hover:bg-slate-800/40 ${sel.isSelected(r.id) ? "bg-teal-500/5" : ""}`}>
                     {canManage && (
                       <td className="px-5 py-3.5">
-                        <PCheckbox checked={sel.isSelected(r.id)} onChange={() => sel.toggle(r.id)} ariaLabel={`Select invoice ${String(r.invoiceNumber)}`} />
+                        <PCheckbox checked={sel.isSelected(r.id)} onToggle={(shift) => sel.toggle(r.id, shift)} ariaLabel={`Select invoice ${String(r.invoiceNumber)}`} />
                       </td>
                     )}
                     <td className="px-5 py-3.5 font-mono text-xs text-slate-300">{String(r.invoiceNumber)}</td>
