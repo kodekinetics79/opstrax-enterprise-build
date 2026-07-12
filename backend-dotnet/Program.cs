@@ -92,6 +92,9 @@ builder.Services.AddRateLimiter(options =>
         // shares the strict login rate-limit bucket (domain-harvesting burns the
         // same budget as password guessing).
         path.Equals("/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
+        // OIDC login start/callback also mint or lead to sessions — same bucket.
+        path.StartsWithSegments("/api/auth/sso/start", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/sso/callback", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);
@@ -164,6 +167,7 @@ builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
+builder.Services.AddSingleton<OidcLoginService>(); // OIDC SSO login (discovery + JWKS + code exchange)
 builder.Services.AddScoped<AuditService>();
 
 // ── Integration connector framework (real, testable third-party connectivity) ──
@@ -470,6 +474,11 @@ app.UseWhen(
                 // time, so it reads the RLS-forced sso_connections table under the
                 // platform-admin bypass scope, exactly like /api/auth/login.
                 string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
+                // OIDC login start + callback are pre-session too: they read the
+                // sso_connections + users tables and mint a session with no prior
+                // tenant context, so they run under the same bypass scope as login.
+                path.StartsWith("/api/auth/sso/start", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/api/auth/sso/callback", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/health", StringComparison.OrdinalIgnoreCase) ||
