@@ -1048,8 +1048,9 @@ public static class PlatformEndpoints
     {
         var (_, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
         if (error is not null) return error;
+        // NB: `users` has no last_login_at column — only the columns below exist.
         var rows = await db.QueryAsync(
-            @"SELECT id, full_name, email, role_name, status, last_login_at
+            @"SELECT id, full_name, email, role_name, status, customer_id, password_changed_at, created_at
               FROM users
               WHERE company_id=@id AND COALESCE(status,'') <> 'Deleted'
               ORDER BY (role_name ILIKE '%admin%') DESC, full_name",
@@ -1074,8 +1075,14 @@ public static class PlatformEndpoints
                 statusCode: StatusCodes.Status404NotFound);
 
         var temp = GenerateTempPassword();
+        // Mirrors the canonical self-service reset path: set the hash, stamp the change,
+        // and CLEAR the lockout counters — a locked-out user is usually the reason an
+        // operator is resetting in the first place.
         await db.ExecuteAsync(
-            "UPDATE users SET password_hash=@h, demo_password=NULL WHERE id=@uid AND company_id=@cid",
+            @"UPDATE users SET
+                password_hash=@h, demo_password='', password_changed_at=NOW(),
+                failed_login_attempts=0, locked_until=NULL
+              WHERE id=@uid AND company_id=@cid",
             c =>
             {
                 c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));

@@ -2856,7 +2856,9 @@ public static partial class EndpointMappings
         if (!ok) return Results.BadRequest(ApiResponse<object>.Fail("Current password is incorrect"));
 
         await db.ExecuteAsync(
-            "UPDATE users SET password_hash=@hash, demo_password=NULL WHERE id=@id",
+            // demo_password is NOT NULL (default 'Admin@12345'); NULL here violated the
+            // constraint and 500'd every self-service password change. Clear it instead.
+            "UPDATE users SET password_hash=@hash, demo_password='', password_changed_at=NOW() WHERE id=@id",
             c => { c.Parameters.AddWithValue("@hash", HashPassword(next)); c.Parameters.AddWithValue("@id", userId); }, ct);
         // Invalidate sessions on other devices; keep the caller's current token valid.
         await db.ExecuteAsync(
