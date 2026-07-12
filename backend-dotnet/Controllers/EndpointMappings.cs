@@ -450,6 +450,46 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "driver:self");
             return denied is not null ? Task.FromResult(denied) : DriverSubmitProof(http, id, body, db, audit, ct);
         });
+        // Driver-scoped POD evidence upload — photo or signature captured on the
+        // driver device, stored to durable object storage, scoped to the driver's
+        // own assignment. Returns a persistable reference + a short-lived signed URL
+        // for immediate preview. The reference is recorded on the proof at submit.
+        app.MapPost("/api/driver/assignments/{id:long}/proof/upload", async (HttpContext http, long id, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "driver:self");
+            if (denied is not null) return denied;
+            var companyId = GetCompanyId(http);
+            var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+            if (driverId < 0) return DriverIdentityNotFound();
+            if (!await AssignmentBelongsToDriverAsync(id, driverId, companyId, db, ct))
+                return Results.NotFound(ApiResponse<object>.Fail("Assignment not found or does not belong to you"));
+            if (!http.Request.HasFormContentType)
+                return Results.BadRequest(ApiResponse<object>.Fail("multipart/form-data with a 'file' field is required"));
+
+            var form = await http.Request.ReadFormAsync(ct);
+            var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+            if (file is null || file.Length == 0) return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
+            var kind = form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo";
+
+            Opstrax.Api.Storage.FileStorageService.UploadResult stored;
+            try
+            {
+                await using var s = file.OpenReadStream();
+                stored = await files.UploadAsync(companyId, "proof", file.FileName, file.ContentType ?? "application/octet-stream", s, ct);
+            }
+            catch (ArgumentException ex)
+            {
+                LogSafeEndpointFailure(http, ex, "driver.proof.upload");
+                return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
+            }
+
+            var resolved = await files.ResolveAsync(stored.Reference, TimeSpan.FromMinutes(15), ct);
+            await audit.LogAsync(http, "driver.proof.artifact_uploaded", "DispatchAssignment", id,
+                System.Text.Json.JsonSerializer.Serialize(new { kind, size = stored.Size, contentType = stored.ContentType }), ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(
+                new { reference = stored.Reference, url = resolved.SignedUrl ?? resolved.LegacyUrl, kind, size = stored.Size, contentType = stored.ContentType },
+                "Evidence uploaded"));
+        }).DisableAntiforgery();
         // DVIR templates are safe to read for any authenticated user
         app.MapGet("/api/driver/dvir/templates", DriverDvirTemplates);
         app.MapPost("/api/driver/dvir", (HttpContext http, MaintInspectionBody body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) =>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Camera, CheckCircle, ChevronRight,
@@ -6,6 +6,38 @@ import {
 } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
 import type { AnyRecord } from "@/types";
+
+// Touch/mouse signature capture. Exports the drawn ink as a PNG Blob for upload.
+function SignaturePad({ onCapture, disabled }: { onCapture: (blob: Blob) => void; disabled?: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+  const [hasInk, setHasInk] = useState(false);
+  const point = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const c = canvasRef.current!; const r = c.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
+  };
+  const down = (e: ReactPointerEvent<HTMLCanvasElement>) => { drawing.current = true; const ctx = canvasRef.current!.getContext("2d")!; const p = point(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const moveP = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!drawing.current) return;
+    const ctx = canvasRef.current!.getContext("2d")!; const p = point(e);
+    ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2; ctx.lineCap = "round";
+    ctx.lineTo(p.x, p.y); ctx.stroke(); setHasInk(true);
+  };
+  const up = () => { drawing.current = false; };
+  const clear = () => { const c = canvasRef.current; if (c) c.getContext("2d")!.clearRect(0, 0, c.width, c.height); setHasInk(false); };
+  const attach = () => { canvasRef.current?.toBlob((b) => { if (b) { onCapture(b); clear(); } }, "image/png"); };
+  return (
+    <div>
+      <canvas ref={canvasRef} width={480} height={150}
+        onPointerDown={down} onPointerMove={moveP} onPointerUp={up} onPointerLeave={up}
+        className="w-full h-36 rounded-xl border border-slate-300 bg-white" style={{ touchAction: "none" }} />
+      <div className="mt-2 flex gap-2">
+        <button type="button" onClick={clear} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600">Clear</button>
+        <button type="button" onClick={attach} disabled={!hasInk || disabled} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">Attach signature</button>
+      </div>
+    </div>
+  );
+}
 
 const STATUS_LABELS: Record<string, string> = {
   assigned:         "Accept Assignment",
@@ -58,6 +90,21 @@ export function DriverAssignmentPage() {
   const [exceptionNotes, setExceptionNotes] = useState("");
   const [proofNotes, setProofNotes] = useState("");
   const [proofHash, setProofHash] = useState("");
+  const [artifacts, setArtifacts] = useState<AnyRecord[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
+
+  const uploadArtifact = async (assignmentId: number, file: Blob, kind: string, filename: string) => {
+    setUploading(true); setUploadErr(null);
+    try {
+      const res = await driverApi.uploadProofArtifact(assignmentId, file, kind, filename);
+      setArtifacts((a) => [...a, res]);
+    } catch (e) {
+      setUploadErr(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const current = useQuery<AnyRecord>({
     queryKey: ["driver", "current"],
@@ -85,7 +132,7 @@ export function DriverAssignmentPage() {
   const proofMut = useMutation({
     mutationFn: ({ id, type, notes, hash }: { id: number; type: "pickup" | "delivery"; notes: string; hash: string }) =>
       driverApi.submitProof(id, { proofType: type, notes: notes || undefined, evidenceHash: hash || undefined }),
-    onSuccess: () => { setShowProof(null); void qc.invalidateQueries({ queryKey: ["driver"] }); },
+    onSuccess: () => { setShowProof(null); setArtifacts([]); setProofNotes(""); setProofHash(""); setUploadErr(null); void qc.invalidateQueries({ queryKey: ["driver"] }); },
   });
 
   if (current.isLoading) {
@@ -312,15 +359,42 @@ export function DriverAssignmentPage() {
                 onChange={(e) => setProofHash(e.target.value)}
               />
             </div>
-            <p className="text-xs text-slate-400 flex items-center gap-1">
-              <Camera className="h-3 w-3" />
-              Photo/signature upload requires storage integration — reference hash records intent
-            </p>
+            <div className="rounded-2xl border border-slate-200 p-3 space-y-3">
+              <p className="text-xs font-bold text-slate-500 flex items-center gap-1"><Camera className="h-3.5 w-3.5" /> Photo & signature</p>
+              <input
+                type="file" accept="image/*" capture="environment" disabled={uploading}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadArtifact(id, f, "photo", f.name); e.target.value = ""; }}
+                className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-teal-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
+              />
+              <div>
+                <p className="text-[11px] font-semibold text-slate-500 mb-1">Recipient signature</p>
+                <SignaturePad disabled={uploading} onCapture={(blob) => void uploadArtifact(id, blob, "signature", "signature.png")} />
+              </div>
+              {artifacts.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {artifacts.map((a, i) => (
+                    <div key={i} className="relative">
+                      {a.url
+                        ? <img src={String(a.url)} alt={String(a.kind)} className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
+                        : <span className="inline-flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200 text-[10px] text-slate-500">{String(a.kind)}</span>}
+                      <span className="absolute -top-1 -right-1 rounded-full bg-teal-600 px-1 text-[9px] font-bold text-white capitalize">{String(a.kind)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {uploading && <p className="text-xs text-slate-400">Uploading…</p>}
+              {uploadErr && <p className="text-xs text-red-600">{uploadErr}</p>}
+            </div>
             <button
               type="button"
-              className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700"
-              disabled={proofMut.isPending}
-              onClick={() => proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: proofHash })}
+              className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700 disabled:opacity-50"
+              disabled={proofMut.isPending || uploading}
+              onClick={() => {
+                const evidence = artifacts.length
+                  ? JSON.stringify({ artifacts: artifacts.map((a) => ({ kind: a.kind, reference: a.reference })), ref: proofHash || undefined })
+                  : proofHash;
+                proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: evidence });
+              }}
             >
               {proofMut.isPending ? "Submitting…" : `Confirm ${showProof === "delivery" ? "Delivery" : "Pickup"}`}
             </button>
