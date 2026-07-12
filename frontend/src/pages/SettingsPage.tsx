@@ -9,6 +9,7 @@ import { useI18n, LOCALES } from "@/i18n";
 import type { LocaleCode } from "@/i18n";
 import type { AnyRecord } from "@/types";
 import { settingsApi } from "@/services/settingsApi";
+import { SsoConnectionsPanel } from "@/components/SsoConnectionsPanel";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
 const TIMEZONES = [
@@ -514,6 +515,8 @@ export function SettingsPage() {
               ))}
             </div>
           </div>
+
+          <SsoConnectionsPanel />
         </div>
       )}
 
