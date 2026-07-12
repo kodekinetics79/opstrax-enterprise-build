@@ -2507,7 +2507,7 @@ public static partial class EndpointMappings
     // state/nonce/verifier in a signed, http-only cookie, and 302s to the IdP.
     private static async Task<IResult> SsoStart(
         HttpContext http, long id, Database db, OidcLoginService oidc,
-        Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct)
+        [Microsoft.AspNetCore.Mvc.FromServices] Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT id, company_id, provider_type, issuer_or_entity_id, client_id, metadata_url
@@ -2548,7 +2548,7 @@ public static partial class EndpointMappings
     // and hand the token to the SPA via a URL fragment (never a query/log).
     private static async Task<IResult> SsoCallback(
         HttpContext http, Database db, OidcLoginService oidc,
-        Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, AuditService audit, CancellationToken ct)
+        [Microsoft.AspNetCore.Mvc.FromServices] Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, AuditService audit, CancellationToken ct)
     {
         void ClearFlowCookie() =>
             http.Response.Cookies.Delete("opstrax_sso_flow", new CookieOptions { Path = "/api/auth/sso" });

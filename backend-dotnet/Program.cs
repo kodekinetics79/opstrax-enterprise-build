@@ -167,6 +167,7 @@ builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
+builder.Services.AddDataProtection(); // protects the short-lived SSO OIDC flow-state cookie
 builder.Services.AddSingleton<OidcLoginService>(); // OIDC SSO login (discovery + JWKS + code exchange)
 builder.Services.AddScoped<AuditService>();
 
