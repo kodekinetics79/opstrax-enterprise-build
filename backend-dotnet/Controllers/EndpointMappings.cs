@@ -15215,7 +15215,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var rows = await db.QueryAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.actual_delivery_at, da.accepted_at,
-                     da.exception_count, da.previous_status,
+                     da.exception_count, da.previous_status, da.vehicle_id,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address,
                      v.vehicle_code, v.availability_status
