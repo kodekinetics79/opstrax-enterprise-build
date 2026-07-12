@@ -30,12 +30,30 @@ export function DispatchPage() {
   const autoSuggest = useMutation({ mutationFn: dispatchApi.autoSuggest, onSuccess: async () => { await qc.invalidateQueries({ queryKey: ["dispatch", "recommendations"] }); } });
   const eta = useMutation({ mutationFn: dispatchApi.sendEtaUpdates, onSuccess: async () => { await qc.invalidateQueries({ queryKey: ["dispatch"] }); } });
 
-  const bestDriver = drivers.data?.[0];
-  const bestVehicle = vehicles.data?.[0];
+  // Real, multi-factor match scoring from the fields the dispatch API already
+  // returns — composite readiness (safety + readiness + compliance), remaining
+  // HOS hours, and open DVIR defects — instead of the previous risk-only formula.
+  const driverScore = (d: AnyRecord) => {
+    const readiness = Number(
+      d?.matchReadiness ?? d?.match_readiness ??
+      ((Number(d?.readinessScore ?? d?.readiness_score ?? 50) + Number(d?.safetyScore ?? d?.safety_score ?? 50) + Number(d?.complianceScore ?? d?.compliance_score ?? 50)) / 3),
+    );
+    const hos = Number(d?.availableHosHours ?? d?.available_hos_hours ?? 0);
+    const defects = Number(d?.openDefectCount ?? d?.open_defect_count ?? 0);
+    return Math.max(0, readiness * (hos > 0 ? 1 : 0.6) - Math.min(15, defects * 5));
+  };
+  const vehicleScore = (v: AnyRecord) => Number(v?.matchReadiness ?? v?.match_readiness ?? v?.readinessScore ?? v?.readiness_score ?? v?.healthScore ?? 50);
+
+  // Recommend the highest-scoring available resources, not just the first row.
+  const bestDriver = useMemo(() => [...(drivers.data ?? [])].sort((a, b) => driverScore(b) - driverScore(a))[0], [drivers.data]);
+  const bestVehicle = useMemo(() => [...(vehicles.data ?? [])].sort((a, b) => vehicleScore(b) - vehicleScore(a))[0], [vehicles.data]);
   const matchScore = useMemo(() => {
-    const risk = Number(selected?.riskScore || 10);
-    return Math.max(55, 100 - Math.round(risk * 0.4));
-  }, [selected]);
+    if (!selected || !bestDriver) return null;
+    const risk = Number(selected?.riskScore ?? selected?.riskHeatScore ?? 10);
+    const d = driverScore(bestDriver);
+    const v = bestVehicle ? vehicleScore(bestVehicle) : d;
+    return Math.round(Math.min(100, Math.max(0, d * 0.55 + v * 0.35 - risk * 0.1)));
+  }, [selected, bestDriver, bestVehicle]);
 
   if (board.isLoading) return <LoadingState />;
   if (board.isError) return <ErrorState message={(board.error as Error)?.message} />;
@@ -57,7 +75,7 @@ export function DispatchPage() {
         })}
       </div>
       <aside className="space-y-4">
-        <section className="panel p-5"><h2 className="section-title">Assignment Panel</h2>{selected ? <><p className="mt-3 font-semibold text-slate-900">{String(selected.jobNumber || selected.jobCode)}</p><p className="mt-1 text-sm text-slate-500">{String(selected.customerName)} | {String(selected.priority)} priority</p><div className="mt-4 rounded-2xl border border-teal-200 bg-teal-50 p-4"><p className="text-sm font-semibold text-teal-700">Driver/Vehicle Match Score {matchScore}%</p><p className="mt-2 text-xs text-slate-500">Based on job risk score, driver safety record, vehicle readiness, HOS hours and regional availability.</p></div><div className="mt-4 grid gap-3"><p className="text-sm text-slate-700">Recommended driver: {String(bestDriver?.fullName || "No driver")}</p><p className="text-sm text-slate-700">Recommended vehicle: {String(bestVehicle?.vehicleCode || "No vehicle")}</p><button type="button" className="btn-primary" onClick={() => assign.mutate({ jobId: selected.id, driverId: bestDriver?.id, vehicleId: bestVehicle?.id, override: true })}>Assign</button><p className="text-xs text-amber-700">Note: assigning unavailable resources requires dispatcher approval and will trigger an override audit entry.</p></div><div className="mt-4 flex flex-wrap gap-2">{["En Route","At Stop","Completed","Delayed","Exception"].map(x=><button key={x} type="button" className="btn-ghost" onClick={()=>status.mutate(x)}>Mark {x}</button>)}</div></> : <p className="mt-3 text-sm text-slate-500">Select a job card to assign or move status.</p>}</section>
+        <section className="panel p-5"><h2 className="section-title">Assignment Panel</h2>{selected ? <><p className="mt-3 font-semibold text-slate-900">{String(selected.jobNumber || selected.jobCode)}</p><p className="mt-1 text-sm text-slate-500">{String(selected.customerName)} | {String(selected.priority)} priority</p><div className="mt-4 rounded-2xl border border-teal-200 bg-teal-50 p-4"><p className="text-sm font-semibold text-teal-700">Driver/Vehicle Match Score {matchScore != null ? `${matchScore}%` : "—"}</p><p className="mt-2 text-xs text-slate-500">Composite of driver readiness (safety, compliance, HOS), open DVIR defects, vehicle readiness and job risk.</p></div><div className="mt-4 grid gap-3"><p className="text-sm text-slate-700">Recommended driver: {String(bestDriver?.fullName || "No driver")}</p><p className="text-sm text-slate-700">Recommended vehicle: {String(bestVehicle?.vehicleCode || "No vehicle")}</p><button type="button" className="btn-primary" onClick={() => assign.mutate({ jobId: selected.id, driverId: bestDriver?.id, vehicleId: bestVehicle?.id, override: true })}>Assign</button><p className="text-xs text-amber-700">Note: assigning unavailable resources requires dispatcher approval and will trigger an override audit entry.</p></div><div className="mt-4 flex flex-wrap gap-2">{["En Route","At Stop","Completed","Delayed","Exception"].map(x=><button key={x} type="button" className="btn-ghost" onClick={()=>status.mutate(x)}>Mark {x}</button>)}</div></> : <p className="mt-3 text-sm text-slate-500">Select a job card to assign or move status.</p>}</section>
         <section className="panel p-5"><h2 className="section-title">Exception Radar</h2><p className="mt-3 text-sm text-slate-700">{String(s.exceptions || 0)} jobs are delayed or in exception posture.</p><p className="mt-2 text-sm text-slate-700">{String(s.slaWatch || 0)} jobs are on SLA watch.</p></section>
         <section className="panel p-5"><h2 className="section-title">Live Ops Events</h2>{events.slice(0,5).map((event, index)=><p key={String(event.id || index)} className="mt-2 text-sm text-slate-400">{String(event.type)}: {String(event.title)}</p>)}</section>
         {(autoSuggest.data || recommendations.data || []).slice(0, 4).map((item, i) => <AiInsightCard key={String(item.id || i)} insight={{ title: item.title || "Dispatch recommendation", body: item.recommendation || item.body || String(item.matchReasons || item.match_reasons || "Review assignment") }} />)}

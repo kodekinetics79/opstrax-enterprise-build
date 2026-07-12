@@ -1,21 +1,11 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { useHasPermission } from "@/hooks/usePermission";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Live data ─────────────────────────────────────────────────────────────────
-
-const VIOLATION_TYPES = [
-  "Speeding (>20 km/h over limit)",
-  "Phone Use While Driving",
-  "Seatbelt Violation",
-  "Hard Braking",
-  "Harsh Acceleration",
-  "Late-night Driving",
-  "Unauthorized Route Deviation",
-  "Red Light / Stop Sign",
-];
 
 const violationsApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/traffic-violations")).then((rows) =>
@@ -74,6 +64,31 @@ export function TrafficViolationsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
+
+  const qc = useQueryClient();
+  const hasPermission = useHasPermission();
+  const canReview = hasPermission("safety:review");
+  const canCoach = hasPermission("safety:update");
+  const [actionNotes, setActionNotes] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  // Every action routes through the existing tenant-scoped, RBAC-gated, audited
+  // /api/safety/events/{id}/* workflow endpoints — no client-side status faking.
+  const runAction = async (path: string, body: AnyRecord, label: string) => {
+    if (!selected) return;
+    setActionBusy(true); setActionMsg(null);
+    try {
+      await apiClient.post(`/api/safety/events/${selected.id}/${path}`, body);
+      setActionNotes("");
+      await qc.invalidateQueries({ queryKey: ["traffic-violations"] });
+      setSelected(null);
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : `${label} failed`);
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   const listQ = useQuery({ queryKey: ["traffic-violations", "list"], queryFn: violationsApi.list, refetchInterval: 30_000 });
   const sumQ = useQuery({ queryKey: ["traffic-violations", "summary"], queryFn: violationsApi.summary });
@@ -226,6 +241,29 @@ export function TrafficViolationsPage() {
                   : "Schedule a coaching call within 48 hours and document outcome in driver's safety record."}
               </p>
             </div>
+
+            {canReview || canCoach ? (
+              <div className="mt-auto px-5 py-4 border-t border-white/8">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Review Actions</p>
+                <textarea
+                  value={actionNotes}
+                  onChange={(e) => setActionNotes(e.target.value)}
+                  placeholder="Add a review note (optional)…"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-teal-400 resize-y min-h-16"
+                />
+                {actionMsg && <p className="mt-2 text-xs text-red-300">{actionMsg}</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("review", { notes: actionNotes || undefined }, "Review")} className="rounded-lg bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50">Mark Reviewed</button>}
+                  {canCoach && <button type="button" disabled={actionBusy} onClick={() => runAction("coaching", { notes: actionNotes || undefined, coachingType: "targeted" }, "Coaching")} className="rounded-lg bg-violet-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50">Assign Coaching</button>}
+                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("resolve", { notes: actionNotes || undefined }, "Resolve")} className="rounded-lg bg-teal-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-50">Resolve</button>}
+                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("dismiss", { notes: actionNotes || undefined }, "Dismiss")} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/5 disabled:opacity-50">Dismiss</button>}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-auto px-5 py-4 border-t border-white/8">
+                <p className="text-xs text-slate-400">Read-only access — safety review permissions are required to review, coach, resolve or dismiss violations.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
