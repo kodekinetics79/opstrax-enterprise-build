@@ -7,6 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi, type SsoConnection } from "@/services/authApi";
+import { API_BASE_URL } from "@/services/apiClient";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
 /** Minimal structural email check — mirrors the backend's non-revealing validation. */
@@ -483,9 +484,9 @@ export function LoginPage() {
   };
 
   const goToSso = () => {
-    // Full-page navigation to the third-party IdP. redirectUrl is validated
-    // absolute-https server-side; treat it strictly as a navigation target.
-    if (ssoConn?.redirectUrl) window.location.assign(ssoConn.redirectUrl);
+    // Initiate the flow through our own start endpoint on the API host; it derives
+    // the IdP authorize URL from the connection and 302-redirects to the provider.
+    if (ssoConn) window.location.assign(`${API_BASE_URL}/api/auth/sso/start/${ssoConn.id}`);
   };
 
   const submit = (e: React.FormEvent) => {

@@ -2414,19 +2414,27 @@ public static partial class EndpointMappings
 
         // Runs under the platform-admin bypass scope (Program.cs pre-tenant branch),
         // so this reads across tenants without a session — same as the login handler.
-        // Keyed ONLY on domain + enabled status; the users table is never touched.
+        // Matches the email DOMAIN against a connection's domain_hints; the users
+        // table is never touched (enumeration-safe). This reads the canonical
+        // sso_connections schema owned by SecuritySchemaService (domain_hints jsonb,
+        // enabled bool, provider_type) — NOT a bespoke shape.
         //
-        // A discovery lookup must NEVER block login, so any failure (table not yet
-        // provisioned by the DB owner, transient DB error, cancellation) fails OPEN
-        // to the password field rather than surfacing a 500. This mirrors the
-        // client-side fail-open and keeps the honest empty-state path a clean 200.
+        // A discovery lookup must NEVER block login, so any failure (transient DB
+        // error, malformed domain_hints, cancellation) fails OPEN to the password
+        // field rather than surfacing a 500. Keeps the empty path a clean 200.
         Dictionary<string, object?>? row;
         try
         {
             row = await db.QuerySingleAsync(
-                @"SELECT company_id, display_name, protocol, idp_entry_url
+                @"SELECT id, company_id, provider_type, display_name
                   FROM sso_connections
-                  WHERE LOWER(email_domain) = @d AND status = 'enabled'
+                  WHERE enabled = true
+                    AND domain_hints IS NOT NULL
+                    AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements_text(domain_hints) AS h(v)
+                      WHERE lower(trim(h.v)) = @d
+                    )
+                  ORDER BY id
                   LIMIT 1",
                 cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
         }
@@ -2438,27 +2446,24 @@ public static partial class EndpointMappings
         if (row is null)
             return Password();
 
-        // Read-time open-redirect guard: only an absolute https URL is ever handed
-        // to the browser, even if a malformed row slipped past the DB CHECK.
-        var idpUrl = row.GetValueOrDefault("idpEntryUrl")?.ToString() ?? string.Empty;
-        if (!Uri.TryCreate(idpUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-            return Password();
-
         // Audit the DOMAIN routing decision (no user id — there is no authenticated
         // principal here). company_id is known from the connection row.
-        await audit.LogAsync(http, "auth.sso.discover", "SsoConnection",
-            Convert.ToInt64(row["companyId"]),
-            JsonSerializer.Serialize(new { domain, protocol = row.GetValueOrDefault("protocol")?.ToString() }), ct: ct);
+        var connectionId = Convert.ToInt64(row["id"]);
+        await audit.LogAsync(http, "auth.sso.discover", "SsoConnection", connectionId,
+            JsonSerializer.Serialize(new { domain, provider = row.GetValueOrDefault("providerType")?.ToString() }), ct: ct);
 
+        // The client initiates the flow through OUR start endpoint
+        // (/api/auth/sso/start/{id}) rather than a stored redirect — the IdP
+        // authorize URL is derived server-side from the connection at start time.
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             ssoConfigured = true,
             usePassword   = false,
             connection = new
             {
+                id          = connectionId,
                 displayName = row.GetValueOrDefault("displayName"),
-                protocol    = row.GetValueOrDefault("protocol"),
-                redirectUrl = uri.ToString(),
+                protocol    = row.GetValueOrDefault("providerType"),
             }
         }));
     }
