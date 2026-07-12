@@ -102,6 +102,12 @@ export const platformApi = {
   me: () => unwrap<PlatformSession>(platformClient.get("/api/platform/auth/me")),
   logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
 
+  // Self-service account management (any platform admin, own record only)
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/auth/change-password", { currentPassword, newPassword })),
+  updateOwnProfile: (body: { fullName?: string; email?: string }) =>
+    unwrap<AnyRecord>(platformClient.patch("/api/platform/auth/profile", body)),
+
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
   commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),

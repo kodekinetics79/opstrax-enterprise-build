@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Truck, Camera, MessageSquare, Send, AlertTriangle } from "lucide-react";
 import { PageHeader, KpiCard, StatusBadge, DataTable, EmptyState, LoadingState } from "@/components/ui";
+import { ChangePasswordCard } from "@/components/ChangePasswordCard";
 import { portalApi } from "@/services/portalApi";
 import type { AnyRecord } from "@/types";
 
@@ -178,6 +179,12 @@ export function CustomerPortalPage() {
               </div>
             ))}
           </div>}
+      </section>
+
+      {/* Account & security — self-service, no email/SMTP required */}
+      <section className="space-y-3">
+        <h2 className="section-title">Account &amp; security</h2>
+        <ChangePasswordCard />
       </section>
     </div>
   );

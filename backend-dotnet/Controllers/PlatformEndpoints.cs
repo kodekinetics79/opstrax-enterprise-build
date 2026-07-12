@@ -188,7 +188,7 @@ public static class PlatformEndpoints
             }, ct);
     }
 
-    private static string BearerToken(HttpContext http)
+    internal static string BearerToken(HttpContext http)
     {
         var header = http.Request.Headers.Authorization.ToString();
         return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
@@ -1604,7 +1604,7 @@ public static class PlatformEndpoints
             }, ct);
     }
 
-    private static bool VerifyPassword(string password, string? storedHash)
+    internal static bool VerifyPassword(string password, string? storedHash)
     {
         if (string.IsNullOrWhiteSpace(storedHash)) return false;
         var parts = storedHash.Split('$');

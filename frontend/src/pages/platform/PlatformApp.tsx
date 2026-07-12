@@ -13,6 +13,7 @@ import { PlatformAuditPage } from "./PlatformAuditPage";
 import { PlatformCommercialOpsPage } from "./PlatformCommercialOpsPage";
 import { PlatformOperatorsPage } from "./PlatformOperatorsPage";
 import { PlatformAcceptInvitePage } from "./PlatformAcceptInvitePage";
+import { PlatformAccountPage } from "./PlatformAccountPage";
 
 // Permission-gated wrapper: redirects to the platform login if not authenticated,
 // and to the command center if the role lacks the required permission.
@@ -48,6 +49,8 @@ export default function PlatformApp() {
           <Route path="reliability" element={<Guard permission="platform:health:view"><PlatformReliabilityPage /></Guard>} />
           <Route path="audit" element={<Guard permission="platform:audit:view"><PlatformAuditPage /></Guard>} />
           <Route path="operators" element={<Guard permission="platform:admins:view"><PlatformOperatorsPage /></Guard>} />
+          {/* Self-service: every signed-in admin can manage their own account. */}
+          <Route path="account" element={<Guard permission="platform:dashboard:view"><PlatformAccountPage /></Guard>} />
         </Route>
         <Route path="*" element={<Navigate to="/platform" replace />} />
       </Routes>

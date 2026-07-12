@@ -58,6 +58,12 @@ public static class PlatformAdminEndpoints
         // Self-service MFA enrollment (authenticated platform principal).
         app.MapPost("/api/platform/auth/mfa/enroll", MfaEnroll);
         app.MapPost("/api/platform/auth/mfa/verify", MfaVerify);
+
+        // Self-service account management. These act ONLY on the caller's own record
+        // (principal.AdminId — never an id from the route/body), so any platform admin
+        // can manage their own password/profile without needing another admin.
+        app.MapPost("/api/platform/auth/change-password", ChangeOwnPassword);
+        app.MapPatch("/api/platform/auth/profile", UpdateOwnProfile);
     }
 
     internal sealed record CreateAdminRequest(string? Email, string? FullName, string? RoleKey);
@@ -687,6 +693,89 @@ public static class PlatformAdminEndpoints
 
     // ── helpers ──────────────────────────────────────────────────────────────
     private sealed record AdminRow(long Id, string Email, string RoleKey, string Status);
+
+    internal sealed record ChangeOwnPasswordRequest(string? CurrentPassword, string? NewPassword);
+    internal sealed record UpdateOwnProfileRequest(string? FullName, string? Email);
+
+    // ── POST /api/platform/auth/change-password (self-service) ────────────────
+    // Verifies the caller's CURRENT password before setting a new one, then revokes
+    // every OTHER session for that admin (their current token stays valid). Gated on
+    // the baseline dashboard:view grant every admin holds — this is not a privileged
+    // operation because it can only ever touch principal.AdminId.
+    internal static async Task<IResult> ChangeOwnPassword(HttpContext http, ChangeOwnPasswordRequest request, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
+        if (error is not null) return error;
+
+        var current = request.CurrentPassword ?? "";
+        var next    = request.NewPassword ?? "";
+        if (next.Length < 12)
+            return Results.BadRequest(ApiResponse<object>.Fail("New password must be at least 12 characters"));
+        if (string.Equals(current, next, StringComparison.Ordinal))
+            return Results.BadRequest(ApiResponse<object>.Fail("New password must differ from the current password"));
+
+        var row = await db.QuerySingleAsync(
+            "SELECT password_hash FROM platform_admins WHERE id=@id AND status='Active'",
+            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+        if (row is null) return Results.Unauthorized();
+
+        if (!PlatformEndpoints.VerifyPassword(current, row["passwordHash"]?.ToString()))
+        {
+            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.password_change_denied", "PlatformAdmin", principal!.AdminId, null, null, ct);
+            return Results.BadRequest(ApiResponse<object>.Fail("Current password is incorrect"));
+        }
+
+        await db.ExecuteAsync(
+            "UPDATE platform_admins SET password_hash=@h, updated_at=NOW() WHERE id=@id",
+            c => { c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(next)); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
+
+        var revoked = await db.ExecuteAsync(
+            "DELETE FROM platform_sessions WHERE admin_id=@id AND session_token<>@tok",
+            c => { c.Parameters.AddWithValue("@id", principal!.AdminId); c.Parameters.AddWithValue("@tok", PlatformEndpoints.BearerToken(http)); }, ct);
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.password_changed", "PlatformAdmin", principal!.AdminId, null,
+            new { otherSessionsRevoked = revoked }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { changed = true, otherSessionsRevoked = revoked }, "Password updated"));
+    }
+
+    // ── PATCH /api/platform/auth/profile (self-service) ───────────────────────
+    internal static async Task<IResult> UpdateOwnProfile(HttpContext http, UpdateOwnProfileRequest request, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
+        if (error is not null) return error;
+
+        var fullName = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName!.Trim();
+        var email    = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email!.Trim().ToLowerInvariant();
+        if (fullName is null && email is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Nothing to update"));
+        if (email is not null && (!email.Contains('@') || email.Length < 5))
+            return Results.BadRequest(ApiResponse<object>.Fail("A valid email is required"));
+
+        if (email is not null)
+        {
+            var taken = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM platform_admins WHERE LOWER(email)=@e AND id<>@id",
+                c => { c.Parameters.AddWithValue("@e", email); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
+            if (taken > 0) return Results.Conflict(ApiResponse<object>.Fail("That email is already in use"));
+        }
+
+        await db.ExecuteAsync(
+            @"UPDATE platform_admins
+              SET full_name = COALESCE(@n, full_name),
+                  email     = COALESCE(@e, email),
+                  updated_at = NOW()
+              WHERE id=@id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@n", (object?)fullName ?? DBNull.Value);
+                c.Parameters.AddWithValue("@e", (object?)email ?? DBNull.Value);
+                c.Parameters.AddWithValue("@id", principal!.AdminId);
+            }, ct);
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.profile_updated", "PlatformAdmin", principal!.AdminId, null,
+            new { fullName, emailChanged = email is not null }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { updated = true }, "Profile updated"));
+    }
 
     private static async Task<AdminRow?> LoadAdminAsync(Database db, long id, CancellationToken ct)
     {
