@@ -9,8 +9,20 @@ import {
   PCheckbox, PBulkBar, useRowSelection,
 } from "./ui";
 
-const GATED_MODULES = [
-  "safety", "maintenance", "dispatch", "telematics", "crm", "customer_portal", "reports", "compliance",
+// The modules a Platform Admin can turn on/off per tenant. `key` must match the
+// module_key the API gate uses (Program.cs ModuleKeyForPath) — the blurb spells out
+// exactly which API surface each toggle governs, so the control is self-explanatory.
+type GatedModule = { key: string; label: string; blurb: string };
+
+const GATED_MODULES: GatedModule[] = [
+  { key: "safety",          label: "Safety",          blurb: "Safety events, dashcam, incidents, coaching, traffic violations" },
+  { key: "maintenance",     label: "Maintenance",     blurb: "Work orders, PM schedules, DVIR, service history, downtime" },
+  { key: "dispatch",        label: "Dispatch",        blurb: "Dispatch board, jobs, trips, routes, smart assign, last mile" },
+  { key: "telematics",      label: "Telematics",      blurb: "Live telemetry, devices, ELD, geofences" },
+  { key: "crm",             label: "CRM",             blurb: "Customers, contracts, leads, opportunities, quotations, rate cards" },
+  { key: "customer_portal", label: "Customer Portal", blurb: "Customer-facing portal, ETA sharing, shipment visibility" },
+  { key: "reports",         label: "Reports",         blurb: "Reporting and analytics" },
+  { key: "compliance",      label: "Compliance",      blurb: "Compliance rules, HOS, audit packages" },
 ];
 
 export function PlatformTenantsPage() {
@@ -425,7 +437,7 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
 }
 
 function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitlements, gatedModules, onClose, onChanged }: {
-  id: number; packages: AnyRecord[]; canManage: boolean; canOffboard: boolean; canEntitlements: boolean; gatedModules: string[];
+  id: number; packages: AnyRecord[]; canManage: boolean; canOffboard: boolean; canEntitlements: boolean; gatedModules: GatedModule[];
   onClose: () => void; onChanged: () => void;
 }) {
   const qc = useQueryClient();
@@ -713,25 +725,33 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
           )}
 
           <section>
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Feature entitlements</h3>
-            <p className="mb-3 text-xs text-slate-500">Server-enforced. Disabling a module blocks tenant API access immediately.</p>
+            <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Feature entitlements</h3>
+            <p className="mb-3 text-xs leading-5 text-slate-500">
+              Controls which product modules this tenant may use. <strong className="font-semibold text-slate-700">Server-enforced</strong> —
+              turning one off makes every API route it owns return <span className="font-mono">403</span> immediately, even if called
+              directly outside the UI. Modules are <strong className="font-semibold text-slate-700">on by default</strong> (inherited)
+              until you explicitly disable them.
+            </p>
             <div className="space-y-2">
-              {gatedModules.map((mk) => {
-                const ent = entMap.get(mk);
+              {gatedModules.map((m) => {
+                const ent = entMap.get(m.key);
                 const enabled = ent ? Boolean(ent.enabled) : true;
                 return (
-                  <div key={mk} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium capitalize text-slate-200">{mk.replace(/_/g, " ")}</p>
-                      <p className="text-[11px] text-slate-500">{ent ? `${String(ent.source)} · ${String(ent.tier)}` : "inherited (default on)"}</p>
+                  <div key={m.key} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">{m.label}</p>
+                      <p className="text-[11px] leading-4 text-slate-500">{m.blurb}</p>
+                      <p className="mt-0.5 text-[11px] font-medium text-slate-400">
+                        {ent ? `${String(ent.source)} · ${String(ent.tier)}` : "inherited (default on)"}
+                      </p>
                     </div>
                     <button
                       disabled={!canEntitlements || busy}
-                      onClick={() => act(() => platformApi.setEntitlement(id, { moduleKey: mk, enabled: !enabled }))}
-                      className={`relative h-6 w-11 rounded-full transition disabled:opacity-40 ${enabled ? "bg-teal-400" : "bg-slate-700"}`}
-                      aria-label={`Toggle ${mk}`}
+                      onClick={() => act(() => platformApi.setEntitlement(id, { moduleKey: m.key, enabled: !enabled }))}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40 ${enabled ? "bg-teal-500" : "bg-slate-300"}`}
+                      aria-label={`${enabled ? "Disable" : "Enable"} ${m.label}`}
                     >
-                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${enabled ? "left-[22px]" : "left-0.5"}`} />
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${enabled ? "left-[22px]" : "left-0.5"}`} />
                     </button>
                   </div>
                 );
@@ -795,9 +815,9 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-2.5">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
       <p className="text-[10px] uppercase tracking-wider text-slate-500">{label}</p>
-      <p className="mt-0.5 text-sm font-medium text-slate-200">{value}</p>
+      <p className="mt-0.5 text-sm font-medium text-slate-800">{value}</p>
     </div>
   );
 }
