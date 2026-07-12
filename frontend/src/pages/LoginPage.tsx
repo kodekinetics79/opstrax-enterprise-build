@@ -497,6 +497,17 @@ export function LoginPage() {
   };
 
   const identifying = identify.isPending;
+  // Surface a friendly message if the SSO round-trip bounced back to /login.
+  const ssoErrorCode = new URLSearchParams(window.location.search).get("sso_error");
+  const ssoErrorMessage = ssoErrorCode
+    ? ssoErrorCode === "sso_no_account"
+      ? "Single sign-on succeeded, but no OpsTrax account matches that identity. Contact your administrator."
+      : ssoErrorCode === "sso_tenant_suspended"
+        ? "Your organization's OpsTrax access is currently suspended. Contact your administrator."
+        : ssoErrorCode === "sso_account_inactive"
+          ? "Your OpsTrax account is not active. Contact your administrator."
+          : "We couldn't complete single sign-on. Please try again or sign in with your password."
+    : "";
   return (
     <div className="flex min-h-screen">
 
@@ -637,6 +648,13 @@ export function LoginPage() {
                       : "Enter your password to sign in."}
                 </p>
               </div>
+
+              {ssoErrorMessage && !login.isError && (
+                <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {ssoErrorMessage}
+                </div>
+              )}
 
               {login.isError && (
                 <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

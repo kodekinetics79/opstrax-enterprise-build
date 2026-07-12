@@ -5,7 +5,9 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Opstrax.Api.Foundation;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
@@ -56,6 +58,8 @@ public static partial class EndpointMappings
                 SecuritySettingsService securitySettings, PasswordPolicyService passwordPolicy, CancellationToken ct) =>
             Login(http, request, db, audit, securitySettings, passwordPolicy, ct));
         app.MapPost("/api/auth/sso/discover", SsoDiscover);
+        app.MapGet("/api/auth/sso/start/{id:long}", SsoStart);
+        app.MapGet("/api/auth/sso/callback", SsoCallback);
         app.MapPost("/api/auth/forgot-password", ForgotPassword);
         app.MapPost("/api/auth/reset-password", ResetPassword);
         app.MapGet("/api/auth/me", AuthMe);
@@ -2466,6 +2470,169 @@ public static partial class EndpointMappings
                 protocol    = row.GetValueOrDefault("providerType"),
             }
         }));
+    }
+
+    // Short-lived flow state carried across the IdP round-trip in a signed cookie.
+    private sealed record SsoFlowState(long ConnectionId, string Nonce, string CodeVerifier, string State, long Ts);
+
+    private static string SsoRandUrl(int bytes) => SsoB64Url(RandomNumberGenerator.GetBytes(bytes));
+    private static string SsoB64Url(byte[] data) =>
+        Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    private static string SsoChallenge(string verifier) =>
+        SsoB64Url(SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(verifier)));
+
+    // Public base URL of THIS API — must match the IdP's whitelisted redirect_uri.
+    // Prefer an explicit env var; fall back to the (proxy-forwarded) request host.
+    private static string SsoApiBaseUrl(HttpContext http)
+    {
+        var env = Environment.GetEnvironmentVariable("PUBLIC_API_URL");
+        return !string.IsNullOrWhiteSpace(env) ? env.TrimEnd('/') : $"{http.Request.Scheme}://{http.Request.Host}";
+    }
+    private static string SsoWebBaseUrl() =>
+        (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+         ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL")
+         ?? "https://opstrax.vercel.app").TrimEnd('/');
+    private static IResult SsoError(string code) =>
+        Results.Redirect($"{SsoWebBaseUrl()}/login?sso_error={Uri.EscapeDataString(code)}");
+
+    // The client secret is never stored raw — client_secret_ref points to an env
+    // var: "env:VAR_NAME". Anything else is treated as unconfigured.
+    private static string? ResolveSsoClientSecret(string? secretRef) =>
+        !string.IsNullOrWhiteSpace(secretRef) && secretRef.StartsWith("env:", StringComparison.OrdinalIgnoreCase)
+            ? Environment.GetEnvironmentVariable(secretRef[4..])
+            : null;
+
+    // GET /api/auth/sso/start/{id} — begin the OIDC authorization-code + PKCE flow.
+    // Builds the IdP authorize URL from the connection's discovery doc, stashes the
+    // state/nonce/verifier in a signed, http-only cookie, and 302s to the IdP.
+    private static async Task<IResult> SsoStart(
+        HttpContext http, long id, Database db, OidcLoginService oidc,
+        Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, CancellationToken ct)
+    {
+        var row = await db.QuerySingleAsync(
+            @"SELECT id, company_id, provider_type, issuer_or_entity_id, client_id, metadata_url
+              FROM sso_connections WHERE id=@id AND enabled=true LIMIT 1",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (row is null) return SsoError("sso_unavailable");
+        if (row.GetValueOrDefault("providerType")?.ToString() != "oidc") return SsoError("sso_unsupported_protocol");
+
+        var issuer   = (row.GetValueOrDefault("issuerOrEntityId")?.ToString() ?? string.Empty).Trim();
+        var clientId = row.GetValueOrDefault("clientId")?.ToString() ?? string.Empty;
+        var metadata = row.GetValueOrDefault("metadataUrl")?.ToString();
+        if (string.IsNullOrWhiteSpace(metadata)) metadata = issuer.TrimEnd('/') + "/.well-known/openid-configuration";
+        if (issuer.Length == 0 || clientId.Length == 0) return SsoError("sso_misconfigured");
+
+        OpenIdConnectConfiguration cfg;
+        try { cfg = await oidc.GetConfigurationAsync(metadata!, ct); }
+        catch { return SsoError("sso_discovery_failed"); }
+
+        var state    = SsoRandUrl(32);
+        var nonce    = SsoRandUrl(32);
+        var verifier = SsoRandUrl(48);
+        var sealedState = dp.CreateProtector("opstrax.sso.flow.v1").Protect(
+            JsonSerializer.Serialize(new SsoFlowState(id, nonce, verifier, state, DateTimeOffset.UtcNow.ToUnixTimeSeconds())));
+        http.Response.Cookies.Append("opstrax_sso_flow", sealedState, new CookieOptions
+        {
+            HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax,
+            MaxAge = TimeSpan.FromMinutes(10), Path = "/api/auth/sso",
+        });
+
+        var redirectUri = SsoApiBaseUrl(http) + "/api/auth/sso/callback";
+        return Results.Redirect(oidc.BuildAuthorizeUrl(cfg, clientId, redirectUri, state, nonce, SsoChallenge(verifier)));
+    }
+
+    // GET /api/auth/sso/callback — the IdP redirects the browser back here with a
+    // code. Validate state/nonce, exchange the code, validate the id_token against
+    // the IdP JWKS, map the verified email to an OpsTrax user IN THE CONNECTION'S
+    // TENANT, re-apply the same status gates password login uses, mint a session,
+    // and hand the token to the SPA via a URL fragment (never a query/log).
+    private static async Task<IResult> SsoCallback(
+        HttpContext http, Database db, OidcLoginService oidc,
+        Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dp, AuditService audit, CancellationToken ct)
+    {
+        void ClearFlowCookie() =>
+            http.Response.Cookies.Delete("opstrax_sso_flow", new CookieOptions { Path = "/api/auth/sso" });
+
+        if (!string.IsNullOrEmpty(http.Request.Query["error"])) { ClearFlowCookie(); return SsoError("sso_denied"); }
+        var code   = http.Request.Query["code"].ToString();
+        var state  = http.Request.Query["state"].ToString();
+        var cookie = http.Request.Cookies["opstrax_sso_flow"];
+        ClearFlowCookie();
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(cookie)) return SsoError("sso_state_missing");
+
+        SsoFlowState? flow;
+        try { flow = JsonSerializer.Deserialize<SsoFlowState>(dp.CreateProtector("opstrax.sso.flow.v1").Unprotect(cookie)); }
+        catch { return SsoError("sso_state_invalid"); }
+        if (flow is null ||
+            !CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(flow.State), System.Text.Encoding.UTF8.GetBytes(state)))
+            return SsoError("sso_state_mismatch");
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - flow.Ts > 600) return SsoError("sso_expired");
+
+        var row = await db.QuerySingleAsync(
+            @"SELECT id, company_id, provider_type, issuer_or_entity_id, client_id, client_secret_ref, metadata_url
+              FROM sso_connections WHERE id=@id AND enabled=true LIMIT 1",
+            c => c.Parameters.AddWithValue("@id", flow.ConnectionId), ct);
+        if (row is null) return SsoError("sso_unavailable");
+
+        var issuer   = (row.GetValueOrDefault("issuerOrEntityId")?.ToString() ?? string.Empty).Trim();
+        var clientId = row.GetValueOrDefault("clientId")?.ToString() ?? string.Empty;
+        var secret   = ResolveSsoClientSecret(row.GetValueOrDefault("clientSecretRef")?.ToString());
+        if (string.IsNullOrEmpty(secret)) return SsoError("sso_secret_missing");
+        var metadata = row.GetValueOrDefault("metadataUrl")?.ToString();
+        if (string.IsNullOrWhiteSpace(metadata)) metadata = issuer.TrimEnd('/') + "/.well-known/openid-configuration";
+
+        string email;
+        try
+        {
+            var cfg = await oidc.GetConfigurationAsync(metadata!, ct);
+            var redirectUri = SsoApiBaseUrl(http) + "/api/auth/sso/callback";
+            // Validate iss against the discovery doc's issuer (Auth0 uses a trailing slash).
+            email = await oidc.ExchangeAndValidateEmailAsync(
+                cfg, cfg.Issuer, clientId, secret!, redirectUri, code, flow.CodeVerifier, flow.Nonce, ct);
+        }
+        catch { return SsoError("sso_token_invalid"); }
+
+        // The federated identity may only resolve to a user WITHIN the tenant that
+        // owns this connection — a foreign IdP can never mint a session in another
+        // tenant even if the email happens to exist there.
+        var companyId = Convert.ToInt64(row["companyId"]);
+        var user = await db.QuerySingleAsync(
+            @"SELECT u.id, u.status user_status, c.status company_status
+              FROM users u JOIN companies c ON c.id=u.company_id
+              WHERE LOWER(u.email)=@email AND u.company_id=@cid LIMIT 1",
+            c => { c.Parameters.AddWithValue("@email", email); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (user is null) return SsoError("sso_no_account");
+
+        if (!string.Equals(user.GetValueOrDefault("userStatus")?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
+            return SsoError("sso_account_inactive");
+        var companyStatus = (user.GetValueOrDefault("companyStatus")?.ToString() ?? "active").ToLowerInvariant();
+        if (companyStatus is "suspended" or "cancelled" or "canceled" or "disabled")
+            return SsoError("sso_tenant_suspended");
+
+        var userId = Convert.ToInt64(user["id"]);
+        http.Items[AuthCompanyIdItemKey] = companyId;
+        http.Items[AuthUserIdItemKey]    = userId;
+
+        // MFA note: for SSO the second factor is enforced at the IdP (e.g. Auth0
+        // policies), so the password-path MFA gate is intentionally delegated here.
+
+        // Mint the session on the exact issuance path password login uses.
+        var token     = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        var csrfToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        await db.ExecuteAsync(
+            @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
+              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@tok", token); }, ct);
+
+        await audit.LogAsync(http, "user.login", "User", userId,
+            JsonSerializer.Serialize(new { source = "sso", provider = "oidc", connectionId = flow.ConnectionId }), ct: ct);
+
+        // Hand the session to the SPA in a fragment (not sent to servers/logs). The
+        // SPA stores it and hydrates the rest of the session via /api/auth/me.
+        var frag = $"#sso=1&token={Uri.EscapeDataString(token)}&csrf={Uri.EscapeDataString(csrfToken)}";
+        return Results.Redirect($"{SsoWebBaseUrl()}/sso/callback{frag}");
     }
 
     private static async Task<IResult> ForgotPassword(HttpContext http, ForgotPasswordRequest request, Database db, CancellationToken ct)
