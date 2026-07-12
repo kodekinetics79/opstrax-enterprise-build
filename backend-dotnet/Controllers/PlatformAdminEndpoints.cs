@@ -47,6 +47,7 @@ public static class PlatformAdminEndpoints
         app.MapPost("/api/platform/admins/{id:long}/enable",
             (HttpContext http, long id, Database db, CancellationToken ct) => SetStatus(http, id, new SetStatusRequest("Active"), db, ct));
         app.MapPost("/api/platform/admins/{id:long}/revoke-sessions", RevokeSessions);
+        app.MapPost("/api/platform/admins/bulk", BulkAdmins);
         app.MapPost("/api/platform/admins/{id:long}/reset-invite", ResetInvite);
         app.MapPost("/api/platform/admins/{id:long}/mfa/reset", ResetMfa);
 
@@ -293,24 +294,45 @@ public static class PlatformAdminEndpoints
         if (status is not ("Active" or "Disabled"))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["status must be 'Active' or 'Disabled'."]));
 
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
-
-        if (status == "Disabled" && id == principal!.AdminId)
-            return Results.BadRequest(ApiResponse<object>.Fail("You cannot disable your own account"));
-
-        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal!))
+        var (outcome, revoked) = await ApplyAdminStatusCoreAsync(principal!, http, id, status, db, ct);
+        return outcome switch
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+            AdminOpOutcome.NotFound => Results.NotFound(ApiResponse<object>.Fail("Operator not found")),
+            AdminOpOutcome.SelfDisable => Results.BadRequest(ApiResponse<object>.Fail("You cannot disable your own account")),
+            AdminOpOutcome.EscalationDenied => Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change a Super Admin's status"), statusCode: StatusCodes.Status403Forbidden),
+            AdminOpOutcome.LastSuperAdmin => Results.Conflict(ApiResponse<object>.Fail("Cannot disable the last active Platform Super Admin")),
+            _ => Results.Ok(ApiResponse<object>.Ok(new { id, status, sessionsRevoked = revoked },
+                status == "Disabled" ? "Operator disabled" : "Operator re-enabled")),
+        };
+    }
+
+    internal enum AdminOpOutcome { Ok, NotFound, SelfDisable, EscalationDenied, LastSuperAdmin }
+
+    // Core status transition for a single operator, shared by SetStatus and BulkAdmins
+    // so the security invariants — no self-disable, the Super-Admin escalation fence,
+    // and the last-active-Super-Admin protection — can NEVER differ between the
+    // single-row and bulk entry points. Writes the audit row on success/denial.
+    // The caller performs the platform:admins:manage authorization first.
+    private static async Task<(AdminOpOutcome Outcome, long Revoked)> ApplyAdminStatusCoreAsync(
+        PlatformEndpoints.PlatformPrincipal principal, HttpContext http, long id, string status, Database db, CancellationToken ct)
+    {
+        var target = await LoadAdminAsync(db, id, ct);
+        if (target is null) return (AdminOpOutcome.NotFound, 0);
+
+        if (status == "Disabled" && id == principal.AdminId)
+            return (AdminOpOutcome.SelfDisable, 0);
+
+        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
+        {
+            await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
                 new { attempted = "status_change", to = status }, ct);
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change a Super Admin's status"),
-                statusCode: StatusCodes.Status403Forbidden);
+            return (AdminOpOutcome.EscalationDenied, 0);
         }
 
         if (status == "Disabled" && IsSuperRole(target.RoleKey) &&
             target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
         {
-            return Results.Conflict(ApiResponse<object>.Fail("Cannot disable the last active Platform Super Admin"));
+            return (AdminOpOutcome.LastSuperAdmin, 0);
         }
 
         await db.ExecuteAsync("UPDATE platform_admins SET status=@s, updated_at=NOW() WHERE id=@id",
@@ -326,12 +348,74 @@ public static class PlatformAdminEndpoints
                 c => c.Parameters.AddWithValue("@id", id), ct);
         }
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http,
+        await PlatformEndpoints.AuditAsync(db, principal, http,
             status == "Disabled" ? "platform.admin.disabled" : "platform.admin.enabled",
             "PlatformAdmin", id, null, new { sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, status, sessionsRevoked = revoked },
-            status == "Disabled" ? "Operator disabled" : "Operator re-enabled"));
+        return (AdminOpOutcome.Ok, revoked);
     }
+
+    // Bulk operator operations — the Platform Operators table multi-select action bar.
+    // disable | enable | revoke-sessions. Every id runs through the same guarded core
+    // as its single-row counterpart; a blocked row (self, escalation, last-super-admin)
+    // is reported, not silently skipped, and never fails the whole batch.
+    private static async Task<IResult> BulkAdmins(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:admins:manage", ct);
+        if (error is not null) return error;
+
+        var action = (BulkStr(body, "action") ?? "").ToLowerInvariant();
+        if (action is not ("disable" or "enable" or "revoke-sessions"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", ["Use disable|enable|revoke-sessions"]));
+
+        var ids = BulkLongArray(body, "ids").Distinct().ToList();
+        if (ids.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["ids must be a non-empty array"]));
+        if (ids.Count > 200)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["A bulk action is limited to 200 operators at once"]));
+
+        var results = new List<object>();
+        var succeeded = 0;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                if (action == "revoke-sessions")
+                {
+                    var (ok, revoked, reason) = await RevokeAdminSessionsCoreAsync(principal!, http, id, db, ct);
+                    if (ok) { results.Add(new { id, ok = true, sessionsRevoked = revoked }); succeeded++; }
+                    else results.Add(new { id, ok = false, error = reason });
+                }
+                else
+                {
+                    var status = action == "disable" ? "Disabled" : "Active";
+                    var (outcome, revoked) = await ApplyAdminStatusCoreAsync(principal!, http, id, status, db, ct);
+                    if (outcome == AdminOpOutcome.Ok) { results.Add(new { id, ok = true, status, sessionsRevoked = revoked }); succeeded++; }
+                    else results.Add(new { id, ok = false, error = AdminOutcomeReason(outcome) });
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { id, ok = false, error = ex.Message });
+            }
+        }
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, $"platform.admin.bulk.{action}", "PlatformAdmin", null, null,
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, ids }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, results },
+            $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
+    }
+
+    private static string AdminOutcomeReason(AdminOpOutcome o) => o switch
+    {
+        AdminOpOutcome.NotFound => "Operator not found",
+        AdminOpOutcome.SelfDisable => "You cannot disable your own account",
+        AdminOpOutcome.EscalationDenied => "Only a Super Admin can change a Super Admin",
+        AdminOpOutcome.LastSuperAdmin => "Cannot disable the last active Super Admin",
+        _ => "Failed",
+    };
 
     // ── POST /api/platform/admins/{id}/revoke-sessions ───────────────────────
     internal static async Task<IResult> RevokeSessions(HttpContext http, long id, Database db, CancellationToken ct)
@@ -339,24 +423,59 @@ public static class PlatformAdminEndpoints
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:admins:manage", ct);
         if (error is not null) return error;
 
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
+        var (ok, revoked, reason) = await RevokeAdminSessionsCoreAsync(principal!, http, id, db, ct);
+        if (!ok)
+            return reason == "Operator not found"
+                ? Results.NotFound(ApiResponse<object>.Fail("Operator not found"))
+                : Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can revoke a Super Admin's sessions"), statusCode: StatusCodes.Status403Forbidden);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Sessions revoked"));
+    }
 
-        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal!))
+    // Core session-revocation for a single operator, shared by RevokeSessions and
+    // BulkAdmins. Preserves the Super-Admin escalation fence. The caller performs the
+    // platform:admins:manage authorization first.
+    private static async Task<(bool Ok, long Revoked, string Reason)> RevokeAdminSessionsCoreAsync(
+        PlatformEndpoints.PlatformPrincipal principal, HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        var target = await LoadAdminAsync(db, id, ct);
+        if (target is null) return (false, 0, "Operator not found");
+
+        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+            await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
                 new { attempted = "revoke_sessions" }, ct);
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can revoke a Super Admin's sessions"),
-                statusCode: StatusCodes.Status403Forbidden);
+            return (false, 0, "Only a Super Admin can revoke a Super Admin's sessions");
         }
 
         var revoked = await db.ScalarLongAsync(
             "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
             c => c.Parameters.AddWithValue("@id", id), ct);
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.sessions_revoked", "PlatformAdmin", id, null,
+        await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.sessions_revoked", "PlatformAdmin", id, null,
             new { sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Sessions revoked"));
+        return (true, revoked, "");
+    }
+
+    // ── Local body accessors for BulkAdmins (JSON values arrive as JsonElement) ──
+    private static string? BulkStr(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var v) || v is null) return null;
+        if (v is System.Text.Json.JsonElement je)
+            return je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString() : je.ToString();
+        return v.ToString();
+    }
+
+    private static List<long> BulkLongArray(Dictionary<string, object?> body, string key)
+    {
+        var list = new List<long>();
+        if (!body.TryGetValue(key, out var v) || v is null) return list;
+        if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var e in je.EnumerateArray())
+            {
+                if (e.ValueKind == System.Text.Json.JsonValueKind.Number && e.TryGetInt64(out var n)) list.Add(n);
+                else if (e.ValueKind == System.Text.Json.JsonValueKind.String && long.TryParse(e.GetString(), out var sn)) list.Add(sn);
+            }
+        return list;
     }
 
     // ── POST /api/platform/admins/{id}/reset-invite ──────────────────────────

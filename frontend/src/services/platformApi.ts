@@ -115,6 +115,8 @@ export const platformApi = {
   assignPackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/assign-package`, body)),
   resetInvite: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/reset-admin-invite`, body)),
   revokeSessions: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/revoke-sessions`)),
+  deleteTenant: (id: number, confirm: string) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}`, { data: { confirm } })),
+  bulkTenants: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/tenants/bulk", body)),
 
   // Entitlements
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
@@ -134,6 +136,7 @@ export const platformApi = {
   invoices: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/invoices")),
   createInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices", body)),
   markPaid: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/mark-paid`)),
+  bulkInvoices: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/bulk", body)),
 
   // Customer success + audit + roles
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
@@ -150,6 +153,7 @@ export const platformApi = {
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/${status === "Disabled" ? "disable" : "enable"}`)),
   revokePlatformAdminSessions: (id: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/revoke-sessions`)),
+  bulkAdmins: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/admins/bulk", body)),
   resetPlatformAdminInvite: (id: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/reset-invite`)),
   acceptPlatformInvite: (body: { email: string; token: string; password: string }) =>

@@ -75,7 +75,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
                 c.Parameters.AddWithValue("@clientId",  dto.ClientId);
                 c.Parameters.AddWithValue("@secretRef", (object?)dto.ClientSecretRef ?? DBNull.Value);
                 c.Parameters.AddWithValue("@certThumb", (object?)dto.CertificateThumbprint ?? DBNull.Value);
-                c.Parameters.AddWithValue("@enabled",   dto.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@enabled",   dto.Enabled);
                 c.Parameters.AddWithValue("@hints",     (object?)dto.DomainHintsJson ?? DBNull.Value);
                 c.Parameters.AddWithValue("@metaUrl",   (object?)dto.MetadataUrl ?? DBNull.Value);
                 c.Parameters.AddWithValue("@createdBy", createdBy);
@@ -122,7 +122,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
                 c.Parameters.AddWithValue("@clientId",  dto.ClientId);
                 c.Parameters.AddWithValue("@secretRef", (object?)dto.ClientSecretRef ?? DBNull.Value);
                 c.Parameters.AddWithValue("@certThumb", (object?)dto.CertificateThumbprint ?? DBNull.Value);
-                c.Parameters.AddWithValue("@enabled",   dto.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@enabled",   dto.Enabled);
                 c.Parameters.AddWithValue("@hints",     (object?)dto.DomainHintsJson ?? DBNull.Value);
                 c.Parameters.AddWithValue("@metaUrl",   (object?)dto.MetadataUrl ?? DBNull.Value);
                 c.Parameters.AddWithValue("@id",        id);
@@ -140,7 +140,7 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
         CancellationToken ct = default)
     {
         var rows = await db.ExecuteAsync(
-            "UPDATE sso_connections SET enabled = 0, updated_at = NOW() WHERE id = @id AND company_id = @cid",
+            "UPDATE sso_connections SET enabled = FALSE, updated_at = NOW() WHERE id = @id AND company_id = @cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         if (rows == 0) throw new InvalidOperationException("SSO connection not found or access denied");

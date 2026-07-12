@@ -191,6 +191,78 @@ export function PConfirm({ open, title, body, confirmLabel = "Confirm", confirmT
   );
 }
 
+// ─── Bulk selection primitives ────────────────────────────────────────────────
+// Shared across every platform table that supports multi-select CRUD (Tenants,
+// Invoices, …) so the selection model and action bar behave identically product-
+// wide. Selection is keyed by string id. Callers pass the CURRENTLY VISIBLE
+// (filtered) ids, so "select all" only ever targets rows the operator can see,
+// while any selected id that scrolls out of the active filter is preserved.
+export function useRowSelection(visibleIds: unknown[]) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const ids = visibleIds.map(String);
+  const allVisibleSelected = ids.length > 0 && ids.every((id) => selected.has(id));
+  const someVisibleSelected = ids.some((id) => selected.has(id));
+
+  const toggle = (id: unknown) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const key = String(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (ids.every((id) => prev.has(id))) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+
+  return {
+    selectedIds: [...selected],
+    count: selected.size,
+    isSelected: (id: unknown) => selected.has(String(id)),
+    toggle,
+    toggleAllVisible,
+    allVisibleSelected,
+    someVisibleSelected,
+    clear: () => setSelected(new Set()),
+  };
+}
+
+export function PCheckbox({ checked, indeterminate, onChange, ariaLabel }: {
+  checked: boolean; indeterminate?: boolean; onChange: () => void; ariaLabel: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      ref={(el) => { if (el) el.indeterminate = Boolean(indeterminate) && !checked; }}
+      onChange={onChange}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={ariaLabel}
+      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-teal-500 focus:ring-2 focus:ring-teal-400/30"
+    />
+  );
+}
+
+// Sticky action bar shown while ≥1 row is selected. `children` are the action
+// buttons, already permission-filtered by the caller.
+export function PBulkBar({ count, onClear, children }: {
+  count: number; onClear: () => void; children: ReactNode;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="sticky bottom-4 z-40 flex flex-wrap items-center gap-3 rounded-[16px] border border-slate-300 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+      <span className="text-sm font-semibold text-slate-700">{count} selected</span>
+      <div className="flex flex-wrap items-center gap-2">{children}</div>
+      <button type="button" onClick={onClear} className="ml-auto text-sm font-medium text-slate-500 hover:text-slate-700">Clear</button>
+    </div>
+  );
+}
+
 export function PDrawer({ open, onClose, title, children }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode;
 }) {

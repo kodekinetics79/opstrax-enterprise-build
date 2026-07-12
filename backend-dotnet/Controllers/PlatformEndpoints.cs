@@ -47,6 +47,9 @@ public static class PlatformEndpoints
         app.MapGet("/api/platform/tenants/{id:long}/audit", TenantAudit);
         // Offboarding — schema-driven cascade delete of ALL tenant-owned rows + the company.
         app.MapDelete("/api/platform/tenants/{id:long}", TenantDelete);
+        // Bulk operations for the Tenants table multi-select action bar. Routes each
+        // id through the SAME audited persistence path as its single-row counterpart.
+        app.MapPost("/api/platform/tenants/bulk", TenantBulk);
 
         // ── Feature Entitlements ────────────────────────────────────────────────
         app.MapGet("/api/platform/tenants/{id:long}/entitlements", EntitlementsGet);
@@ -68,6 +71,7 @@ public static class PlatformEndpoints
         app.MapGet("/api/platform/invoices", InvoicesList);
         app.MapPost("/api/platform/invoices", InvoiceCreate);
         app.MapPost("/api/platform/invoices/{id:long}/mark-paid", InvoiceMarkPaid);
+        app.MapPost("/api/platform/invoices/bulk", InvoiceBulk);
 
         // ── Customer Success (health scores) ────────────────────────────────────
         app.MapGet("/api/platform/health", HealthScores);
@@ -580,8 +584,9 @@ public static class PlatformEndpoints
 
     private const string TenantSelect =
         @"SELECT c.id, c.name, c.company_code, c.industry, c.status company_status, c.created_at,
-                 c.country, c.currency,
-                 ts.status, ts.seat_limit, ts.billing_currency, ts.mrr_cents, ts.trial_ends_at,
+                 c.country, c.currency, c.legal_name, c.website, c.fleet_size, c.tax_id,
+                 c.primary_contact_name, c.primary_contact_email, c.primary_contact_phone, c.billing_email,
+                 ts.status, ts.seat_limit, ts.billing_currency, ts.mrr_cents, ts.trial_ends_at, ts.billing_cycle,
                  ts.contract_start, ts.contract_end, ts.account_owner, ts.support_owner,
                  p.name package_name, p.package_code,
                  (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) user_count
@@ -671,9 +676,30 @@ public static class PlatformEndpoints
 
         var mrrCents = packageId.HasValue ? await ComputeMrrAsync(db, packageId.Value, seatLimit, ct) : 0;
 
+        // Extended firmographic / contact attributes captured on the New Tenant form.
+        // Nullable — only overwrites the fresh company row's columns when provided.
         await db.ExecuteAsync(
-            @"INSERT INTO tenant_subscriptions (company_id, package_id, status, seat_limit, billing_currency, mrr_cents, trial_ends_at, account_owner, support_owner)
-              VALUES (@cid, @pid, @status, @seats, @cur, @mrr,
+            @"UPDATE companies SET
+                legal_name = @legal, website = @web, fleet_size = @fleet, tax_id = @tax,
+                primary_contact_name = @pcn, primary_contact_email = @pce,
+                primary_contact_phone = @pcp, billing_email = @bill
+              WHERE id=@id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", companyId);
+                c.Parameters.AddWithValue("@legal", (object?)Str(body, "legalName") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@web", (object?)Str(body, "website") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@fleet", (object?)(int?)Long(body, "fleetSize") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@tax", (object?)Str(body, "taxId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pcn", (object?)Str(body, "primaryContactName") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pce", (object?)Str(body, "primaryContactEmail") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@pcp", (object?)Str(body, "primaryContactPhone") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@bill", (object?)Str(body, "billingEmail") ?? DBNull.Value);
+            }, ct);
+
+        await db.ExecuteAsync(
+            @"INSERT INTO tenant_subscriptions (company_id, package_id, status, seat_limit, billing_currency, mrr_cents, billing_cycle, contract_start, contract_end, trial_ends_at, account_owner, support_owner)
+              VALUES (@cid, @pid, @status, @seats, @cur, @mrr, @cycle, @cs::date, @ce::date,
                       CASE WHEN @status='trial' THEN NOW() + (@trialDays || ' day')::interval ELSE NULL END,
                       @ao, @so)",
             c =>
@@ -684,6 +710,9 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@seats", seatLimit);
                 c.Parameters.AddWithValue("@cur", currency);
                 c.Parameters.AddWithValue("@mrr", mrrCents);
+                c.Parameters.AddWithValue("@cycle", Str(body, "billingCycle") ?? "monthly");
+                c.Parameters.AddWithValue("@cs", (object?)Str(body, "contractStart") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@ce", (object?)Str(body, "contractEnd") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@trialDays", trialDays.ToString());
                 c.Parameters.AddWithValue("@ao", (object?)Str(body, "accountOwner") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@so", (object?)Str(body, "supportOwner") ?? DBNull.Value);
@@ -790,6 +819,24 @@ public static class PlatformEndpoints
         if (tenantExists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
 
         var action = (Str(body, "action") ?? "").ToLowerInvariant();
+        var days = (int)(Long(body, "days") ?? 14);
+
+        var applied = await ApplyTenantStatusAsync(db, id, action, days, ct);
+        if (applied is null)
+            return Results.Json(ApiResponse<object>.Fail("Invalid action", "Use activate|suspend|cancel|extend-trial|reactivate|manual-contract"), statusCode: StatusCodes.Status400BadRequest);
+
+        await AuditAsync(db, principal!, http, $"tenant.{action}", "Tenant", id, id, new { newStatus = applied.Value.NewStatus, sessionsRevoked = applied.Value.Revoked }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = applied.Value.NewStatus, sessionsRevoked = applied.Value.Revoked }, $"Tenant {action} applied"));
+    }
+
+    // Core subscription-status transition — shared by the single-tenant TenantStatus
+    // handler and the bulk TenantBulk handler so the tenant_subscriptions write, the
+    // companies status mirror, and the mandatory session revocation on suspend/cancel
+    // can never diverge between the two entry points. Returns null for an unrecognized
+    // action; the caller is responsible for the audit row.
+    private static async Task<(string NewStatus, int Revoked)?> ApplyTenantStatusAsync(
+        Database db, long id, string action, int days, CancellationToken ct)
+    {
         string? newStatus = action switch
         {
             "activate" or "reactivate" => "active",
@@ -799,12 +846,10 @@ public static class PlatformEndpoints
             "manual-contract" or "manual_contract" => "manual_contract",
             _ => null,
         };
-        if (newStatus is null)
-            return Results.Json(ApiResponse<object>.Fail("Invalid action", "Use activate|suspend|cancel|extend-trial|reactivate|manual-contract"), statusCode: StatusCodes.Status400BadRequest);
+        if (newStatus is null) return null;
 
         if (action is "extend-trial" or "extend_trial")
         {
-            var days = (int)(Long(body, "days") ?? 14);
             await db.ExecuteAsync(
                 "UPDATE tenant_subscriptions SET status='trial', trial_ends_at = GREATEST(COALESCE(trial_ends_at, NOW()), NOW()) + (@d || ' day')::interval, updated_at=NOW() WHERE company_id=@id",
                 c => { c.Parameters.AddWithValue("@d", days.ToString()); c.Parameters.AddWithValue("@id", id); }, ct);
@@ -829,8 +874,83 @@ public static class PlatformEndpoints
             revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE company_id=@id",
                 c => c.Parameters.AddWithValue("@id", id), ct);
 
-        await AuditAsync(db, principal!, http, $"tenant.{action}", "Tenant", id, id, new { newStatus, sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, status = newStatus, sessionsRevoked = revoked }, $"Tenant {action} applied"));
+        return (newStatus, revoked);
+    }
+
+    // Bulk tenant operations — the platform Tenants table's multi-select action bar.
+    // Every action routes through the SAME persistence + audit path as its single-row
+    // counterpart; there is no bulk-only shortcut that could bypass session revocation
+    // or the offboarding cascade. One bad row does not fail the batch — outcomes are
+    // reported per-id so the operator sees exactly what happened.
+    private static async Task<IResult> TenantBulk(
+        HttpContext http, Dictionary<string, object?> body, Database db, TenantOffboardingService offboarding, CancellationToken ct)
+    {
+        var action = (Str(body, "action") ?? "").ToLowerInvariant();
+        var allowed = new[] { "activate", "reactivate", "suspend", "cancel", "extend-trial", "manual-contract", "revoke-sessions", "delete" };
+        if (!allowed.Contains(action))
+            return Results.Json(ApiResponse<object>.Fail("Invalid action",
+                "Use activate|suspend|cancel|extend-trial|manual-contract|revoke-sessions|delete"),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        var ids = ReadLongArray(body, "ids").Distinct().ToList();
+        if (ids.Count == 0)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "ids must be a non-empty array"), statusCode: StatusCodes.Status400BadRequest);
+        if (ids.Count > 200)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "A bulk action is limited to 200 tenants at once"), statusCode: StatusCodes.Status400BadRequest);
+
+        // Hard delete demands the dedicated offboard permission plus an explicit typed
+        // confirmation, mirroring the single-tenant guard. Everything else is manage.
+        var isDelete = action == "delete";
+        var (principal, error) = await RequireAsync(http, db, isDelete ? "platform:tenants:offboard" : "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        if (isDelete && !string.Equals(Str(body, "confirm"), "DELETE", StringComparison.Ordinal))
+            return Results.Json(ApiResponse<object>.Fail("Confirmation required",
+                "To permanently delete these tenants and ALL their data, send {\"confirm\":\"DELETE\"}."),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        var days = (int)(Long(body, "days") ?? 14);
+        var results = new List<object>();
+        var succeeded = 0;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+                    c => c.Parameters.AddWithValue("@id", id), ct);
+                if (exists == 0) { results.Add(new { id, ok = false, error = "Not found" }); continue; }
+
+                if (action == "delete")
+                {
+                    var del = await offboarding.DeleteTenantAsync(id, ct);
+                    results.Add(new { id, ok = true, rowsDeleted = del.TotalRowsDeleted });
+                }
+                else if (action == "revoke-sessions")
+                {
+                    var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE company_id=@id",
+                        c => c.Parameters.AddWithValue("@id", id), ct);
+                    results.Add(new { id, ok = true, sessionsRevoked = revoked });
+                }
+                else
+                {
+                    var applied = await ApplyTenantStatusAsync(db, id, action, days, ct);
+                    results.Add(new { id, ok = true, status = applied!.Value.NewStatus, sessionsRevoked = applied.Value.Revoked });
+                }
+                succeeded++;
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { id, ok = false, error = ex.Message });
+            }
+        }
+
+        await AuditAsync(db, principal!, http, $"tenant.bulk.{action}", "Tenant", null, null,
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, ids }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, results },
+            $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
     }
 
     private static async Task<IResult> TenantAssignPackage(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -1237,6 +1357,66 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "paid" }, "Invoice marked paid"));
     }
 
+    // Bulk invoice operations — the Collections table multi-select action bar.
+    // mark-paid / void are idempotent status writes; delete is a hard row removal
+    // (invoices carry no downstream cascade). Every row is audited individually and
+    // outcomes are reported per-id so a partial failure is transparent.
+    private static async Task<IResult> InvoiceBulk(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:billing:manage", ct);
+        if (error is not null) return error;
+
+        var action = (Str(body, "action") ?? "").ToLowerInvariant();
+        if (action is not ("mark-paid" or "void" or "delete"))
+            return Results.Json(ApiResponse<object>.Fail("Invalid action", "Use mark-paid|void|delete"), statusCode: StatusCodes.Status400BadRequest);
+
+        var ids = ReadLongArray(body, "ids").Distinct().ToList();
+        if (ids.Count == 0)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "ids must be a non-empty array"), statusCode: StatusCodes.Status400BadRequest);
+        if (ids.Count > 200)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "A bulk action is limited to 200 invoices at once"), statusCode: StatusCodes.Status400BadRequest);
+
+        var results = new List<object>();
+        var succeeded = 0;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                var companyId = await db.ScalarLongAsync("SELECT company_id FROM platform_invoices WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+                if (companyId == 0) { results.Add(new { id, ok = false, error = "Not found" }); continue; }
+
+                var affected = action switch
+                {
+                    "mark-paid" => await db.ExecuteAsync("UPDATE platform_invoices SET status='paid', paid_at=NOW() WHERE id=@id AND status<>'paid'", c => c.Parameters.AddWithValue("@id", id), ct),
+                    // Void never touches an already-paid invoice — collected revenue is immutable.
+                    "void" => await db.ExecuteAsync("UPDATE platform_invoices SET status='void' WHERE id=@id AND status<>'paid'", c => c.Parameters.AddWithValue("@id", id), ct),
+                    _ => await db.ExecuteAsync("DELETE FROM platform_invoices WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct),
+                };
+
+                if (affected == 0 && action == "void")
+                { results.Add(new { id, ok = false, error = "Cannot void a paid invoice" }); continue; }
+                if (affected == 0 && action == "mark-paid")
+                { results.Add(new { id, ok = true, note = "already paid" }); succeeded++; continue; }
+
+                await AuditAsync(db, principal!, http, $"invoice.{action}", "Invoice", id, companyId, null, ct);
+                results.Add(new { id, ok = true });
+                succeeded++;
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { id, ok = false, error = ex.Message });
+            }
+        }
+
+        await AuditAsync(db, principal!, http, $"invoice.bulk.{action}", "Invoice", null, null,
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, ids }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, results },
+            $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
+    }
+
     // ════════════════════════════════════════════════════════════════════════════
     // CUSTOMER SUCCESS — health scores
     // ════════════════════════════════════════════════════════════════════════════
@@ -1491,6 +1671,22 @@ public static class PlatformEndpoints
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(s => s!.Trim())
                 .ToList();
+        return [];
+    }
+
+    private static List<long> ReadLongArray(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var v) || v is null) return [];
+        if (v is JsonElement je && je.ValueKind == JsonValueKind.Array)
+        {
+            var list = new List<long>();
+            foreach (var e in je.EnumerateArray())
+            {
+                if (e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var n)) list.Add(n);
+                else if (e.ValueKind == JsonValueKind.String && long.TryParse(e.GetString(), out var sn)) list.Add(sn);
+            }
+            return list;
+        }
         return [];
     }
 

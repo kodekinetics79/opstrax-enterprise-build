@@ -189,8 +189,33 @@ public sealed class PlatformSchemaService(Database db)
             )
             """);
 
+        await EnsureTenantProfileColumnsAsync();
+
         await SeedRolesAsync();
         await SeedSuperAdminAsync();
+    }
+
+    // Extended tenant provisioning attributes captured on the (Samsara-benchmark)
+    // New Tenant form. Additive + idempotent — companies pre-exists and already
+    // carries country/currency/timezone/status, so these follow the same
+    // ADD COLUMN IF NOT EXISTS pattern rather than a destructive rebuild.
+    private async Task EnsureTenantProfileColumnsAsync()
+    {
+        string[] companyCols =
+        {
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS legal_name VARCHAR(220) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS website VARCHAR(200) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS fleet_size INT NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS tax_id VARCHAR(80) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_name VARCHAR(160) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_email VARCHAR(200) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_phone VARCHAR(40) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(200) NULL",
+        };
+        foreach (var sql in companyCols) await db.ExecuteAsync(sql);
+
+        // Commercial term on the subscription: monthly | annual billing cadence.
+        await db.ExecuteAsync("ALTER TABLE tenant_subscriptions ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly'");
     }
 
     // Platform RBAC roles + their permission grants. permission_key uses the

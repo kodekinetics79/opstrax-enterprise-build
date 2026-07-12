@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import type { AnyRecord } from "@/types";
 import { platformApi, formatMoney } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
-import { PHeader, PCard, PKpi, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer } from "./ui";
+import { PHeader, PCard, PKpi, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm, PCheckbox, PBulkBar, useRowSelection } from "./ui";
 
 export function PlatformBillingPage() {
   const qc = useQueryClient();
@@ -15,10 +15,30 @@ export function PlatformBillingPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const rows = (data ?? []) as AnyRecord[];
+  const sel = useRowSelection(rows.map((r) => Number(r.id)));
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<"void" | "delete" | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+
+  const runBulk = async (action: string) => {
+    setBulkBusy(true); setBulkNotice(null);
+    try {
+      const res = await platformApi.bulkInvoices({ ids: sel.selectedIds.map(Number), action }) as AnyRecord;
+      const failed = Number(res.failed ?? 0);
+      setBulkNotice(`${action.replace(/-/g, " ")}: ${res.succeeded}/${res.requested} applied${failed > 0 ? ` · ${failed} failed` : ""}`);
+      sel.clear();
+      qc.invalidateQueries({ queryKey: ["platform", "invoices"] });
+    } catch (e) {
+      setBulkNotice(e instanceof Error ? e.message : "Bulk action failed");
+    } finally {
+      setBulkBusy(false); setBulkConfirm(null);
+    }
+  };
+
   if (isLoading) return <PLoading />;
   if (error) return <PError message={(error as Error)?.message} />;
 
-  const rows = (data ?? []) as AnyRecord[];
   const sum = (pred: (r: AnyRecord) => boolean) => rows.filter(pred).reduce((acc, r) => acc + Number(r.amountCents || 0), 0);
   const collected = sum((r) => String(r.status) === "paid");
   const outstanding = sum((r) => ["sent", "overdue"].includes(String(r.status)));
@@ -44,6 +64,10 @@ export function PlatformBillingPage() {
         <PKpi label="Invoices" value={rows.length} />
       </div>
 
+      {bulkNotice && (
+        <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-2.5 text-sm text-teal-700">{bulkNotice}</div>
+      )}
+
       {rows.length === 0 ? (
         <PEmpty title="No invoices yet" subtitle="Create an invoice to begin tracking collections." />
       ) : (
@@ -52,12 +76,27 @@ export function PlatformBillingPage() {
             <table className="w-full min-w-[820px] text-left text-sm">
               <thead className="border-b border-slate-800 bg-slate-900/80">
                 <tr className="text-xs uppercase tracking-wider text-slate-500">
+                  {canManage && (
+                    <th className="w-10 px-5 py-3">
+                      <PCheckbox
+                        checked={sel.allVisibleSelected}
+                        indeterminate={sel.someVisibleSelected}
+                        onChange={sel.toggleAllVisible}
+                        ariaLabel="Select all invoices"
+                      />
+                    </th>
+                  )}
                   {["Invoice", "Tenant", "Amount", "Status", "Due", "Paid", ""].map((h) => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {rows.map((r) => (
-                  <tr key={String(r.id)} className="hover:bg-slate-800/40">
+                  <tr key={String(r.id)} className={`hover:bg-slate-800/40 ${sel.isSelected(r.id) ? "bg-teal-500/5" : ""}`}>
+                    {canManage && (
+                      <td className="px-5 py-3.5">
+                        <PCheckbox checked={sel.isSelected(r.id)} onChange={() => sel.toggle(r.id)} ariaLabel={`Select invoice ${String(r.invoiceNumber)}`} />
+                      </td>
+                    )}
                     <td className="px-5 py-3.5 font-mono text-xs text-slate-300">{String(r.invoiceNumber)}</td>
                     <td className="px-5 py-3.5 text-slate-200">{String(r.tenant)}</td>
                     <td className="px-5 py-3.5 font-semibold text-slate-100">{formatMoney(Number(r.amountCents), String(r.currency ?? "USD"))}</td>
@@ -76,6 +115,33 @@ export function PlatformBillingPage() {
           </div>
         </PCard>
       )}
+
+      {canManage && (
+        <PBulkBar count={sel.count} onClear={sel.clear}>
+          <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("mark-paid")}>Mark paid</PButton>
+          <PButton variant="ghost" disabled={bulkBusy} onClick={() => setBulkConfirm("void")}>Void</PButton>
+          <PButton variant="danger" disabled={bulkBusy} onClick={() => setBulkConfirm("delete")}>Delete</PButton>
+        </PBulkBar>
+      )}
+
+      <PConfirm
+        open={bulkConfirm === "void"}
+        title={`Void ${sel.count} invoice${sel.count === 1 ? "" : "s"}?`}
+        body={<>The selected invoices will be marked void and drop out of outstanding collections. Already-paid invoices are skipped. This does not delete the records.</>}
+        confirmLabel="Void invoices"
+        busy={bulkBusy}
+        onConfirm={() => runBulk("void")}
+        onClose={() => setBulkConfirm(null)}
+      />
+      <PConfirm
+        open={bulkConfirm === "delete"}
+        title={`Delete ${sel.count} invoice${sel.count === 1 ? "" : "s"}?`}
+        body={<>The selected invoice records are permanently removed. This cannot be undone. Prefer <strong>Void</strong> if you need an audit trail.</>}
+        confirmLabel="Delete invoices"
+        busy={bulkBusy}
+        onConfirm={() => runBulk("delete")}
+        onClose={() => setBulkConfirm(null)}
+      />
 
       {createOpen && (
         <CreateInvoiceDrawer

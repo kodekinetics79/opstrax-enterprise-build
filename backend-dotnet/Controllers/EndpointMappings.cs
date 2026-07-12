@@ -11128,7 +11128,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@type",  ruleType);
                 c.Parameters.AddWithValue("@val",   body.ThresholdValue);
                 c.Parameters.AddWithValue("@sev",   body.Severity ?? "High");
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
                 c.Parameters.AddWithValue("@notes", body.Notes ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uid",   userId);
             }, ct);
@@ -12187,7 +12187,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@type",  ruleType);
                 c.Parameters.AddWithValue("@val",   body.ThresholdValue);
                 c.Parameters.AddWithValue("@sev",   body.Severity ?? "High");
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
                 c.Parameters.AddWithValue("@notes", body.Notes ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uid",   userId);
             }, ct);
@@ -12542,7 +12542,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@itype",   body.InspectionType ?? "pre_trip");
                 c.Parameters.AddWithValue("@status",  status);
                 c.Parameters.AddWithValue("@defects", body.ChecklistItems?.Count(i => i.Result == "fail") ?? 0);
-                c.Parameters.AddWithValue("@safe",    hasCritical ? 0 : 1);
+                c.Parameters.AddWithValue("@safe",    !hasCritical);
                 c.Parameters.AddWithValue("@odo",     body.OdometerMiles ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@hrs",     body.EngineHours   ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@notes",   body.Notes ?? (object)DBNull.Value);
@@ -12586,7 +12586,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                             c.Parameters.AddWithValue("@cat",  item.Category ?? "general");
                             c.Parameters.AddWithValue("@desc", item.ItemName ?? "DVIR defect");
                             c.Parameters.AddWithValue("@sev",  CapitalizeSeverity(item.Severity));
-                            c.Parameters.AddWithValue("@oos",  isOos ? 1 : 0);
+                            c.Parameters.AddWithValue("@oos",  isOos);
                         }, ct);
 
                     // Critical defect — immediately mark vehicle out of service.
@@ -12985,7 +12985,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@warn",  body.WarningThresholdPct ?? 10);
                 c.Parameters.AddWithValue("@pri",   body.Priority ?? "Medium");
                 c.Parameters.AddWithValue("@cost",  body.EstimatedCost ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
             }, ct);
 
         await audit.LogAsync(http, "pm_rule.upserted", "PmRule", 0, $"type:{ruleType}", ct);
@@ -15036,7 +15036,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@tte",     body.TryGetValue("timeToEscalateMinutes", out var t) && t is not null ? Convert.ToInt32(t) : DBNull.Value);
                 c.Parameters.AddWithValue("@ri",      body.TryGetValue("repeatIntervalMinutes", out var ri) && ri is not null ? Convert.ToInt32(ri) : DBNull.Value);
                 c.Parameters.AddWithValue("@maxR",    body.TryGetValue("maxRepeats", out var mr) && mr is not null ? Convert.ToInt32(mr) : DBNull.Value);
-                c.Parameters.AddWithValue("@enabled", body.TryGetValue("enabled", out var en) && en is not null ? (Convert.ToBoolean(en) ? 1 : 0) : DBNull.Value);
+                c.Parameters.AddWithValue("@enabled", body.TryGetValue("enabled", out var en) && en is not null ? (object)Convert.ToBoolean(en) : DBNull.Value);
             }, ct);
 
         await audit.LogAsync(http, "escalation_rule.updated", "EscalationRule", id, ct: ct);
