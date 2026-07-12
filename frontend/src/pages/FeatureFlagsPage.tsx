@@ -194,7 +194,7 @@ export function FeatureFlagsPage() {
                       <p className="text-xs text-slate-400 mt-0.5 font-mono">{key}</p>
                     </div>
                     <div className="shrink-0 hidden sm:block">
-                      <RolloutBar pct={isEnabled ? Math.max(Number(flag.rolloutPct ?? 0), isEnabled ? 100 : 0) : 0} />
+                      <RolloutBar pct={Math.min(100, Math.max(0, Number(flag.rolloutPct ?? 0)))} />
                     </div>
                     <p className="text-xs text-slate-400 shrink-0 hidden md:block w-24 text-right">{String(flag.lastModified ?? "")}</p>
                   </div>

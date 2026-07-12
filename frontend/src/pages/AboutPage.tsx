@@ -38,8 +38,19 @@ const PLATFORM_MODULES = [
   { icon: <Bot className="h-4 w-4" />,           label: "AI Copilot",                      color: "text-violet-400" },
 ];
 
-function StatusDot({ ok }: { ok: boolean }) {
-  return <span className={`inline-block h-2 w-2 rounded-full ${ok ? "bg-emerald-400" : "bg-amber-400"}`} />;
+function StatusDot({ ok }: { ok: boolean | null }) {
+  const tone = ok === true ? "bg-emerald-400" : ok === false ? "bg-amber-400" : "bg-slate-300";
+  return <span className={`inline-block h-2 w-2 rounded-full ${tone}`} />;
+}
+
+// Map a real health status string → ok (green) / bad (amber) / unknown (neutral).
+// Never assume green: an absent or unrecognised value resolves to neutral, not "ok".
+function statusOk(status: unknown): boolean | null {
+  const s = String(status ?? "").trim().toLowerCase();
+  if (!s) return null;
+  if (/(connected|online|healthy|operational|active|ready|available|nominal|\bok\b|\bup\b)/.test(s)) return true;
+  if (/(degraded|down|offline|disconnected|error|fail|unavailable|unhealthy|outage|stopped)/.test(s)) return false;
+  return null;
 }
 
 export function AboutPage() {
@@ -85,9 +96,9 @@ export function AboutPage() {
       {health && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
           {[
-            { label: "API",          ok: true,  value: String(health.apiStatus ?? "Connected") },
-            { label: "Database",     ok: true,  value: String(health.databaseStatus ?? "Connected") },
-            { label: "Node Events",  ok: true,  value: String(health.nodeEventsStatus ?? "Connected") },
+            { label: "API",          ok: statusOk(health.apiStatus),        value: String(health.apiStatus ?? "—") },
+            { label: "Database",     ok: statusOk(health.databaseStatus),   value: String(health.databaseStatus ?? "—") },
+            { label: "Node Events",  ok: statusOk(health.nodeEventsStatus), value: String(health.nodeEventsStatus ?? "—") },
             { label: "Modules",      ok: true,  value: String(health.moduleCount ?? "35+") },
             { label: "Version",      ok: true,  value: String(health.version ?? "Enterprise Build") },
             { label: "Environment",  ok: false, value: String(health.environment ?? "Local / Seeded") },

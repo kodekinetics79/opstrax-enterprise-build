@@ -237,8 +237,8 @@ const moduleDefinitions: Record<string, ModuleDefinition> = {
     kpis: [
       { label: "Critical Alerts", value: alerts.filter((a) => a.severity === "Critical").length, status: "Critical" },
       { label: "Open Alerts", value: alerts.filter((a) => a.status === "Open").length, status: "Open" },
-      { label: "Customer Impact", value: "3 accounts", status: "Risk" },
-      { label: "Triage Confidence", value: "92%", status: "AI" },
+      { label: "Customer Impact", value: `${new Set(alerts.map((a) => a.customer).filter(Boolean)).size} accounts`, status: "Risk" },
+      { label: "Triage Confidence", value: "—", status: "AI" },
     ],
     insight: "Temperature breach and camera outage are linked to customer-sensitive lanes. Prioritize customer communication before internal investigation closes.",
   },

@@ -10,7 +10,7 @@ import {
   useSlaSummary, useSlaRecords, useSlaBreaches,
   useAcknowledgeSlaBreache, useResolveSlaBreache,
 } from "@/hooks/useBatch7";
-import { exportCsv } from "@/components/ui";
+import { exportCsv, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // Empty-state defaults — used only as fallbacks when the live backend returns no
@@ -22,10 +22,6 @@ const EMPTY_SLA_RECORDS: AnyRecord[] = [];
 const EMPTY_SLA_SUMMARY: AnyRecord = { met: 0, breached: 0 };
 const EMPTY_SLA_BREACHES: AnyRecord[] = [];
 const EMPTY_AI_RECS: AnyRecord[] = [];
-
-// ── Chart data ────────────────────────────────────────────────────────────────
-
-const KPI_ATTAINMENT_DATA: Array<{ name: string; pct: number; status: string }> = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -100,13 +96,15 @@ export function SlaKpiPage() {
   const [filterCat, setFilterCat]         = useState("");
   const [filterSlaType, setFilterSlaType] = useState("");
 
-  const { data: kpiMetricsRaw = [] } = useKpiMetrics();
-  const { data: kpiSummaryRaw }      = useKpiSummary();
+  const { data: kpiMetricsRaw = [], isLoading: kpiMetricsLoading } = useKpiMetrics();
+  const { data: kpiSummaryRaw, isLoading: kpiSummaryLoading }      = useKpiSummary();
   const { data: kpiTargetsRaw = [] } = useKpiTargets();
   const { data: kpiAiRecsRaw = [] }  = useKpiAiRecs();
-  const { data: slaSummaryRaw }      = useSlaSummary();
+  const { data: slaSummaryRaw, isLoading: slaSummaryLoading }      = useSlaSummary();
   const { data: slaRecordsRaw = [] } = useSlaRecords();
   const { data: slaBreachesRaw = [] }= useSlaBreaches();
+
+  const isLoading = kpiMetricsLoading || kpiSummaryLoading || slaSummaryLoading;
 
   const kpiMetrics  = (kpiMetricsRaw  as AnyRecord[]) ?? [];
   const kpiSummary  = (kpiSummaryRaw  ?? EMPTY_KPI_SUMMARY) as AnyRecord;
@@ -125,11 +123,32 @@ export function SlaKpiPage() {
   const filteredKpi   = filterCat     ? kpiMetrics.filter((k) => String(k.category) === filterCat) : kpiMetrics;
   const filteredSla   = filterSlaType ? slaRecords.filter((s) => String(s.sla_type) === filterSlaType) : slaRecords;
 
+  // Attainment vs target, derived from the same live kpiMetrics the KPI cards use
+  // (pct = actual / target, capped at 110 to mirror KpiCard). Bars colour by pct.
+  const kpiAttainmentData = kpiMetrics.map((k) => {
+    const actual = Number(k.actual_value ?? 0);
+    const target = Number(k.target_value ?? 0);
+    const pct = target > 0 ? Math.min(110, Math.round((actual / target) * 100)) : 0;
+    return { name: String(k.kpi_name ?? ""), pct, status: String(k.status ?? "") };
+  });
+
   function handleExport() {
     if (tab === "KPI Dashboard") exportCsv("kpi-metrics", kpiMetrics);
     else if (tab === "SLA Records") exportCsv("sla-records", slaRecords);
     else if (tab === "SLA Breaches") exportCsv("sla-breaches", slaBreaches);
     else exportCsv("kpi-ai-recommendations", kpiAiRecs);
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full flex-col gap-6 overflow-y-auto">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">SLA / KPI Center</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Key performance indicators, SLA compliance, breach exposure and AI recommendations</p>
+        </div>
+        <LoadingState />
+      </div>
+    );
   }
 
   return (
@@ -161,7 +180,7 @@ export function SlaKpiPage() {
         <p className="section-title mb-0.5">KPI Attainment vs Target (%)</p>
         <p className="text-xs text-slate-400 mb-4">Values above 100% indicate target exceeded; below 90% are highlighted critical</p>
         <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={KPI_ATTAINMENT_DATA} margin={{ top: 4, right: 8, left: -16, bottom: 24 }}>
+          <BarChart data={kpiAttainmentData} margin={{ top: 4, right: 8, left: -16, bottom: 24 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} angle={-30} textAnchor="end" interval={0} />
             <YAxis domain={[60, 115]} tick={{ fontSize: 10, fill: "#94a3b8" }} unit="%" />
@@ -169,7 +188,7 @@ export function SlaKpiPage() {
             <ReferenceLine y={100} stroke="#0d9488" strokeDasharray="4 2" label={{ value: "Target", position: "right", fontSize: 10, fill: "#0d9488" }} />
             <ReferenceLine y={90}  stroke="#f59e0b" strokeDasharray="4 2" />
             <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
-              {KPI_ATTAINMENT_DATA.map((d, i) => (
+              {kpiAttainmentData.map((d, i) => (
                 <Cell key={i} fill={d.pct >= 100 ? "#0d9488" : d.pct >= 90 ? "#f59e0b" : "#dc2626"} />
               ))}
             </Bar>
@@ -305,7 +324,11 @@ export function SlaKpiPage() {
                 </div>
                 <p className="mt-1 text-sm text-slate-600 leading-relaxed">{String(rec.body ?? rec.description ?? "")}</p>
                 {rec.action_label ? (
-                  <button type="button" className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition">{String(rec.action_label)} →</button>
+                  <button
+                    type="button"
+                    onClick={() => setTab(String(rec.action_type) === "sla_action" ? "SLA Breaches" : "KPI Dashboard")}
+                    className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition"
+                  >{String(rec.action_label)} →</button>
                 ) : null}
               </div>
               <Target className="h-4 w-4 shrink-0 text-slate-400" />

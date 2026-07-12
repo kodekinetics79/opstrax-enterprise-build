@@ -102,6 +102,13 @@ export function CommandCenterPage() {
   const donut = FLEET_CFG.map(f => ({ name: f.label, value: Number(fleetStatus[f.key] ?? 0), color: f.color }));
   const postureTone = POSTURE[posture] ?? POSTURE.Stable;
 
+  // Real "as of" time from the payload (generatedAt). Never fake "now": if the feed
+  // carries no parseable timestamp we drop the label rather than imply a fresh sync.
+  const generatedAt = data.generatedAt ? new Date(String(data.generatedAt)) : null;
+  const lastUpdated = generatedAt && !Number.isNaN(generatedAt.getTime())
+    ? generatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+
   return (
     <div className="control-tower space-y-4">
       {/* ── Dashboard banner — light glass, brand-tinted ─────── */}
@@ -128,9 +135,11 @@ export function CommandCenterPage() {
               Dashboard
               <span className="ml-2 text-base font-medium text-slate-400">· Fleet Operations</span>
             </h1>
-            <p className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
-              Last updated <span className="ml-1 font-black text-teal-700">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-            </p>
+            {lastUpdated && (
+              <p className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
+                Last updated <span className="ml-1 font-black text-teal-700">{lastUpdated}</span>
+              </p>
+            )}
             <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
               {critCount > 0
                 ? <><span className="font-bold text-red-600">{critCount} critical</span> and {warnCount} warning signal{warnCount === 1 ? "" : "s"} on the board — act on the queue before the next dispatch window.</>
