@@ -336,6 +336,10 @@ public class CustomerPortalPostgresTests
             "DELETE FROM users WHERE company_id=@c AND role_name='Customer Portal'",
             "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM customers WHERE company_id=@c",
+            // Delete the tenant company itself LAST (after all FK children) — without
+            // this every test run leaked a 'Portal Tenant' shell company into the shared
+            // dev DB and polluted the platform Tenants list.
+            "DELETE FROM companies WHERE id=@c",
         })
         {
             await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", companyId));
