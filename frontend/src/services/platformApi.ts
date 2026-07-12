@@ -102,6 +102,12 @@ export const platformApi = {
   me: () => unwrap<PlatformSession>(platformClient.get("/api/platform/auth/me")),
   logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
 
+  // Self-service account management (any platform admin, own record only)
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/auth/change-password", { currentPassword, newPassword })),
+  updateOwnProfile: (body: { fullName?: string; email?: string }) =>
+    unwrap<AnyRecord>(platformClient.patch("/api/platform/auth/profile", body)),
+
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
   commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),
@@ -115,6 +121,12 @@ export const platformApi = {
   assignPackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/assign-package`, body)),
   resetInvite: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/reset-admin-invite`, body)),
   revokeSessions: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/revoke-sessions`)),
+  deleteTenant: (id: number, confirm: string) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}`, { data: { confirm } })),
+  bulkTenants: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/tenants/bulk", body)),
+  // Tenant user directory + platform-initiated password reset (returns a one-time password)
+  tenantUsers: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/users`)),
+  resetTenantUserPassword: (id: number, userId: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/reset-password`)),
 
   // Entitlements
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
@@ -129,11 +141,13 @@ export const platformApi = {
   packages: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/packages")),
   createPackage: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/packages", body)),
   updatePackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/packages/${id}`, body)),
+  deletePackage: (id: number) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/packages/${id}`)),
 
   // Billing
   invoices: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/invoices")),
   createInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices", body)),
   markPaid: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/mark-paid`)),
+  bulkInvoices: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/bulk", body)),
 
   // Customer success + audit + roles
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
@@ -150,6 +164,7 @@ export const platformApi = {
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/${status === "Disabled" ? "disable" : "enable"}`)),
   revokePlatformAdminSessions: (id: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/revoke-sessions`)),
+  bulkAdmins: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/admins/bulk", body)),
   resetPlatformAdminInvite: (id: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/reset-invite`)),
   acceptPlatformInvite: (body: { email: string; token: string; password: string }) =>

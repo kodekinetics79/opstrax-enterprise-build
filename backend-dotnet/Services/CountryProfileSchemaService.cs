@@ -21,8 +21,9 @@ namespace Opstrax.Api.Services;
 //   - adds companies.country / companies.currency via ADD COLUMN IF NOT EXISTS
 //     (companies.timezone already exists) so the tenant-creation cascade can
 //     persist the profile defaults onto the tenant company row
-//   - seeds SA + CA using ON CONFLICT upserts so future countries are added
-//     through the platform CRUD endpoint, never a code deploy.
+//   - seeds a baseline of major logistics markets (NA/EU/GCC/APAC/LATAM/Africa)
+//     using ON CONFLICT upserts; any further country is added through the
+//     platform CRUD endpoint, never a code deploy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class CountryProfileSchemaService(Database db)
@@ -56,27 +57,48 @@ public sealed class CountryProfileSchemaService(Database db)
         await SeedProfilesAsync();
     }
 
-    // Seed exactly two profiles for now (SA, CA). Idempotent upsert: re-running keeps
-    // the canonical seed defaults for these two rows while never disturbing profiles
-    // an operator later adds/edits through the CRUD endpoint.
+    // Seed a baseline of major logistics markets. Idempotent upsert: re-running keeps
+    // these canonical seed defaults while never disturbing profiles an operator later
+    // adds/edits through the CRUD endpoint. Operators can still add any country not
+    // listed here (or adjust tax rates / auto-enabled features) via the platform API.
     private async Task SeedProfilesAsync()
     {
         var saFeatures = JsonSerializer.Serialize(new[] { "zatca_invoicing", "hijri_calendar_toggle", "arabic_rtl" });
-        var caFeatures = JsonSerializer.Serialize(Array.Empty<string>());
+        var arabicRtl = JsonSerializer.Serialize(new[] { "arabic_rtl" });
+        var none = JsonSerializer.Serialize(Array.Empty<string>());
+        const string euGdpr = "EU data residency (GDPR).";
 
-        await UpsertSeedAsync(
-            code: "SA", name: "Saudi Arabia", currency: "SAR", locale: "ar-SA",
-            direction: "rtl", calendar: "gregorian_hijri_dual", invoicing: "zatca_phase2",
-            taxLabel: "VAT Number", taxRate: 0.1500m,
-            residency: "KSA data residency expected for regulated invoicing (ZATCA).",
-            featuresJson: saFeatures);
+        // code, name, currency, locale, direction, calendar, invoicing, taxLabel, taxRate, residency, featuresJson
+        var seeds = new (string, string, string, string, string, string, string, string, decimal?, string?, string)[]
+        {
+            ("US", "United States",        "USD", "en-US", "ltr", "gregorian",            "standard",     "EIN / Tax ID",     null,    null,   none),
+            ("CA", "Canada",               "CAD", "en-CA", "ltr", "gregorian",            "standard",     "GST/HST Number",   0.0500m, null,   none),
+            ("GB", "United Kingdom",       "GBP", "en-GB", "ltr", "gregorian",            "standard",     "VAT Number",       0.2000m, null,   none),
+            ("IE", "Ireland",              "EUR", "en-IE", "ltr", "gregorian",            "standard",     "VAT Number",       0.2300m, euGdpr, none),
+            ("DE", "Germany",              "EUR", "de-DE", "ltr", "gregorian",            "standard",     "USt-IdNr.",        0.1900m, euGdpr, none),
+            ("FR", "France",               "EUR", "fr-FR", "ltr", "gregorian",            "standard",     "TVA Number",       0.2000m, euGdpr, none),
+            ("NL", "Netherlands",          "EUR", "nl-NL", "ltr", "gregorian",            "standard",     "BTW Number",       0.2100m, euGdpr, none),
+            ("ES", "Spain",                "EUR", "es-ES", "ltr", "gregorian",            "standard",     "NIF / VAT",        0.2100m, euGdpr, none),
+            ("IT", "Italy",                "EUR", "it-IT", "ltr", "gregorian",            "standard",     "Partita IVA",      0.2200m, euGdpr, none),
+            ("AU", "Australia",            "AUD", "en-AU", "ltr", "gregorian",            "standard",     "ABN",              0.1000m, null,   none),
+            ("NZ", "New Zealand",          "NZD", "en-NZ", "ltr", "gregorian",            "standard",     "GST Number",       0.1500m, null,   none),
+            ("SG", "Singapore",            "SGD", "en-SG", "ltr", "gregorian",            "standard",     "GST Reg. No.",     0.0900m, null,   none),
+            ("IN", "India",                "INR", "en-IN", "ltr", "gregorian",            "standard",     "GSTIN",            0.1800m, null,   none),
+            ("JP", "Japan",                "JPY", "ja-JP", "ltr", "gregorian",            "standard",     "Corporate Number", 0.1000m, null,   none),
+            ("BR", "Brazil",               "BRL", "pt-BR", "ltr", "gregorian",            "standard",     "CNPJ",             0.1700m, "Brazil data residency (LGPD).", none),
+            ("MX", "Mexico",               "MXN", "es-MX", "ltr", "gregorian",            "standard",     "RFC",              0.1600m, null,   none),
+            ("ZA", "South Africa",         "ZAR", "en-ZA", "ltr", "gregorian",            "standard",     "VAT Number",       0.1500m, null,   none),
+            ("SA", "Saudi Arabia",         "SAR", "ar-SA", "rtl", "gregorian_hijri_dual", "zatca_phase2", "VAT Number",       0.1500m, "KSA data residency expected for regulated invoicing (ZATCA).", saFeatures),
+            ("AE", "United Arab Emirates", "AED", "ar-AE", "rtl", "gregorian",            "standard",     "TRN",              0.0500m, null,   arabicRtl),
+            ("QA", "Qatar",                "QAR", "ar-QA", "rtl", "gregorian",            "standard",     "Tax Card No.",     null,    null,   arabicRtl),
+            ("KW", "Kuwait",               "KWD", "ar-KW", "rtl", "gregorian",            "standard",     "Tax No.",          null,    null,   arabicRtl),
+            ("BH", "Bahrain",              "BHD", "ar-BH", "rtl", "gregorian",            "standard",     "VAT Number",       0.1000m, null,   arabicRtl),
+            ("OM", "Oman",                 "OMR", "ar-OM", "rtl", "gregorian",            "standard",     "VAT Number",       0.0500m, null,   arabicRtl),
+            ("EG", "Egypt",                "EGP", "ar-EG", "rtl", "gregorian",            "standard",     "Tax Reg. No.",     0.1400m, null,   arabicRtl),
+        };
 
-        await UpsertSeedAsync(
-            code: "CA", name: "Canada", currency: "CAD", locale: "en-CA",
-            direction: "ltr", calendar: "gregorian", invoicing: "standard",
-            taxLabel: "GST/HST Number", taxRate: 0.0500m,
-            residency: null,
-            featuresJson: caFeatures);
+        foreach (var (code, name, currency, locale, direction, calendar, invoicing, taxLabel, taxRate, residency, featuresJson) in seeds)
+            await UpsertSeedAsync(code, name, currency, locale, direction, calendar, invoicing, taxLabel, taxRate, residency, featuresJson);
     }
 
     private Task UpsertSeedAsync(string code, string name, string currency, string locale,

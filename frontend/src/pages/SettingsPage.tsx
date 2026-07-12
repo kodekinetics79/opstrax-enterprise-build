@@ -9,6 +9,7 @@ import { useI18n, LOCALES } from "@/i18n";
 import type { LocaleCode } from "@/i18n";
 import type { AnyRecord } from "@/types";
 import { settingsApi } from "@/services/settingsApi";
+import { ChangePasswordCard } from "@/components/ChangePasswordCard";
 import { SsoConnectionsPanel } from "@/components/SsoConnectionsPanel";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
@@ -476,6 +477,9 @@ export function SettingsPage() {
       {/* ── SECURITY ─────────────────────────────────────────────────────────── */}
       {tab === "security" && (
         <div className="flex flex-col gap-5">
+          {/* Self-service: any signed-in user can change their own password here,
+              regardless of role — no admin action and no SMTP required. */}
+          <ChangePasswordCard />
           <div className="panel space-y-4">
             <SectionHeader icon={Lock} title="Session & Access" description="Idle timeout and audit log retention policy" />
             <div className="space-y-3">

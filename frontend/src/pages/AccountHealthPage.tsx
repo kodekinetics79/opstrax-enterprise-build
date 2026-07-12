@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { customersApi } from "@/services/customersApi";
 import { contractsApi } from "@/services/contractsApi";
@@ -16,7 +16,6 @@ function buildHealthRows(customers: AnyRecord[], contracts: AnyRecord[]): AnyRec
     status: String(c.status ?? "Healthy"),
     healthScore: Number(c.healthScore ?? c.slaHealthScore ?? 0),
     slaCompliance: Number(c.slaHealthScore ?? c.healthScore ?? 0),
-    npsEstimate: Math.round((Number(c.healthScore ?? c.slaHealthScore ?? 0) - 50) * 1.2),
     atRisk: /risk/i.test(String(c.status ?? "")) || Number(c.healthScore ?? c.slaHealthScore ?? 0) < 80,
     accountManager: String(c.accountManager ?? "Ops"),
     renewalDate: String(c.renewalDate ?? contracts.find((ctr) => String(ctr.customerName ?? ctr.customer ?? "") === String(c.name ?? c.companyName ?? ""))?.expiryDate ?? "—"),
@@ -31,7 +30,9 @@ function buildFollowUpRows(customers: AnyRecord[], contracts: AnyRecord[]): AnyR
     id: c.id ?? i + 1,
     company: String(c.name ?? c.companyName ?? ""),
     contactPerson: String(c.contactName ?? c.primaryContact ?? "—"),
-    followUpType: String(i % 2 === 0 ? "Renewal Discussion" : "SLA Review"),
+    // Type derived from the account's real state: at-risk accounts need an SLA
+    // review; healthy ones get a renewal touch. No row-parity guessing.
+    followUpType: /risk/i.test(String(c.status ?? "")) || Number(c.healthScore ?? c.slaHealthScore ?? 0) < 80 ? "SLA Review" : "Renewal Discussion",
     priority: /risk/i.test(String(c.status ?? "")) ? "High" : "Medium",
     dueDate: String(c.renewalDate ?? contracts[i % Math.max(contracts.length, 1)]?.expiryDate ?? "—"),
     assignedRep: String(c.accountManager ?? "Ops"),
@@ -43,7 +44,7 @@ function buildFollowUpRows(customers: AnyRecord[], contracts: AnyRecord[]): AnyR
 function buildSupportRows(comms: AnyRecord[]): AnyRecord[] {
   return comms.slice(0, 10).map((c, i) => ({
     id: c.id ?? i + 1,
-    ticketId: String(c.trackingCode ?? c.jobNumber ?? `TCK-${2200 + i}`),
+    ticketId: String(c.trackingCode ?? c.jobNumber ?? "—"),
     customer: String(c.customerName ?? "Customer"),
     shipment: String(c.jobNumber ?? "—"),
     issueType: String(c.messageType ?? "Communication"),
@@ -58,9 +59,9 @@ function buildSupportRows(comms: AnyRecord[]): AnyRecord[] {
 function buildRenewalRows(contracts: AnyRecord[]): AnyRecord[] {
   return contracts.map((c, i) => ({
     id: c.id ?? i + 1,
-    contractId: String(c.contractCode ?? c.contractId ?? `CON-${1001 + i}`),
+    contractId: String(c.contractCode ?? c.contractId ?? "—"),
     customer: String(c.customerName ?? c.customer ?? ""),
-    currentValue: Number(c.baseRate ?? c.currentValue ?? 0) * 1000,
+    currentValue: Number(c.currentValue ?? c.contractValue ?? c.baseRate ?? 0),
     renewalRisk: /risk|expiring/i.test(String(c.status ?? c.displayStatus ?? "")) ? "High" : "Low",
     expiryDate: String(c.expiryDate ?? c.endDate ?? "—"),
     renewalOwner: String(c.owner ?? c.renewalOwner ?? "Ops"),
@@ -69,16 +70,20 @@ function buildRenewalRows(contracts: AnyRecord[]): AnyRecord[] {
 }
 
 function buildUpsellRows(customers: AnyRecord[]): AnyRecord[] {
-  return customers.slice(0, 4).map((c, i) => ({
-    id: c.id ?? i + 1,
-    customer: String(c.name ?? c.companyName ?? ""),
-    currentService: String(c.industry ?? c.serviceType ?? "FTL"),
-    upsellOpportunity: String(i % 2 === 0 ? "Add Last Mile" : "Add Visibility"),
-    estimatedValue: Number(c.monthlyRevenue ?? c.revenueMtd ?? 0) * 0.18,
-    probability: /risk/i.test(String(c.status ?? "")) ? 48 : 72,
-    owner: String(c.accountManager ?? "Ops"),
-    status: /risk/i.test(String(c.status ?? "")) ? "Retention First" : "Qualified",
-  }));
+  return customers.slice(0, 6).map((c, i) => {
+    const service = String(c.industry ?? c.serviceType ?? "FTL");
+    return {
+      id: c.id ?? i + 1,
+      customer: String(c.name ?? c.companyName ?? ""),
+      currentService: service,
+      // Suggested cross-sell keyed off the real current service, not row parity.
+      upsellOpportunity: /ftl|full|truck/i.test(service) ? "Add Last Mile" : "Add Visibility",
+      accountMrr: Number(c.revenueMtd ?? c.monthlyRevenue ?? 0),
+      healthScore: Number(c.healthScore ?? c.slaHealthScore ?? 0),
+      owner: String(c.accountManager ?? "Ops"),
+      status: /risk/i.test(String(c.status ?? "")) ? "Retention First" : "Qualified",
+    };
+  });
 }
 
 const healthApi = () => Promise.all([customersApi.list(), contractsApi.list()]).then(([customers, contracts]) => buildHealthRows(customers as AnyRecord[], contracts as AnyRecord[]));
@@ -146,7 +151,7 @@ function AccountHealthTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                {["Customer", "Status", "Health Score", "SLA Compliance", "Est. NPS", "Active Contracts", "Account Manager"].map((h) => (
+                {["Customer", "Status", "Health Score", "SLA Compliance", "Active Contracts", "Account Manager"].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -158,7 +163,6 @@ function AccountHealthTab() {
                   <td className="px-4 py-3"><StatusBadge status={String(r.atRisk ? "At Risk" : r.status ?? "Active")} /></td>
                   <td className="px-4 py-3"><ScoreBar score={Number(r.healthScore ?? 0)} /></td>
                   <td className="px-4 py-3"><ScoreBar score={Number(r.slaCompliance ?? 0)} /></td>
-                  <td className="px-4 py-3 text-slate-700 font-medium">{Number(r.npsEstimate ?? 0) > 0 ? `+${String(r.npsEstimate)}` : String(r.npsEstimate ?? "—")}</td>
                   <td className="px-4 py-3 text-slate-700">{String(r.activeContracts ?? "—")}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{String(r.accountManager ?? "—")}</td>
                 </tr>
@@ -323,15 +327,16 @@ function RenewalsTab() {
 function UpsellTab() {
   const q = useQuery({ queryKey: ["account-health", "upsell"], queryFn: upsellApi });
   const rows = (q.data ?? []) as AnyRecord[];
-  const totalValue = rows.reduce((s, r) => s + Number(r.estimatedValue ?? 0), 0);
+  const totalMrr = rows.reduce((s, r) => s + Number(r.accountMrr ?? 0), 0);
+  const avgHealth = rows.length ? Math.round(rows.reduce((s, r) => s + Number(r.healthScore ?? 0), 0) / rows.length) : 0;
   if (q.isLoading) return <LoadingState />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         {[
-          { label: "Upsell Opportunities", val: rows.length },
-          { label: "Pipeline Value", val: `SAR ${(totalValue / 1_000_000).toFixed(2)}M`, accent: "text-teal-600" },
-          { label: "Avg Probability", val: `${Math.round(rows.reduce((s, r) => s + Number(r.probability ?? 0), 0) / (rows.length || 1))}%`, accent: "text-violet-600" },
+          { label: "Expansion Candidates", val: rows.length },
+          { label: "Total Account MRR", val: `SAR ${totalMrr.toLocaleString()}`, accent: "text-teal-600" },
+          { label: "Avg Health", val: rows.length ? String(avgHealth) : "—", accent: "text-violet-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-36">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -344,7 +349,7 @@ function UpsellTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                {["Customer", "Current Service", "Upsell Opportunity", "Est. Value", "Probability", "Owner", "Status"].map((h) => (
+                {["Customer", "Current Service", "Suggested Upsell", "Account MRR", "Health", "Owner", "Status"].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -355,8 +360,8 @@ function UpsellTab() {
                   <td className="px-4 py-3 font-medium text-slate-900">{String(r.customer ?? "—")}</td>
                   <td className="px-4 py-3 text-xs text-slate-600">{String(r.currentService ?? "—")}</td>
                   <td className="px-4 py-3 text-slate-700">{String(r.upsellOpportunity ?? "—")}</td>
-                  <td className="px-4 py-3 font-medium text-teal-700">SAR {Number(r.estimatedValue ?? 0).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-slate-700 font-medium">{String(r.probability ?? 0)}%</td>
+                  <td className="px-4 py-3 font-medium text-teal-700">SAR {Number(r.accountMrr ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3"><ScoreBar score={Number(r.healthScore ?? 0)} /></td>
                   <td className="px-4 py-3 text-xs text-slate-600">{String(r.owner ?? "—")}</td>
                   <td className="px-4 py-3"><StatusBadge status={String(r.status ?? "Identified")} /></td>
                 </tr>
@@ -391,13 +396,25 @@ const TABS: { key: Tab; label: string }[] = [
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+const TAB_QUERY_KEY: Record<Tab, unknown[]> = {
+  "health":     ["account-health"],
+  "follow-ups": ["account-health", "follow-ups"],
+  "tickets":    ["account-health", "support"],
+  "renewals":   ["account-health", "renewals"],
+  "upsell":     ["account-health", "upsell"],
+};
+
 export function AccountHealthPage() {
   const { pathname } = useLocation();
+  const qc = useQueryClient();
   const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "health";
   const [tab, setTab] = useState<Tab>(defaultTab);
 
+  // Export the currently displayed tab's real rows (read straight from the
+  // react-query cache) to CSV. No-op with a hint if the tab hasn't loaded yet.
   function exportActive() {
-    void 0;
+    const rows = (qc.getQueryData(TAB_QUERY_KEY[tab]) ?? []) as AnyRecord[];
+    if (rows.length) exportCsv(`account-${tab}`, rows);
   }
 
   const titles: Record<Tab, string> = {

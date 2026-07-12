@@ -14,12 +14,21 @@ async function fetchMessages(): Promise<AnyRecord[]> {
   return (res.data as AnyRecord[]) ?? [];
 }
 
-// Empty-state defaults — fallbacks for when the live backend returns no rows.
-// No synthetic/demo content ships here; the UI shows honest empty states.
-const EMPTY_MESSAGES: AnyRecord[] = [];
-const EMPTY_TEMPLATES: AnyRecord[] = [];
-const EMPTY_BROADCASTS: AnyRecord[] = [];
-const EMPTY_DRIVERS: string[] = [];
+async function fetchDrivers(): Promise<AnyRecord[]> {
+  const res = await apiClient.get("/api/drivers");
+  return (res.data as AnyRecord[]) ?? [];
+}
+
+// App-provided message presets the dispatcher can drop into the composer. This is
+// form configuration (the templates a fleet actually sends), not synthetic data.
+const MESSAGE_TEMPLATES = [
+  { id: "dispatch", category: "Operations", title: "Dispatch instructions", body: "Your next assignment is ready — please review the pickup and delivery details in the app and confirm acceptance." },
+  { id: "eta",      category: "Operations", title: "ETA request",           body: "Please share your current ETA for the active delivery, and notify dispatch immediately if you expect any delay." },
+  { id: "safety",   category: "Safety",     title: "Safety alert",          body: "Road/weather conditions have changed on your route. Reduce speed, keep a safe following distance, and check in at your next stop." },
+  { id: "hos",      category: "Compliance", title: "HOS reminder",          body: "You are approaching your Hours-of-Service limit. Plan your next rest break now and make sure your duty status is logged." },
+  { id: "pod",      category: "Customer",   title: "Proof of delivery",     body: "Please capture the signature/photo proof of delivery at drop-off and submit it in the app before leaving the site." },
+  { id: "docs",     category: "Compliance", title: "Document request",      body: "We need updated documents on file. Please upload your latest license and medical certificate in the driver app." },
+];
 
 async function sendMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages", payload); }
 async function broadcastMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages/broadcast", payload); }
@@ -50,6 +59,8 @@ export function DriverMessagingPage() {
 
   const messagesQ = useQuery({ queryKey: ["driver-messages"], queryFn: fetchMessages });
   const messages = (messagesQ.data ?? []) as AnyRecord[];
+  const driversQ = useQuery({ queryKey: ["drivers"], queryFn: fetchDrivers });
+  const drivers = (driversQ.data ?? []) as AnyRecord[];
 
   const sendMut = useMutation({
     mutationFn: sendMessage,
@@ -73,7 +84,8 @@ export function DriverMessagingPage() {
   const deliveredCount = messages.filter((m) => String(m.status) === "Delivered").length;
   const readCount      = messages.filter((m) => String(m.status) === "Read").length;
   const replyCount     = messages.reduce((s, m) => s + Number(m.replies ?? 0), 0);
-  const broadcastCount = messages.filter((m) => String(m.channel) === "Broadcast").length;
+  const broadcasts = messages.filter((m) => String(m.channel) === "Broadcast");
+  const broadcastCount = broadcasts.length;
 
   if (messagesQ.isLoading) return <LoadingState />;
   if (messagesQ.isError) return <ErrorState message="Unable to load driver messages." />;
@@ -126,9 +138,13 @@ export function DriverMessagingPage() {
             <h2 className="text-lg font-semibold text-slate-900">Compose Message</h2>
             <label>
               <span className="field-label">Recipient Driver</span>
-              <select className="field mt-1" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required>
-                <option value="">Select driver…</option>
-                {EMPTY_DRIVERS.map((d) => <option key={d}>{d}</option>)}
+              <select className="field mt-1" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required disabled={driversQ.isLoading}>
+                <option value="">{driversQ.isLoading ? "Loading drivers…" : drivers.length ? "Select driver…" : "No drivers found"}</option>
+                {drivers.map((d) => {
+                  const name = String(d.fullName ?? d.full_name ?? d.name ?? d.driverCode ?? d.id);
+                  const code = d.driverCode ?? d.driver_code;
+                  return <option key={String(d.id)} value={name}>{name}{code ? ` · ${String(code)}` : ""}</option>;
+                })}
               </select>
             </label>
             <label>
@@ -155,11 +171,11 @@ export function DriverMessagingPage() {
 
           <div className="panel p-5 space-y-4">
             <h3 className="section-title">Quick Templates</h3>
-            {EMPTY_TEMPLATES.slice(0, 6).map((t) => (
-              <button key={String(t.id)} type="button" className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-teal-300 hover:bg-teal-50"
-                onClick={() => setComposeForm((f) => ({ ...f, subject: String(t.title), body: String(t.body) }))}>
-                <p className="text-xs font-semibold text-slate-900">{String(t.title)}</p>
-                <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{String(t.body)}</p>
+            {MESSAGE_TEMPLATES.slice(0, 6).map((t) => (
+              <button key={t.id} type="button" className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-teal-300 hover:bg-teal-50"
+                onClick={() => setComposeForm((f) => ({ ...f, subject: t.title, body: t.body }))}>
+                <p className="text-xs font-semibold text-slate-900">{t.title}</p>
+                <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{t.body}</p>
               </button>
             ))}
           </div>
@@ -211,19 +227,18 @@ export function DriverMessagingPage() {
       {/* Templates */}
       {tab === "Templates" && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {EMPTY_TEMPLATES.map((t) => {
-            const catColor = TEMPLATE_CAT_COLOR[String(t.category)] ?? "border-slate-200 bg-slate-50 text-slate-600";
+          {MESSAGE_TEMPLATES.map((t) => {
+            const catColor = TEMPLATE_CAT_COLOR[t.category] ?? "border-slate-200 bg-slate-50 text-slate-600";
             return (
-              <div key={String(t.id)} className="panel flex flex-col gap-3 p-4">
+              <div key={t.id} className="panel flex flex-col gap-3 p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold text-slate-900">{String(t.title)}</p>
-                  <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${catColor}`}>{String(t.category)}</span>
+                  <p className="font-semibold text-slate-900">{t.title}</p>
+                  <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${catColor}`}>{t.category}</span>
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">{String(t.body)}</p>
-                <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100">
-                  <span className="text-xs text-slate-400">Used {Number(t.usageCount)}×</span>
+                <p className="text-xs text-slate-500 leading-relaxed">{t.body}</p>
+                <div className="flex items-center justify-end mt-auto pt-2 border-t border-slate-100">
                   <button type="button" className="text-xs font-medium text-teal-600 hover:underline"
-                    onClick={() => { setTab("Compose"); setComposeForm((f) => ({ ...f, subject: String(t.title), body: String(t.body) })); }}>
+                    onClick={() => { setTab("Compose"); setComposeForm((f) => ({ ...f, subject: t.title, body: t.body })); }}>
                     Use template →
                   </button>
                 </div>
@@ -250,12 +265,14 @@ export function DriverMessagingPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {EMPTY_BROADCASTS.map((b) => (
+                  {broadcasts.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-400">No broadcasts sent yet.</td></tr>
+                  ) : broadcasts.map((b) => (
                     <tr key={String(b.id)} className="transition hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">{String(b.subject)}</td>
-                      <td className="px-4 py-3 text-slate-500">{String(b.recipients)}</td>
+                      <td className="px-4 py-3 text-slate-500">{String(b.recipient)}</td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                      <td className="px-4 py-3 text-center text-slate-700">{Number(b.reads)}</td>
+                      <td className="px-4 py-3 text-center text-slate-300">—</td>
                       <td className="px-4 py-3 text-center">{Number(b.replies) > 0 ? <span className="text-teal-700 font-semibold">{Number(b.replies)}</span> : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{String(b.sentAt)}</td>
                     </tr>

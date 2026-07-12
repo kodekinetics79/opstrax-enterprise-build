@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, Plus, Route, Sparkles, X } from "lucide-react";
-import { AiInsightCard, DataTable, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { ClayStat } from "@/components/console";
 import { useRouteDetail, useRoutes, useRouteSummary } from "@/hooks/useBatch2";
 import { routesApi } from "@/services/routesApi";
@@ -35,6 +35,7 @@ export function RoutePlanningPage() {
     return matchesQuery && matchesStatus;
   }), [query, routes.data, status]);
   if (routes.isLoading) return <LoadingState />;
+  if (routes.isError) return <ErrorState message={(routes.error as Error)?.message} />;
   const s = summary.data || {};
 
   return <div className="fleet-console space-y-3">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Copy, KeyRound, MailCheck, RefreshCw, ScrollText, ShieldOff, ShieldCheck, Smartphone, UserPlus } from "lucide-react";
-import { PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm } from "./ui";
+import { PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm, PCheckbox, PBulkBar, useRowSelection } from "./ui";
 import { platformApi } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 import type { AnyRecord } from "@/types";
@@ -154,6 +154,26 @@ export function PlatformOperatorsPage() {
   const [confirmDisable, setConfirmDisable] = useState<AnyRecord | null>(null);
   const [mfaOpen, setMfaOpen] = useState(false);
 
+  const sel = useRowSelection((admins ?? []).map((a) => Number(a.id)));
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<"disable" | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+
+  const runBulk = async (action: string) => {
+    setBulkBusy(true); setBulkNotice(null);
+    try {
+      const res = await platformApi.bulkAdmins({ ids: sel.selectedIds.map(Number), action }) as AnyRecord;
+      const failed = Number(res.failed ?? 0);
+      setBulkNotice(`${action.replace(/-/g, " ")}: ${res.succeeded}/${res.requested} applied${failed > 0 ? ` · ${failed} blocked/failed` : ""}`);
+      sel.clear();
+      await reload();
+    } catch (e) {
+      setBulkNotice(e instanceof Error ? e.message : "Bulk action failed");
+    } finally {
+      setBulkBusy(false); setBulkConfirm(null);
+    }
+  };
+
   const reload = useCallback(async () => {
     try {
       setError(null);
@@ -228,6 +248,9 @@ export function PlatformOperatorsPage() {
       />
 
       {actionError && <PError message={actionError} />}
+      {bulkNotice && (
+        <div className="rounded-[14px] border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-700">{bulkNotice}</div>
+      )}
 
       {admins.length === 0 ? (
         <PEmpty title="No operators" subtitle="Invite the first platform operator to get started." />
@@ -237,6 +260,16 @@ export function PlatformOperatorsPage() {
             <table className="w-full min-w-[860px] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
+                  {canManage && (
+                    <th className="w-10 px-5 py-3">
+                      <PCheckbox
+                        checked={sel.allVisibleSelected}
+                        indeterminate={sel.someVisibleSelected}
+                        onToggle={() => sel.toggleAllVisible()}
+                        ariaLabel="Select all operators"
+                      />
+                    </th>
+                  )}
                   {["Operator", "Role", "Status", "Sessions", "Last login", canManage ? "Actions" : ""].filter(Boolean).map((h) => (
                     <th key={h} className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">{h}</th>
                   ))}
@@ -249,7 +282,12 @@ export function PlatformOperatorsPage() {
                   const isSelf = id === Number(session?.admin.id);
                   const busy = busyId === id;
                   return (
-                    <tr key={id} className="transition hover:bg-slate-50">
+                    <tr key={id} className={`transition hover:bg-slate-50 ${sel.isSelected(id) ? "bg-teal-50/50" : ""}`}>
+                      {canManage && (
+                        <td className="px-5 py-3.5">
+                          <PCheckbox checked={sel.isSelected(id)} onToggle={(shift) => sel.toggle(id, shift)} ariaLabel={`Select ${String(a.fullName ?? a.email ?? id)}`} />
+                        </td>
+                      )}
                       <td className="px-5 py-3.5">
                         <p className="font-semibold text-slate-900">{String(a.fullName ?? "")}{isSelf && <span className="ml-2 text-[10px] font-bold uppercase text-teal-700">you</span>}</p>
                         <p className="text-xs text-slate-500">{String(a.email ?? "")}</p>
@@ -327,6 +365,24 @@ export function PlatformOperatorsPage() {
           </div>
         </PCard>
       )}
+
+      {canManage && (
+        <PBulkBar count={sel.count} onClear={sel.clear}>
+          <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("enable")}>Enable</PButton>
+          <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("revoke-sessions")}>Revoke sessions</PButton>
+          <PButton variant="danger" disabled={bulkBusy} onClick={() => setBulkConfirm("disable")}>Disable</PButton>
+        </PBulkBar>
+      )}
+
+      <PConfirm
+        open={bulkConfirm === "disable"}
+        title={`Disable ${sel.count} operator${sel.count === 1 ? "" : "s"}?`}
+        body={<>The selected operators are signed out immediately and blocked from the control plane. Your own account, and the last active Super Admin, are protected and will be skipped.</>}
+        confirmLabel="Disable operators"
+        busy={bulkBusy}
+        onConfirm={() => runBulk("disable")}
+        onClose={() => setBulkConfirm(null)}
+      />
 
       {/* Invite drawer — also hosts the one-time link after invite/reset */}
       <PDrawer

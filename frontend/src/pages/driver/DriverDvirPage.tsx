@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ClipboardList, XCircle } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { ErrorState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type ChecklistResult = "pass" | "fail" | "na";
@@ -46,6 +47,18 @@ export function DriverDvirPage() {
     queryKey: ["driver", "dvir-templates"],
     queryFn: driverApi.dvirTemplates,
   });
+
+  // The driver's own vehicles, derived from their assignments — a real picker
+  // instead of asking a driver to type a numeric vehicle id.
+  const assignmentsQ = useQuery<AnyRecord[]>({ queryKey: ["driver", "assignments"], queryFn: driverApi.assignments });
+  const vehicles = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of assignmentsQ.data ?? []) {
+      const vid = a["vehicleId"] ?? a["vehicle_id"];
+      if (vid != null && vid !== "") map.set(String(vid), String(a["vehicleCode"] ?? a["vehicle_code"] ?? vid));
+    }
+    return [...map.entries()].map(([id, code]) => ({ id, code }));
+  }, [assignmentsQ.data]);
 
   const submitMut = useMutation({
     mutationFn: driverApi.submitDvir,
@@ -117,6 +130,8 @@ export function DriverDvirPage() {
     );
   }
 
+  if (templates.isError) return <ErrorState message={(templates.error as Error)?.message} />;
+
   return (
     <div className="space-y-4 p-4 pb-10">
       <div className="pt-2">
@@ -128,14 +143,25 @@ export function DriverDvirPage() {
       {!selectedTemplateId ? (
         <div className="space-y-4">
           <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">Vehicle ID</label>
-            <input
-              type="number"
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
-              placeholder="Vehicle ID (required)"
-              value={vehicleId}
-              onChange={e => setVehicleId(e.target.value)}
-            />
+            <label className="text-xs font-bold text-slate-500 block mb-1">Vehicle</label>
+            {vehicles.length > 0 ? (
+              <select
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                value={vehicleId}
+                onChange={e => setVehicleId(e.target.value)}
+              >
+                <option value="">Select vehicle…</option>
+                {vehicles.map(v => <option key={v.id} value={v.id}>{v.code}</option>)}
+              </select>
+            ) : (
+              <input
+                type="number"
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                placeholder={assignmentsQ.isLoading ? "Loading your vehicles…" : "Vehicle ID (no assigned vehicles found)"}
+                value={vehicleId}
+                onChange={e => setVehicleId(e.target.value)}
+              />
+            )}
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Inspection Type</label>
@@ -163,12 +189,14 @@ export function DriverDvirPage() {
           {/* Template selection */}
           <div>
             <p className="text-xs font-bold text-slate-500 mb-2">Select Checklist</p>
+            {!vehicleId && <p className="mb-2 text-xs font-medium text-amber-600">Select a vehicle above to start an inspection.</p>}
             {(templates.data ?? []).map(t => (
               <button
                 key={String(t["id"])}
                 type="button"
-                className="mb-2 flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-5 py-4 text-left text-sm font-semibold text-slate-800 shadow-sm active:bg-slate-50"
-                onClick={() => vehicleId ? selectTemplate(Number(t["id"])) : alert("Enter Vehicle ID first")}
+                disabled={!vehicleId}
+                className="mb-2 flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-5 py-4 text-left text-sm font-semibold text-slate-800 shadow-sm active:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => selectTemplate(Number(t["id"]))}
               >
                 <span>{String(t["templateName"] ?? t["id"])}</span>
                 <span className="text-xs text-slate-400">{String(t["inspectionType"] ?? "")}</span>

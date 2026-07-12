@@ -47,6 +47,7 @@ public static class PlatformAdminEndpoints
         app.MapPost("/api/platform/admins/{id:long}/enable",
             (HttpContext http, long id, Database db, CancellationToken ct) => SetStatus(http, id, new SetStatusRequest("Active"), db, ct));
         app.MapPost("/api/platform/admins/{id:long}/revoke-sessions", RevokeSessions);
+        app.MapPost("/api/platform/admins/bulk", BulkAdmins);
         app.MapPost("/api/platform/admins/{id:long}/reset-invite", ResetInvite);
         app.MapPost("/api/platform/admins/{id:long}/mfa/reset", ResetMfa);
 
@@ -57,6 +58,12 @@ public static class PlatformAdminEndpoints
         // Self-service MFA enrollment (authenticated platform principal).
         app.MapPost("/api/platform/auth/mfa/enroll", MfaEnroll);
         app.MapPost("/api/platform/auth/mfa/verify", MfaVerify);
+
+        // Self-service account management. These act ONLY on the caller's own record
+        // (principal.AdminId — never an id from the route/body), so any platform admin
+        // can manage their own password/profile without needing another admin.
+        app.MapPost("/api/platform/auth/change-password", ChangeOwnPassword);
+        app.MapPatch("/api/platform/auth/profile", UpdateOwnProfile);
     }
 
     internal sealed record CreateAdminRequest(string? Email, string? FullName, string? RoleKey);
@@ -293,24 +300,45 @@ public static class PlatformAdminEndpoints
         if (status is not ("Active" or "Disabled"))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["status must be 'Active' or 'Disabled'."]));
 
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
-
-        if (status == "Disabled" && id == principal!.AdminId)
-            return Results.BadRequest(ApiResponse<object>.Fail("You cannot disable your own account"));
-
-        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal!))
+        var (outcome, revoked) = await ApplyAdminStatusCoreAsync(principal!, http, id, status, db, ct);
+        return outcome switch
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+            AdminOpOutcome.NotFound => Results.NotFound(ApiResponse<object>.Fail("Operator not found")),
+            AdminOpOutcome.SelfDisable => Results.BadRequest(ApiResponse<object>.Fail("You cannot disable your own account")),
+            AdminOpOutcome.EscalationDenied => Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change a Super Admin's status"), statusCode: StatusCodes.Status403Forbidden),
+            AdminOpOutcome.LastSuperAdmin => Results.Conflict(ApiResponse<object>.Fail("Cannot disable the last active Platform Super Admin")),
+            _ => Results.Ok(ApiResponse<object>.Ok(new { id, status, sessionsRevoked = revoked },
+                status == "Disabled" ? "Operator disabled" : "Operator re-enabled")),
+        };
+    }
+
+    internal enum AdminOpOutcome { Ok, NotFound, SelfDisable, EscalationDenied, LastSuperAdmin }
+
+    // Core status transition for a single operator, shared by SetStatus and BulkAdmins
+    // so the security invariants — no self-disable, the Super-Admin escalation fence,
+    // and the last-active-Super-Admin protection — can NEVER differ between the
+    // single-row and bulk entry points. Writes the audit row on success/denial.
+    // The caller performs the platform:admins:manage authorization first.
+    private static async Task<(AdminOpOutcome Outcome, long Revoked)> ApplyAdminStatusCoreAsync(
+        PlatformEndpoints.PlatformPrincipal principal, HttpContext http, long id, string status, Database db, CancellationToken ct)
+    {
+        var target = await LoadAdminAsync(db, id, ct);
+        if (target is null) return (AdminOpOutcome.NotFound, 0);
+
+        if (status == "Disabled" && id == principal.AdminId)
+            return (AdminOpOutcome.SelfDisable, 0);
+
+        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
+        {
+            await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
                 new { attempted = "status_change", to = status }, ct);
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change a Super Admin's status"),
-                statusCode: StatusCodes.Status403Forbidden);
+            return (AdminOpOutcome.EscalationDenied, 0);
         }
 
         if (status == "Disabled" && IsSuperRole(target.RoleKey) &&
             target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
         {
-            return Results.Conflict(ApiResponse<object>.Fail("Cannot disable the last active Platform Super Admin"));
+            return (AdminOpOutcome.LastSuperAdmin, 0);
         }
 
         await db.ExecuteAsync("UPDATE platform_admins SET status=@s, updated_at=NOW() WHERE id=@id",
@@ -326,12 +354,74 @@ public static class PlatformAdminEndpoints
                 c => c.Parameters.AddWithValue("@id", id), ct);
         }
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http,
+        await PlatformEndpoints.AuditAsync(db, principal, http,
             status == "Disabled" ? "platform.admin.disabled" : "platform.admin.enabled",
             "PlatformAdmin", id, null, new { sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, status, sessionsRevoked = revoked },
-            status == "Disabled" ? "Operator disabled" : "Operator re-enabled"));
+        return (AdminOpOutcome.Ok, revoked);
     }
+
+    // Bulk operator operations — the Platform Operators table multi-select action bar.
+    // disable | enable | revoke-sessions. Every id runs through the same guarded core
+    // as its single-row counterpart; a blocked row (self, escalation, last-super-admin)
+    // is reported, not silently skipped, and never fails the whole batch.
+    private static async Task<IResult> BulkAdmins(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:admins:manage", ct);
+        if (error is not null) return error;
+
+        var action = (BulkStr(body, "action") ?? "").ToLowerInvariant();
+        if (action is not ("disable" or "enable" or "revoke-sessions"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", ["Use disable|enable|revoke-sessions"]));
+
+        var ids = BulkLongArray(body, "ids").Distinct().ToList();
+        if (ids.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["ids must be a non-empty array"]));
+        if (ids.Count > 200)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["A bulk action is limited to 200 operators at once"]));
+
+        var results = new List<object>();
+        var succeeded = 0;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                if (action == "revoke-sessions")
+                {
+                    var (ok, revoked, reason) = await RevokeAdminSessionsCoreAsync(principal!, http, id, db, ct);
+                    if (ok) { results.Add(new { id, ok = true, sessionsRevoked = revoked }); succeeded++; }
+                    else results.Add(new { id, ok = false, error = reason });
+                }
+                else
+                {
+                    var status = action == "disable" ? "Disabled" : "Active";
+                    var (outcome, revoked) = await ApplyAdminStatusCoreAsync(principal!, http, id, status, db, ct);
+                    if (outcome == AdminOpOutcome.Ok) { results.Add(new { id, ok = true, status, sessionsRevoked = revoked }); succeeded++; }
+                    else results.Add(new { id, ok = false, error = AdminOutcomeReason(outcome) });
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { id, ok = false, error = ex.Message });
+            }
+        }
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, $"platform.admin.bulk.{action}", "PlatformAdmin", null, null,
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, ids }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { action, requested = ids.Count, succeeded, failed = ids.Count - succeeded, results },
+            $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
+    }
+
+    private static string AdminOutcomeReason(AdminOpOutcome o) => o switch
+    {
+        AdminOpOutcome.NotFound => "Operator not found",
+        AdminOpOutcome.SelfDisable => "You cannot disable your own account",
+        AdminOpOutcome.EscalationDenied => "Only a Super Admin can change a Super Admin",
+        AdminOpOutcome.LastSuperAdmin => "Cannot disable the last active Super Admin",
+        _ => "Failed",
+    };
 
     // ── POST /api/platform/admins/{id}/revoke-sessions ───────────────────────
     internal static async Task<IResult> RevokeSessions(HttpContext http, long id, Database db, CancellationToken ct)
@@ -339,24 +429,59 @@ public static class PlatformAdminEndpoints
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:admins:manage", ct);
         if (error is not null) return error;
 
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
+        var (ok, revoked, reason) = await RevokeAdminSessionsCoreAsync(principal!, http, id, db, ct);
+        if (!ok)
+            return reason == "Operator not found"
+                ? Results.NotFound(ApiResponse<object>.Fail("Operator not found"))
+                : Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can revoke a Super Admin's sessions"), statusCode: StatusCodes.Status403Forbidden);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Sessions revoked"));
+    }
 
-        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal!))
+    // Core session-revocation for a single operator, shared by RevokeSessions and
+    // BulkAdmins. Preserves the Super-Admin escalation fence. The caller performs the
+    // platform:admins:manage authorization first.
+    private static async Task<(bool Ok, long Revoked, string Reason)> RevokeAdminSessionsCoreAsync(
+        PlatformEndpoints.PlatformPrincipal principal, HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        var target = await LoadAdminAsync(db, id, ct);
+        if (target is null) return (false, 0, "Operator not found");
+
+        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+            await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
                 new { attempted = "revoke_sessions" }, ct);
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can revoke a Super Admin's sessions"),
-                statusCode: StatusCodes.Status403Forbidden);
+            return (false, 0, "Only a Super Admin can revoke a Super Admin's sessions");
         }
 
         var revoked = await db.ScalarLongAsync(
             "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
             c => c.Parameters.AddWithValue("@id", id), ct);
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.sessions_revoked", "PlatformAdmin", id, null,
+        await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.sessions_revoked", "PlatformAdmin", id, null,
             new { sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = revoked }, "Sessions revoked"));
+        return (true, revoked, "");
+    }
+
+    // ── Local body accessors for BulkAdmins (JSON values arrive as JsonElement) ──
+    private static string? BulkStr(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var v) || v is null) return null;
+        if (v is System.Text.Json.JsonElement je)
+            return je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString() : je.ToString();
+        return v.ToString();
+    }
+
+    private static List<long> BulkLongArray(Dictionary<string, object?> body, string key)
+    {
+        var list = new List<long>();
+        if (!body.TryGetValue(key, out var v) || v is null) return list;
+        if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var e in je.EnumerateArray())
+            {
+                if (e.ValueKind == System.Text.Json.JsonValueKind.Number && e.TryGetInt64(out var n)) list.Add(n);
+                else if (e.ValueKind == System.Text.Json.JsonValueKind.String && long.TryParse(e.GetString(), out var sn)) list.Add(sn);
+            }
+        return list;
     }
 
     // ── POST /api/platform/admins/{id}/reset-invite ──────────────────────────
@@ -568,6 +693,89 @@ public static class PlatformAdminEndpoints
 
     // ── helpers ──────────────────────────────────────────────────────────────
     private sealed record AdminRow(long Id, string Email, string RoleKey, string Status);
+
+    internal sealed record ChangeOwnPasswordRequest(string? CurrentPassword, string? NewPassword);
+    internal sealed record UpdateOwnProfileRequest(string? FullName, string? Email);
+
+    // ── POST /api/platform/auth/change-password (self-service) ────────────────
+    // Verifies the caller's CURRENT password before setting a new one, then revokes
+    // every OTHER session for that admin (their current token stays valid). Gated on
+    // the baseline dashboard:view grant every admin holds — this is not a privileged
+    // operation because it can only ever touch principal.AdminId.
+    internal static async Task<IResult> ChangeOwnPassword(HttpContext http, ChangeOwnPasswordRequest request, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
+        if (error is not null) return error;
+
+        var current = request.CurrentPassword ?? "";
+        var next    = request.NewPassword ?? "";
+        if (next.Length < 12)
+            return Results.BadRequest(ApiResponse<object>.Fail("New password must be at least 12 characters"));
+        if (string.Equals(current, next, StringComparison.Ordinal))
+            return Results.BadRequest(ApiResponse<object>.Fail("New password must differ from the current password"));
+
+        var row = await db.QuerySingleAsync(
+            "SELECT password_hash FROM platform_admins WHERE id=@id AND status='Active'",
+            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+        if (row is null) return Results.Unauthorized();
+
+        if (!PlatformEndpoints.VerifyPassword(current, row["passwordHash"]?.ToString()))
+        {
+            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.password_change_denied", "PlatformAdmin", principal!.AdminId, null, null, ct);
+            return Results.BadRequest(ApiResponse<object>.Fail("Current password is incorrect"));
+        }
+
+        await db.ExecuteAsync(
+            "UPDATE platform_admins SET password_hash=@h, updated_at=NOW() WHERE id=@id",
+            c => { c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(next)); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
+
+        var revoked = await db.ExecuteAsync(
+            "DELETE FROM platform_sessions WHERE admin_id=@id AND session_token<>@tok",
+            c => { c.Parameters.AddWithValue("@id", principal!.AdminId); c.Parameters.AddWithValue("@tok", PlatformEndpoints.BearerToken(http)); }, ct);
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.password_changed", "PlatformAdmin", principal!.AdminId, null,
+            new { otherSessionsRevoked = revoked }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { changed = true, otherSessionsRevoked = revoked }, "Password updated"));
+    }
+
+    // ── PATCH /api/platform/auth/profile (self-service) ───────────────────────
+    internal static async Task<IResult> UpdateOwnProfile(HttpContext http, UpdateOwnProfileRequest request, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
+        if (error is not null) return error;
+
+        var fullName = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName!.Trim();
+        var email    = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email!.Trim().ToLowerInvariant();
+        if (fullName is null && email is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Nothing to update"));
+        if (email is not null && (!email.Contains('@') || email.Length < 5))
+            return Results.BadRequest(ApiResponse<object>.Fail("A valid email is required"));
+
+        if (email is not null)
+        {
+            var taken = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM platform_admins WHERE LOWER(email)=@e AND id<>@id",
+                c => { c.Parameters.AddWithValue("@e", email); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
+            if (taken > 0) return Results.Conflict(ApiResponse<object>.Fail("That email is already in use"));
+        }
+
+        await db.ExecuteAsync(
+            @"UPDATE platform_admins
+              SET full_name = COALESCE(@n, full_name),
+                  email     = COALESCE(@e, email),
+                  updated_at = NOW()
+              WHERE id=@id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@n", (object?)fullName ?? DBNull.Value);
+                c.Parameters.AddWithValue("@e", (object?)email ?? DBNull.Value);
+                c.Parameters.AddWithValue("@id", principal!.AdminId);
+            }, ct);
+
+        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.profile_updated", "PlatformAdmin", principal!.AdminId, null,
+            new { fullName, emailChanged = email is not null }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { updated = true }, "Profile updated"));
+    }
 
     private static async Task<AdminRow?> LoadAdminAsync(Database db, long id, CancellationToken ct)
     {

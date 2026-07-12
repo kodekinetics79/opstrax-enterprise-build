@@ -454,6 +454,46 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "driver:self");
             return denied is not null ? Task.FromResult(denied) : DriverSubmitProof(http, id, body, db, audit, ct);
         });
+        // Driver-scoped POD evidence upload — photo or signature captured on the
+        // driver device, stored to durable object storage, scoped to the driver's
+        // own assignment. Returns a persistable reference + a short-lived signed URL
+        // for immediate preview. The reference is recorded on the proof at submit.
+        app.MapPost("/api/driver/assignments/{id:long}/proof/upload", async (HttpContext http, long id, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "driver:self");
+            if (denied is not null) return denied;
+            var companyId = GetCompanyId(http);
+            var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+            if (driverId < 0) return DriverIdentityNotFound();
+            if (!await AssignmentBelongsToDriverAsync(id, driverId, companyId, db, ct))
+                return Results.NotFound(ApiResponse<object>.Fail("Assignment not found or does not belong to you"));
+            if (!http.Request.HasFormContentType)
+                return Results.BadRequest(ApiResponse<object>.Fail("multipart/form-data with a 'file' field is required"));
+
+            var form = await http.Request.ReadFormAsync(ct);
+            var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+            if (file is null || file.Length == 0) return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
+            var kind = form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo";
+
+            Opstrax.Api.Storage.FileStorageService.UploadResult stored;
+            try
+            {
+                await using var s = file.OpenReadStream();
+                stored = await files.UploadAsync(companyId, "proof", file.FileName, file.ContentType ?? "application/octet-stream", s, ct);
+            }
+            catch (ArgumentException ex)
+            {
+                LogSafeEndpointFailure(http, ex, "driver.proof.upload");
+                return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
+            }
+
+            var resolved = await files.ResolveAsync(stored.Reference, TimeSpan.FromMinutes(15), ct);
+            await audit.LogAsync(http, "driver.proof.artifact_uploaded", "DispatchAssignment", id,
+                System.Text.Json.JsonSerializer.Serialize(new { kind, size = stored.Size, contentType = stored.ContentType }), ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(
+                new { reference = stored.Reference, url = resolved.SignedUrl ?? resolved.LegacyUrl, kind, size = stored.Size, contentType = stored.ContentType },
+                "Evidence uploaded"));
+        }).DisableAntiforgery();
         // DVIR templates are safe to read for any authenticated user
         app.MapGet("/api/driver/dvir/templates", DriverDvirTemplates);
         app.MapPost("/api/driver/dvir", (HttpContext http, MaintInspectionBody body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) =>
@@ -11300,7 +11340,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@type",  ruleType);
                 c.Parameters.AddWithValue("@val",   body.ThresholdValue);
                 c.Parameters.AddWithValue("@sev",   body.Severity ?? "High");
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
                 c.Parameters.AddWithValue("@notes", body.Notes ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uid",   userId);
             }, ct);
@@ -12359,7 +12399,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@type",  ruleType);
                 c.Parameters.AddWithValue("@val",   body.ThresholdValue);
                 c.Parameters.AddWithValue("@sev",   body.Severity ?? "High");
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
                 c.Parameters.AddWithValue("@notes", body.Notes ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uid",   userId);
             }, ct);
@@ -12714,7 +12754,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@itype",   body.InspectionType ?? "pre_trip");
                 c.Parameters.AddWithValue("@status",  status);
                 c.Parameters.AddWithValue("@defects", body.ChecklistItems?.Count(i => i.Result == "fail") ?? 0);
-                c.Parameters.AddWithValue("@safe",    hasCritical ? 0 : 1);
+                c.Parameters.AddWithValue("@safe",    !hasCritical);
                 c.Parameters.AddWithValue("@odo",     body.OdometerMiles ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@hrs",     body.EngineHours   ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@notes",   body.Notes ?? (object)DBNull.Value);
@@ -12758,7 +12798,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                             c.Parameters.AddWithValue("@cat",  item.Category ?? "general");
                             c.Parameters.AddWithValue("@desc", item.ItemName ?? "DVIR defect");
                             c.Parameters.AddWithValue("@sev",  CapitalizeSeverity(item.Severity));
-                            c.Parameters.AddWithValue("@oos",  isOos ? 1 : 0);
+                            c.Parameters.AddWithValue("@oos",  isOos);
                         }, ct);
 
                     // Critical defect — immediately mark vehicle out of service.
@@ -13157,7 +13197,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@warn",  body.WarningThresholdPct ?? 10);
                 c.Parameters.AddWithValue("@pri",   body.Priority ?? "Medium");
                 c.Parameters.AddWithValue("@cost",  body.EstimatedCost ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@ena",   body.Enabled ? 1 : 0);
+                c.Parameters.AddWithValue("@ena",   body.Enabled);
             }, ct);
 
         await audit.LogAsync(http, "pm_rule.upserted", "PmRule", 0, $"type:{ruleType}", ct);
@@ -15208,7 +15248,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@tte",     body.TryGetValue("timeToEscalateMinutes", out var t) && t is not null ? Convert.ToInt32(t) : DBNull.Value);
                 c.Parameters.AddWithValue("@ri",      body.TryGetValue("repeatIntervalMinutes", out var ri) && ri is not null ? Convert.ToInt32(ri) : DBNull.Value);
                 c.Parameters.AddWithValue("@maxR",    body.TryGetValue("maxRepeats", out var mr) && mr is not null ? Convert.ToInt32(mr) : DBNull.Value);
-                c.Parameters.AddWithValue("@enabled", body.TryGetValue("enabled", out var en) && en is not null ? (Convert.ToBoolean(en) ? 1 : 0) : DBNull.Value);
+                c.Parameters.AddWithValue("@enabled", body.TryGetValue("enabled", out var en) && en is not null ? (object)Convert.ToBoolean(en) : DBNull.Value);
             }, ct);
 
         await audit.LogAsync(http, "escalation_rule.updated", "EscalationRule", id, ct: ct);
@@ -15347,7 +15387,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var rows = await db.QueryAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.actual_delivery_at, da.accepted_at,
-                     da.exception_count, da.previous_status,
+                     da.exception_count, da.previous_status, da.vehicle_id,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address,
                      v.vehicle_code, v.availability_status

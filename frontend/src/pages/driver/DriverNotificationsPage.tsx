@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Bell, CheckCheck, Eye } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notificationsApi } from "@/services/notificationsApi";
+import { ErrorState } from "@/components/ui";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -29,7 +30,7 @@ export function DriverNotificationsPage() {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  const { data = [], isLoading } = useQuery({
+  const { data = [], isLoading, isError, error } = useQuery({
     queryKey: ["notifications"],
     queryFn:  notificationsApi.list,
     refetchInterval: 30_000,
@@ -47,6 +48,8 @@ export function DriverNotificationsPage() {
 
   const rows = data as AnyRecord[];
   const unreadCount = rows.filter((n) => String(n.status) === "unread").length;
+
+  if (isError) return <ErrorState message={(error as Error)?.message} />;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
