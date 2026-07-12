@@ -11386,9 +11386,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            endpointUrl      = row.TryGetValue("endpoint_url", out var url) ? url : null,
-            events           = row.TryGetValue("events", out var ev) ? ev : Array.Empty<string>(),
-            enabled          = row.TryGetValue("enabled", out var en) && en is bool b ? b : true,
+            endpointUrl      = row.GetValueOrDefault("endpointUrl") as string,
+            events           = ParseJsonStringArray(row.GetValueOrDefault("events")),
+            enabled          = row.GetValueOrDefault("enabled") is bool b ? b : true,
             secretConfigured = true,
         }, "Webhook settings"));
     }
@@ -11535,10 +11535,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            prefs = row?.GetValueOrDefault("prefs"),
-            updatedAt = row?.GetValueOrDefault("updated_at"),
+            prefs = ParseJsonElementDeep(row?.GetValueOrDefault("prefs")),
+            updatedAt = row?.GetValueOrDefault("updatedAt"),
         }, "Notification preferences"));
     }
+
+    // Unlike ParseJsonObject (flat, stringifies nested values), this recursively
+    // converts to plain CLR types so nested objects (e.g. per-channel toggle maps)
+    // serialize back out as real JSON objects, not escaped strings.
+    private static object? ParseJsonElementDeep(object? raw)
+    {
+        if (raw is null) return null;
+        try
+        {
+            var json = raw as string ?? raw.ToString();
+            if (string.IsNullOrWhiteSpace(json) || json == "null") return null;
+            return ConvertJsonElement(System.Text.Json.JsonDocument.Parse(json).RootElement);
+        }
+        catch { return null; }
+    }
+
+    private static object? ConvertJsonElement(System.Text.Json.JsonElement el) => el.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.Object => el.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value)),
+        System.Text.Json.JsonValueKind.Array  => el.EnumerateArray().Select(ConvertJsonElement).ToList(),
+        System.Text.Json.JsonValueKind.Number => el.TryGetInt64(out var l) ? l : el.GetDouble(),
+        System.Text.Json.JsonValueKind.True   => true,
+        System.Text.Json.JsonValueKind.False  => false,
+        System.Text.Json.JsonValueKind.Null   => null,
+        _ => el.GetString(),
+    };
 
     // ── PUT /api/settings/notification-prefs ────────────────────────────────────
     private static async Task<IResult> NotificationPrefsPut(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)

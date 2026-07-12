@@ -151,10 +151,18 @@ BEGIN
     END IF;
 END $$;
 
-GRANT SELECT, INSERT, UPDATE ON tenant_api_keys         TO opstrax_app;
-GRANT SELECT, INSERT, UPDATE ON tenant_webhook_settings TO opstrax_app;
-GRANT SELECT, INSERT, UPDATE ON company_profile         TO opstrax_app;
-GRANT SELECT, INSERT, UPDATE ON user_notification_prefs TO opstrax_app;
-GRANT USAGE, SELECT ON SEQUENCE tenant_api_keys_id_seq TO opstrax_app;
+-- opstrax_app is only provisioned once stage20 is activated on a given
+-- environment (see stage19's dormancy note); skip the grants rather than
+-- fail the whole migration where that role doesn't exist yet.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_app') THEN
+        GRANT SELECT, INSERT, UPDATE ON tenant_api_keys         TO opstrax_app;
+        GRANT SELECT, INSERT, UPDATE ON tenant_webhook_settings TO opstrax_app;
+        GRANT SELECT, INSERT, UPDATE ON company_profile         TO opstrax_app;
+        GRANT SELECT, INSERT, UPDATE ON user_notification_prefs TO opstrax_app;
+        GRANT USAGE, SELECT ON SEQUENCE tenant_api_keys_id_seq TO opstrax_app;
+    END IF;
+END $$;
 
 COMMIT;

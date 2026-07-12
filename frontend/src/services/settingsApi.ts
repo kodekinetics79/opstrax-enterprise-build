@@ -16,4 +16,7 @@ export const settingsApi = {
 
   notificationPrefsGet: () => unwrap<AnyRecord>(apiClient.get("/api/settings/notification-prefs")),
   notificationPrefsPut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/settings/notification-prefs", body)),
+
+  securitySettingsGet: () => unwrap<AnyRecord>(apiClient.get("/api/security/settings")),
+  securitySettingsPut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/security/settings", body)),
 };

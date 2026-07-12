@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { Bell, Building2, Check, Code2, ExternalLink, Globe, Key, Languages, Lock, Mail, Phone, Settings, Shield, Webhook } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, Building2, Check, Code2, Copy, ExternalLink, Globe, Key, Languages, Lock, Mail, Phone, RefreshCw, Settings, Shield, Trash2, Webhook } from "lucide-react";
 import { useLocalizationSettings, useUpdateLocaleSettings, useUpdateUserPreferences } from "@/hooks/useBatch6";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,6 +8,7 @@ import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useI18n, LOCALES } from "@/i18n";
 import type { LocaleCode } from "@/i18n";
 import type { AnyRecord } from "@/types";
+import { settingsApi } from "@/services/settingsApi";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
 const TIMEZONES = [
@@ -101,6 +103,8 @@ export function SettingsPage() {
   const hasPermission = useHasPermission();
   const canUpdateSettings = hasPermission(PERMISSIONS.SETTINGS_UPDATE);
 
+  const queryClient = useQueryClient();
+
   const settingsQ         = useLocalizationSettings();
   const updateSettingsMut = useUpdateLocaleSettings();
   const updatePrefsMut    = useUpdateUserPreferences();
@@ -120,34 +124,128 @@ export function SettingsPage() {
   });
   const [localeSaved, setLocaleSaved] = useState(false);
 
+  // ── Company profile — real, persisted per tenant ──────────────────────────
+  const companyProfileQ = useQuery({ queryKey: ["settings-company-profile"], queryFn: settingsApi.companyProfileGet });
   const [companyForm, setCompanyForm] = useState({
-    companyName:  "OpsTrax Logistics",
-    addressLine1: "1234 Fleet Drive",
-    city:         "Manassas",
-    state:        "VA",
-    country:      "US",
-    phone:        "+1 571 430 5333",
-    contactEmail: "info@kodekinetics.com",
-    website:      "www.kodekinetics.com",
+    displayName: "", addressLine1: "", city: "", state: "", country: "US",
+    phone: "", contactEmail: "", website: "",
+  });
+  useEffect(() => {
+    if (!companyProfileQ.data) return;
+    const p = companyProfileQ.data as AnyRecord;
+    setCompanyForm({
+      displayName:  String(p.displayName ?? ""),
+      addressLine1: String(p.addressLine1 ?? ""),
+      city:         String(p.city ?? ""),
+      state:        String(p.state ?? ""),
+      country:      String(p.country ?? "US"),
+      phone:        String(p.phone ?? ""),
+      contactEmail: String(p.contactEmail ?? ""),
+      website:      String(p.website ?? ""),
+    });
+  }, [companyProfileQ.data]);
+  const companyProfileMut = useMutation({
+    mutationFn: () => settingsApi.companyProfilePut(companyForm),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-company-profile"] }),
   });
   const [companySaved, setCompanySaved] = useState(false);
+  function saveCompany() {
+    companyProfileMut.mutate(undefined, {
+      onSuccess: () => { setCompanySaved(true); setTimeout(() => setCompanySaved(false), 2500); },
+    });
+  }
 
+  // ── Notification preferences — real, per-user ─────────────────────────────
+  const notifPrefsQ = useQuery({ queryKey: ["settings-notification-prefs"], queryFn: settingsApi.notificationPrefsGet });
   const [notifPrefs, setNotifPrefs] = useState(buildDefaultNotifPrefs());
+  useEffect(() => {
+    const prefs = notifPrefsQ.data?.prefs as Record<string, Record<Channel, boolean>> | undefined;
+    if (prefs && Object.keys(prefs).length > 0) setNotifPrefs(prefs);
+  }, [notifPrefsQ.data]);
+  const notifPrefsMut = useMutation({
+    mutationFn: () => settingsApi.notificationPrefsPut(notifPrefs),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-notification-prefs"] }),
+  });
   const [notifSaved, setNotifSaved] = useState(false);
+  function saveNotif() {
+    notifPrefsMut.mutate(undefined, {
+      onSuccess: () => { setNotifSaved(true); setTimeout(() => setNotifSaved(false), 2500); },
+    });
+  }
 
+  // ── Security policy — real, tenant-scoped (/api/security/settings) ───────
+  const securitySettingsQ = useQuery({ queryKey: ["settings-security"], queryFn: settingsApi.securitySettingsGet });
   const [securityForm, setSecurityForm] = useState({
     sessionTimeoutMin: "60",
     requireMfa:        false,
-    ipAllowlist:       "",
-    auditRetentionDays:"365",
+    auditRetentionDays:"90",
+  });
+  useEffect(() => {
+    if (!securitySettingsQ.data) return;
+    const s = securitySettingsQ.data as AnyRecord;
+    setSecurityForm({
+      sessionTimeoutMin:  String(s.sessionIdleTimeoutMinutes ?? "60"),
+      requireMfa:         Boolean(s.mfaRequired),
+      auditRetentionDays: String(s.auditRetentionDays ?? "90"),
+    });
+  }, [securitySettingsQ.data]);
+  const securitySettingsMut = useMutation({
+    mutationFn: () => settingsApi.securitySettingsPut({
+      sessionIdleTimeoutMinutes: Number(securityForm.sessionTimeoutMin) || 60,
+      mfaRequired: securityForm.requireMfa,
+      auditRetentionDays: Number(securityForm.auditRetentionDays) || 90,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-security"] }),
   });
   const [securitySaved, setSecuritySaved] = useState(false);
+  function saveSecurity() {
+    securitySettingsMut.mutate(undefined, {
+      onSuccess: () => { setSecuritySaved(true); setTimeout(() => setSecuritySaved(false), 2500); },
+    });
+  }
 
-  const [apiKey] = useState(() => `opstrax_${Math.random().toString(36).slice(2,12)}_${Math.random().toString(36).slice(2,12)}`);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [webhookEvents, setWebhookEvents] = useState<string[]>(["shipment.created", "alert.triggered"]);
-  const [apiSaved, setApiSaved] = useState(false);
+  // ── API keys — real, hashed server-side; raw value shown once on creation ─
+  const apiKeysQ = useQuery({ queryKey: ["settings-api-keys"], queryFn: settingsApi.apiKeysList });
+  const [justCreatedKey, setJustCreatedKey] = useState<{ apiKey: string; keyPrefix: string } | null>(null);
   const [apiKeyCopied, setApiKeyCopied] = useState(false);
+  const createApiKeyMut = useMutation({
+    mutationFn: () => settingsApi.apiKeyCreate(),
+    onSuccess: (data) => {
+      setJustCreatedKey({ apiKey: String(data.apiKey), keyPrefix: String(data.keyPrefix) });
+      void queryClient.invalidateQueries({ queryKey: ["settings-api-keys"] });
+    },
+  });
+  const revokeApiKeyMut = useMutation({
+    mutationFn: (id: number) => settingsApi.apiKeyRevoke(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-api-keys"] }),
+  });
+  function copyApiKey(value: string) {
+    void navigator.clipboard.writeText(value);
+    setApiKeyCopied(true);
+    setTimeout(() => setApiKeyCopied(false), 2000);
+  }
+
+  // ── Webhook — real, persisted per tenant ──────────────────────────────────
+  const webhookQ = useQuery({ queryKey: ["settings-webhook"], queryFn: settingsApi.webhookGet });
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookEvents, setWebhookEvents] = useState<string[]>([]);
+  useEffect(() => {
+    if (!webhookQ.data) return;
+    const w = webhookQ.data as AnyRecord;
+    setWebhookUrl(String(w.endpointUrl ?? ""));
+    setWebhookEvents(Array.isArray(w.events) ? (w.events as string[]) : []);
+  }, [webhookQ.data]);
+  const webhookMut = useMutation({
+    mutationFn: () => settingsApi.webhookPut({ endpointUrl: webhookUrl || null, events: webhookEvents }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-webhook"] }),
+  });
+  const rotateWebhookSecretMut = useMutation({ mutationFn: settingsApi.webhookRotateSecret });
+  const [apiSaved, setApiSaved] = useState(false);
+  function saveApi() {
+    webhookMut.mutate(undefined, {
+      onSuccess: () => { setApiSaved(true); setTimeout(() => setApiSaved(false), 2500); },
+    });
+  }
 
   function saveLocale() {
     updateSettingsMut.mutate({ ...localeForm });
@@ -155,32 +253,6 @@ export function SettingsPage() {
     setLocale(localeForm.defaultLanguage as LocaleCode);
     setLocaleSaved(true);
     setTimeout(() => setLocaleSaved(false), 2500);
-  }
-
-  function saveCompany() {
-    setCompanySaved(true);
-    setTimeout(() => setCompanySaved(false), 2500);
-  }
-
-  function saveNotif() {
-    setNotifSaved(true);
-    setTimeout(() => setNotifSaved(false), 2500);
-  }
-
-  function saveSecurity() {
-    setSecuritySaved(true);
-    setTimeout(() => setSecuritySaved(false), 2500);
-  }
-
-  function saveApi() {
-    setApiSaved(true);
-    setTimeout(() => setApiSaved(false), 2500);
-  }
-
-  function copyApiKey() {
-    void navigator.clipboard.writeText(apiKey);
-    setApiKeyCopied(true);
-    setTimeout(() => setApiKeyCopied(false), 2000);
   }
 
   function toggleWebhookEvent(evt: string) {
@@ -244,7 +316,7 @@ export function SettingsPage() {
           <div className="panel space-y-4">
             <SectionHeader icon={Building2} title="Company Profile" description="Display name, contact info and business address" />
             <div className="space-y-3">
-              <TextField label="Company Name"    value={companyForm.companyName}  onChange={(v) => setCompanyForm((f) => ({ ...f, companyName: v }))} />
+              <TextField label="Company Name"    value={companyForm.displayName}  onChange={(v) => setCompanyForm((f) => ({ ...f, displayName: v }))} />
               <TextField label="Address"         value={companyForm.addressLine1} onChange={(v) => setCompanyForm((f) => ({ ...f, addressLine1: v }))} />
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -266,7 +338,7 @@ export function SettingsPage() {
               <TextField label="Email"    value={companyForm.contactEmail} onChange={(v) => setCompanyForm((f) => ({ ...f, contactEmail: v }))} type="email" />
               <TextField label="Website"  value={companyForm.website}      onChange={(v) => setCompanyForm((f) => ({ ...f, website: v }))} />
             </div>
-            <SaveRow onSave={saveCompany} isPending={false} saved={companySaved} canSave={canUpdateSettings} />
+            <SaveRow onSave={saveCompany} isPending={companyProfileMut.isPending} saved={companySaved} canSave={canUpdateSettings} />
           </div>
 
           {/* Language */}
@@ -396,7 +468,7 @@ export function SettingsPage() {
               </tbody>
             </table>
           </div>
-          <SaveRow onSave={saveNotif} isPending={false} saved={notifSaved} canSave={canUpdateSettings} />
+          <SaveRow onSave={saveNotif} isPending={notifPrefsMut.isPending} saved={notifSaved} canSave={canUpdateSettings} />
         </div>
       )}
 
@@ -404,13 +476,12 @@ export function SettingsPage() {
       {tab === "security" && (
         <div className="flex flex-col gap-5">
           <div className="panel space-y-4">
-            <SectionHeader icon={Lock} title="Session & Access" description="Idle timeout and IP restriction policy" />
+            <SectionHeader icon={Lock} title="Session & Access" description="Idle timeout and audit log retention policy" />
             <div className="space-y-3">
               <SelectField label="Session Timeout"    value={securityForm.sessionTimeoutMin} onChange={(v) => setSecurityForm((f) => ({ ...f, sessionTimeoutMin: v }))} options={["15","30","60","120","240"]} />
-              <TextField  label="IP Allow-list (CIDR)" value={securityForm.ipAllowlist}       onChange={(v) => setSecurityForm((f) => ({ ...f, ipAllowlist: v }))}       placeholder="0.0.0.0/0 (allow all)" />
               <TextField  label="Audit Retention (days)" value={securityForm.auditRetentionDays} onChange={(v) => setSecurityForm((f) => ({ ...f, auditRetentionDays: v }))} type="number" />
             </div>
-            <SaveRow onSave={saveSecurity} isPending={false} saved={securitySaved} canSave={canUpdateSettings} />
+            <SaveRow onSave={saveSecurity} isPending={securitySettingsMut.isPending} saved={securitySaved} canSave={canUpdateSettings} />
           </div>
 
           <div className="panel space-y-4">
@@ -434,7 +505,7 @@ export function SettingsPage() {
                 ["User",     String(session?.user?.fullName ?? session?.user?.email ?? "—")],
                 ["Role",     String(session?.role ?? "—")],
                 ["Tenant",   String(session?.company?.name ?? session?.company?.id ?? "—")],
-                ["Session",  "Active · JWT"],
+                ["Session",  "Active · Server-verified session token"],
               ].map(([k, v]) => (
                 <div key={k} className="rounded-lg bg-slate-50 border border-slate-200 p-3">
                   <p className="text-slate-500 font-medium">{k}</p>
@@ -450,32 +521,80 @@ export function SettingsPage() {
       {tab === "api" && (
         <div className="flex flex-col gap-5">
           <div className="panel space-y-4">
-            <SectionHeader icon={Key} title="API Key" description="Use this key to authenticate server-to-server API calls" />
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-700 overflow-x-auto select-all">
-                {apiKey}
-              </code>
+            <SectionHeader icon={Key} title="API Keys" description="Server-to-server credentials, hashed at rest — the raw key is shown once" />
+
+            {justCreatedKey && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                <p className="text-xs font-semibold text-amber-800">New key created — copy it now, it will not be shown again.</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 overflow-x-auto select-all">
+                    {justCreatedKey.apiKey}
+                  </code>
+                  <button type="button" className="btn-secondary text-xs shrink-0" onClick={() => copyApiKey(justCreatedKey.apiKey)}>
+                    {apiKeyCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+                  </button>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 font-semibold mb-1.5">Authentication Header</p>
+                  <code className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-600">
+                    Authorization: Bearer {justCreatedKey.apiKey}
+                  </code>
+                </div>
+                <button type="button" className="text-xs font-semibold text-amber-800 underline" onClick={() => setJustCreatedKey(null)}>
+                  I've saved this key
+                </button>
+              </div>
+            )}
+
+            {apiKeysQ.isLoading ? (
+              <p className="text-xs text-slate-400">Loading keys…</p>
+            ) : (apiKeysQ.data ?? []).length === 0 ? (
+              <p className="text-xs text-slate-500">No API keys yet. Generate one to authenticate server-to-server calls.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+                {(apiKeysQ.data as AnyRecord[]).map((k) => (
+                  <div key={String(k.id)} className="flex items-center justify-between px-3 py-2.5 text-xs">
+                    <div>
+                      <p className="font-mono text-slate-700">{String(k.keyPrefix)}_••••{String(k.lastFour)}</p>
+                      <p className="text-slate-400 mt-0.5">
+                        {k.label ? `${k.label} · ` : ""}
+                        Created {k.createdAt ? new Date(String(k.createdAt)).toLocaleDateString() : "—"}
+                        {k.revokedAt ? " · Revoked" : ""}
+                      </p>
+                    </div>
+                    {!k.revokedAt && canUpdateSettings && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-rose-600 hover:text-rose-700 font-semibold"
+                        onClick={() => revokeApiKeyMut.mutate(Number(k.id))}
+                        disabled={revokeApiKeyMut.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Revoke
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {canUpdateSettings && (
               <button
                 type="button"
-                className="btn-secondary text-xs shrink-0"
-                onClick={copyApiKey}
+                className="rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm px-4 py-2 transition disabled:opacity-50"
+                onClick={() => createApiKeyMut.mutate()}
+                disabled={createApiKeyMut.isPending}
               >
-                {apiKeyCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : "Copy"}
+                {createApiKeyMut.isPending ? "Generating…" : "Generate New Key"}
               </button>
-            </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-              Keep this key secret. Treat it like a password — do not expose it in client-side code or public repositories. Rotate immediately if compromised.
-            </div>
-            <div className="pt-1">
-              <p className="text-xs text-slate-500 font-semibold mb-1.5">Authentication Header</p>
-              <code className="block rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-600">
-                Authorization: Bearer {apiKey.slice(0, 20)}…
-              </code>
+            )}
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              Keep keys secret. Treat them like a password — do not expose them in client-side code or public repositories. Revoke immediately if compromised.
             </div>
           </div>
 
           <div className="panel space-y-4">
-            <SectionHeader icon={Webhook} title="Webhooks" description="Receive real-time push events to your endpoint when platform events occur" />
+            <SectionHeader icon={Webhook} title="Webhooks" description="Configure the endpoint and events your integration subscribes to" />
             <div className="space-y-3">
               <div>
                 <label className="text-sm text-slate-600">Endpoint URL</label>
@@ -505,15 +624,31 @@ export function SettingsPage() {
                 </div>
               </div>
             </div>
-            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-              <p className="text-xs font-semibold text-slate-600 mb-1.5">Delivery guarantees</p>
-              <ul className="text-xs text-slate-500 space-y-0.5 list-disc list-inside">
-                <li>At-least-once delivery with exponential backoff retry</li>
-                <li>Events signed with HMAC-SHA256 in <code className="font-mono">X-OpsTrax-Signature</code> header</li>
-                <li>30-day event log available via <code className="font-mono">GET /api/webhooks/events</code></li>
-              </ul>
+
+            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 flex items-center justify-between gap-3">
+              <div className="text-xs text-slate-600">
+                Signing secret: {webhookQ.data?.secretConfigured ? <span className="font-semibold text-emerald-700">configured</span> : <span className="text-slate-400">not yet generated</span>}
+                <p className="text-slate-400 mt-0.5">Payloads are signed with HMAC-SHA256 in the <code className="font-mono">X-OpsTrax-Signature</code> header.</p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary text-xs shrink-0 flex items-center gap-1"
+                onClick={() => rotateWebhookSecretMut.mutate()}
+                disabled={!canUpdateSettings || rotateWebhookSecretMut.isPending}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Rotate Secret
+              </button>
             </div>
-            <SaveRow onSave={saveApi} isPending={false} saved={apiSaved} canSave={canUpdateSettings} />
+            {rotateWebhookSecretMut.data && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-amber-800">New signing secret — copy it now, it will not be shown again.</p>
+                <code className="block rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 overflow-x-auto select-all">
+                  {String(rotateWebhookSecretMut.data.signingSecret)}
+                </code>
+              </div>
+            )}
+
+            <SaveRow onSave={saveApi} isPending={webhookMut.isPending} saved={apiSaved} canSave={canUpdateSettings} />
           </div>
         </div>
       )}
