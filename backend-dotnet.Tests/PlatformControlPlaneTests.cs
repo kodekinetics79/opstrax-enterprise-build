@@ -273,6 +273,7 @@ public class PlatformControlPlaneTests
         await new PlatformSchemaService(db).EnsureAsync();
         var (adminId, token, email) = await SeedAdminSessionAsync(db, "platform_super_admin");
         var countries = new CountryProfileService(db);
+        var flags = new FeatureFlagService(db); // TenantCreate seeds the tenant's default flags
         var code = $"CPT-{Unique()}";
         // Hostile name: XSS + SQLi payload must be stored inertly as a literal.
         var hostileName = "<script>alert(1)</script>'; DROP TABLE companies;--";
@@ -282,7 +283,7 @@ public class PlatformControlPlaneTests
             // CREATE
             var create = await PlatformEndpoints.TenantCreate(Http(token),
                 new Dictionary<string, object?> { ["name"] = hostileName, ["companyCode"] = code, ["seatLimit"] = 5L, ["status"] = "trial" },
-                db, countries, CancellationToken.None);
+                db, countries, flags, CancellationToken.None);
             Assert.Equal(200, StatusOf(create));
             companyId = await db.ScalarLongAsync("SELECT id FROM companies WHERE company_code=@c", c => c.Parameters.AddWithValue("@c", code));
             Assert.True(companyId > 0);
@@ -295,7 +296,7 @@ public class PlatformControlPlaneTests
             // DUPLICATE CODE → 409
             var dup = await PlatformEndpoints.TenantCreate(Http(token),
                 new Dictionary<string, object?> { ["name"] = "Dup", ["companyCode"] = code },
-                db, countries, CancellationToken.None);
+                db, countries, flags, CancellationToken.None);
             Assert.Equal(409, StatusOf(dup));
 
             // LIST + DETAIL work and leak no secrets
