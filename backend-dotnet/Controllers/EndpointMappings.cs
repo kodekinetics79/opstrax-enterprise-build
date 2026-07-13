@@ -458,11 +458,25 @@ public static partial class EndpointMappings
         // driver device, stored to durable object storage, scoped to the driver's
         // own assignment. Returns a persistable reference + a short-lived signed URL
         // for immediate preview. The reference is recorded on the proof at submit.
-        app.MapPost("/api/driver/assignments/{id:long}/proof/upload", async (HttpContext http, long id, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct) =>
+        app.MapPost("/api/driver/assignments/{id:long}/proof/upload", async (HttpContext http, long id, Opstrax.Api.Storage.FileStorageService files, Database db, FeatureFlagService flags, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "driver:self");
             if (denied is not null) return denied;
             var companyId = GetCompanyId(http);
+
+            // Feature flag: POD media capture. Gated IN THE CODE PATH — the general
+            // mechanism. A route-prefix gate would be far too blunt here: /api/driver
+            // covers much more than this one endpoint. Bucketed on the driver's user id,
+            // so a partial rollout is a STABLE slice of drivers.
+            // defaultOn:true — a tenant with no flag row must never lose POD upload.
+            // When off the driver app falls back to the text evidence reference, so
+            // delivery confirmation still works; it just loses the media.
+            var podUserId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+            if (!await flags.IsEnabledAsync(companyId, "pod_media_capture", podUserId, defaultOn: true, ct))
+                return Results.Json(ApiResponse<object>.Fail("Feature turned off",
+                    "Photo/signature capture is currently switched off. Record the delivery using the evidence reference field."),
+                    statusCode: StatusCodes.Status403Forbidden);
+
             var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
             if (driverId < 0) return DriverIdentityNotFound();
             if (!await AssignmentBelongsToDriverAsync(id, driverId, companyId, db, ct))

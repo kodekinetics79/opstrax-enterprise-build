@@ -172,8 +172,11 @@ export default function App() {
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
+        {/* The driver portal is a SEPARATE shell from ProtectedShell, so it needs its own
+            FeatureFlagsProvider — without it useFlag() would silently return the fallback
+            forever and the POD capture flag would gate nothing in the driver UI. */}
         {session ? (
-          <Route element={<RequirePermission permission="driver:self"><DriverLayout /></RequirePermission>}>
+          <Route element={<RequirePermission permission="driver:self"><FeatureFlagsProvider><DriverLayout /></FeatureFlagsProvider></RequirePermission>}>
             <Route path="/driver"               element={<DriverDashboardPage />} />
             <Route path="/driver/assignments"   element={<DriverAssignmentPage />} />
             <Route path="/driver/dvir"           element={<DriverDvirPage />} />
