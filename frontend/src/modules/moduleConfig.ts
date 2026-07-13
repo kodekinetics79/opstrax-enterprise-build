@@ -137,6 +137,7 @@ export const modules: ModuleConfig[] = [
   { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "dispatch.view" },
   { key: "workforce", title: "Workforce Management", route: "/workforce", group: "Transport Operations", description: "Driver shift scheduling calendar, availability tracking, HOS compliance indicators and automated roster optimisation.", accent: "teal", requiredPermission: "dispatch.view" },
 
+  { key: "feature-flags",        title: "Feature Flags",       route: "/feature-flags",        group: "Governance",   description: "Kill switches and gradual rollouts. Turning a flag off blocks its API (403) and hides it in the UI — no deploy.", accent: "purple", requiredPermission: "users.manage" },
   { key: "ai-copilot",           title: "Operations Copilot",  route: "/ai-copilot",           group: "Intelligence", description: "Operational query workspace for cost, dispatch, maintenance, safety and executive analysis.", accent: "purple", requiredPermission: "reports.view" },
   { key: "predictive-analytics", title: "Fleet Intelligence",  route: "/predictive-analytics",  group: "Intelligence", description: "Maintenance failure predictions, driver safety risk scores, and SLA breach probability.", accent: "purple", requiredPermission: "reports.view" },
   { key: "control-tower",     title: "Control Tower",       route: "/control-tower",     group: "Intelligence", description: "Connected live map and control tower.", accent: "blue",   requiredPermission: "dashboard.view" },
@@ -210,6 +211,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   profitability: BarChart3,
   "user-management": UserCog,
   "audit-logs": Siren,
+  "feature-flags": Settings,
   integrations: Settings,
   "carbon-tracking": Leaf,
   "digital-forms": ClipboardList,

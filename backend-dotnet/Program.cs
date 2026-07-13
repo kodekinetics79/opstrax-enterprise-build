@@ -266,6 +266,7 @@ builder.Services.AddScoped<ZatcaService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
+builder.Services.AddScoped<FeatureFlagService>();
 // Market-pack engine (Canada/NA + Saudi/GCC) — regional capability + compliance
 builder.Services.AddSingleton<MarketPackSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
@@ -654,6 +655,35 @@ app.UseWhen(
                 }
             }
 
+            // ── Feature-flag route kill-switch (server-side, tenant-isolated) ──────
+            // A REAL flag gate: turning a flag off here stops the traffic at the edge,
+            // even if the API is called directly. Runs BEFORE the tenant scope opens, so
+            // (like the entitlement check above) it must read in system scope under RLS.
+            //   defaultOn:true → a tenant with no row yet keeps working. Kill switches
+            //   over EXISTING behaviour must never fail closed on a missing row.
+            var flagGate = FlagGateForPath(path);
+            if (flagGate is not null)
+            {
+                var (flagKey, defaultOn) = flagGate.Value;
+                const string flagSql = "SELECT enabled, rollout_pct FROM feature_flags WHERE company_id=@cid AND flag_key=@fk";
+                void BindFlag(Npgsql.NpgsqlCommand c)
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@fk", flagKey);
+                }
+                var flagRow = rlsEnforceTenantContext
+                    ? await db.QuerySingleInSystemScopeAsync(flagSql, BindFlag, context.RequestAborted)
+                    : await db.QuerySingleAsync(flagSql, BindFlag, context.RequestAborted);
+
+                if (!FeatureFlagService.Resolve(flagRow, flagKey, userId, defaultOn))
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Feature turned off",
+                        $"The '{flagKey}' feature is currently switched off for your account."));
+                    return;
+                }
+            }
+
             // Authenticated handler runs inside a tenant-scoped transaction so every
             // query is filtered by RLS on app.current_tenant_id (no-op when RLS is off).
             if (rlsEnforceTenantContext)
@@ -906,6 +936,22 @@ static IEnumerable<string> ParsePermissions(object? source)
 
 // Maps an /api/* request path to the entitlement module_key that gates it.
 // Returns null for paths that are not entitlement-gated (always allowed).
+// Route-level feature-flag gates. This is only ONE way to consume a flag — any code
+// path can call FeatureFlagService.IsEnabledAsync(...) directly, and the UI resolves
+// its own via GET /api/feature-flags/evaluate.
+//
+// defaultOn:true means "no flag row → allowed". Use it for kill switches over EXISTING
+// behaviour (a tenant with no row must not break). Use defaultOn:false for genuinely
+// new features, which should be off until explicitly turned on.
+static (string Flag, bool DefaultOn)? FlagGateForPath(string path)
+{
+    if (string.IsNullOrEmpty(path)) return null;
+    // AI kill switch: lets an operator stop every AI call tenant-wide during an incident
+    // (cost spike, bad output, provider outage) without a deploy.
+    if (path.StartsWith("/api/ai", StringComparison.OrdinalIgnoreCase)) return ("ai_copilot", true);
+    return null;
+}
+
 static string? ModuleKeyForPath(string path)
 {
     if (string.IsNullOrEmpty(path)) return null;
