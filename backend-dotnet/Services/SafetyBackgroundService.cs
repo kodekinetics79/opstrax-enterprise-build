@@ -131,7 +131,7 @@ public sealed class SafetyBackgroundService(
                         (@cid, @did, @vid, @devId,
                          @alertId, @srcId,
                          @evType, @sev, @impact, 'open',
-                         @evTime, @hash, @meta)",
+                         @evTime, @hash, @meta::jsonb)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",    companyId);

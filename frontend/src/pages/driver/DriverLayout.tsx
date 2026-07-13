@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { AlertTriangle, Bell, BookOpen, ClipboardList, Clock, Package, Truck } from "lucide-react";
+import { AlertTriangle, Bell, BookOpen, ClipboardList, Clock, LogOut, Package, Truck } from "lucide-react";
 import { useOfflineQueue } from "@/hooks/useOfflineQueue";
 import { useQuery } from "@tanstack/react-query";
 import { notificationsApi } from "@/services/notificationsApi";
+import { useAuth } from "@/hooks/useAuth";
 
 const NAV = [
   { to: "/driver",               icon: Truck,         label: "Home",     end: true,  badge: false },
@@ -15,21 +16,27 @@ const NAV = [
 
 export function DriverLayout() {
   const { isOnline, pendingCount } = useOfflineQueue();
+  const { session, logout } = useAuth();
   const { data: unreadData } = useQuery({
     queryKey: ["notifications", "unread-count"],
     queryFn:  notificationsApi.unreadCount,
     refetchInterval: 30_000,
   });
   const unreadCount = (unreadData as { count?: number } | null)?.count ?? 0;
+  const driverName = String(session?.user?.fullName ?? session?.user?.email ?? "Driver");
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50">
-      {/* Offline banner */}
+      {/* Offline banner.
+          This used to read "Offline — drafts saved locally, sync pending", which was not
+          true: no page enqueues anything, so a driver in a dead zone who trusted that
+          message and filled out a DVIR or POD lost the lot. Until the offline queue is
+          actually wired end-to-end, the banner states plainly what is happening. Never tell
+          a driver their work is saved unless it is. */}
       {!isOnline && (
-        <div className="flex items-center justify-center gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
-          <AlertTriangle className="h-4 w-4" />
-          Offline — drafts saved locally, sync pending
-          {pendingCount > 0 ? ` (${pendingCount})` : ""}
+        <div className="flex items-center justify-center gap-2 bg-amber-500 px-4 py-2 text-center text-sm font-semibold text-white">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          No connection — you must be online to submit. Don't close this screen.
         </div>
       )}
       {isOnline && pendingCount > 0 && (
@@ -37,6 +44,26 @@ export function DriverLayout() {
           Syncing {pendingCount} pending action(s)…
         </div>
       )}
+
+      {/* Header — a driver previously had no way to see who they were signed in as, and
+          no way to sign out at all (shared cab devices made that a real problem). */}
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Truck className="h-5 w-5 shrink-0 text-teal-600" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-slate-900">{driverName}</p>
+            <p className="text-[11px] text-slate-500">Driver</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => { void logout(); }}
+          className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 active:bg-slate-100"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+      </header>
 
       {/* Page content */}
       <main className="flex-1 overflow-y-auto pb-20">

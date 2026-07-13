@@ -229,6 +229,11 @@ public static partial class EndpointMappings
         app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers"));
         app.MapPost("/api/drivers/{id:long}/assign-vehicle", ChangeEntityStatus("drivers", "assigned_vehicle_id", "driver.vehicle.assigned", "fleet:manage"));
         app.MapPost("/api/drivers/{id:long}/change-status", ChangeStatus("drivers", "driver.status.changed", "fleet:manage"));
+        // Driver portal access. The only writers of drivers.user_id in the system — without
+        // these, every /api/driver/* route below is unreachable for every driver.
+        app.MapPost("/api/drivers/portal-invite/bulk", DriverPortalInviteBulk);
+        app.MapPost("/api/drivers/{id:long}/portal-invite", DriverPortalInvite);
+        app.MapPost("/api/drivers/{id:long}/portal-revoke", DriverPortalRevoke);
 
         app.MapGet("/api/customers/summary", CustomerSummary);
         app.MapGet("/api/customers", Customers);
@@ -508,7 +513,9 @@ public static partial class EndpointMappings
                 new { reference = stored.Reference, url = resolved.SignedUrl ?? resolved.LegacyUrl, kind, size = stored.Size, contentType = stored.ContentType },
                 "Evidence uploaded"));
         }).DisableAntiforgery();
-        // DVIR templates are safe to read for any authenticated user
+        // Inspection checklists are tenant data (a fleet's DVIR template reveals its
+        // equipment and its compliance posture), NOT public reference data — gated and
+        // company-scoped like every other driver route.
         app.MapGet("/api/driver/dvir/templates", DriverDvirTemplates);
         app.MapPost("/api/driver/dvir", (HttpContext http, MaintInspectionBody body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) =>
         {
@@ -1994,40 +2001,134 @@ public static partial class EndpointMappings
         ["Customer Viewer"]          = ["customer_portal:view","shipments:view","fleet.pod.view","fleet.tracking.view","fleet.shipments.view"],
     };
 
+    /// <summary>
+    /// THE single, canonical answer to "what may this user do?".
+    ///
+    /// Both the login response and the request-authorization middleware (Program.cs) call
+    /// this. They used to each implement their own resolution, with OPPOSITE precedence:
+    /// login consulted `users.permissions_json` first and returned it outright, while the
+    /// middleware ignored `users.permissions_json` entirely whenever the user had a role.
+    /// A user could therefore be handed one permission set at login (which drives the SPA's
+    /// nav and landing route) and be authorized against a different one on every subsequent
+    /// API call — menus that 403 on click, and menus hidden despite being allowed. Two
+    /// resolvers is one too many; this is now the only one.
+    ///
+    /// Precedence (role membership is authoritative):
+    ///   • roleId > 0 → roles.permissions_json ∪ role_permissions rows.
+    ///     `users.permissions_json` is deliberately NOT consulted, so a grant removed from a
+    ///     role cannot linger on the user row.
+    ///   • roleId = 0 → the legacy per-user `users.permissions_json`.
+    ///   • Empty result → RolePermissionDefaults for the role name, as a last resort.
+    ///     Note this fires only when the role has NO grants at all in the DB; drift where a
+    ///     role has *some* (wrong) grants is corrected at boot by RolePermissionReconciler,
+    ///     not here — a silent runtime top-up is what let the Driver role ship broken.
+    ///
+    /// <paramref name="rolePermissionsJson"/> may be null when the caller has not already
+    /// joined `roles` (the login path); it is then fetched. The middleware passes it from
+    /// its existing session join, so the hot path costs no extra round-trip.
+    /// </summary>
+    internal static async Task<string[]> ResolveEffectivePermissionsAsync(
+        long roleId,
+        string roleName,
+        object? rolePermissionsJson,
+        object? userPermissionsJson,
+        Database db,
+        CancellationToken ct)
+    {
+        if (roleId > 0 && (rolePermissionsJson is null or DBNull))
+        {
+            var role = await db.QuerySingleAsync(
+                "SELECT permissions_json FROM roles WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", roleId), ct);
+            rolePermissionsJson = role?.GetValueOrDefault("permissionsJson");
+        }
+
+        var permissions = ParsePermissionKeys(roleId > 0 ? rolePermissionsJson : userPermissionsJson)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (roleId > 0)
+        {
+            var rows = await db.QueryAsync(
+                "SELECT permission_key FROM role_permissions WHERE role_id=@id",
+                c => c.Parameters.AddWithValue("@id", roleId), ct);
+            foreach (var row in rows)
+            {
+                var key = row.GetValueOrDefault("permissionKey")?.ToString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(key)) permissions.Add(key);
+            }
+        }
+
+        if (permissions.Count == 0 && RolePermissionDefaults.TryGetValue(roleName, out var defaults))
+        {
+            permissions.UnionWith(defaults);
+        }
+
+        return [.. permissions];
+    }
+
+    /// <summary>
+    /// Tolerant reader for a jsonb string[] permission column. Handles every shape the
+    /// driver can hand back for a jsonb value — byte[], JsonElement, a JSON-array string, or
+    /// a single bare token. Do not "simplify" this to source?.ToString(): a byte[] would
+    /// stringify to "System.Byte[]", parse to nothing, and silently strip every permission
+    /// from every user. Lifted verbatim from the middleware's original parser.
+    /// </summary>
+    internal static IEnumerable<string> ParsePermissionKeys(object? source)
+    {
+        if (source is null or DBNull) yield break;
+
+        if (source is byte[] bytes)
+        {
+            source = System.Text.Encoding.UTF8.GetString(bytes);
+        }
+
+        if (source is System.Text.Json.JsonElement json)
+        {
+            if (json.ValueKind != System.Text.Json.JsonValueKind.Array) yield break;
+            foreach (var item in json.EnumerateArray())
+            {
+                var key = item.GetString();
+                if (!string.IsNullOrWhiteSpace(key)) yield return key.Trim();
+            }
+            yield break;
+        }
+
+        if (source is string str && !string.IsNullOrWhiteSpace(str))
+        {
+            str = str.Trim();
+            if (str.StartsWith("[", StringComparison.Ordinal))
+            {
+                List<string>? values = null;
+                try { values = System.Text.Json.JsonSerializer.Deserialize<List<string>>(str); }
+                catch { yield break; }
+
+                if (values is null) yield break;
+                foreach (var value in values.Where(static v => !string.IsNullOrWhiteSpace(v)))
+                {
+                    yield return value.Trim();
+                }
+                yield break;
+            }
+
+            yield return str;
+        }
+    }
+
+    /// <summary>Login-path adapter over <see cref="ResolveEffectivePermissionsAsync"/>.</summary>
     public static async Task<string[]> ResolvePermissionsAsync(Dictionary<string, object?> user, Database db, CancellationToken ct)
     {
-        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        var roleName = user.GetValueOrDefault("roleName")?.ToString() ?? "Company Admin";
         var roleId = user.TryGetValue("roleId", out var roleIdValue) && roleIdValue is not null and not DBNull
             ? Convert.ToInt64(roleIdValue)
-            : (long?)null;
-        var permsRaw = user["permissionsJson"]?.ToString();
-        if (!string.IsNullOrWhiteSpace(permsRaw))
-        {
-            try
-            {
-                var parsed = System.Text.Json.JsonSerializer.Deserialize<string[]>(permsRaw);
-                if (parsed is { Length: > 0 }) return parsed;
-            }
-            catch { /* fallback below */ }
-        }
+            : 0L;
 
-        if (roleId is not null)
-        {
-            var rolePerms = await db.QueryAsync(
-                "SELECT permission_key FROM role_permissions WHERE role_id=@id",
-                c => c.Parameters.AddWithValue("@id", roleId.Value), ct);
-            if (rolePerms.Count > 0)
-            {
-                return rolePerms
-                    .Select(static x => x["permissionKey"]?.ToString())
-                    .Where(static x => !string.IsNullOrWhiteSpace(x))
-                    .Cast<string>()
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-            }
-        }
-
-        return RolePermissionDefaults.GetValueOrDefault(role, ["dashboard:view"]);
+        return await ResolveEffectivePermissionsAsync(
+            roleId,
+            roleName,
+            user.GetValueOrDefault("rolePermissionsJson"),
+            user.GetValueOrDefault("permissionsJson"),
+            db,
+            ct);
     }
 
     public static bool HasPermission(IReadOnlyCollection<string> permissions, string requiredPermission)
@@ -3296,9 +3397,17 @@ public static partial class EndpointMappings
                      CASE WHEN d.assigned_vehicle_id IS NULL THEN 'Assign best-fit available vehicle'
                           WHEN d.compliance_score < 85 THEN 'Review certifications'
                           WHEN d.safety_score < 88 THEN 'Queue coaching review'
-                          ELSE 'Ready for dispatch' END recommended_action
+                          ELSE 'Ready for dispatch' END recommended_action,
+                     -- Driver-portal access, so the roster can show who can actually use the
+                     -- app and offer the invite action. NULL user_id = never provisioned.
+                     CASE WHEN d.user_id IS NULL       THEN 'none'
+                          WHEN pu.status = 'Active'    THEN 'active'
+                          WHEN pu.id IS NULL           THEN 'none'
+                          ELSE 'disabled' END portal_status,
+                     pu.email portal_email
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
+              LEFT JOIN users pu ON pu.id=d.user_id AND pu.company_id=d.company_id
               WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
             "d.full_name",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
@@ -3961,6 +4070,251 @@ public static partial class EndpointMappings
         }, ct);
         await audit.LogAsync(http, "vehicle.updated", "Vehicle", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────────
+    // DRIVER PORTAL PROVISIONING
+    //
+    // `drivers.user_id` is how a driver's login is bound to their driver record: every
+    // /api/driver/* endpoint resolves the caller through it. The column and its readers have
+    // existed for a long time. Nothing ever WROTE it — there was no product path, in the API
+    // or the UI, to give a driver a login. Consequently GetDriverIdFromAuthAsync returned -1
+    // for all 1281 drivers and the entire driver portal 403'd, in every tenant, always.
+    //
+    // These three endpoints are that missing path. Deliberately a distinct "invite" action
+    // rather than auto-provisioning inside CreateDriver: not every driver should get a login
+    // (subcontractors, terminated staff), and CreateDriver's INSERT is shared with the CSV
+    // bulk importer — auto-provisioning there would silently mint hundreds of credentialed
+    // accounts from a spreadsheet paste, which is a security incident, not a feature.
+    // ─────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Driver-portal logins are not staff seats and must not consume the tenant's
+    /// seat quota — exactly as customer-portal users (customer_id IS NOT NULL) already don't.
+    /// Otherwise inviting a 200-driver fleet to the app would instantly exhaust the licence
+    /// and hard-fail at 409, and the whole feature would be unusable on any real tenant.</summary>
+    internal const string StaffSeatFilter = "status <> 'Disabled' AND customer_id IS NULL AND COALESCE(role_name,'') <> 'Driver'";
+
+    private static async Task<IResult> DriverPortalInvite(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+
+        var result = await ProvisionDriverPortalAsync(id, companyId, db, ct);
+        if (result.Error is not null)
+            return Results.Json(ApiResponse<object>.Fail(result.Error), statusCode: result.StatusCode);
+
+        await audit.LogAsync(http, "driver.portal.invited", "Driver", id,
+            System.Text.Json.JsonSerializer.Serialize(new { userId = result.UserId, email = result.Email }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { driverId = id, userId = result.UserId, email = result.Email, temporaryPassword = result.TempPassword },
+            "Driver portal access granted. Share the temporary password with the driver — they will be asked to change it."));
+    }
+
+    private static async Task<IResult> DriverPortalInviteBulk(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+
+        var ids = ReadLongIdArray(Get(body, "driverIds") ?? Get(body, "ids"));
+        if (ids.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Select at least one driver to invite."));
+        if (ids.Count > 500)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invite at most 500 drivers at a time."));
+
+        var granted = new List<object>();
+        var skipped = new List<object>();
+
+        foreach (var driverId in ids)
+        {
+            var result = await ProvisionDriverPortalAsync(driverId, companyId, db, ct);
+            if (result.Error is not null)
+                skipped.Add(new { driverId, reason = result.Error });
+            else
+                granted.Add(new { driverId, userId = result.UserId, email = result.Email, temporaryPassword = result.TempPassword });
+        }
+
+        await audit.LogAsync(http, "driver.portal.invited.bulk", "Driver", 0,
+            System.Text.Json.JsonSerializer.Serialize(new { requested = ids.Count, granted = granted.Count, skipped = skipped.Count }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { requested = ids.Count, granted, skipped },
+            $"{granted.Count} of {ids.Count} driver(s) granted portal access."));
+    }
+
+    private static async Task<IResult> DriverPortalRevoke(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+
+        var driver = await db.QuerySingleAsync(
+            "SELECT id, user_id FROM drivers WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (driver is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
+
+        var userId = driver["userId"] is { } uid && uid is not DBNull ? Convert.ToInt64(uid) : 0L;
+        if (userId == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("This driver has no portal access to revoke."));
+
+        // Disable the login and kill live sessions, then unlink. Order matters: if the unlink
+        // succeeded but the disable failed, the account would still be able to sign in.
+        await db.ExecuteAsync(
+            "UPDATE users SET status='Disabled' WHERE id=@uid AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        await db.ExecuteAsync(
+            "DELETE FROM user_sessions WHERE user_id=@uid AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        await db.ExecuteAsync(
+            "UPDATE drivers SET user_id=NULL WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+        await audit.LogAsync(http, "driver.portal.revoked", "Driver", id,
+            System.Text.Json.JsonSerializer.Serialize(new { userId }), ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new { driverId = id, userId }, "Driver portal access revoked."));
+    }
+
+    private sealed record DriverProvisionResult(
+        long UserId, string? Email, string? TempPassword, string? Error, int StatusCode);
+
+    /// <summary>
+    /// Creates (or re-links) the login behind a driver record and binds drivers.user_id.
+    /// Shared by the single and bulk invite paths so they cannot drift apart.
+    /// </summary>
+    private static async Task<DriverProvisionResult> ProvisionDriverPortalAsync(
+        long driverId, long companyId, Database db, CancellationToken ct)
+    {
+        var driver = await db.QuerySingleAsync(
+            "SELECT id, full_name, email, user_id, status FROM drivers WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (driver is null)
+            return new(0, null, null, "Driver not found in this fleet.", StatusCodes.Status404NotFound);
+
+        if (driver["userId"] is { } existingUid && existingUid is not DBNull && Convert.ToInt64(existingUid) > 0)
+            return new(0, null, null, "This driver already has portal access.", StatusCodes.Status409Conflict);
+
+        var email = driver["email"]?.ToString()?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email) || !System.Net.Mail.MailAddress.TryCreate(email, out _))
+            return new(0, null, null, "This driver has no valid email address. Add one before granting portal access.", StatusCodes.Status400BadRequest);
+
+        var fullName = driver["fullName"]?.ToString()?.Trim() ?? email;
+
+        var driverRole = await db.QuerySingleAsync(
+            "SELECT id, name FROM roles WHERE name='Driver' AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (driverRole is null)
+            return new(0, null, null, "The built-in Driver role is missing from this database.", StatusCodes.Status500InternalServerError);
+        var roleId = Convert.ToInt64(driverRole["id"]);
+
+        // users.email is GLOBALLY unique, not per-tenant. An existing account with this
+        // address must be handled explicitly, never blindly re-pointed at another tenant's
+        // driver — that would be an account takeover.
+        var existing = await db.QuerySingleAsync(
+            "SELECT id, company_id, role_name FROM users WHERE LOWER(email)=LOWER(@email) LIMIT 1",
+            c => c.Parameters.AddWithValue("@email", email), ct);
+
+        long userId;
+        string? tempPassword = null;
+
+        if (existing is not null)
+        {
+            var ownerCompany = Convert.ToInt64(existing["companyId"]);
+            if (ownerCompany != companyId)
+                return new(0, null, null,
+                    $"The address {email} already belongs to a user in another organization. Use a different email for this driver.",
+                    StatusCodes.Status409Conflict);
+
+            // Same tenant: adopt the existing account rather than creating a duplicate. Its
+            // password is untouched — we are linking an identity, not resetting a credential.
+            userId = Convert.ToInt64(existing["id"]);
+
+            var alreadyLinked = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM drivers WHERE user_id=@uid AND company_id=@cid AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            if (alreadyLinked > 0)
+                return new(0, null, null, $"The login {email} is already linked to another driver.", StatusCodes.Status409Conflict);
+
+            await db.ExecuteAsync(
+                "UPDATE users SET role_id=@rid, role_name='Driver', status='Active' WHERE id=@uid AND company_id=@cid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@rid", roleId);
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", companyId);
+                }, ct);
+        }
+        else
+        {
+            tempPassword = GenerateDriverTempPassword();
+            // demo_password is NOT NULL — bind '' rather than NULL (a NULL here is a 23502
+            // that only fires in production, which is how the change-password endpoint
+            // shipped broken for months).
+            userId = await db.InsertAsync(
+                @"INSERT INTO users (company_id, role_id, full_name, email, role_name, password_hash, demo_password, permissions_json, status, password_changed_at)
+                  VALUES (@cid, @rid, @name, @email, 'Driver', @hash, '', '[]'::jsonb, 'Active', NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@rid", roleId);
+                    c.Parameters.AddWithValue("@name", fullName);
+                    c.Parameters.AddWithValue("@email", email);
+                    c.Parameters.AddWithValue("@hash", HashPassword(tempPassword));
+                }, ct);
+        }
+
+        // Guarded by uq_drivers_user_id; `AND user_id IS NULL` closes the race where two
+        // concurrent invites both passed the check above.
+        var linked = await db.ExecuteAsync(
+            "UPDATE drivers SET user_id=@uid WHERE id=@id AND company_id=@cid AND user_id IS NULL",
+            c =>
+            {
+                c.Parameters.AddWithValue("@uid", userId);
+                c.Parameters.AddWithValue("@id", driverId);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+        if (linked == 0)
+            return new(0, null, null, "This driver already has portal access.", StatusCodes.Status409Conflict);
+
+        return new(userId, email, tempPassword, null, StatusCodes.Status200OK);
+    }
+
+    /// <summary>Temporary credential for a newly-provisioned driver login. Handed back to the
+    /// inviting admin (SMTP is not configured — pretending to email it would strand the
+    /// driver with no way in).</summary>
+    private static string GenerateDriverTempPassword()
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(12);
+        var chars = bytes.Select(b => alphabet[b % alphabet.Length]).ToArray();
+        return $"Drv-{new string(chars)}!";
+    }
+
+    /// <summary>Reads a JSON array of ids from a request body value (bulk actions).</summary>
+    private static List<long> ReadLongIdArray(object? raw)
+    {
+        var ids = new List<long>();
+        if (raw is null or DBNull) return ids;
+
+        if (raw is System.Text.Json.JsonElement json && json.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in json.EnumerateArray())
+            {
+                if (item.ValueKind == System.Text.Json.JsonValueKind.Number && item.TryGetInt64(out var n)) ids.Add(n);
+                else if (item.ValueKind == System.Text.Json.JsonValueKind.String && long.TryParse(item.GetString(), out var s)) ids.Add(s);
+            }
+            return ids.Distinct().Where(static i => i > 0).ToList();
+        }
+
+        if (raw is System.Collections.IEnumerable seq and not string)
+        {
+            foreach (var item in seq)
+            {
+                if (long.TryParse(item?.ToString(), out var n) && n > 0) ids.Add(n);
+            }
+        }
+
+        return ids.Distinct().ToList();
     }
 
     private static async Task<IResult> CreateDriver(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -9623,7 +9977,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (seatLimit > 0)
         {
             var seatCount = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM users WHERE company_id=@cid AND status <> 'Disabled' AND customer_id IS NULL",
+                $"SELECT COUNT(*) FROM users WHERE company_id=@cid AND {StaffSeatFilter}",
                 c => c.Parameters.AddWithValue("@cid", companyId), ct);
             if (seatCount >= seatLimit)
                 return Results.Json(ApiResponse<object>.Fail("Seat limit reached",
@@ -12829,7 +13183,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var reportNumber = $"DVIR-{companyId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         var hasDefects   = body.ChecklistItems?.Any(i => i.Result == "fail") ?? false;
-        var hasCritical  = body.ChecklistItems?.Any(i => i.Result == "fail" && i.Severity == "critical") ?? false;
+        // SAFETY-CRITICAL, and it was silently broken: this compared `Severity == "critical"`
+        // (ordinal, case-sensitive) while the driver app sends "Critical". So hasCritical was
+        // always false — safe_to_operate stayed true, dvir_defects.out_of_service stayed
+        // false, and the vehicle was never taken out of service. A driver could report a
+        // critical brake defect and be cleared to depart. Worse, CapitalizeSeverity meant the
+        // stored row read severity='Critical', so the record LOOKED correct in every report
+        // while the interlock it exists to trigger never fired. Compare case-insensitively.
+        var hasCritical  = body.ChecklistItems?.Any(i => IsCriticalSeverity(i.Severity) && i.Result == "fail") ?? false;
         var status       = hasDefects ? "defect_found" : "submitted";
 
         var reportId = await db.InsertAsync(
@@ -12879,7 +13240,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 // Persist failed items as dvir_defects.
                 if (item.Result == "fail")
                 {
-                    var isOos  = item.Severity == "critical";
+                    var isOos  = IsCriticalSeverity(item.Severity);
                     var defId = await db.InsertAsync(
                         @"INSERT INTO dvir_defects
                             (company_id, dvir_report_id, vehicle_id, driver_id, defect_category,
@@ -13483,6 +13844,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         _          => "Minor",
     };
 
+    /// <summary>
+    /// The single test for "does this defect ground the vehicle?". Case-insensitive by
+    /// design: the driver app posts "Critical", older clients post "critical", and the
+    /// out-of-service interlock must not depend on which. Use this everywhere rather than
+    /// comparing the raw string — an ordinal `== "critical"` here previously meant no vehicle
+    /// was ever taken out of service by a DVIR.
+    /// </summary>
+    internal static bool IsCriticalSeverity(string? severity)
+        => string.Equals(severity?.Trim(), "critical", StringComparison.OrdinalIgnoreCase);
+
     // ── Maintenance DTOs ───────────────────────────────────────────────────────────
     private sealed record MaintInspectionBody(
         long VehicleId,
@@ -13808,61 +14179,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!IsValidDispatchTransition(from, to))
             return Results.Conflict(ApiResponse<object>.Fail($"Invalid status transition from '{from}' to '{to}'"));
 
-        // Timestamp fields set based on target status.
-        var (tsCol, tsVal) = to switch
-        {
-            "en_route_pickup"  => ("actual_pickup_at",    (object?)DBNull.Value),  // not yet
-            "arrived_pickup"   => ("actual_pickup_at",    DBNull.Value),
-            "in_transit"       => ("actual_pickup_at",    DateTime.UtcNow),
-            "arrived_delivery" => ("actual_delivery_at",  DBNull.Value),
-            "delivered"        => ("actual_delivery_at",  DateTime.UtcNow),
-            _                  => ("updated_at",          DBNull.Value),
-        };
-
-        var updateSql = to switch
-        {
-            "in_transit"  => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_pickup_at=NOW() WHERE id=@id AND company_id=@cid",
-            "delivered"   => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos, actual_delivery_at=NOW(), completed_at=NOW() WHERE id=@id AND company_id=@cid",
-            _             => @"UPDATE dispatch_assignments SET assignment_status=@to, status=@tos WHERE id=@id AND company_id=@cid",
-        };
-
-        await db.ExecuteAsync(updateSql, c =>
-        {
-            c.Parameters.AddWithValue("@to",  to);
-            c.Parameters.AddWithValue("@tos", ToDisplayStatus(to));
-            c.Parameters.AddWithValue("@id",  id);
-            c.Parameters.AddWithValue("@cid", companyId);
-        }, ct);
-
-        // If job linked, mirror status on job (Postgres UPDATE ... FROM syntax).
-        await db.ExecuteAsync(
-            @"UPDATE jobs j SET status=@tos
-              FROM dispatch_assignments da
-              WHERE da.job_id=j.id AND da.id=@id AND da.company_id=@cid",
-            c =>
-            {
-                c.Parameters.AddWithValue("@tos", ToDisplayStatus(to));
-                c.Parameters.AddWithValue("@id",  id);
-                c.Parameters.AddWithValue("@cid", companyId);
-            }, ct);
-
-        // Trip integration — activate trip when in_transit starts.
-        if (to == "in_transit" && current["tripId"] is not null && current["tripId"] is not DBNull)
-        {
-            var tripId = Convert.ToInt64(current["tripId"]);
-            await db.ExecuteAsync(
-                "UPDATE trips SET status='active', actual_start_time=NOW() WHERE id=@tid AND status='planned'",
-                c => c.Parameters.AddWithValue("@tid", tripId), ct);
-        }
-
-        // Trip integration — complete trip on delivered.
-        if (to == "delivered" && current["tripId"] is not null && current["tripId"] is not DBNull)
-        {
-            var tripId = Convert.ToInt64(current["tripId"]);
-            await db.ExecuteAsync(
-                "UPDATE trips SET status='completed', actual_end_time=NOW() WHERE id=@tid AND status='active'",
-                c => c.Parameters.AddWithValue("@tid", tripId), ct);
-        }
+        // Shared with the driver app (ApplyAssignmentTransitionAsync) — one state machine,
+        // one write path. Previously each surface had its own, and the driver's wrote fewer
+        // columns, so who moved the load determined whether ops could see it.
+        await ApplyAssignmentTransitionAsync(db, companyId, id, to, ct);
 
         await audit.LogAsync(http, "dispatch.assignment.status", "DispatchAssignment", id,
             $"from:{from} to:{to}", ct);
@@ -14226,6 +14546,87 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         "cancelled"        => "Cancelled",
         _                  => s,
     };
+
+    /// <summary>
+    /// THE single way an assignment changes state, for BOTH the dispatcher board and the
+    /// driver app. Writes the canonical token (assignment_status), the display mirror
+    /// (status), the linked job, the transition timestamps and the trip state — atomically
+    /// consistent, every time, from whichever surface moved it.
+    ///
+    /// WHY: the driver path used to write ONLY assignment_status. The dispatcher path wrote
+    /// assignment_status AND status AND jobs.status. So a driver could accept a load, drive
+    /// it, and deliver it, while dispatch_assignments.status and jobs.status both sat at
+    /// 'Assigned' forever — the dispatch board, the shipment list, the customer tracking page
+    /// and every KPI showed the load as never started. Ops literally could not see the driver
+    /// move. Two write paths for one state machine is the bug; this is the fix.
+    ///
+    /// Caller is responsible for validating the transition (IsValidDispatchTransition) and
+    /// for authorization — this is the write, not the policy.
+    /// </summary>
+    internal static async Task ApplyAssignmentTransitionAsync(
+        Database db, long companyId, long assignmentId, string to, CancellationToken ct)
+    {
+        var display = ToDisplayStatus(to);
+
+        // COALESCE every timestamp: a re-entered state (e.g. exception → in_transit) must not
+        // rewrite the original pickup time and silently corrupt the transit-time metrics.
+        var timestamps = to switch
+        {
+            "accepted"         => ", accepted_at=COALESCE(accepted_at, NOW())",
+            "in_transit"       => ", actual_pickup_at=COALESCE(actual_pickup_at, NOW()), started_at=COALESCE(started_at, NOW())",
+            "arrived_delivery" => ", arrived_at=COALESCE(arrived_at, NOW())",
+            "delivered"        => ", actual_delivery_at=COALESCE(actual_delivery_at, NOW()), completed_at=COALESCE(completed_at, NOW())",
+            "cancelled"        => ", cancelled_at=COALESCE(cancelled_at, NOW())",
+            _                  => "",
+        };
+
+        await db.ExecuteAsync(
+            $@"UPDATE dispatch_assignments
+               SET assignment_status=@to,
+                   status=@display,
+                   previous_status=assignment_status,
+                   updated_at=NOW(){timestamps}
+               WHERE id=@id AND company_id=@cid",
+            c =>
+            {
+                c.Parameters.AddWithValue("@to", to);
+                c.Parameters.AddWithValue("@display", display);
+                c.Parameters.AddWithValue("@id", assignmentId);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+
+        // Mirror onto the linked job — this is what the dispatch board, shipment list and
+        // customer tracking actually read.
+        await db.ExecuteAsync(
+            @"UPDATE jobs j SET status=@display
+              FROM dispatch_assignments da
+              WHERE da.job_id=j.id AND da.id=@id AND da.company_id=@cid",
+            c =>
+            {
+                c.Parameters.AddWithValue("@display", display);
+                c.Parameters.AddWithValue("@id", assignmentId);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+
+        if (to == "in_transit")
+        {
+            await db.ExecuteAsync(
+                @"UPDATE trips t
+                  SET status='active', actual_start_time=COALESCE(t.actual_start_time, NOW())
+                  FROM dispatch_assignments da
+                  WHERE da.trip_id=t.id AND da.id=@id AND t.company_id=@cid AND t.status <> 'completed'",
+                c => { c.Parameters.AddWithValue("@id", assignmentId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        }
+        else if (to == "delivered")
+        {
+            await db.ExecuteAsync(
+                @"UPDATE trips t
+                  SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
+                  FROM dispatch_assignments da
+                  WHERE da.trip_id=t.id AND da.id=@id AND t.company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", assignmentId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        }
+    }
 
     // Canonicalize legacy / display-cased assignment statuses (e.g. "Assigned",
     // "Accepted", "In Progress") into the lowercase P4 state-machine tokens that the
@@ -15435,8 +15836,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 "SELECT COUNT(*) FROM dvir_defects WHERE vehicle_id=@vid AND out_of_service=TRUE AND status NOT IN ('resolved','Resolved')",
                 c => c.Parameters.AddWithValue("@vid", vehicleId.Value), ct);
 
+        // "Pending" means the DRIVER still owes an action. Acknowledging sets
+        // driver_acknowledged=TRUE and status='Driver Acknowledged' — which is neither
+        // 'Completed' nor 'Cancelled', so a status-only test counted an acknowledged task as
+        // still pending forever. The driver could acknowledge every task and the badge (and
+        // the "You have N pending coaching task(s)" nag) would never clear.
         var coachingCount = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM coaching_tasks WHERE driver_id=@did AND company_id=@cid AND status NOT IN ('Completed','Cancelled') AND deleted_at IS NULL",
+            @"SELECT COUNT(*) FROM coaching_tasks
+              WHERE driver_id=@did AND company_id=@cid AND deleted_at IS NULL
+                AND COALESCE(driver_acknowledged, FALSE) = FALSE
+                AND status NOT IN ('Completed','Cancelled')",
             c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         var hosRow = await db.QuerySingleAsync(
@@ -15543,13 +15952,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var current = await db.QuerySingleAsync(
             "SELECT assignment_status FROM dispatch_assignments WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        var from = current?["assignmentStatus"]?.ToString() ?? "";
+        // Normalize, as the dispatch board already does. Raw-comparing the column meant a
+        // legacy title-case row ('Assigned') matched no transition rule, and the driver got
+        // "Cannot accept: invalid transition from ''" on a perfectly valid load.
+        var from = NormalizeAssignmentStatus(current?["assignmentStatus"]?.ToString());
         if (!IsValidDispatchTransition(from, "accepted"))
             return Results.UnprocessableEntity(ApiResponse<object>.Fail($"Cannot accept: invalid transition from '{from}'"));
 
-        await db.ExecuteAsync(
-            "UPDATE dispatch_assignments SET assignment_status='accepted', accepted_at=NOW(), updated_at=NOW() WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        await ApplyAssignmentTransitionAsync(db, companyId, id, "accepted", ct);
         await audit.LogAsync(http, "driver.assignment.accepted", "DispatchAssignment", id, ct: ct);
 
         // P7: Notify dispatcher that driver accepted
@@ -15578,7 +15988,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var current = await db.QuerySingleAsync(
             "SELECT assignment_status FROM dispatch_assignments WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        var from = current?["assignmentStatus"]?.ToString() ?? "";
+        var from = NormalizeAssignmentStatus(current?["assignmentStatus"]?.ToString());
         if (!IsValidDispatchTransition(from, to))
             return Results.UnprocessableEntity(ApiResponse<object>.Fail($"Invalid transition from '{from}' to '{to}'"));
 
@@ -15588,37 +15998,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!driverAllowedTargets.Contains(to))
             return Results.UnprocessableEntity(ApiResponse<object>.Fail($"Drivers cannot set status '{to}'"));
 
-        var updates = new System.Text.StringBuilder("assignment_status=@to, updated_at=NOW()");
-        if (to == "in_transit") updates.Append(", actual_pickup_at=COALESCE(actual_pickup_at, NOW())");
-
-        await db.ExecuteAsync(
-            $"UPDATE dispatch_assignments SET {updates} WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@to", to); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-
-        // Trip activation on in_transit
-        if (to == "in_transit")
-        {
-            await db.ExecuteAsync(
-                @"UPDATE trips t
-                  SET status='active', actual_start_time=COALESCE(t.actual_start_time, NOW())
-                  FROM dispatch_assignments da
-                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
-                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        }
-        // Trip completion on delivered
-        if (to == "delivered")
-        {
-            await db.ExecuteAsync(
-                @"UPDATE trips t
-                  SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
-                  FROM dispatch_assignments da
-                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
-                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-            // Also set actual delivery time
-            await db.ExecuteAsync(
-                "UPDATE dispatch_assignments SET actual_delivery_at=COALESCE(actual_delivery_at, NOW()) WHERE id=@id AND company_id=@cid",
-                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        }
+        // Same write the dispatcher board uses — so ops sees the driver move. This used to
+        // update assignment_status alone, leaving status and jobs.status at 'Assigned' for
+        // the life of the load.
+        await ApplyAssignmentTransitionAsync(db, companyId, id, to, ct);
 
         await audit.LogAsync(http, "driver.assignment.status_updated", "DispatchAssignment", id, $"{{\"from\":\"{from}\",\"to\":\"{to}\"}}", ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, from, to }, $"Status updated to {to}"));
@@ -15685,6 +16068,18 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.NotFound(ApiResponse<object>.Fail("Assignment not found or does not belong to you"));
 
         var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
+
+        // evidence_hash is VARCHAR(128) and means a HASH. The driver app was packing the POD
+        // media manifest into it — `{"artifacts":[{"kind":"photo","reference":"objkey:…"}…]}`
+        // — which is ~185 chars for a normal photo+signature POD. Every such submit died on
+        // Postgres 22001 (value too long), so a driver with proof attached literally could not
+        // confirm a delivery. Artifacts now go to their own table; this column only ever holds
+        // a hash again, and is defensively clamped so an oversized value can never 500 a
+        // delivery confirmation.
+        var evidenceHash = body.EvidenceHash?.Trim();
+        if (!string.IsNullOrEmpty(evidenceHash) && evidenceHash.Length > 128)
+            evidenceHash = evidenceHash[..128];
+
         var proofId = await db.InsertAsync(
             @"INSERT INTO dispatch_proofs
                 (company_id, assignment_id, proof_type, confirmed_at, confirmed_by_user_id, confirmed_by_driver_id, notes, evidence_hash, lat, lng)
@@ -15697,25 +16092,48 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@uid",   userId > 0 ? userId : DBNull.Value);
                 c.Parameters.AddWithValue("@did",   driverId);
                 c.Parameters.AddWithValue("@notes", body.Notes ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@hash",  body.EvidenceHash ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@hash",  string.IsNullOrEmpty(evidenceHash) ? DBNull.Value : evidenceHash);
                 c.Parameters.AddWithValue("@lat",   body.Lat ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@lng",   body.Lng ?? (object)DBNull.Value);
             }, ct);
 
-        // Delivery proof auto-triggers delivered status
+        // Persist the POD media (photo / signature) against the proof. Previously the uploaded
+        // artifacts were left orphaned in object storage with nothing pointing at them — the
+        // photo and signature a driver captured were, in effect, thrown away.
+        foreach (var artifact in body.Artifacts ?? [])
+        {
+            var kind = artifact.Kind?.Trim().ToLowerInvariant();
+            if (kind is not ("photo" or "signature")) continue;
+            if (string.IsNullOrWhiteSpace(artifact.Reference)) continue;
+
+            await db.ExecuteAsync(
+                @"INSERT INTO dispatch_proof_artifacts (company_id, proof_id, kind, reference, content_type, size_bytes)
+                  VALUES (@cid, @pid, @kind, @ref, @ctype, @size)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid",   companyId);
+                    c.Parameters.AddWithValue("@pid",   proofId);
+                    c.Parameters.AddWithValue("@kind",  kind);
+                    c.Parameters.AddWithValue("@ref",   artifact.Reference.Trim());
+                    c.Parameters.AddWithValue("@ctype", (object?)artifact.ContentType ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@size",  (object?)artifact.Size ?? DBNull.Value);
+                }, ct);
+        }
+
+        // Delivery proof auto-triggers delivered status — through the shared transition, so
+        // jobs.status and the display status move too. This path used to write only
+        // assignment_status, so a load delivered via POD still read 'Assigned' to dispatch.
         if (string.Equals(body.ProofType, "delivery", StringComparison.OrdinalIgnoreCase))
         {
-            await db.ExecuteAsync(
-                @"UPDATE dispatch_assignments
-                  SET assignment_status='delivered', actual_delivery_at=COALESCE(actual_delivery_at, NOW()), updated_at=NOW()
-                  WHERE id=@id AND company_id=@cid AND assignment_status NOT IN ('delivered','cancelled')",
-                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-            await db.ExecuteAsync(
-                @"UPDATE trips t
-                  SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
-                  FROM dispatch_assignments da
-                  WHERE da.trip_id = t.id AND da.id = @id AND t.company_id=@cid",
-                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            var currentStatus = NormalizeAssignmentStatus((await db.QuerySingleAsync(
+                "SELECT assignment_status FROM dispatch_assignments WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct))
+                ?["assignmentStatus"]?.ToString());
+
+            if (currentStatus is not ("delivered" or "cancelled"))
+            {
+                await ApplyAssignmentTransitionAsync(db, companyId, id, "delivered", ct);
+            }
         }
         else if (string.Equals(body.ProofType, "pickup", StringComparison.OrdinalIgnoreCase))
         {
@@ -15729,14 +16147,27 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { proofId }, "Proof submitted"));
     }
 
-    private static async Task<IResult> DriverDvirTemplates(Database db, CancellationToken ct)
+    // Was the ONLY /api/driver/* route with neither a permission gate nor a company_id
+    // filter — it took no HttpContext at all, so it could not scope even if it wanted to.
+    // Any authenticated user of any tenant could read every other tenant's inspection
+    // checklists, and drivers were offered other companies' templates to fill in.
+    private static async Task<IResult> DriverDvirTemplates(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "driver:self") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+
         var templates = await db.QueryAsync(
-            "SELECT id, template_name, inspection_type, vehicle_type, status FROM dvir_templates WHERE status='Active' ORDER BY inspection_type, template_name",
-            ct: ct);
+            @"SELECT id, template_name, inspection_type, vehicle_type, status
+              FROM dvir_templates
+              WHERE status='Active' AND company_id=@cid
+              ORDER BY inspection_type, template_name",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var items = await db.QueryAsync(
-            "SELECT template_id, item_category, item_label AS item_name, sort_order, required AS is_required FROM inspection_checklist_items ORDER BY template_id, sort_order",
-            ct: ct);
+            @"SELECT ci.template_id, ci.item_category, ci.item_label AS item_name, ci.sort_order, ci.required AS is_required
+              FROM inspection_checklist_items ci
+              JOIN dvir_templates t ON t.id = ci.template_id AND t.company_id=@cid
+              ORDER BY ci.template_id, ci.sort_order",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
         // Group items by template_id
         var grouped = items.GroupBy(i => i["templateId"]?.ToString() ?? "")
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -15790,7 +16221,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LIMIT 30",
             c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
-        var pending   = rows.Count(r => r["status"]?.ToString() is not "Completed" and not "Cancelled");
+        // Must agree with the badge count in DriverMe: acknowledged ⇒ not pending. A
+        // status-only test left every acknowledged task counted as pending for ever.
+        var pending   = rows.Count(r =>
+            r["status"]?.ToString() is not "Completed" and not "Cancelled" &&
+            r["driverAcknowledged"] is not true);
         var insights  = pending > 0
             ? new[] { DriverInsight("coaching", $"You have {pending} pending coaching task(s). Please review and acknowledge each one.") }
             : new[] { DriverInsight("ok", "All coaching tasks are acknowledged. Great job!") };
@@ -15834,16 +16269,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
         if (driverId < 0) return DriverIdentityNotFound();
 
+        // eld_devices has no `device_identifier` column — it is `device_serial`. This 500'd
+        // (42703) on every call; nobody saw it because the route 403'd for every driver
+        // first, so the lockout was hiding a second, independent break. Also scoped by
+        // company_id: driverId is tenant-resolved, but a bare driver_id filter on a
+        // cross-tenant table is one refactor away from a leak.
         var record = await db.QuerySingleAsync(
             @"SELECT hr.remaining_drive_hours, hr.remaining_shift_hours, hr.remaining_cycle_hours,
                      hr.hos_status, hr.shift_date, hr.eld_device_id,
-                     ed.device_identifier eld_identifier
+                     ed.device_serial eld_identifier
               FROM hos_records hr
-              LEFT JOIN eld_devices ed ON ed.id = hr.eld_device_id
-              WHERE hr.driver_id=@did
+              LEFT JOIN eld_devices ed ON ed.id = hr.eld_device_id AND ed.company_id = hr.company_id
+              WHERE hr.driver_id=@did AND hr.company_id=@cid
               ORDER BY hr.shift_date DESC
               LIMIT 1",
-            c => c.Parameters.AddWithValue("@did", driverId), ct);
+            c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         if (record is null)
         {
@@ -15966,7 +16406,18 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         string? Notes = null,
         string? EvidenceHash = null,
         decimal? Lat = null,
-        decimal? Lng = null);
+        decimal? Lng = null,
+        // POD media captured on the device (photo of the delivered goods, recipient
+        // signature). Uploaded first via POST /api/driver/assignments/{id}/proof/upload,
+        // which returns the object-storage reference; those references are then submitted
+        // here and recorded against the proof.
+        DriverProofArtifactBody[]? Artifacts = null);
+
+    private sealed record DriverProofArtifactBody(
+        string? Kind = null,            // 'photo' | 'signature'
+        string? Reference = null,       // objkey:tenant/…
+        string? ContentType = null,
+        long? Size = null);
 
     // ── Rule-based insight generator ──────────────────────────────────────────────
     // Generates explainable system insights from safety event data.

@@ -23,4 +23,12 @@ export const driversApi = {
   remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/drivers/${id}`)),
   assignVehicle: (id: string | number, vehicleId: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/assign-vehicle`, { vehicleId })),
   changeStatus: (id: string | number, status: string) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/change-status`, { status })),
+
+  // Driver-portal access. Creates the login behind a driver record and links
+  // drivers.user_id — without this the driver app cannot identify the caller and every
+  // /api/driver/* route 403s. Returns a temporary password to hand to the driver (SMTP is
+  // not configured, so nothing is emailed; see the response `temporaryPassword`).
+  portalInvite: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/portal-invite`, {})),
+  portalInviteBulk: (driverIds: Array<string | number>) => unwrap<AnyRecord>(apiClient.post("/api/drivers/portal-invite/bulk", { driverIds })),
+  portalRevoke: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/portal-revoke`, {})),
 };

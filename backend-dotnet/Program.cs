@@ -267,6 +267,7 @@ builder.Services.AddScoped<ZatcaService>();
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
 builder.Services.AddScoped<FeatureFlagService>();
+builder.Services.AddSingleton<RolePermissionReconciler>();
 // Market-pack engine (Canada/NA + Saudi/GCC) — regional capability + compliance
 builder.Services.AddSingleton<MarketPackSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
@@ -416,6 +417,17 @@ using (var scope = app.Services.CreateScope())
         app.Logger.LogWarning("Schema init SKIPPED — runtime is connected as the restricted role under RLS enforcement. " +
             "Ensure migrations/seeders have been applied out-of-band by the DB owner.");
     }
+}
+
+// Built-in role permissions are reconciled from RolePermissionDefaults on EVERY boot,
+// deliberately OUTSIDE the schema-init gate above. This is DML, not DDL, so the restricted
+// `opstrax_app` role can run it — which matters because production is exactly the
+// environment where schema init is skipped, and exactly where the drift this repairs
+// (the Driver role missing `driver:self`, locking every driver out of the driver portal)
+// was fatal. Additive and idempotent; see RolePermissionReconciler for the full rationale.
+using (var scope = app.Services.CreateScope())
+{
+    await scope.ServiceProvider.GetRequiredService<RolePermissionReconciler>().ReconcileAsync();
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
@@ -586,33 +598,22 @@ app.UseWhen(
             var roleName = session["roleName"]?.ToString() ?? string.Empty;
             var roleId = session.TryGetValue("roleId", out var rid) && rid is not null && rid is not DBNull ? Convert.ToInt64(rid) : 0;
 
-            // Role membership is authoritative. Legacy user-level JSON is consulted
-            // only for accounts without a role, so removed role grants cannot linger.
-            var permissions = (roleId > 0
-                    ? ParsePermissions(session.GetValueOrDefault("rolePermissionsJson"))
-                    : ParsePermissions(session.GetValueOrDefault("permissionsJson")))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (roleId > 0)
-            {
-                var rows = await db.QueryAsync(
-                    "SELECT permission_key FROM role_permissions WHERE role_id=@roleId",
-                    c => c.Parameters.AddWithValue("@roleId", roleId));
-                foreach (var row in rows)
-                {
-                    var key = row.GetValueOrDefault("permissionKey")?.ToString();
-                    if (!string.IsNullOrWhiteSpace(key))
-                    {
-                        permissions.Add(key.Trim());
-                    }
-                }
-            }
-
-            if (permissions.Count == 0 &&
-                EndpointMappings.RolePermissionDefaults.TryGetValue(roleName, out var defaultPermissions))
-            {
-                permissions.UnionWith(defaultPermissions);
-            }
+            // Role membership is authoritative. Legacy user-level JSON is consulted only for
+            // accounts without a role, so removed role grants cannot linger.
+            //
+            // This calls the SAME resolver as the login endpoint. It previously duplicated the
+            // logic, and the two copies had drifted into opposite precedence — login answered
+            // from users.permissions_json, this answered from the role — so the SPA could be
+            // told it had permissions the API would then deny (and vice versa). One resolver,
+            // one answer. Do not re-inline this.
+            var permissionSet = await EndpointMappings.ResolveEffectivePermissionsAsync(
+                roleId,
+                roleName,
+                session.GetValueOrDefault("rolePermissionsJson"),
+                session.GetValueOrDefault("permissionsJson"),
+                db,
+                context.RequestAborted);
+            var permissions = permissionSet.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
@@ -886,53 +887,6 @@ app.MapMarketPackEndpoints();
 app.MapSafetyMaintenanceFoundationEndpoints();
 
 app.Run();
-
-static IEnumerable<string> ParsePermissions(object? source)
-{
-    if (source is null or DBNull) yield break;
-
-    if (source is byte[] bytes)
-    {
-        source = System.Text.Encoding.UTF8.GetString(bytes);
-    }
-
-    if (source is JsonElement json)
-    {
-        if (json.ValueKind != JsonValueKind.Array) yield break;
-        foreach (var item in json.EnumerateArray())
-        {
-            var key = item.GetString();
-            if (!string.IsNullOrWhiteSpace(key)) yield return key.Trim();
-        }
-        yield break;
-    }
-
-    if (source is string str && !string.IsNullOrWhiteSpace(str))
-    {
-        str = str.Trim();
-        if (str.StartsWith("[", StringComparison.Ordinal))
-        {
-            List<string>? values = null;
-            try
-            {
-                values = JsonSerializer.Deserialize<List<string>>(str);
-            }
-            catch
-            {
-                yield break;
-            }
-
-            if (values is null) yield break;
-            foreach (var value in values.Where(v => !string.IsNullOrWhiteSpace(v)))
-            {
-                yield return value.Trim();
-            }
-            yield break;
-        }
-
-        yield return str;
-    }
-}
 
 // Maps an /api/* request path to the entitlement module_key that gates it.
 // Returns null for paths that are not entitlement-gated (always allowed).

@@ -90,6 +90,11 @@ public class PlatformControlPlaneTests
             "DELETE FROM platform_invoices WHERE company_id=@id",
             "DELETE FROM tenant_entitlements WHERE company_id=@id",
             "DELETE FROM tenant_subscriptions WHERE company_id=@id",
+            // TenantCreate seeds each new tenant's default feature flags, and feature_flags has
+            // an FK to companies — so without this the final DELETE FROM companies fails 23503
+            // and every provisioned test tenant leaks. Anything TenantCreate writes has to be
+            // torn down here, in FK order, ending with companies.
+            "DELETE FROM feature_flags WHERE company_id=@id",
             "DELETE FROM user_sessions WHERE company_id=@id",
             "DELETE FROM users WHERE company_id=@id",
             "DELETE FROM companies WHERE id=@id",

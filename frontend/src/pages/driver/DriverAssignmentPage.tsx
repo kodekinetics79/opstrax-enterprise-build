@@ -138,8 +138,19 @@ export function DriverAssignmentPage() {
   });
 
   const proofMut = useMutation({
-    mutationFn: ({ id, type, notes, hash }: { id: number; type: "pickup" | "delivery"; notes: string; hash: string }) =>
-      driverApi.submitProof(id, { proofType: type, notes: notes || undefined, evidenceHash: hash || undefined }),
+    mutationFn: ({ id, type, notes, hash, media }: {
+      id: number;
+      type: "pickup" | "delivery";
+      notes: string;
+      hash: string;
+      media: Array<{ kind: "photo" | "signature"; reference: string; contentType?: string; size?: number }>;
+    }) =>
+      driverApi.submitProof(id, {
+        proofType: type,
+        notes: notes || undefined,
+        evidenceHash: hash || undefined,
+        artifacts: media.length ? media : undefined,
+      }),
     onSuccess: () => { setShowProof(null); setArtifacts([]); setProofNotes(""); setProofHash(""); setUploadErr(null); void qc.invalidateQueries({ queryKey: ["driver"] }); },
   });
 
@@ -400,10 +411,18 @@ export function DriverAssignmentPage() {
               className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700 disabled:opacity-50"
               disabled={proofMut.isPending || uploading}
               onClick={() => {
-                const evidence = artifacts.length
-                  ? JSON.stringify({ artifacts: artifacts.map((a) => ({ kind: a.kind, reference: a.reference })), ref: proofHash || undefined })
-                  : proofHash;
-                proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: evidence });
+                // Media travels in `artifacts`, the reference/hash stays a hash. Packing the
+                // media manifest into evidenceHash (a VARCHAR(128)) is what made every POD
+                // with a photo fail to submit at all.
+                const media = artifacts
+                  .filter((a) => a.reference && (a.kind === "photo" || a.kind === "signature"))
+                  .map((a) => ({
+                    kind: a.kind as "photo" | "signature",
+                    reference: String(a.reference),
+                    contentType: a.contentType ? String(a.contentType) : undefined,
+                    size: typeof a.size === "number" ? a.size : undefined,
+                  }));
+                proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: proofHash, media });
               }}
             >
               {proofMut.isPending ? "Submitting…" : `Confirm ${showProof === "delivery" ? "Delivery" : "Pickup"}`}
