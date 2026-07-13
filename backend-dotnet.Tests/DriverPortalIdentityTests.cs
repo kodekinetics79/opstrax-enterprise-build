@@ -18,7 +18,11 @@ namespace Opstrax.Tests;
 /// the two. A test that cannot fail when the product is broken is worse than no test — it is
 /// a source of false confidence. Every assertion below is made against the real DB.
 /// </summary>
-public class RolePermissionReconcilerTests
+/// Named *Postgres* per the repo convention: CI's unit lane filters on
+/// `FullyQualifiedName!~Postgres`, so DB-backed suites run in the SIT environment against a
+/// live database rather than in unit CI. These assertions are meaningless without a real DB —
+/// asserting against anything else is precisely the mistake that let this bug ship.
+public class RolePermissionReconcilerPostgresTests
 {
     private const string LocalConnectionString =
         "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
