@@ -129,7 +129,6 @@ export const modules: ModuleConfig[] = [
 
   { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users.manage" },
   { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "reports.manage" },
-  { key: "feature-flags",   title: "Feature Flags",  route: "/feature-flags",   group: "Governance", description: "Tenant feature rollout, beta controls and operational toggles.", accent: "purple", requiredPermission: "users.manage" },
   { key: "integrations",    title: "Integrations",   route: "/integrations",    group: "Governance", description: "Live connector hub for ERP, accounting, telematics, fuel cards, maps, messaging, WMS and compliance integrations.", accent: "teal",   requiredPermission: "telematics:providers:manage" },
 
   { key: "carbon-tracking",   title: "Carbon Tracking",     route: "/carbon-tracking",   group: "Intelligence",        description: "Fleet CO₂ emissions, sustainability KPIs, reduction targets and carbon intensity per shipment.", accent: "green",  requiredPermission: "reports.view" },
@@ -211,7 +210,6 @@ export const moduleIcons: Record<string, typeof Activity> = {
   profitability: BarChart3,
   "user-management": UserCog,
   "audit-logs": Siren,
-  "feature-flags": Settings,
   integrations: Settings,
   "carbon-tracking": Leaf,
   "digital-forms": ClipboardList,

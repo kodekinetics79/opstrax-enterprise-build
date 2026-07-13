@@ -100,7 +100,7 @@ export function SsoConnectionsPanel() {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+    <div className="iam iam-card p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2.5">
           <ShieldCheck className="h-5 w-5 text-teal-600" />
@@ -131,6 +131,9 @@ export function SsoConnectionsPanel() {
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-semibold text-slate-900">{String(r.displayName)}</span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{String(r.providerType)}</span>
+                {String(r.providerType) === "saml" && (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title="SAML sign-in is not yet active; users on these domains fall back to password login.">sign-in inactive</span>
+                )}
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${r.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
                   {r.enabled ? "Enabled" : "Disabled"}
                 </span>
@@ -170,8 +173,13 @@ export function SsoConnectionsPanel() {
             <Field label="Protocol">
               <select value={draft.providerType} onChange={(e) => setDraft({ ...draft, providerType: e.target.value as "oidc" | "saml" })} className={inputCls}>
                 <option value="oidc">OIDC (OpenID Connect)</option>
-                <option value="saml">SAML 2.0</option>
+                <option value="saml">SAML 2.0 (configuration only — sign-in not yet active)</option>
               </select>
+              {draft.providerType === "saml" && (
+                <p className="mt-1 text-[11px] font-medium text-amber-700">
+                  SAML sign-in is not live yet: users on these domains will keep using password login until SAML support ships. Use OIDC for active SSO today.
+                </p>
+              )}
             </Field>
             <Field label="Email domains (comma-separated)">
               <input value={draft.domainHints} onChange={(e) => setDraft({ ...draft, domainHints: e.target.value })}

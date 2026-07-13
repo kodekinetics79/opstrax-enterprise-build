@@ -90,12 +90,18 @@ function permissionsByGroup(permissions: string[]) {
     { title: "Settings", prefix: "settings:" },
     { title: "Audit", prefix: "audit:" },
   ];
-  return groups
+  const grouped = groups
     .map((group) => ({
       ...group,
       permissions: permissions.filter((permission) => permission.startsWith(group.prefix)),
     }))
     .filter((group) => group.permissions.length > 0);
+  // Catch-all so permissions with unknown prefixes (access_review:, telematics:, …)
+  // stay visible and grantable instead of silently disappearing from the editor.
+  const known = new Set(grouped.flatMap((g) => g.permissions));
+  const other = permissions.filter((p) => !known.has(p));
+  if (other.length > 0) grouped.push({ title: "Other", prefix: "", permissions: other });
+  return grouped;
 }
 
 function permissionList(value: unknown): string[] {
@@ -109,6 +115,45 @@ function permissionList(value: unknown): string[] {
     }
   }
   return [];
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "?";
+}
+
+/** Deterministic avatar hue per name so the roster is scannable at a glance. */
+function avatarHue(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return h;
+}
+
+function Avatar({ name }: { name: string }) {
+  const hue = avatarHue(name);
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_2px_5px_rgba(15,23,42,.25)]"
+      style={{ background: `linear-gradient(145deg, hsl(${hue} 55% 52%), hsl(${hue} 60% 40%))` }}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+function MfaBadge({ status }: { status: unknown }) {
+  const enabled = String(status ?? "").toLowerCase() === "enabled";
+  return (
+    <span className={`iam-chip ${enabled ? "!text-emerald-700" : "!text-slate-400"}`} title={enabled ? "Multi-factor authentication enrolled" : "MFA not enrolled"}>
+      <ShieldCheck className={`h-3 w-3 shrink-0 ${enabled ? "text-emerald-600" : "text-slate-300"}`} />
+      <span>{enabled ? "MFA" : "No MFA"}</span>
+    </span>
+  );
 }
 
 export function AdminPage() {
@@ -263,11 +308,11 @@ export function AdminPage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="iam flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Governance"
-        title="Admin Console"
-        description="Manage users, roles, permissions, settings and audit posture from a single commercial-grade control surface."
+        title="Users & Roles"
+        description="Manage the people, roles, permissions and audit posture of this workspace."
         actions={
           <>
             <button className="btn-ghost" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
@@ -289,22 +334,21 @@ export function AdminPage() {
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
           {[
-            { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, status: "Active", icon: <Users className="h-4 w-4" /> },
-            { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, status: "Healthy", icon: <Users className="h-4 w-4" /> },
-            { label: "Tenant Admins", value: overviewQ.data?.tenantAdmins ?? 0, status: "Review", icon: <UserCog className="h-4 w-4" /> },
-            { label: "Roles", value: overviewQ.data?.roles ?? 0, status: "Active", icon: <KeyRound className="h-4 w-4" /> },
-            { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, status: "Info", icon: <ShieldCheck className="h-4 w-4" /> },
-            { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, status: "Active", icon: <ShieldCheck className="h-4 w-4" /> },
+            { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, icon: <Users className="h-4 w-4" /> },
+            { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, icon: <Users className="h-4 w-4" /> },
+            { label: "Tenant Admins", value: overviewQ.data?.tenantAdmins ?? 0, icon: <UserCog className="h-4 w-4" /> },
+            { label: "Roles", value: overviewQ.data?.roles ?? 0, icon: <KeyRound className="h-4 w-4" /> },
+            { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, icon: <ShieldCheck className="h-4 w-4" /> },
+            { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, icon: <ShieldCheck className="h-4 w-4" /> },
           ].map((card) => (
-            <div key={card.label} className="panel p-5">
-              <div className="flex items-start justify-between">
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{card.label}</p>
-                <div className="rounded-xl border border-slate-200 bg-slate-100 p-2 text-teal-600">{card.icon}</div>
+            <div key={card.label} className="iam-stat min-w-0">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500" title={card.label}>{card.label}</p>
+                <div className="shrink-0 rounded-xl border border-white/70 bg-white p-2 text-teal-600 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.24)]">{card.icon}</div>
               </div>
-              <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
-              <div className="mt-3"><StatusBadge status={card.status} /></div>
+              <div className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
             </div>
           ))}
         </div>
@@ -344,23 +388,26 @@ export function AdminPage() {
 
       {tab === "dashboard" && (
         <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="panel space-y-3 p-5">
-              <div className="flex items-center justify-between">
+            <div className="iam-card space-y-3 p-5">
+              <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-bold text-slate-900">Admin Activity</h2>
-                <button className="btn-ghost h-9 px-3" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
+                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
               </div>
             {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 6).map((entry: AnyRecord) => (
-              <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">{String(entry.actionName ?? entry.action_name ?? "Action")}</p>
-                  <StatusBadge status={String(entry.severity ?? "Info")} />
+              <div key={String(entry.id)} className="iam-kv">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 truncate">{String(entry.actionName ?? entry.action_name ?? "Action")}</p>
+                  <p className="mt-1 text-xs text-slate-500 truncate">{String(entry.actorName ?? entry.actor_name ?? "system")} • {String(entry.entityName ?? entry.entity_name ?? "Admin")}</p>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{String(entry.actorName ?? entry.actor_name ?? "system")} • {String(entry.entityName ?? entry.entity_name ?? "Admin")}</p>
+                <div className="shrink-0"><StatusBadge status={String(entry.severity ?? "Info")} /></div>
               </div>
             ))}
+            {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).length === 0 && !auditLogsQ.isLoading && (
+              <EmptyState title="No recent admin activity" subtitle="IAM actions in this tenant will appear here as they happen." />
+            )}
           </div>
           <div className="space-y-4">
-            <div className="panel p-5">
+            <div className="iam-card p-5">
               <h3 className="font-bold text-slate-900">Quick Actions</h3>
               <div className="mt-4 grid gap-2">
                 <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
@@ -369,10 +416,10 @@ export function AdminPage() {
                 <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
               </div>
             </div>
-            <div className="panel p-5">
+            <div className="iam-card p-5">
               <h3 className="font-bold text-slate-900">Current Tenant</h3>
-              <p className="mt-2 text-sm text-slate-600">{String(session?.company?.name ?? "Tenant")}</p>
-              <p className="mt-1 text-xs text-slate-500">Role: {String(session?.role ?? "Unknown")}</p>
+              <p className="mt-2 text-sm text-slate-600 truncate">{String(session?.company?.name ?? "Tenant")}</p>
+              <p className="mt-1 text-xs text-slate-500 truncate">Role: {String(session?.role ?? "Unknown")}</p>
             </div>
           </div>
         </div>
@@ -410,28 +457,36 @@ export function AdminPage() {
           {usersQ.isLoading ? <LoadingState /> : usersQ.isError ? <ErrorState message="Could not load users." /> : users.length === 0 ? (
             <EmptyState title="No users found" subtitle="Try another filter or add a new user for this tenant." />
           ) : (
-            <div className="panel overflow-x-auto">
+            <div className="iam-card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200">
-                    {["User", "Company", "Role", "Status", "Last Login", "Actions"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                    {["User", "Company", "Role", "Security", "Status", "Last Login", "Actions"].map((header) => (
+                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((user: AnyRecord) => (
-                    <tr key={String(user.id)} className="transition hover:bg-slate-50">
-                      <td className="px-4 py-3">
-                        <button className="text-left" onClick={() => setSelectedUser(user)}>
-                          <p className="font-semibold text-slate-900">{String(user.fullName ?? user.full_name ?? "User")}</p>
-                          <p className="text-xs text-slate-400">{String(user.email ?? "")}</p>
+                  {filteredUsers.map((user: AnyRecord) => {
+                    const name = String(user.fullName ?? user.full_name ?? "User");
+                    return (
+                    <tr key={String(user.id)} className="transition hover:bg-white/60">
+                      <td className="px-4 py-3 max-w-[260px]">
+                        <button className="flex w-full min-w-0 items-center gap-3 text-left" onClick={() => setSelectedUser(user)}>
+                          <Avatar name={name} />
+                          <span className="min-w-0">
+                            <p className="font-semibold text-slate-900 truncate" title={name}>{name}</p>
+                            <p className="text-xs text-slate-400 truncate" title={String(user.email ?? "")}>{String(user.email ?? "")}</p>
+                          </span>
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{String(user.companyName ?? user.company_name ?? "—")}</td>
-                      <td className="px-4 py-3 text-slate-700">{String(user.roleName ?? user.role_name ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-700 max-w-[160px]"><span className="block truncate" title={String(user.companyName ?? user.company_name ?? "—")}>{String(user.companyName ?? user.company_name ?? "—")}</span></td>
+                      <td className="px-4 py-3 max-w-[150px]">
+                        <span className="iam-chip"><span>{String(user.roleName ?? user.role_name ?? "—")}</span></span>
+                      </td>
+                      <td className="px-4 py-3"><MfaBadge status={user.mfaStatus ?? user.mfa_status} /></td>
                       <td className="px-4 py-3"><StatusBadge status={String(user.status ?? "Active")} /></td>
-                      <td className="px-4 py-3 text-xs text-slate-400">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "—"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "Never"}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button className="btn-ghost h-8 px-3" onClick={() => setSelectedUser(user)}>View</button>
@@ -451,7 +506,7 @@ export function AdminPage() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
@@ -462,7 +517,7 @@ export function AdminPage() {
       {tab === "roles" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-400">Roles list and permission bundles.</p>
+            <p className="text-sm text-slate-500">Roles list and permission bundles.</p>
             <div className="flex items-center gap-2">
               <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
               <button className="btn-primary" onClick={openCreateRole} disabled={!canCreateRoles}>
@@ -473,25 +528,23 @@ export function AdminPage() {
           {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : (
             <div className="grid gap-4 xl:grid-cols-2">
               {roles.map((role: AnyRecord) => (
-                <div key={String(role.id)} className="panel p-5">
+                <div key={String(role.id)} className="iam-card p-5 min-w-0">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-bold text-slate-900">{String(role.name)}</h3>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-900 truncate" title={String(role.name)}>{String(role.name)}</h3>
                       <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
                     </div>
-                    <button className="btn-ghost h-8 px-3" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
+                    <button className="btn-ghost h-8 px-3 shrink-0" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
                       {Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}
                     </button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {permissionList(role.permissions ?? role.permissions_json).slice(0, 8).map((permission) => (
-                      <span key={permission} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">
-                        {permission}
-                      </span>
+                      <span key={permission} className="iam-chip"><span>{permission}</span></span>
                     ))}
                     {permissionList(role.permissions ?? role.permissions_json).length > 8 && (
-                      <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-slate-500">
-                        +{permissionList(role.permissions ?? role.permissions_json).length - 8} more
+                      <span className="iam-chip !text-slate-400">
+                        <span>+{permissionList(role.permissions ?? role.permissions_json).length - 8} more</span>
                       </span>
                     )}
                   </div>
@@ -508,24 +561,24 @@ export function AdminPage() {
             <ErrorState message="The live permissions endpoint failed, so the admin view is not showing a seed-backed replacement." />
           ) : permissionsQ.isLoading && permissions.length === 0 ? (
             <div className="space-y-3">
-              <p className="text-sm text-slate-400">Fetching the live RBAC catalog.</p>
+              <p className="text-sm text-slate-500">Fetching the live RBAC catalog.</p>
               <LoadingState />
             </div>
           ) : (
             <>
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-slate-400">Canonical permission catalog used by the RBAC layer.</p>
+            <p className="text-sm text-slate-500">Canonical permission catalog used by the RBAC layer.</p>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             {permissionsByGroup(permissions).map((group) => (
-              <div key={group.title} className="panel p-5">
+              <div key={group.title} className="iam-card p-5 min-w-0">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-bold text-slate-900">{group.title}</h3>
+                  <h3 className="font-bold text-slate-900 truncate">{group.title}</h3>
                   <StatusBadge status={`${group.permissions.length} perms`} />
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {group.permissions.map((permission) => (
-                    <span key={permission} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{permission}</span>
+                    <span key={permission} className="iam-chip"><span>{permission}</span></span>
                   ))}
                 </div>
               </div>
@@ -540,7 +593,7 @@ export function AdminPage() {
         <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
           <div className="space-y-4">
             {canManageAccessReviews && (
-              <div className="panel space-y-3 p-5">
+              <div className="iam-card space-y-3 p-5">
                 <div>
                   <h2 className="font-bold text-slate-900">Start access certification</h2>
                   <p className="mt-1 text-xs text-slate-500">Snapshots every active user and their current role permissions for this tenant.</p>
@@ -559,32 +612,32 @@ export function AdminPage() {
                 ><Plus className="h-4 w-4" />{createAccessReview.isPending ? "Creating…" : "Create review"}</button>
               </div>
             )}
-            <div className="panel overflow-hidden">
+            <div className="iam-card overflow-hidden">
               <div className="border-b border-slate-200 px-5 py-4"><h2 className="font-bold text-slate-900">Review campaigns</h2></div>
               {accessReviewsQ.isLoading ? <LoadingState /> : accessReviewsQ.isError ? <ErrorState message="Could not load access reviews." /> : (accessReviewsQ.data ?? []).length === 0 ? (
                 <div className="p-5"><EmptyState title="No access reviews" subtitle="Create the first tenant access certification campaign." /></div>
               ) : (accessReviewsQ.data ?? []).map((review) => (
-                <button key={review.id} className={`w-full border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50 ${selectedReviewId === Number(review.id) ? "bg-teal-50" : ""}`} onClick={() => setSelectedReviewId(Number(review.id))}>
-                  <div className="flex items-start justify-between gap-3"><p className="font-semibold text-slate-900">{String(review.title)}</p><StatusBadge status={String(review.status)} /></div>
+                <button key={review.id} className={`w-full border-b border-slate-100 px-5 py-4 text-left transition hover:bg-white/60 ${selectedReviewId === Number(review.id) ? "bg-teal-50/70" : ""}`} onClick={() => setSelectedReviewId(Number(review.id))}>
+                  <div className="flex items-start justify-between gap-3"><p className="font-semibold text-slate-900 truncate min-w-0">{String(review.title)}</p><div className="shrink-0"><StatusBadge status={String(review.status)} /></div></div>
                   <p className="mt-2 text-xs text-slate-500">{Number(review.itemsPending ?? review.items_pending ?? 0)} pending · {Number(review.itemsApproved ?? review.items_approved ?? 0)} approved · {Number(review.itemsRevoked ?? review.items_revoked ?? 0)} revoked</p>
                 </button>
               ))}
             </div>
           </div>
-          <div className="panel min-h-80 overflow-hidden">
+          <div className="iam-card min-h-80 overflow-hidden">
             {!selectedReviewId ? (
               <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><ClipboardCheck className="h-10 w-10 text-teal-500" /><h2 className="mt-3 font-bold text-slate-900">Select a review</h2><p className="mt-1 text-sm text-slate-500">Inspect each user’s snapshotted role and make an explicit retain or revoke decision.</p></div>
             ) : accessReviewQ.isLoading ? <LoadingState /> : accessReviewQ.isError ? <ErrorState message="Could not load this access review." /> : (
               <div>
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
-                  <div><h2 className="text-lg font-bold text-slate-900">{String(accessReviewQ.data?.title ?? "Access review")}</h2><p className="mt-1 text-sm text-slate-500">{String(accessReviewQ.data?.description ?? "Tenant access certification")}</p></div>
-                  <button className="btn-primary" disabled={!canManageAccessReviews || Number(accessReviewQ.data?.itemsPending ?? accessReviewQ.data?.items_pending ?? 0) > 0 || String(accessReviewQ.data?.status) === "completed" || completeAccessReview.isPending} onClick={() => completeAccessReview.mutateAsync(selectedReviewId)}><Check className="h-4 w-4" />Complete review</button>
+                  <div className="min-w-0"><h2 className="text-lg font-bold text-slate-900 truncate">{String(accessReviewQ.data?.title ?? "Access review")}</h2><p className="mt-1 text-sm text-slate-500">{String(accessReviewQ.data?.description ?? "Tenant access certification")}</p></div>
+                  <button className="btn-primary shrink-0" disabled={!canManageAccessReviews || Number(accessReviewQ.data?.itemsPending ?? accessReviewQ.data?.items_pending ?? 0) > 0 || String(accessReviewQ.data?.status) === "completed" || completeAccessReview.isPending} onClick={() => completeAccessReview.mutateAsync(selectedReviewId)}><Check className="h-4 w-4" />Complete review</button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm"><thead><tr className="border-b border-slate-200">{["User", "Role", "Permissions", "Decision"].map((h) => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>)}</tr></thead>
                     <tbody className="divide-y divide-slate-100">{(((accessReviewQ.data?.items as AnyRecord[] | undefined) ?? [])).map((item) => {
                       const pending = String(item.status) === "pending";
-                      return <tr key={String(item.id)}><td className="px-4 py-3"><p className="font-semibold text-slate-900">{String(item.targetUserName ?? item.target_user_name ?? "User")}</p><p className="text-xs text-slate-500">{String(item.targetUserEmail ?? item.target_user_email ?? "")}</p></td><td className="px-4 py-3 text-slate-700">{String(item.roleName ?? item.role_name ?? "—")}</td><td className="px-4 py-3 text-xs text-slate-500">{permissionList(item.permissionsSnapshot ?? item.permissions_snapshot).length} granted</td><td className="px-4 py-3">{pending ? <div className="flex gap-2"><button className="btn-ghost h-8 px-3" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "approve" })}>Retain</button><button className="btn-ghost h-8 px-3 text-rose-600" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "revoke", notes: "Access removal required by reviewer" })}>Revoke</button></div> : <StatusBadge status={String(item.status)} />}</td></tr>;
+                      return <tr key={String(item.id)}><td className="px-4 py-3 max-w-[220px]"><p className="font-semibold text-slate-900 truncate">{String(item.targetUserName ?? item.target_user_name ?? "User")}</p><p className="text-xs text-slate-500 truncate">{String(item.targetUserEmail ?? item.target_user_email ?? "")}</p></td><td className="px-4 py-3 text-slate-700 max-w-[140px]"><span className="block truncate">{String(item.roleName ?? item.role_name ?? "—")}</span></td><td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{permissionList(item.permissionsSnapshot ?? item.permissions_snapshot).length} granted</td><td className="px-4 py-3">{pending ? <div className="flex gap-2"><button className="btn-ghost h-8 px-3" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "approve" })}>Retain</button><button className="btn-ghost h-8 px-3 text-rose-600" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "revoke", notes: "Access removal required by reviewer" })}>Revoke</button></div> : <StatusBadge status={String(item.status)} />}</td></tr>;
                     })}</tbody></table>
                 </div>
               </div>
@@ -594,19 +647,26 @@ export function AdminPage() {
       )}
 
       {tab === "settings" && (
-        <div className="panel p-5 space-y-4">
+        <div className="iam-card p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <h2 className="text-lg font-bold text-slate-900">Tenant Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Locale and operational preferences for this tenant.</p>
             </div>
-            <button className="btn-ghost" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
+            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {Object.entries((localeQ.data as AnyRecord | undefined) ?? []).slice(0, 6).map(([key, value]) => (
-              <div key={key} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{key.replace(/_/g, " ")}</p>
-                <p className="mt-1 text-sm text-slate-700">{String(value ?? "—")}</p>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {Object.entries(
+              // The endpoint returns an array of tenant rows — unwrap the first row,
+              // otherwise Object.entries renders "[object Object]" tiles.
+              ((Array.isArray(localeQ.data) ? (localeQ.data as AnyRecord[])[0] : localeQ.data) as AnyRecord | undefined) ?? {}
+            )
+              .filter(([key]) => !["id", "tenant_id", "company_id", "created_at", "updated_at"].includes(key))
+              .slice(0, 6)
+              .map(([key, value]) => (
+              <div key={key} className="iam-kv flex-col !items-start gap-1 min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate w-full">{key.replace(/_/g, " ")}</p>
+                <p className="text-sm text-slate-700 break-words w-full">{String(value ?? "—")}</p>
               </div>
             ))}
           </div>
@@ -620,11 +680,11 @@ export function AdminPage() {
       {tab === "audit" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-400">Recent audit activity and export requests.</p>
-            <button className="btn-ghost" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
+            <p className="text-sm text-slate-500">Recent audit activity and export requests.</p>
+            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="panel overflow-x-auto">
+            <div className="iam-card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200">
@@ -636,21 +696,21 @@ export function AdminPage() {
                 <tbody className="divide-y divide-slate-100">
                   {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 8).map((log: AnyRecord) => (
                     <tr key={String(log.id)}>
-                      <td className="px-4 py-3 text-slate-900">{String(log.actionName ?? log.action_name ?? "Action")}</td>
-                      <td className="px-4 py-3 text-slate-600">{String(log.actorName ?? log.actor_name ?? "system")}</td>
-                      <td className="px-4 py-3 text-slate-600">{String(log.entityName ?? log.entity_name ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-900 max-w-[220px]"><span className="block truncate" title={String(log.actionName ?? log.action_name ?? "Action")}>{String(log.actionName ?? log.action_name ?? "Action")}</span></td>
+                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.actorName ?? log.actor_name ?? "system")}</span></td>
+                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.entityName ?? log.entity_name ?? "—")}</span></td>
                       <td className="px-4 py-3"><StatusBadge status={String(log.severity ?? "Info")} /></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div className="panel p-5 space-y-3">
+            <div className="iam-card p-5 space-y-3">
               <h3 className="font-bold text-slate-900">Export Requests</h3>
               {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
-                <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-semibold text-slate-900">{String(entry.requested_by_name ?? "—")}</p>
-                  <p className="text-xs text-slate-500">{String(entry.status ?? "Pending")}</p>
+                <div key={String(entry.id)} className="iam-kv">
+                  <p className="text-sm font-semibold text-slate-900 truncate min-w-0">{String(entry.requested_by_name ?? "—")}</p>
+                  <p className="text-xs text-slate-500 shrink-0">{String(entry.status ?? "Pending")}</p>
                 </div>
               ))}
               <button
@@ -670,11 +730,17 @@ export function AdminPage() {
       )}
 
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedUser(null)}>
-          <aside className="h-full w-full max-w-lg overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelectedUser(null)}><X className="h-4 w-4" /></button>
-            <p className="section-title text-teal-300">User Detail</p>
-            <h2 className="mt-3 text-2xl font-bold text-white">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={() => setSelectedUser(null)}>
+          <aside className="iam iam-drawer max-w-lg p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="User detail">
+            <button className="float-right icon-btn" onClick={() => setSelectedUser(null)} aria-label="Close user detail"><X className="h-4 w-4" /></button>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">User Detail</p>
+            <div className="mt-4 flex items-center gap-3 min-w-0">
+              <Avatar name={String(selectedUser.fullName ?? selectedUser.full_name ?? "User")} />
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
+                <p className="text-xs text-slate-500 truncate">{String(selectedUser.email ?? "")}</p>
+              </div>
+            </div>
             <div className="mt-6 space-y-2">
               {([
                 ["Email", selectedUser.email],
@@ -685,22 +751,27 @@ export function AdminPage() {
                 ["MFA", selectedUser.mfaStatus ?? selectedUser.mfa_status],
                 ["Created", selectedUser.createdAt ?? selectedUser.created_at],
               ] as Array<[string, unknown]>).map(([key, value]) => (
-                <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2.5">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{key}</p>
-                  <p className="text-right text-sm text-slate-200 break-all">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
+                <div key={key} className="iam-kv">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5 shrink-0">{key}</p>
+                  <p className="text-right text-sm font-medium text-slate-800 break-all min-w-0">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
                 </div>
               ))}
             </div>
+            {canUpdateUsers && (
+              <button className="btn-primary mt-6 w-full" onClick={() => { openEditUser(selectedUser); setSelectedUser(null); }}>
+                Edit User
+              </button>
+            )}
           </aside>
         </div>
       )}
 
       {userModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-2xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
+          <div className="iam iam-card w-full max-w-2xl space-y-4 p-6">
             <div className="flex items-center justify-between">
               <h2 className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
-              <button className="icon-btn" onClick={() => setUserModal(null)}><X className="h-4 w-4" /></button>
+              <button className="icon-btn" onClick={() => setUserModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
               <div className="grid gap-3 md:grid-cols-2">
               <div><label className="label">Full Name</label><input className="field w-full" value={String(userForm.fullName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, fullName: e.target.value }))} /></div>
@@ -741,11 +812,11 @@ export function AdminPage() {
       )}
 
       {roleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-3xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
+          <div className="iam iam-card w-full max-w-3xl space-y-4 p-6">
             <div className="flex items-center justify-between">
               <h2 className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
-              <button className="icon-btn" onClick={() => setRoleModal(null)}><X className="h-4 w-4" /></button>
+              <button className="icon-btn" onClick={() => setRoleModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
             <div>
               <div><label className="label">Role Name</label><input className="field w-full" value={String(roleForm.name ?? "")} onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} /></div>
@@ -756,9 +827,10 @@ export function AdminPage() {
                   <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{group.title}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {group.permissions.map((permission) => (
-                      <label key={permission} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm text-slate-700">
+                      <label key={permission} className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm text-slate-700 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),2px_3px_6px_rgba(141,157,184,.14)]">
                         <input
                           type="checkbox"
+                          className="shrink-0 accent-teal-600"
                           checked={roleForm.permissions.includes(permission)}
                           onChange={(e) => setRoleForm((f) => ({
                             ...f,
@@ -767,7 +839,7 @@ export function AdminPage() {
                               : f.permissions.filter((value) => value !== permission),
                           }))}
                         />
-                        <span>{permission}</span>
+                        <span className="truncate" title={permission}>{permission}</span>
                       </label>
                     ))}
                   </div>

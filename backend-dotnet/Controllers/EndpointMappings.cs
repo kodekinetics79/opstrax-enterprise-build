@@ -661,27 +661,12 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(new { code }));
         });
 
-        // ── Feature Flags ──
-        app.MapGet("/api/feature-flags", (HttpContext http, Database db, CancellationToken ct) =>
-            RequirePermission(http, "users:manage") is { } denied ? Task.FromResult(denied) : OkRows(db,
-            @"SELECT mr.id, mr.record_code flag_key, mr.title name, mr.notes description,
-                     COALESCE(mr.tags, 'General') category,
-                     CASE WHEN mr.status='Active' THEN 1 ELSE 0 END enabled,
-                     COALESCE(mr.numeric_value, 100) rollout_pct,
-                     COALESCE(mr.priority, 'Production') env,
-                     mr.updated_at last_modified
-              FROM module_records mr
-              WHERE mr.company_id=@cid AND mr.module_key='feature-flags' AND mr.deleted_at IS NULL
-              ORDER BY mr.tags, mr.title",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapPut("/api/feature-flags/{key}/toggle", async (string key, ToggleBody body, Database db, HttpContext http, AuditService audit, CancellationToken ct) => {
-            var companyId = GetCompanyId(http);
-            var affected = await db.ExecuteAsync(
-                "UPDATE module_records SET status=@s, updated_at=NOW() WHERE company_id=@c AND module_key='feature-flags' AND record_code=@k",
-                c => { c.Parameters.AddWithValue("@s", body.Enabled ? "Active" : "Inactive"); c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@k", key); }, ct);
-            await audit.LogAsync(http, "feature_flag.toggled", "FeatureFlag", 0, $"Flag {key} set to {(body.Enabled ? "enabled" : "disabled")}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { key, enabled = body.Enabled }));
-        });
+        // Feature Flags REMOVED: the toggle only flipped a module_records row + wrote an
+        // audit entry — nothing in the product ever read a flag, so it changed no
+        // behaviour. A control that looks like a kill switch but isn't is an operational
+        // hazard. Per-tenant module access is handled for real by Feature Entitlements
+        // (server-enforced in Program.cs). Reintroduce a flag system only when there is
+        // an actual rollout to gate, and wire it into the code paths at that time.
 
         // ── Integrations ──
         // ── Integrations control-tower (full CRUD) ────────────────────────────────
@@ -1477,7 +1462,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/hos/logs", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT hl.*, d.full_name driver_name, d.driver_code, v.vehicle_code FROM hos_logs hl JOIN drivers d ON d.id=hl.driver_id AND d.company_id=@cid LEFT JOIN vehicles v ON v.id=hl.vehicle_id AND v.company_id=@cid WHERE hl.company_id=@cid ORDER BY hl.log_date DESC, hl.start_time DESC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/hos/logs/{driverId:long}", (HttpContext http, long driverId, Database db, CancellationToken ct) => OkRows(db, "SELECT hl.*, v.vehicle_code FROM hos_logs hl LEFT JOIN vehicles v ON v.id=hl.vehicle_id AND v.company_id=@cid WHERE hl.driver_id=@id AND hl.company_id=@cid ORDER BY hl.log_date DESC, hl.start_time DESC LIMIT 30", c => { c.Parameters.AddWithValue("@id", driverId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct));
         app.MapPost("/api/hos/logs/{id:long}/certify", HosCertify);
-        app.MapGet("/api/hos/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='hos-eld' ORDER BY score DESC LIMIT 10", ct: ct));
+        app.MapGet("/api/hos/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         app.MapGet("/api/eld/devices", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT e.*, v.vehicle_code, d.full_name driver_name, d.driver_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.company_id=@cid AND e.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Malfunction','Diagnostic','Active'], e.status), e.device_serial", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/eld/devices/{id:long}", (long id, HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT e.*, v.vehicle_code, d.full_name driver_name FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.id=@id AND e.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct));
@@ -1522,7 +1507,7 @@ public static partial class EndpointMappings
                 ct: ct);
         });
         app.MapPost("/api/reports/exports", CreateReportExport);
-        app.MapGet("/api/reports/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='reports-analytics' ORDER BY score DESC LIMIT 10", ct: ct));
+        app.MapGet("/api/reports/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='reports-analytics' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ===== P8 REPORTING + ANALYTICS ENGINE ====================================
         // SECURITY: All query execution goes through the dataset registry whitelist.
@@ -1620,7 +1605,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/kpi/metrics", (HttpContext http, Database db, CancellationToken ct) => KpiMetricsComputed(http, db, ct));
         app.MapGet("/api/kpi/summary", KpiSummary);
         app.MapGet("/api/kpi/targets", (Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code ORDER BY kt.effective_date DESC LIMIT 30", ct: ct));
-        app.MapGet("/api/kpi/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='sla-kpi' ORDER BY score DESC LIMIT 10", ct: ct));
+        app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
         app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
@@ -1656,7 +1641,7 @@ public static partial class EndpointMappings
                 ct: ct);
         });
         app.MapPost("/api/audit/export-requests", CreateAuditExportRequest);
-        app.MapGet("/api/audit/ai/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='audit-logs' ORDER BY score DESC LIMIT 10", ct: ct));
+        app.MapGet("/api/audit/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='audit-logs' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ===== ADMIN / GOVERNANCE ==============================================
         // ── Branches / Depots / Yards (org hierarchy) ──
@@ -2317,7 +2302,7 @@ public static partial class EndpointMappings
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.status user_status,
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency
               FROM users u JOIN companies c ON c.id = u.company_id
-              WHERE u.email=@email LIMIT 1",
+              WHERE LOWER(u.email)=LOWER(@email) LIMIT 1",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@email", request.Email);
@@ -6314,7 +6299,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["user-management"] = "users:manage",
         ["settings"] = "settings:manage",
         ["integrations"] = "settings:manage",
-        ["feature-flags"] = "users:manage",
         ["companies"] = "users:manage",
         ["audit-logs"] = "reports:manage",
         ["billing"] = "finance:manage",
@@ -10327,15 +10311,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
 
-    private static IResult AboutPlatform()
+    private static IResult AboutPlatform(IHostEnvironment env)
     {
+        var asm = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             fullProductName  = "OpsTrax Transport Management Solution",
             shortName        = "OpsTrax",
             developer        = "Kode Kinetics",
-            version          = "Enterprise Demo Build",
-            environment      = "Local / Demo",
+            version          = asm is null ? "Enterprise" : $"Enterprise {asm.Major}.{asm.Minor}.{asm.Build}",
+            environment      = env.EnvironmentName,
             companyDescription = "Kode Kinetics is a technology company specializing in custom software development, AI automation, SaaS platforms, enterprise integrations, cloud solutions, web/mobile applications, and digital transformation systems for modern organizations.",
             disclaimer       = "OpsTrax provides compliance management, monitoring, and audit-readiness tools. Final regulatory compliance remains the carrier's responsibility. ELD certification depends on the connected ELD provider/device and applicable country requirements.",
             support = new

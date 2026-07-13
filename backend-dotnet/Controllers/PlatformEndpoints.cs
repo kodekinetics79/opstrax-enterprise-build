@@ -267,7 +267,7 @@ public static class PlatformEndpoints
         var admin = await db.QuerySingleAsync(
             @"SELECT a.id, a.email, a.full_name, a.password_hash, a.mfa_enabled, a.mfa_secret, r.role_key, r.name role_name
               FROM platform_admins a LEFT JOIN platform_roles r ON r.id = a.role_id
-              WHERE a.email=@e AND a.status='Active' LIMIT 1",
+              WHERE LOWER(a.email)=LOWER(@e) AND a.status='Active' LIMIT 1",
             c => c.Parameters.AddWithValue("@e", email), ct);
         if (admin is null) return await FailAsync("unknown_or_inactive_account");
 

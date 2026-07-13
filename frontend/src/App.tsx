@@ -64,7 +64,6 @@ const CustomerVisibilityPage = lazy(() => import("@/pages/CustomerVisibilityPage
 const FinancialAnalyticsPage = lazy(() => import("@/pages/FinancialAnalyticsPage").then((module) => ({ default: module.FinancialAnalyticsPage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
-const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((module) => ({ default: module.FeatureFlagsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
 const DigitalFormsPage = lazy(() => import("@/pages/DigitalFormsPage").then((module) => ({ default: module.DigitalFormsPage })));
 const Batch3OperationsPage = lazy(() => import("@/pages/Batch3OperationsPage").then((module) => ({ default: module.Batch3OperationsPage })));
@@ -264,7 +263,6 @@ export default function App() {
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
-        <Route path="/feature-flags"   element={<RequirePermission permission="users:manage"><FeatureFlagsPage /></RequirePermission>} />
         <Route path="/carbon-tracking" element={<RequirePermission permission="reports:view"><CarbonTrackingPage /></RequirePermission>} />
         <Route path="/digital-forms"   element={<RequirePermission permission="safety:view"><DigitalFormsPage /></RequirePermission>} />
 
@@ -318,7 +316,7 @@ export default function App() {
               "follow-ups","support-tickets","renewals","upsell-opportunities","contracts","rate-cards",
               "price-simulation","quotations",
               "fleet-utilization","traffic-violations","service-history","downtime","preventive-maintenance",
-              "invoices","payments","profitability","integrations","owners","assignments","feature-flags",
+              "invoices","payments","profitability","integrations","owners","assignments",
               "carbon-tracking","digital-forms",
               "geofences","driver-scorecards",
               "alert-rules","driver-messaging","workforce",
