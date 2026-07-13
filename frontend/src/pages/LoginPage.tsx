@@ -419,7 +419,7 @@ const ACCESS_GUIDANCE = [
 const TRUST_SIGNALS = [
   { icon: ShieldCheck, label: "Tenant-isolated access" },
   { icon: Lock,        label: "Encrypted in transit" },
-  { icon: Building2,   label: "SSO / SAML ready" },
+  { icon: Building2,   label: "Enterprise SSO (OIDC)" },
 ] as const;
 
 /* ── Main component ─────────────────────────────────────────────────────── */
