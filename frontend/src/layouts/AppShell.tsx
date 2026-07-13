@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell, ChevronDown, ChevronLeft, ChevronRight, Filter, LogOut,
@@ -8,6 +8,7 @@ import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
+import { useFlag } from "@/hooks/useFeatureFlags";
 import { useHasPermission } from "@/hooks/usePermission";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
@@ -330,6 +331,15 @@ export function AppShell() {
   const activeModule = useMemo(() => findActiveModule(location.pathname), [location.pathname]);
   const pageBreadcrumbs = useMemo(() => buildBreadcrumbs(location.pathname, session), [location.pathname, session]);
   const currentPageTitle = pageBreadcrumbs.at(-1)?.label ?? activeModule?.title ?? "Dashboard";
+  // Feature-flag gating of nav items. The server gate is the real enforcement; this
+  // just stops us advertising a module whose API would 403. Kill switches over EXISTING
+  // modules use fallback=true so nothing flickers away while flags load.
+  const aiCopilotOn = useFlag("ai_copilot", true);
+  const moduleAllowedByFlag = useCallback(
+    (key: string) => (key === "ai-copilot" ? aiCopilotOn : true),
+    [aiCopilotOn],
+  );
+
   const visibleSections = useMemo(
     () => NAV_SECTIONS.map((section) => {
       const accessibleItems = section.items
@@ -337,7 +347,8 @@ export function AppShell() {
         .filter((module): module is (typeof modules)[number] => Boolean(
           module
           && (!module.requiredPermission || hasPermission(module.requiredPermission))
-          && moduleAvailableForCountry(module, tenantCountry),
+          && moduleAvailableForCountry(module, tenantCountry)
+          && moduleAllowedByFlag(module.key),
         ));
 
       return {
@@ -345,7 +356,7 @@ export function AppShell() {
         items: accessibleItems,
       };
     }).filter((section) => section.items.length > 0),
-    [hasPermission, session?.permissions, tenantCountry],
+    [hasPermission, session?.permissions, tenantCountry, moduleAllowedByFlag],
   );
 
   const normalizedSidebarQuery = sidebarQuery.trim().toLowerCase();

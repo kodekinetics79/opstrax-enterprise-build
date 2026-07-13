@@ -661,12 +661,98 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(new { code }));
         });
 
-        // Feature Flags REMOVED: the toggle only flipped a module_records row + wrote an
-        // audit entry — nothing in the product ever read a flag, so it changed no
-        // behaviour. A control that looks like a kill switch but isn't is an operational
-        // hazard. Per-tenant module access is handled for real by Feature Entitlements
-        // (server-enforced in Program.cs). Reintroduce a flag system only when there is
-        // an actual rollout to gate, and wire it into the code paths at that time.
+        // ── Feature Flags (REAL — consumed by Program.cs route gates, FeatureFlagService
+        //    from any code path, and useFlag() in the UI via /evaluate) ────────────────
+        // /evaluate is intentionally open to ANY authenticated user: the UI must be able
+        // to resolve its own flags. Mutations require users:manage.
+        app.MapGet("/api/feature-flags/evaluate", async (HttpContext http, FeatureFlagService flags, CancellationToken ct) =>
+        {
+            var companyId = GetCompanyId(http);
+            var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+            return Results.Ok(ApiResponse<object>.Ok(await flags.EvaluateAllAsync(companyId, userId, ct)));
+        });
+
+        app.MapGet("/api/feature-flags", (HttpContext http, Database db, CancellationToken ct) =>
+            RequirePermission(http, "users:manage") is { } denied ? Task.FromResult(denied) : OkRows(db,
+            @"SELECT id, flag_key, name, description, enabled, rollout_pct, environment,
+                     created_at, updated_at, updated_by
+              FROM feature_flags WHERE company_id=@cid
+              ORDER BY flag_key",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+
+        app.MapPost("/api/feature-flags", async (HttpContext http, FeatureFlagBody body, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "users:manage") is { } denied) return denied;
+            var key = (body.FlagKey ?? "").Trim().ToLowerInvariant();
+            if (key.Length == 0 || (body.Name ?? "").Trim().Length == 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("flagKey and name are required"));
+            var pct = Math.Clamp(body.RolloutPct ?? 100, 0, 100);
+            try
+            {
+                var id = await db.InsertAsync(
+                    @"INSERT INTO feature_flags (company_id, flag_key, name, description, enabled, rollout_pct, environment, updated_by)
+                      VALUES (@cid, @k, @n, @d, @e, @p, @env, @by)",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                        c.Parameters.AddWithValue("@k", key);
+                        c.Parameters.AddWithValue("@n", body.Name!.Trim());
+                        c.Parameters.AddWithValue("@d", (object?)body.Description ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@e", body.Enabled ?? false);
+                        c.Parameters.AddWithValue("@p", pct);
+                        c.Parameters.AddWithValue("@env", body.Environment ?? "production");
+                        c.Parameters.AddWithValue("@by", FlagActor(http));
+                    }, ct);
+                await audit.LogAsync(http, "feature_flag.created", "FeatureFlag", id, $"Flag {key} created", ct: ct);
+                return Results.Ok(ApiResponse<object>.Ok(new { id, flagKey = key }, "Flag created"));
+            }
+            catch (Npgsql.PostgresException pex) when (pex.SqlState == "23505")
+            {
+                return Results.Conflict(ApiResponse<object>.Fail($"A flag named '{key}' already exists"));
+            }
+        });
+
+        app.MapPut("/api/feature-flags/{key}", async (string key, HttpContext http, FeatureFlagBody body, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "users:manage") is { } denied) return denied;
+            var pct = body.RolloutPct is { } p ? Math.Clamp(p, 0, 100) : (int?)null;
+            var affected = await db.ExecuteAsync(
+                @"UPDATE feature_flags SET
+                    name        = COALESCE(@n, name),
+                    description = COALESCE(@d, description),
+                    enabled     = COALESCE(@e, enabled),
+                    rollout_pct = COALESCE(@p, rollout_pct),
+                    environment = COALESCE(@env, environment),
+                    updated_at  = NOW(),
+                    updated_by  = @by
+                  WHERE company_id=@cid AND flag_key=@k",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@k", key.ToLowerInvariant());
+                    c.Parameters.AddWithValue("@n", (object?)body.Name ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@d", (object?)body.Description ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@e", (object?)body.Enabled ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@p", (object?)pct ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@env", (object?)body.Environment ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@by", FlagActor(http));
+                }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Flag not found"));
+            await audit.LogAsync(http, "feature_flag.updated", "FeatureFlag", 0,
+                $"Flag {key}: enabled={body.Enabled?.ToString() ?? "-"} rollout={pct?.ToString() ?? "-"}", ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { key, enabled = body.Enabled, rolloutPct = pct }, "Flag updated"));
+        });
+
+        app.MapDelete("/api/feature-flags/{key}", async (string key, HttpContext http, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "users:manage") is { } denied) return denied;
+            var affected = await db.ExecuteAsync(
+                "DELETE FROM feature_flags WHERE company_id=@cid AND flag_key=@k",
+                c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@k", key.ToLowerInvariant()); }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Flag not found"));
+            await audit.LogAsync(http, "feature_flag.deleted", "FeatureFlag", 0, $"Flag {key} deleted", ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { key, deleted = true }, "Flag deleted"));
+        });
 
         // ── Integrations ──
         // ── Integrations control-tower (full CRUD) ────────────────────────────────
@@ -9136,6 +9222,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private sealed record ForgotPasswordRequest(string? Email);
     private sealed record ResetPasswordRequest(string? Email, string? Token, string? NewPassword);
     private sealed record ToggleBody(bool Enabled);
+
+    // Feature flags: every field optional on PUT so a partial update (e.g. just the
+    // rollout slider) doesn't clobber the rest.
+    private sealed record FeatureFlagBody(
+        string? FlagKey, string? Name, string? Description,
+        bool? Enabled, int? RolloutPct, string? Environment);
+
+    private static string FlagActor(HttpContext http) =>
+        $"user:{Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L)}";
     private sealed record DigitalFormSubmissionBody(string FormKey, object? Answers, string? Notes);
     private sealed record WorkforceAssignRequest(int DriverId, string Day, string Shift);
 

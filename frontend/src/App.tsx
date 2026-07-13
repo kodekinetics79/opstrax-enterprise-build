@@ -1,7 +1,8 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
+import { FeatureFlagsProvider, useFlag } from "@/hooks/useFeatureFlags";
 import { RequirePermission } from "@/hooks/usePermission";
 import { GCC_COUNTRIES, RequireRegion } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
@@ -123,9 +124,35 @@ const FleetOverviewPage = lazy(() => import("@/pages/FleetOverviewPage").then(m 
 // Platform Admin — global SaaS business control plane (own auth + routing)
 const PlatformApp = lazy(() => import("@/pages/platform/PlatformApp"));
 
+const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((module) => ({ default: module.FeatureFlagsPage })));
+
 function ProtectedShell() {
   const { session } = useAuth();
-  return session ? <AppShell /> : <Navigate to="/login" replace />;
+  // Flags are only resolvable for an authenticated user (they're evaluated per-user
+  // server-side), so the provider lives inside the authenticated shell.
+  return session
+    ? <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>
+    : <Navigate to="/login" replace />;
+}
+
+/**
+ * Route guard for a feature flag. The server gate (Program.cs) is the real
+ * enforcement — this just keeps the user out of a page whose API would 403.
+ * `fallback` = what to assume before flags load: `true` for a kill switch over
+ * existing behaviour, so the page doesn't flicker away on every load.
+ */
+function RequireFlag({ flag, fallback = true, children }: { flag: string; fallback?: boolean; children: ReactNode }) {
+  const on = useFlag(flag, fallback);
+  if (on) return <>{children}</>;
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 p-16 text-center">
+      <p className="text-lg font-bold text-slate-900">This feature is turned off</p>
+      <p className="max-w-md text-sm text-slate-500">
+        An administrator has switched it off for your organisation. It can be re-enabled
+        under Settings → Feature flags.
+      </p>
+    </div>
+  );
 }
 
 export default function App() {
@@ -171,7 +198,10 @@ export default function App() {
         {/* ── Intelligence ── */}
         <Route path="/command-center" element={<RequirePermission permission="dashboard:view"><CommandCenterPage /></RequirePermission>} />
         <Route path="/control-tower" element={<RequirePermission permission="dashboard:view"><ControlTowerPage /></RequirePermission>} />
-        <Route path="/ai-copilot"           element={<RequirePermission permission="reports:view"><AiCopilotPage /></RequirePermission>} />
+        {/* Real flag consumer: the `ai_copilot` kill switch. Turning it off 403s /api/ai/*
+            server-side and takes this page out of reach. fallback=true so the page doesn't
+            vanish while flags are still loading. */}
+        <Route path="/ai-copilot"           element={<RequirePermission permission="reports:view"><RequireFlag flag="ai_copilot"><AiCopilotPage /></RequireFlag></RequirePermission>} />
         <Route path="/predictive-analytics" element={<RequirePermission permission="reports:view"><PredictiveAnalyticsPage /></RequirePermission>} />
         <Route path="/reports-analytics" element={<RequirePermission permission="reports:view"><ReportsPage /></RequirePermission>} />
         <Route path="/reports" element={<RequirePermission permission="reports:view"><ReportsPage /></RequirePermission>} />
@@ -263,6 +293,7 @@ export default function App() {
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
+        <Route path="/feature-flags"   element={<RequirePermission permission="users:manage"><FeatureFlagsPage /></RequirePermission>} />
         <Route path="/carbon-tracking" element={<RequirePermission permission="reports:view"><CarbonTrackingPage /></RequirePermission>} />
         <Route path="/digital-forms"   element={<RequirePermission permission="safety:view"><DigitalFormsPage /></RequirePermission>} />
 
@@ -316,7 +347,7 @@ export default function App() {
               "follow-ups","support-tickets","renewals","upsell-opportunities","contracts","rate-cards",
               "price-simulation","quotations",
               "fleet-utilization","traffic-violations","service-history","downtime","preventive-maintenance",
-              "invoices","payments","profitability","integrations","owners","assignments",
+              "invoices","payments","profitability","integrations","owners","assignments","feature-flags",
               "carbon-tracking","digital-forms",
               "geofences","driver-scorecards",
               "alert-rules","driver-messaging","workforce",
