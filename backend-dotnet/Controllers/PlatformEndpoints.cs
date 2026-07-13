@@ -623,7 +623,7 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { tenant, entitlements, invoices }));
     }
 
-    internal static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, CancellationToken ct)
+    internal static async Task<IResult> TenantCreate(HttpContext http, Dictionary<string, object?> body, Database db, CountryProfileService countries, FeatureFlagService flags, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -737,6 +737,10 @@ public static class PlatformEndpoints
         var adminEmail = Str(body, "adminEmail");
         if (!string.IsNullOrWhiteSpace(adminEmail))
             await CreateAdminInviteAsync(db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+
+        // Give the new tenant the standard flag set (seeded enabled — these are kill
+        // switches / ramp controls over features that already ship, not hidden features).
+        await flags.SeedDefaultsAsync(companyId, ct);
 
         await AuditAsync(db, principal!, http, "tenant.created", "Tenant", companyId, companyId,
             new { name, code, status, packageId, seatLimit, countryCode = cascade?.CountryCode, currency = cascade?.Currency, autoEnabled = cascade?.EnabledFeatures }, ct);

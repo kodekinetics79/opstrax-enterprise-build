@@ -5,6 +5,7 @@ import {
   MapPin, Package, X, XCircle,
 } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { useFlag } from "@/hooks/useFeatureFlags";
 import type { AnyRecord } from "@/types";
 
 // Touch/mouse signature capture. Exports the drawn ink as a PNG Blob for upload.
@@ -93,6 +94,13 @@ export function DriverAssignmentPage() {
   const [artifacts, setArtifacts] = useState<AnyRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
+
+  // Feature flag: POD media capture. The server gate on the upload endpoint is the real
+  // enforcement — this just keeps the UI honest so a driver isn't shown a camera whose
+  // upload would 403. fallback=true: never hide an already-shipped capability while flags
+  // load. When off, the text "Evidence Reference" field below is the fallback, so the
+  // driver can still confirm the delivery.
+  const podMediaOn = useFlag("pod_media_capture", true);
 
   const uploadArtifact = async (assignmentId: number, file: Blob, kind: string, filename: string) => {
     setUploading(true); setUploadErr(null);
@@ -359,32 +367,34 @@ export function DriverAssignmentPage() {
                 onChange={(e) => setProofHash(e.target.value)}
               />
             </div>
-            <div className="rounded-2xl border border-slate-200 p-3 space-y-3">
-              <p className="text-xs font-bold text-slate-500 flex items-center gap-1"><Camera className="h-3.5 w-3.5" /> Photo & signature</p>
-              <input
-                type="file" accept="image/*" capture="environment" disabled={uploading}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadArtifact(id, f, "photo", f.name); e.target.value = ""; }}
-                className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-teal-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
-              />
-              <div>
-                <p className="text-[11px] font-semibold text-slate-500 mb-1">Recipient signature</p>
-                <SignaturePad disabled={uploading} onCapture={(blob) => void uploadArtifact(id, blob, "signature", "signature.png")} />
-              </div>
-              {artifacts.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {artifacts.map((a, i) => (
-                    <div key={i} className="relative">
-                      {a.url
-                        ? <img src={String(a.url)} alt={String(a.kind)} className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
-                        : <span className="inline-flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200 text-[10px] text-slate-500">{String(a.kind)}</span>}
-                      <span className="absolute -top-1 -right-1 rounded-full bg-teal-600 px-1 text-[9px] font-bold text-white capitalize">{String(a.kind)}</span>
-                    </div>
-                  ))}
+            {podMediaOn && (
+              <div className="rounded-2xl border border-slate-200 p-3 space-y-3">
+                <p className="text-xs font-bold text-slate-500 flex items-center gap-1"><Camera className="h-3.5 w-3.5" /> Photo & signature</p>
+                <input
+                  type="file" accept="image/*" capture="environment" disabled={uploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadArtifact(id, f, "photo", f.name); e.target.value = ""; }}
+                  className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-teal-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
+                />
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-500 mb-1">Recipient signature</p>
+                  <SignaturePad disabled={uploading} onCapture={(blob) => void uploadArtifact(id, blob, "signature", "signature.png")} />
                 </div>
-              )}
-              {uploading && <p className="text-xs text-slate-400">Uploading…</p>}
-              {uploadErr && <p className="text-xs text-red-600">{uploadErr}</p>}
-            </div>
+                {artifacts.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {artifacts.map((a, i) => (
+                      <div key={i} className="relative">
+                        {a.url
+                          ? <img src={String(a.url)} alt={String(a.kind)} className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
+                          : <span className="inline-flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200 text-[10px] text-slate-500">{String(a.kind)}</span>}
+                        <span className="absolute -top-1 -right-1 rounded-full bg-teal-600 px-1 text-[9px] font-bold text-white capitalize">{String(a.kind)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {uploading && <p className="text-xs text-slate-400">Uploading…</p>}
+                {uploadErr && <p className="text-xs text-red-600">{uploadErr}</p>}
+              </div>
+            )}
             <button
               type="button"
               className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700 disabled:opacity-50"

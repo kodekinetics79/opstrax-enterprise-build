@@ -25,6 +25,45 @@ namespace Opstrax.Api.Services;
 // ─────────────────────────────────────────────────────────────────────────────
 public sealed class FeatureFlagService(Database db)
 {
+    public sealed record DefaultFlag(string Key, string Name, string Description, bool Enabled, int RolloutPct);
+
+    /// <summary>
+    /// The flags every tenant gets. Seeded ENABLED so provisioning a tenant never changes
+    /// behaviour — these are kill switches / ramp controls over features that already ship,
+    /// not hidden features. Add an entry here plus a db/init migration to backfill existing
+    /// tenants; new tenants pick it up at creation.
+    /// </summary>
+    public static readonly DefaultFlag[] Defaults =
+    [
+        new("ai_copilot", "AI Copilot & Recommendations",
+            "Kill switch for all AI features (/api/ai/*). Turn off to immediately stop AI calls tenant-wide.",
+            true, 100),
+        new("pod_media_capture", "POD photo & signature capture",
+            "Driver photo/signature upload for proof of delivery. Turn off (or dial back the rollout) and drivers fall back to the text evidence reference — delivery confirmation keeps working.",
+            true, 100),
+    ];
+
+    /// <summary>Give a tenant the standard flag set. Idempotent.</summary>
+    public async Task SeedDefaultsAsync(long companyId, CancellationToken ct = default)
+    {
+        foreach (var f in Defaults)
+        {
+            await db.ExecuteAsync(
+                @"INSERT INTO feature_flags (company_id, flag_key, name, description, enabled, rollout_pct, environment)
+                  VALUES (@c, @k, @n, @d, @e, @p, 'production')
+                  ON CONFLICT (company_id, flag_key) DO NOTHING",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId);
+                    c.Parameters.AddWithValue("@k", f.Key);
+                    c.Parameters.AddWithValue("@n", f.Name);
+                    c.Parameters.AddWithValue("@d", f.Description);
+                    c.Parameters.AddWithValue("@e", f.Enabled);
+                    c.Parameters.AddWithValue("@p", f.RolloutPct);
+                }, ct);
+        }
+    }
+
     /// <summary>Stable bucket for (flag, subject). Same inputs → same answer, always.</summary>
     public static bool InRollout(string flagKey, long subjectId, int rolloutPct)
     {
