@@ -28,7 +28,21 @@ function JobRow({
     <tr className={`hover:bg-slate-50 ${isAtRisk ? "bg-red-50/40" : ""}`}>
       <td className="px-4 py-3">
         <p className="font-medium text-slate-900 text-sm">{String(job.jobNumber ?? job.job_number ?? "--")}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{String(job.trackingCode ?? job.tracking_code ?? "--")}</p>
+        {job.trackingToken ? (
+          <button
+            type="button"
+            onClick={() => {
+              const url = `${window.location.origin}/track/${String(job.trackingToken)}`;
+              void navigator.clipboard?.writeText(url);
+            }}
+            className="text-xs text-teal-600 hover:underline mt-0.5"
+            title="Copy secure customer tracking link"
+          >
+            Copy tracking link
+          </button>
+        ) : (
+          <p className="text-xs text-slate-400 mt-0.5">Not shared yet</p>
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{String(job.customerName ?? job.customer_name ?? "--")}</td>
       <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
@@ -105,10 +119,17 @@ export function CustomerEtaPage() {
 
   const send = useMutation({
     mutationFn: (jobId: string | number) => customerEtaApi.sendUpdate(jobId),
-    onSuccess: (_, jobId) => {
+    onSuccess: (data, jobId) => {
       qc.invalidateQueries({ queryKey: ["customer-eta"] });
       setSendingId(null);
-      showToast(`ETA update sent for job ${String(jobId)}`);
+      const token = (data as AnyRecord | undefined)?.trackingToken;
+      if (token) {
+        const url = `${window.location.origin}/track/${String(token)}`;
+        void navigator.clipboard?.writeText(url);
+        showToast(`ETA sent for job ${String(jobId)} — secure tracking link copied`);
+      } else {
+        showToast(`ETA update sent for job ${String(jobId)}`);
+      }
     },
     onError: () => setSendingId(null),
   });
@@ -331,8 +352,8 @@ export function PublicEtaTrackingPage() {
           <div className="panel p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-sm text-slate-500">Tracking code</p>
-                <h2 className="text-2xl font-semibold text-slate-950">{String(row.trackingCode ?? row.tracking_code)}</h2>
+                <p className="text-sm text-slate-500">Shipment reference</p>
+                <h2 className="text-2xl font-semibold text-slate-950">{String(row.reference ?? row.trackingCode ?? row.tracking_code ?? "--")}</h2>
               </div>
               <StatusBadge status={row.status} />
             </div>

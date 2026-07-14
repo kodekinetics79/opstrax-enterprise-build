@@ -327,16 +327,24 @@ public class PlatformControlPlaneTests
                 new Dictionary<string, object?> { ["seatLimit"] = 5L }, db, countries, CancellationToken.None);
             Assert.Equal(404, StatusOf(missing));
 
-            // TENANT ADMIN INVITE — creates an Invited user without any credential
+            // TENANT ADMIN INVITE — creates a Pending user with NO password, plus a single-use
+            // reset token so the admin can actually onboard. ('Pending', not the old dead-end
+            // 'Invited' that the login gate rejected forever; the invite now mints a
+            // password_reset_tokens row and emails an accept link.)
             var inviteEmail = $"invite-{Unique()}@opstrax.test";
             var invite = await PlatformEndpoints.TenantResetInvite(companyId, Http(token),
                 new Dictionary<string, object?> { ["adminEmail"] = inviteEmail }, db, CancellationToken.None);
             Assert.Equal(200, StatusOf(invite));
-            var invited = await db.QuerySingleAsync("SELECT status, password_hash FROM users WHERE email=@e",
+            var invited = await db.QuerySingleAsync("SELECT id, status, password_hash FROM users WHERE email=@e",
                 c => c.Parameters.AddWithValue("@e", inviteEmail));
             Assert.NotNull(invited);
-            Assert.Equal("Invited", invited!["status"]?.ToString());
+            Assert.Equal("Pending", invited!["status"]?.ToString());
             Assert.True(invited["passwordHash"] is null or DBNull, "invite must never set a password");
+            // The corrected flow must leave a live credential-setting path (unexpired reset token).
+            var inviteTokenCount = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id=@uid AND consumed_at IS NULL AND expires_at > NOW()",
+                c => c.Parameters.AddWithValue("@uid", Convert.ToInt64(invited["id"])));
+            Assert.True(inviteTokenCount >= 1, "invite must create a single-use, unexpired reset token");
 
             // ACTIVE USER SESSION → SUSPEND revokes it and locks the company
             var userId = await db.InsertAsync(

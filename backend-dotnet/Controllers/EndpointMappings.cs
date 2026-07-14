@@ -248,9 +248,18 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "customer.account.update");
             return denied is not null ? Task.FromResult(denied) : UpdateCustomer(http, id, body, db, audit, events, ct);
         });
-        app.MapDelete("/api/customers/{id:long}", SoftDeleteWithPermission("customers", "customer.deleted", "customer.account.update"));
+        // Single-row delete now demands a DELETE-class permission (it used to accept the
+        // plain update permission, so anyone who could rename a customer could also delete it).
+        app.MapDelete("/api/customers/{id:long}", SoftDeleteWithPermission("customers", "customer.deleted", "customer.account.delete"));
+        // Multi-select action bar. Same persistence + audit + timeline + domain-event path as
+        // the single-row handlers; every statement is company-scoped; one bad row does not
+        // fail the batch.
+        app.MapPost("/api/customers/bulk", CustomerBulk);
         app.MapGet("/api/customers/{id:long}/timeline", Timeline("Customer"));
         app.MapGet("/api/customers/{id:long}/recommendations", Recommendations("customers"));
+        // Health scores computed from REAL delivery history (never invented). Returns
+        // state:"insufficient_data" with NULL scores when the customer has too little history.
+        app.MapGet("/api/customers/{id:long}/health", CustomerHealth);
 
         app.MapGet("/api/assets/summary", AssetSummary);
         app.MapGet("/api/assets", Assets);
@@ -1400,7 +1409,7 @@ public static partial class EndpointMappings
                 c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapGet("/api/fuel/anomalies", FuelAnomalies);
-        app.MapGet("/api/fuel/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='fuel-idling' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/fuel/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='fuel-idling' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/fuel/import-preview", FuelImportPreview);
         app.MapPost("/api/fuel/anomalies/{id:long}/review", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -1420,7 +1429,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/expenses/categories", (HttpContext http, Database db, CancellationToken ct) =>
             OkRows(db, "SELECT * FROM expense_categories WHERE company_id=@companyId AND status='Active' ORDER BY category_name",
                 c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/expenses/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='expenses' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/expenses/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='expenses' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/expenses/import-preview", ExpenseImportPreview);
 
         // ===== BATCH 5: CONTRACTS / RATES ======================================
@@ -1468,33 +1477,43 @@ public static partial class EndpointMappings
             return OkRows(db, "SELECT cd.* FROM carrier_documents cd JOIN carriers ca ON ca.id=cd.carrier_id AND ca.company_id=@cid WHERE cd.carrier_id=@id ORDER BY cd.expiry_date", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
         });
         app.MapPost("/api/carriers/{id:long}/status", CarrierStatus);
-        app.MapGet("/api/carriers/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='carrier-management' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/carriers/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='carrier-management' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ===== BATCH 5: PREDICTIVE COST & MARGIN ================================
+        // TENANT LEAK FIX: every one of these read the whole cost_margin_records /
+        // cost_margin_predictions table with NO company_id predicate, so any tenant saw every
+        // other tenant's revenue, cost, margin — and (via the joins) their customer names,
+        // job codes, routes and vehicles. All statements are now scoped by GetCompanyId(http),
+        // including the joined rows (a child row whose company_id drifted must not leak a
+        // foreign customer's name either).
         app.MapGet("/api/cost-margin/summary", CostMarginSummary);
-        app.MapGet("/api/cost-margin/jobs", (Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, COALESCE(j.job_code,CONCAT('Job-',cm.entity_id)) job_code, c.name customer_name FROM cost_margin_records cm LEFT JOIN jobs j ON j.id=cm.job_id LEFT JOIN customers c ON c.id=cm.customer_id WHERE cm.entity_type='job' ORDER BY cm.margin_percent ASC LIMIT 50", ct: ct));
-        app.MapGet("/api/cost-margin/routes", (Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, r.route_code, COALESCE(r.route_name,r.name) route_name FROM cost_margin_records cm LEFT JOIN routes r ON r.id=cm.route_id WHERE cm.entity_type='route' ORDER BY cm.margin_percent ASC LIMIT 50", ct: ct));
-        app.MapGet("/api/cost-margin/vehicles", (Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, v.vehicle_code, v.type vehicle_type FROM cost_margin_records cm LEFT JOIN vehicles v ON v.id=cm.vehicle_id WHERE cm.entity_type='vehicle' ORDER BY cm.total_cost DESC LIMIT 50", ct: ct));
-        app.MapGet("/api/cost-margin/customers", (Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, c.name customer_name, c.sla_tier FROM cost_margin_records cm LEFT JOIN customers c ON c.id=cm.customer_id WHERE cm.entity_type='customer' ORDER BY cm.margin_percent ASC LIMIT 50", ct: ct));
-        app.MapGet("/api/cost-margin/predictions", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM cost_margin_predictions ORDER BY risk_level DESC, created_at DESC LIMIT 30", ct: ct));
+        app.MapGet("/api/cost-margin/jobs", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, COALESCE(j.job_code,CONCAT('Job-',cm.entity_id)) job_code, c.name customer_name FROM cost_margin_records cm LEFT JOIN jobs j ON j.id=cm.job_id AND j.company_id=cm.company_id LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='job' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/routes", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, r.route_code, COALESCE(r.route_name,r.name) route_name FROM cost_margin_records cm LEFT JOIN routes r ON r.id=cm.route_id AND r.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='route' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/vehicles", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, v.vehicle_code, v.type vehicle_type FROM cost_margin_records cm LEFT JOIN vehicles v ON v.id=cm.vehicle_id AND v.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='vehicle' ORDER BY cm.total_cost DESC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/customers", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, c.name customer_name, c.sla_tier FROM cost_margin_records cm LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='customer' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/predictions", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM cost_margin_predictions WHERE company_id=@cid ORDER BY risk_level DESC, created_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ── Predictive Analytics (Fleet Intelligence) ──────────────────────────
-        app.MapGet("/api/predictions/maintenance", (Database db, CancellationToken ct) => OkRows(db,
+        // Same leak class: module_records was read across all tenants.
+        app.MapGet("/api/predictions/maintenance", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.*, v.vehicle_code, v.type vehicle_type
               FROM module_records mr
-              LEFT JOIN vehicles v ON v.id = CAST(mr.entity_id AS BIGINT)
-              WHERE mr.module_key = 'predictions-maintenance'
-              ORDER BY CAST(mr.data->>'confidencePct' AS FLOAT) DESC NULLS LAST LIMIT 20", ct: ct));
-        app.MapGet("/api/predictions/driver-risk", (Database db, CancellationToken ct) => OkRows(db,
+              LEFT JOIN vehicles v ON v.id = CAST(mr.entity_id AS BIGINT) AND v.company_id = mr.company_id
+              WHERE mr.company_id=@cid AND mr.module_key = 'predictions-maintenance'
+              ORDER BY CAST(mr.data->>'confidencePct' AS FLOAT) DESC NULLS LAST LIMIT 20",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/predictions/driver-risk", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.*, d.full_name driver_name
               FROM module_records mr
-              LEFT JOIN drivers d ON d.id = CAST(mr.entity_id AS BIGINT)
-              WHERE mr.module_key = 'predictions-driver-risk'
-              ORDER BY CAST(mr.data->>'harshEvents' AS INT) DESC NULLS LAST LIMIT 20", ct: ct));
-        app.MapGet("/api/predictions/sla-risk", (Database db, CancellationToken ct) => OkRows(db,
+              LEFT JOIN drivers d ON d.id = CAST(mr.entity_id AS BIGINT) AND d.company_id = mr.company_id
+              WHERE mr.company_id=@cid AND mr.module_key = 'predictions-driver-risk'
+              ORDER BY CAST(mr.data->>'harshEvents' AS INT) DESC NULLS LAST LIMIT 20",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/predictions/sla-risk", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
             @"SELECT mr.* FROM module_records mr
-              WHERE mr.module_key = 'predictions-sla-risk'
-              ORDER BY CAST(mr.data->>'delayProbability' AS FLOAT) DESC NULLS LAST LIMIT 20", ct: ct));
+              WHERE mr.company_id=@cid AND mr.module_key = 'predictions-sla-risk'
+              ORDER BY CAST(mr.data->>'delayProbability' AS FLOAT) DESC NULLS LAST LIMIT 20",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
 
         // ===== WORKFORCE MANAGEMENT ====================================================
         app.MapGet("/api/workforce/drivers", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
@@ -1533,14 +1552,14 @@ public static partial class EndpointMappings
             await audit.LogAsync(http, "workforce.assign", "WorkforceSchedule", req.DriverId, $"day:{req.Day} shift:{req.Shift}", ct);
             return Results.Ok();
         });
-        app.MapGet("/api/cost-margin/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='predictive-margin' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/cost-margin/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/cost-margin/recalculate", CostMarginRecalculate);
         app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, audit, ct));
 
         // ===== BATCH 5: COST LEAKAGE INTELLIGENCE ================================
         app.MapGet("/api/cost-leakage/summary", CostLeakageSummary);
         app.MapGet("/api/cost-leakage/items", CostLeakageItems);
-        app.MapGet("/api/cost-leakage/recommendations", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='cost-leakage' ORDER BY score DESC LIMIT 8", ct: ct));
+        app.MapGet("/api/cost-leakage/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='cost-leakage' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/cost-leakage/items/{id:long}/acknowledge", CostLeakageAcknowledge);
         app.MapPost("/api/cost-leakage/items/{id:long}/create-action", CostLeakageCreateAction);
 
@@ -1713,9 +1732,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/kpi/summary", KpiSummary);
         app.MapGet("/api/kpi/targets", (Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code ORDER BY kt.effective_date DESC LIMIT 30", ct: ct));
         app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
-        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id LEFT JOIN customers c ON c.id=sr.customer_id LEFT JOIN jobs j ON j.id=sr.job_id WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@tenantId LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/sla/breaches/{id:long}/acknowledge", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "sla_breaches", id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct, tenantColumn: "tenant_id"));
         app.MapPost("/api/sla/breaches/{id:long}/resolve", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "sla_breaches", id, "Resolved", "sla.breach_resolved", db, audit, ct, tenantColumn: "tenant_id"));
 
@@ -1764,6 +1783,11 @@ public static partial class EndpointMappings
         app.MapPost("/api/admin/users", CreateAdminUser);
         app.MapPut("/api/admin/users/{id:long}", UpdateAdminUser);
         app.MapDelete("/api/admin/users/{id:long}", DeleteAdminUser);
+        app.MapPost("/api/admin/users/{id:long}/activation-link", AdminUserActivationLink);
+        app.MapGet("/api/admin/users/{id:long}/sessions", AdminUserSessions);
+        app.MapDelete("/api/admin/users/{id:long}/sessions", AdminUserSessionsRevoke);
+        app.MapGet("/api/security/my-sessions", MySessionsList);
+        app.MapDelete("/api/security/my-sessions/{id:long}", MySessionRevoke);
         app.MapGet("/api/admin/roles", AdminRoles);
         app.MapGet("/api/admin/permissions", AdminPermissions);
         app.MapPost("/api/admin/roles", CreateAdminRole);
@@ -2367,6 +2391,10 @@ public static partial class EndpointMappings
 
             "customer.account.read" or "customer.account.view" => ["customer.account.read", "customer.account.view", "customer.contact.read", "customer.address.read", "customers:view", "crm:view"],
             "customer.account.create" or "customer.account.update" or "customer.account.manage" => ["customer.account.create", "customer.account.update", "customer.account.manage", "customer.contact.create", "customer.contact.update", "customer.contact.manage", "customer.address.create", "customer.address.update", "customer.address.manage", "customers:create", "customers:update", "customers:manage", "crm:manage"],
+            // Delete is its OWN class — deliberately NOT reachable from customers:update /
+            // customer.account.update. Deleting the customer book (single-row DELETE or the
+            // bulk delete action) requires an explicit delete/manage grant.
+            "customer.account.delete" or "customer.account.remove" => ["customer.account.delete", "customer.account.remove", "customers:delete", "customers.delete", "customers:manage", "customers.manage", "crm:manage", "crm.manage"],
 
             // finance:view ⇄ billing:view equivalence (declared below) is carried through
             // to the concrete finance nouns so billing-capable roles reach them.
@@ -2499,6 +2527,9 @@ public static partial class EndpointMappings
         PasswordPolicyService passwordPolicy,
         CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            return InvalidCredentials();
+
         var user = await db.QuerySingleAsync(
             @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.status user_status,
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency
@@ -2918,7 +2949,7 @@ public static partial class EndpointMappings
         var match = await db.QuerySingleAsync(
             @"SELECT t.user_id, t.company_id FROM password_reset_tokens t JOIN users u ON u.id=t.user_id
               WHERE LOWER(u.email)=@email AND t.token_hash=@hash AND t.consumed_at IS NULL AND t.expires_at>NOW()
-                AND u.status='Active' LIMIT 1",
+                AND u.status IN ('Active','Pending') LIMIT 1",
             c => { c.Parameters.AddWithValue("@email", email); c.Parameters.AddWithValue("@hash", hash); }, ct);
         if (match is null) return Results.BadRequest(ApiResponse<object>.Fail(invalidMessage));
 
@@ -2932,7 +2963,8 @@ public static partial class EndpointMappings
                 UPDATE password_reset_tokens SET consumed_at=NOW()
                 WHERE user_id=@uid AND token_hash=@token AND consumed_at IS NULL AND expires_at>NOW() RETURNING user_id)
               UPDATE users SET password_hash=@password, demo_password='', password_changed_at=NOW(),
-                failed_login_attempts=0, locked_until=NULL
+                failed_login_attempts=0, locked_until=NULL,
+                status=CASE WHEN status='Pending' THEN 'Active' ELSE status END
               WHERE id IN (SELECT user_id FROM consumed)",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@token", hash); c.Parameters.AddWithValue("@password", HashPassword(request.NewPassword)); }, ct);
         if (changed == 0) return Results.BadRequest(ApiResponse<object>.Fail(invalidMessage));
@@ -3414,23 +3446,51 @@ public static partial class EndpointMappings
             searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" });
     }
 
-    private static Task<IResult> Customers(HttpContext http, Database db, CancellationToken ct)
-        => OkRows(db,
+    // Customer book. Was the ONLY customer read with no permission guard — its siblings
+    // CustomerSummary/CustomerDetail both require customers:view, so any authenticated
+    // tenant user (incl. read-only roles that were never granted CRM access) could
+    // enumerate the entire customer list. Guarded now.
+    //
+    // The health columns are recomputed from real delivery history before the read (cheap
+    // materialised path: only when the stored values are >5 min stale). NULL scores mean
+    // "not enough data" and are surfaced as such — never back-filled with a flattering
+    // default.
+    private static async Task<IResult> Customers(HttpContext http, Database db, CustomerHealthService health, CancellationToken ct)
+    {
+        if (RequirePermission(http, "customers:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        await health.RefreshCompanyAsync(companyId, ct);
+        return await OkRows(db,
             @"SELECT c.*,
                      COUNT(j.id) active_jobs,
-                     ROUND((c.sla_health_score + c.delivery_experience_score + (100 - c.risk_score)) / 3, 1) customer_delivery_experience_score,
-                     CASE WHEN c.risk_score >= 65 OR c.status='At Risk' THEN 'High'
+                     COALESCE(c.health_state, 'insufficient_data') health_state,
+                     CASE WHEN c.sla_health_score IS NULL OR c.delivery_experience_score IS NULL OR c.risk_score IS NULL THEN NULL
+                          ELSE ROUND((c.sla_health_score + c.delivery_experience_score + (100 - c.risk_score)) / 3, 1)
+                     END customer_delivery_experience_score,
+                     CASE WHEN c.risk_score IS NULL THEN 'Unrated'
+                          WHEN c.risk_score >= 65 OR c.status='At Risk' THEN 'High'
                           WHEN c.risk_score >= 35 OR c.sla_health_score < 88 THEN 'Medium'
                           ELSE 'Low' END risk_heat_score,
-                     CASE WHEN c.status='At Risk' OR c.sla_health_score < 88 THEN 'Send proactive customer update'
+                     CASE WHEN c.sla_health_score IS NULL THEN 'Not enough delivery history to score'
+                          WHEN c.status='At Risk' OR c.sla_health_score < 88 THEN 'Send proactive customer update'
                           WHEN COUNT(j.id) > 4 THEN 'Review active workload'
                           ELSE 'Maintain SLA cadence' END recommended_action
               FROM customers c
-              LEFT JOIN jobs j ON j.customer_id=c.id AND j.status NOT IN ('Completed','Delivered')
+              LEFT JOIN jobs j ON j.customer_id=c.id AND j.company_id=c.company_id AND j.status NOT IN ('Completed','Delivered')
               WHERE c.deleted_at IS NULL AND c.company_id=@cid
               GROUP BY c.id
               ORDER BY c.name",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            c => c.Parameters.AddWithValue("@cid", companyId), ct: ct);
+    }
+
+    private static async Task<IResult> CustomerHealth(HttpContext http, long id, Database db, CustomerHealthService health, CancellationToken ct)
+    {
+        if (RequirePermission(http, "customers:view") is { } denied) return denied;
+        var result = await health.GetAsync(GetCompanyId(http), id, ct);
+        return result is null
+            ? Results.NotFound(ApiResponse<object>.Fail("Customer not found"))
+            : Results.Ok(ApiResponse<object>.Ok(result));
+    }
 
     private static Task<IResult> Assets(HttpContext http, Database db, CancellationToken ct)
     {
@@ -3627,7 +3687,7 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            timeline = await EntityTimeline(db, "Vehicle", id, ct),
+            timeline = await EntityTimeline(db, "Vehicle", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct),
             documents = await db.QueryAsync("SELECT * FROM vehicle_documents WHERE vehicle_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             maintenance = await db.QueryAsync("SELECT * FROM maintenance_items WHERE vehicle_id=@id ORDER BY due_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -3664,7 +3724,7 @@ public static partial class EndpointMappings
                   ORDER BY dcs.updated_at DESC NULLS LAST, dcs.id DESC
                   LIMIT 1",
                 c => c.Parameters.AddWithValue("@id", id), ct),
-            timeline = await EntityTimeline(db, "Driver", id, ct),
+            timeline = await EntityTimeline(db, "Driver", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "drivers", ct),
             documents = await db.QueryAsync("SELECT * FROM driver_documents WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             certifications = await db.QueryAsync("SELECT * FROM driver_certifications WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -3684,15 +3744,15 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            timeline = await EntityTimeline(db, "Customer", id, ct),
+            timeline = await EntityTimeline(db, "Customer", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "customers", ct),
-            contacts = await db.QueryAsync("SELECT * FROM customer_contacts WHERE customer_id=@id ORDER BY is_primary DESC, full_name", c => c.Parameters.AddWithValue("@id", id), ct),
-            addresses = await db.QueryAsync("SELECT * FROM customer_addresses WHERE customer_id=@id ORDER BY address_type", c => c.Parameters.AddWithValue("@id", id), ct),
+            contacts = await db.QueryAsync("SELECT * FROM customer_contacts WHERE customer_id=@id AND company_id=@cid ORDER BY is_primary DESC, full_name", c => Bind2(c, id, GetCompanyId(http)), ct),
+            addresses = await db.QueryAsync("SELECT * FROM customer_addresses WHERE customer_id=@id AND company_id=@cid ORDER BY address_type", c => Bind2(c, id, GetCompanyId(http)), ct),
             sites = await commercial.ListCustomerSitesAsync(GetCompanyId(http), id, ct),
-            activeJobs = await db.QueryAsync("SELECT * FROM jobs WHERE customer_id=@id AND status NOT IN ('Completed','Delivered') ORDER BY scheduled_start LIMIT 12", c => c.Parameters.AddWithValue("@id", id), ct),
-            communications = await db.QueryAsync("SELECT * FROM customer_communications WHERE customer_id=@id ORDER BY sent_at DESC LIMIT 10", c => c.Parameters.AddWithValue("@id", id), ct),
-            contracts = await db.QueryAsync("SELECT * FROM contracts WHERE customer_id=@id ORDER BY expiration_date", c => c.Parameters.AddWithValue("@id", id), ct),
-            etaHistory = await db.QueryAsync("SELECT eu.* FROM eta_updates eu JOIN jobs j ON j.id=eu.job_id WHERE j.customer_id=@id ORDER BY eu.sent_at DESC LIMIT 10", c => c.Parameters.AddWithValue("@id", id), ct),
+            activeJobs = await db.QueryAsync("SELECT * FROM jobs WHERE customer_id=@id AND company_id=@cid AND status NOT IN ('Completed','Delivered') ORDER BY scheduled_start LIMIT 12", c => Bind2(c, id, GetCompanyId(http)), ct),
+            communications = await db.QueryAsync("SELECT * FROM customer_communications WHERE customer_id=@id AND company_id=@cid ORDER BY sent_at DESC LIMIT 10", c => Bind2(c, id, GetCompanyId(http)), ct),
+            contracts = await db.QueryAsync("SELECT * FROM contracts WHERE customer_id=@id AND company_id=@cid ORDER BY expiration_date", c => Bind2(c, id, GetCompanyId(http)), ct),
+            etaHistory = await db.QueryAsync("SELECT eu.* FROM eta_updates eu JOIN jobs j ON j.id=eu.job_id AND j.company_id=@cid WHERE j.customer_id=@id ORDER BY eu.sent_at DESC LIMIT 10", c => Bind2(c, id, GetCompanyId(http)), ct),
             auditTrail = await AuditTrail(db, "Customer", id, ct)
         }));
     }
@@ -3712,7 +3772,7 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            timeline = await EntityTimeline(db, "Asset", id, ct),
+            timeline = await EntityTimeline(db, "Asset", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "assets", ct),
             documents = await db.QueryAsync("SELECT * FROM asset_documents WHERE asset_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             movementHistory = await db.QueryAsync("SELECT * FROM entity_timeline_events WHERE entity_type='Asset' AND entity_id=@id ORDER BY created_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -3783,7 +3843,7 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            timeline = await EntityTimeline(db, "Job", id, ct),
+            timeline = await EntityTimeline(db, "Job", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "jobs", ct),
             assignment = await db.QuerySingleAsync(@"SELECT da.*, d.full_name driver_name, v.vehicle_code FROM dispatch_assignments da LEFT JOIN drivers d ON d.id=da.driver_id LEFT JOIN vehicles v ON v.id=da.vehicle_id WHERE da.job_id=@id ORDER BY da.assigned_at DESC LIMIT 1", c => c.Parameters.AddWithValue("@id", id), ct),
             stops = await db.QueryAsync("SELECT * FROM route_stops WHERE job_id=@id ORDER BY stop_sequence", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -4385,9 +4445,14 @@ public static partial class EndpointMappings
     private static async Task<IResult> CreateCustomer(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, IDomainEventPublisher events, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
+        // A brand-new customer has ZERO delivery history, so it has no SLA health, no delivery
+        // experience and no measurable risk. This INSERT used to hardcode 94/92/18 on every
+        // row and nothing ever recomputed them — which is where the product's fictional "SLA
+        // Health 94%" came from. Insert NULL + 'insufficient_data'; CustomerHealthService
+        // fills these in from real jobs/POD/feedback/invoice evidence once it exists.
         var id = await db.InsertAsync(
-            @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score)
-              VALUES (@companyId, @code, @name, @contact, @email, @phone, @billing, @shipping, COALESCE(@status,'Active'), COALESCE(@slaTier,'Standard'), 94, 92, 18)",
+            @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score, health_state)
+              VALUES (@companyId, @code, @name, @contact, @email, @phone, @billing, @shipping, COALESCE(@status,'Active'), COALESCE(@slaTier,'Standard'), NULL, NULL, NULL, 'insufficient_data')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -4407,20 +4472,164 @@ public static partial class EndpointMappings
         return Results.Created($"/api/customers/{id}", ApiResponse<object>.Ok(new { id }, "Customer created"));
     }
 
+    private static void Bind2(NpgsqlCommand c, long id, long companyId)
+    {
+        c.Parameters.AddWithValue("@id", id);
+        c.Parameters.AddWithValue("@cid", companyId);
+    }
+
+    private static readonly string[] CustomerBulkActions = ["set-status", "set-tier", "delete", "restore"];
+    private static readonly string[] CustomerStatuses    = ["Active", "At Risk", "Inactive"];
+    private static readonly string[] CustomerSlaTiers    = ["Standard", "Gold", "Platinum"];
+
+    // Bulk customer operations — the Customers table's multi-select action bar.
+    // Mirrors PlatformEndpoints.TenantBulk: action allow-list, 200-id cap, de-duplicated ids,
+    // typed DELETE confirmation, per-id results (one bad row never fails the batch), one audit
+    // row for the batch. Every statement carries company_id=@cid — the ids from the client are
+    // NEVER trusted on their own, so an id belonging to another tenant simply reports
+    // "Not found" instead of being mutated. Delete is SOFT (deleted_at + status='Deleted'),
+    // exactly like SoftDeleteWithPermission, and is restored by the 'restore' action.
+    private static async Task<IResult> CustomerBulk(
+        HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, IDomainEventPublisher events, CancellationToken ct)
+    {
+        var action = (Str(body, "action") ?? "").Trim().ToLowerInvariant();
+        if (!CustomerBulkActions.Contains(action))
+            return Results.Json(ApiResponse<object>.Fail("Invalid action", "Use set-status|set-tier|delete|restore"),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        // Delete is a delete-class grant; the reversible actions need the update grant.
+        var isDelete = action == "delete";
+        if (RequirePermission(http, isDelete ? "customer.account.delete" : "customer.account.update") is { } denied)
+            return denied;
+
+        var ids = ReadIdArray(body, "ids").Where(id => id > 0).Distinct().ToList();
+        if (ids.Count == 0)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "ids must be a non-empty array"), statusCode: StatusCodes.Status400BadRequest);
+        if (ids.Count > 200)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "A bulk action is limited to 200 customers at once"), statusCode: StatusCodes.Status400BadRequest);
+
+        if (isDelete && !string.Equals(Str(body, "confirm"), "DELETE", StringComparison.Ordinal))
+            return Results.Json(ApiResponse<object>.Fail("Confirmation required",
+                "To delete these customers, send {\"confirm\":\"DELETE\"}."), statusCode: StatusCodes.Status400BadRequest);
+
+        var patch = ReadPatch(body);
+        string? status = null, slaTier = null;
+        if (action == "set-status")
+        {
+            status = Str(patch, "status");
+            if (status is null || !CustomerStatuses.Contains(status))
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", "patch.status must be Active|At Risk|Inactive"), statusCode: StatusCodes.Status400BadRequest);
+        }
+        if (action == "set-tier")
+        {
+            slaTier = Str(patch, "slaTier");
+            if (slaTier is null || !CustomerSlaTiers.Contains(slaTier))
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", "patch.slaTier must be Standard|Gold|Platinum"), statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var (sql, timelineEvent, timelineTitle, domainEvent) = action switch
+        {
+            "set-status" => ("UPDATE customers SET status=@value WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+                             "customer.status.changed", $"Status set to {status}", "customer.account.updated"),
+            "set-tier"   => ("UPDATE customers SET sla_tier=@value WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+                             "customer.tier.changed", $"SLA tier set to {slaTier}", "customer.account.updated"),
+            "delete"     => ("UPDATE customers SET deleted_at=CURRENT_TIMESTAMP, status='Deleted' WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+                             "customer.deleted", "Customer deleted", "customer.account.deleted"),
+            _            => ("UPDATE customers SET deleted_at=NULL, status='Active' WHERE id=@id AND company_id=@cid AND deleted_at IS NOT NULL",
+                             "customer.restored", "Customer restored", "customer.account.updated"),
+        };
+
+        var companyId = GetCompanyId(http);
+        var results = new List<object>();
+        var succeeded = 0;
+
+        foreach (var id in ids)
+        {
+            try
+            {
+                var affected = await db.ExecuteAsync(sql, c =>
+                {
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    if (status is not null) c.Parameters.AddWithValue("@value", status);
+                    if (slaTier is not null) c.Parameters.AddWithValue("@value", slaTier);
+                }, ct);
+
+                if (affected == 0)
+                {
+                    // Either not this tenant's customer, already deleted, or (restore) not deleted.
+                    results.Add(new { id, ok = false, error = "Not found" });
+                    continue;
+                }
+
+                await AddTimeline(db, companyId, "Customer", id, timelineEvent, timelineTitle, ct);
+                _ = events.Publish(
+                    companyId.ToString(CultureInfo.InvariantCulture),
+                    domainEvent,
+                    "customer",
+                    id.ToString(CultureInfo.InvariantCulture),
+                    JsonSerializer.Serialize(new { customerId = id, companyId, action, status, slaTier }),
+                    null, null, null);
+                results.Add(new { id, ok = true });
+                succeeded++;
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { id, ok = false, error = ex.Message });
+            }
+        }
+
+        var failed = ids.Count - succeeded;
+        await audit.LogAsync(http, $"customer.bulk.{action}", "Customer", null,
+            JsonSerializer.Serialize(new { action, requested = ids.Count, succeeded, failed, ids, patch = new { status, slaTier } }), ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { action, requested = ids.Count, succeeded, failed, results },
+            $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
+    }
+
+    private static Dictionary<string, object?> ReadPatch(Dictionary<string, object?> body)
+    {
+        if (!body.TryGetValue("patch", out var value) || value is null) return new Dictionary<string, object?>();
+        if (value is JsonElement je && je.ValueKind == JsonValueKind.Object)
+            return je.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value);
+        return value as Dictionary<string, object?> ?? new Dictionary<string, object?>();
+    }
+
+    private static List<long> ReadIdArray(Dictionary<string, object?> body, string key)
+    {
+        if (!body.TryGetValue(key, out var value) || value is null) return [];
+        if (value is JsonElement je && je.ValueKind == JsonValueKind.Array)
+        {
+            var list = new List<long>();
+            foreach (var element in je.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out var n)) list.Add(n);
+                else if (element.ValueKind == JsonValueKind.String && long.TryParse(element.GetString(), out var sn)) list.Add(sn);
+            }
+            return list;
+        }
+        return [];
+    }
+
     private static async Task<IResult> UpdateCustomer(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, IDomainEventPublisher events, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
-        await db.ExecuteAsync(
+        var affected = await db.ExecuteAsync(
             @"UPDATE customers SET customer_code=COALESCE(@code,customer_code), name=COALESCE(@name,name), contact_name=COALESCE(@contact,contact_name),
                      email=COALESCE(@email,email), phone=COALESCE(@phone,phone), billing_address=COALESCE(@billing,billing_address),
                      shipping_address=COALESCE(@shipping,shipping_address), status=COALESCE(@status,status), sla_tier=COALESCE(@slaTier,sla_tier)
-              WHERE id=@id AND company_id=@companyId",
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", companyId);
                 BindCustomer(c, body);
             }, ct);
+        // No row matched (foreign tenant, unknown, or soft-deleted id): return 404 and emit
+        // NOTHING. Firing audit/timeline/domain events for an update that never happened poisons
+        // the audit trail with records of non-events.
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Customer not found"));
         await audit.LogAsync(http, "customer.updated", "Customer", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Customer", id, "customer.updated", "Customer profile updated", ct);
         _ = events.Publish(
@@ -4649,9 +4858,46 @@ public static partial class EndpointMappings
             }, ct);
         await db.ExecuteAsync("UPDATE jobs SET customer_update_status='Sent' WHERE id=@id AND company_id=@companyId",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+
+        // Mint / rotate the unguessable public tracking token for this job's share link.
+        // 32 random bytes = 256 bits, hex-encoded; expiring + revocable. This is the ONLY
+        // value the public /api/customer-eta/track/{token} endpoint accepts, so the link is
+        // safe to hand to a customer while the enumerable jobs.tracking_code stays internal.
+        var secureToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var linkExpiresAt = DateTime.UtcNow.AddDays(14);
+        var updated = await db.ExecuteAsync(
+            @"UPDATE customer_eta_links
+                 SET secure_token=@token, public_status='Active', expires_at=@exp,
+                     customer_id=COALESCE(@customerId, customer_id)
+               WHERE id = (SELECT id FROM customer_eta_links
+                            WHERE company_id=@companyId AND job_id=@id ORDER BY id LIMIT 1)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@token", secureToken);
+                c.Parameters.AddWithValue("@exp", linkExpiresAt);
+                c.Parameters.AddWithValue("@customerId", job?["customerId"] ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@id", id);
+            }, ct);
+        if (updated == 0)
+        {
+            await db.ExecuteAsync(
+                @"INSERT INTO customer_eta_links (company_id, job_id, customer_id, tracking_code, secure_token, public_status, expires_at)
+                  VALUES (@companyId, @id, @customerId, COALESCE(@jobTracking, @token), @token, 'Active', @exp)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@customerId", job?["customerId"] ?? (object)DBNull.Value);
+                    c.Parameters.AddWithValue("@jobTracking", job?["trackingCode"] ?? (object)DBNull.Value);
+                    c.Parameters.AddWithValue("@token", secureToken);
+                    c.Parameters.AddWithValue("@exp", linkExpiresAt);
+                }, ct);
+        }
+
         await audit.LogAsync(http, "eta.sent", "Job", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Job", id, "eta.sent", "ETA update sent", ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "ETA update sent"));
+        return Results.Ok(ApiResponse<object>.Ok(new { id, trackingToken = secureToken, trackingUrl = $"/track/{secureToken}", expiresAt = linkExpiresAt }, "ETA update sent"));
     }
 
     private static async Task<IResult> CreateProofPlaceholder(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -4893,7 +5139,7 @@ public static partial class EndpointMappings
         {
             record,
             stops = await RouteStopsRows(id, db, ct),
-            timeline = await EntityTimeline(db, "Route", id, ct),
+            timeline = await EntityTimeline(db, "Route", id, GetCompanyId(http), ct),
             recommendations = await db.QueryAsync("SELECT * FROM route_recommendations WHERE route_id=@id OR route_id IS NULL ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             path = await db.QuerySingleAsync("SELECT * FROM route_paths WHERE route_id=@id ORDER BY created_at DESC LIMIT 1", c => c.Parameters.AddWithValue("@id", id), ct),
             auditTrail = await AuditTrail(db, "Route", id, ct)
@@ -5038,6 +5284,10 @@ public static partial class EndpointMappings
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.tracking_code, j.status, j.eta, j.sla_status, j.customer_update_status,
                      c.name customer_name, d.full_name driver_name, v.vehicle_code,
+                     (SELECT cel.secure_token FROM customer_eta_links cel
+                       WHERE cel.job_id=j.id AND cel.company_id=j.company_id
+                         AND cel.public_status='Active' AND cel.expires_at > NOW()
+                       ORDER BY cel.id DESC LIMIT 1) tracking_token,
                      CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'At Risk' WHEN j.risk_score >= 45 THEN 'Medium' ELSE 'High' END eta_confidence_level,
                      CASE WHEN j.customer_update_status <> 'Sent' OR j.sla_status='At Risk' THEN 'Send customer update' ELSE 'Monitor' END recommended_action
               FROM jobs j
@@ -5050,16 +5300,25 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { summary = row, jobs }));
     }
 
+    // PUBLIC, UNAUTHENTICATED read (anon allowlist). SECURITY: the tracking token is a
+    // 256-bit unguessable secret stored in customer_eta_links.secure_token — NOT the
+    // human-readable, enumerable jobs.tracking_code ('ETA-'||job_code). Only links that are
+    // active and unexpired resolve, and the output is restricted to the minimal fields the
+    // public tracking page renders (no customer name / addresses / raw risk score leak).
+    // See CustomerVisibilityTrackByToken for the same token pattern.
     private static async Task<IResult> CustomerEtaTrack(string trackingCode, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
-            @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.status, j.eta, j.sla_status, j.proof_status, j.tracking_code,
-                     c.name customer_name, j.pickup_address, j.dropoff_address,
+            @"SELECT j.id, COALESCE(j.job_number,j.job_code) reference, j.status, j.eta, j.sla_status, j.proof_status,
                      CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'At Risk' WHEN j.risk_score >= 45 THEN 'Medium' ELSE 'High' END eta_confidence_level
-              FROM jobs j LEFT JOIN customers c ON c.id=j.customer_id
-              WHERE j.tracking_code=@code AND j.deleted_at IS NULL LIMIT 1", c => c.Parameters.AddWithValue("@code", trackingCode), ct);
-        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Tracking code not found"));
-        await db.ExecuteAsync("UPDATE customer_eta_links SET last_viewed_at=NOW() WHERE tracking_code=@code", c => c.Parameters.AddWithValue("@code", trackingCode), ct);
+              FROM customer_eta_links cel
+              JOIN jobs j ON j.id = cel.job_id AND j.deleted_at IS NULL
+              WHERE cel.secure_token = @code
+                AND cel.public_status = 'Active'
+                AND cel.expires_at > NOW()
+              LIMIT 1", c => c.Parameters.AddWithValue("@code", trackingCode), ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Tracking link is invalid, expired, or revoked"));
+        await db.ExecuteAsync("UPDATE customer_eta_links SET last_viewed_at=NOW() WHERE secure_token=@code", c => c.Parameters.AddWithValue("@code", trackingCode), ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             tracking = row,
@@ -5071,7 +5330,6 @@ public static partial class EndpointMappings
                 new { label = "Arrived", complete = new[] { "At Stop", "Completed", "Delivered" }.Contains(row["status"]?.ToString()) },
                 new { label = "Completed", complete = new[] { "Completed", "Delivered" }.Contains(row["status"]?.ToString()) }
             },
-            proofPreview = await db.QuerySingleAsync("SELECT status, received_by, captured_at FROM proof_of_delivery WHERE job_id=@id ORDER BY captured_at DESC LIMIT 1", c => c.Parameters.AddWithValue("@id", row["id"]), ct),
             customerMessage = "Connected transport. Intelligent control. Enterprise execution."
         }));
     }
@@ -5146,7 +5404,7 @@ public static partial class EndpointMappings
                    WHEN d.entity_type='vehicle' THEN (SELECT vehicle_code FROM vehicles WHERE id=d.entity_id)
                    WHEN d.entity_type='driver' THEN (SELECT full_name FROM drivers WHERE id=d.entity_id)
                    WHEN d.entity_type='asset' THEN (SELECT name FROM assets WHERE id=d.entity_id)
-                   WHEN d.entity_type='customer' THEN (SELECT name FROM customers WHERE id=d.entity_id)
+                   WHEN d.entity_type='customer' THEN (SELECT name FROM customers WHERE id=d.entity_id AND company_id=d.company_id)
                    ELSE d.owner_name
                  END entity_name
           FROM documents d";
@@ -5190,7 +5448,7 @@ public static partial class EndpointMappings
                 c.Parameters.AddWithValue("@assetId",   record["assetId"]   ?? (object)DBNull.Value);
             }, ct),
             workOrders = await db.QueryAsync("SELECT * FROM work_orders WHERE maintenance_item_id=@id AND deleted_at IS NULL ORDER BY created_date DESC", c => c.Parameters.AddWithValue("@id", id), ct),
-            timeline = await EntityTimeline(db, "Maintenance", id, ct),
+            timeline = await EntityTimeline(db, "Maintenance", id, GetCompanyId(http), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "maintenance", ct),
             auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Maintenance", id, ct)
         }));
@@ -6245,8 +6503,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Ok(ApiResponse<object>.Ok(new { action = actionName, completedAt = DateTime.UtcNow }, message));
         };
 
-    private static Func<long, Database, CancellationToken, Task<IResult>> Timeline(string entityType)
-        => async (id, db, ct) => Results.Ok(ApiResponse<object>.Ok(await EntityTimeline(db, entityType, id, ct)));
+    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Timeline(string entityType)
+        => async (http, id, db, ct) => Results.Ok(ApiResponse<object>.Ok(await EntityTimeline(db, entityType, id, GetCompanyId(http), ct)));
 
     private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Recommendations(string module)
         => async (http, id, db, ct) => Results.Ok(ApiResponse<object>.Ok(
@@ -6370,20 +6628,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Deleted"));
         };
 
-    private static Task<List<Dictionary<string, object?>>> EntityTimeline(Database db, string entityType, long id, CancellationToken ct)
+    private static Task<List<Dictionary<string, object?>>> EntityTimeline(Database db, string entityType, long id, long companyId, CancellationToken ct)
         => db.QueryAsync(
             @"SELECT id, entity_type, entity_id, event_type, title, body, severity, created_at event_time
               FROM entity_timeline_events
-              WHERE entity_type=@type AND entity_id=@id
+              WHERE entity_type=@type AND entity_id=@id AND company_id=@cid
               UNION ALL
               SELECT id, entity_type, entity_id, event_type, title, NULL body, severity, event_time
               FROM operational_events
-              WHERE entity_type=@type AND entity_id=@id
+              WHERE entity_type=@type AND entity_id=@id AND company_id=@cid
               ORDER BY event_time DESC LIMIT 20",
             c =>
             {
                 c.Parameters.AddWithValue("@type", entityType);
                 c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@cid", companyId);
             }, ct);
 
     private static Task<List<Dictionary<string, object?>>> TenantModuleRecommendations(
@@ -9323,7 +9582,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // BATCH 5 HANDLERS — PREDICTIVE COST & MARGIN
     // =====================================================================
 
-    private static async Task<IResult> CostMarginSummary(Database db, CancellationToken ct)
+    // Was summing cost_margin_records across EVERY tenant (no company_id predicate, including
+    // the two correlated sub-selects) — so each tenant's "revenue / cost / margin" tiles were
+    // the whole platform's numbers. Scoped.
+    private static async Task<IResult> CostMarginSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT
@@ -9333,13 +9595,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 CONCAT(ROUND(COALESCE(AVG(margin_percent),0),1),'%') margin_pct,
                 SUM(CASE WHEN margin_percent < 15 THEN 1 ELSE 0 END) jobs_below_margin_target,
                 SUM(CASE WHEN margin_risk='High' THEN 1 ELSE 0 END) routes_below_margin_target,
-                (SELECT COUNT(DISTINCT vehicle_id) FROM cost_margin_records WHERE entity_type='vehicle' AND total_cost > 400) high_cost_vehicles,
-                (SELECT COUNT(DISTINCT driver_id) FROM cost_margin_records WHERE driver_id IS NOT NULL AND total_cost > 300) high_cost_drivers,
+                (SELECT COUNT(DISTINCT vehicle_id) FROM cost_margin_records WHERE company_id=@cid AND entity_type='vehicle' AND total_cost > 400) high_cost_vehicles,
+                (SELECT COUNT(DISTINCT driver_id) FROM cost_margin_records WHERE company_id=@cid AND driver_id IS NOT NULL AND total_cost > 300) high_cost_drivers,
                 CONCAT('$', TO_CHAR((COALESCE(SUM(fuel_cost),0))::numeric, 'FM9,999,999,999')) fuel_cost_impact,
                 CONCAT('$', TO_CHAR((COALESCE(SUM(maintenance_cost),0))::numeric, 'FM9,999,999,999')) maintenance_cost_impact,
                 CONCAT('$', TO_CHAR((COALESCE(SUM(delay_cost),0))::numeric, 'FM9,999,999,999')) delay_cost_impact,
                 CONCAT('$', TO_CHAR((COALESCE(SUM(idle_cost),0))::numeric, 'FM9,999,999,999')) savings_opportunity
-              FROM cost_margin_records", ct: ct);
+              FROM cost_margin_records WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
@@ -9777,8 +10040,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var breaches = await db.QueryAsync(
             @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name
               FROM sla_breaches sb
-              JOIN sla_records sr ON sr.id=sb.sla_record_id
-              LEFT JOIN customers c ON c.id=sr.customer_id
+              JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@t
+              LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@t
               WHERE sb.tenant_id=@t AND sb.status='Open'
               ORDER BY sb.detected_at DESC LIMIT 10",
             p => p.Parameters.AddWithValue("@t", tenantId), ct);
@@ -9959,11 +10222,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (role is null)
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Select a role available to this tenant."]));
         var password = Val(Get(body, "password"))?.ToString();
-        if (string.IsNullOrWhiteSpace(password))
-        {
-            return Results.BadRequest(ApiResponse<object>.Fail("Password is required for new users"));
-        }
-        var status = Val(Get(body, "status"))?.ToString()?.Trim() ?? "Active";
+        // Invite mode: no password means the user sets their own via a one-time
+        // activation link (returned in the response). They stay Pending until the
+        // link is used; password_hash stays NULL so login is impossible meanwhile.
+        var inviteMode = string.IsNullOrWhiteSpace(password);
+        var status = Val(Get(body, "status"))?.ToString()?.Trim() ?? (inviteMode ? "Pending" : "Active");
         if (!AllowedUserStatuses.Contains(status))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Unsupported user status."]));
         var roleName = Val(role.GetValueOrDefault("name"))!;
@@ -9995,13 +10258,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
-                c.Parameters.AddWithValue("@passwordHash", HashPassword(password));
+                c.Parameters.AddWithValue("@passwordHash", inviteMode ? DBNull.Value : HashPassword(password!));
                 c.Parameters.AddWithValue("@permissionsJson", permissionsJson);
                 c.Parameters.AddWithValue("@status", status);
             }, ct);
 
-        await audit.LogAsync(http, "user.created", "User", id, System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName }), ct);
-        return Results.Created($"/api/admin/users/{id}", ApiResponse<object>.Ok(new { id }, "User created"));
+        string? activationLink = null;
+        DateTime? activationExpiresAt = null;
+        if (inviteMode)
+        {
+            (activationLink, var linkExpiry) = await IssueActivationLinkAsync(http, db, id, companyId, email!, ct);
+            activationExpiresAt = linkExpiry;
+        }
+
+        await audit.LogAsync(http, "user.created", "User", id,
+            System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName, invited = inviteMode }), ct);
+        return Results.Created($"/api/admin/users/{id}",
+            ApiResponse<object>.Ok(new { id, activationLink, activationExpiresAt },
+                inviteMode ? "User invited — share the activation link" : "User created"));
     }
 
     private static async Task<IResult> UpdateAdminUser(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -10097,6 +10371,111 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "User deactivated"));
     }
 
+    // Issues a one-time set-password link for a user (7-day expiry, token hashed at
+    // rest via the password_reset_tokens table). This is the no-SMTP invite flow:
+    // the admin copies the link and shares it through their own channel.
+    private static async Task<(string link, DateTime expiresAt)> IssueActivationLinkAsync(
+        HttpContext http, Database db, long userId, long companyId, string email, CancellationToken ct)
+    {
+        var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var tokenHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
+        var expiresAt = DateTime.UtcNow.AddDays(7);
+        await db.ExecuteAsync(
+            @"INSERT INTO password_reset_tokens (user_id, company_id, token_hash, expires_at, request_ip_hash)
+              VALUES (@uid,@cid,@hash,NOW()+INTERVAL '7 days',@ip)
+              ON CONFLICT (user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash, expires_at=EXCLUDED.expires_at,
+                consumed_at=NULL, request_ip_hash=EXCLUDED.request_ip_hash, created_at=NOW()",
+            c =>
+            {
+                c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@hash", tokenHash);
+                c.Parameters.AddWithValue("@ip", HashRequestMetadata(http.Connection.RemoteIpAddress?.ToString()));
+            }, ct);
+        var link = $"{SsoWebBaseUrl()}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
+        return (link, expiresAt);
+    }
+
+    private static async Task<IResult> AdminUserActivationLink(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = await RequireAdminPermission(http, audit, "users:update", "User", new { id }, ct);
+        if (denied is not null) return denied;
+
+        var user = await GetScopedUser(http, db, id, ct);
+        if (user is null) return Results.NotFound(ApiResponse<object>.Fail("User not found"));
+        var status = user.GetValueOrDefault("status")?.ToString() ?? "";
+        if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail("Activation links can only be issued for Active or Pending users."));
+
+        var email = user.GetValueOrDefault("email")?.ToString() ?? "";
+        var companyId = Convert.ToInt64(user["companyId"]);
+        var (link, expiresAt) = await IssueActivationLinkAsync(http, db, id, companyId, email, ct);
+        await audit.LogAsync(http, "user.activation_link.generated", "User", id,
+            System.Text.Json.JsonSerializer.Serialize(new { expiresAt }), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { link, expiresAt }, "Activation link generated"));
+    }
+
+    // ── Session management ────────────────────────────────────────────────────
+    // The session token itself is never returned; the caller only sees metadata
+    // plus an isCurrent flag computed server-side against the presenting token.
+
+    private static async Task<IResult> MySessionsList(HttpContext http, Database db, CancellationToken ct)
+    {
+        var userId = GetUserId(http);
+        if (userId <= 0) return Results.Unauthorized();
+        var current = BearerToken(http);
+        var rows = await db.QueryAsync(
+            "SELECT id, session_token, created_at, expires_at FROM user_sessions WHERE user_id=@uid AND expires_at>NOW() ORDER BY created_at DESC",
+            c => c.Parameters.AddWithValue("@uid", userId), ct);
+        var sessions = rows.Select(r => new
+        {
+            id        = r.GetValueOrDefault("id"),
+            createdAt = r.GetValueOrDefault("createdAt"),
+            expiresAt = r.GetValueOrDefault("expiresAt"),
+            isCurrent = string.Equals(r.GetValueOrDefault("sessionToken")?.ToString(), current, StringComparison.Ordinal),
+        }).ToArray();
+        return Results.Ok(ApiResponse<object>.Ok(sessions, "Active sessions"));
+    }
+
+    private static async Task<IResult> MySessionRevoke(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var userId = GetUserId(http);
+        if (userId <= 0) return Results.Unauthorized();
+        var removed = await db.ExecuteAsync(
+            "DELETE FROM user_sessions WHERE id=@id AND user_id=@uid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@uid", userId); }, ct);
+        if (removed == 0) return Results.NotFound(ApiResponse<object>.Fail("Session not found"));
+        await audit.LogAsync(http, "session.revoked.self", "UserSession", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Session revoked"));
+    }
+
+    private static async Task<IResult> AdminUserSessions(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "users:view");
+        if (denied is not null) return denied;
+        var user = await GetScopedUser(http, db, id, ct);
+        if (user is null) return Results.NotFound(ApiResponse<object>.Fail("User not found"));
+        var rows = await db.QueryAsync(
+            "SELECT id, created_at, expires_at FROM user_sessions WHERE user_id=@uid AND expires_at>NOW() ORDER BY created_at DESC",
+            c => c.Parameters.AddWithValue("@uid", id), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "User sessions"));
+    }
+
+    private static async Task<IResult> AdminUserSessionsRevoke(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var denied = await RequireAdminPermission(http, audit, "users:update", "User", new { id }, ct);
+        if (denied is not null) return denied;
+        var user = await GetScopedUser(http, db, id, ct);
+        if (user is null) return Results.NotFound(ApiResponse<object>.Fail("User not found"));
+        var removed = await db.ExecuteAsync(
+            "DELETE FROM user_sessions WHERE user_id=@uid",
+            c => c.Parameters.AddWithValue("@uid", id), ct);
+        await audit.LogAsync(http, "session.revoked.admin", "User", id,
+            System.Text.Json.JsonSerializer.Serialize(new { sessionsRevoked = removed }), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = removed }, "All sessions revoked"));
+    }
+
     private static async Task<IResult> AdminRoles(HttpContext http, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "roles:view");
@@ -10104,9 +10483,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var companyId = GetCompanyId(http);
         var rows = await db.QueryAsync(
-            @"SELECT r.id, r.name, r.permissions_json permissions_json, r.company_id companyId,
-                     r.is_system isSystem,
-                     COUNT(u.id) FILTER (WHERE u.company_id=@companyId AND u.status='Active') userCount
+            @"SELECT r.id, r.name, r.permissions_json permissions_json, r.company_id company_id,
+                     r.is_system is_system,
+                     COUNT(u.id) FILTER (WHERE u.company_id=@companyId AND u.status='Active') user_count
               FROM roles r
               LEFT JOIN users u ON u.role_id=r.id
               WHERE r.company_id IS NULL OR r.company_id=@companyId
@@ -10156,6 +10535,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var id = await db.InsertAsync(
             "INSERT INTO roles (company_id, name, permissions_json, is_system) VALUES (@companyId, @name, @permissions::jsonb, FALSE)",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@name", name); c.Parameters.AddWithValue("@permissions", permissions); }, ct);
+        // Mirror into role_permissions so the normalized store (permission-coverage
+        // KPI, future joins) never lags permissions_json — UpdateAdminRole already
+        // dual-writes; creation must too.
+        foreach (var permission in permissionKeys)
+        {
+            await db.ExecuteAsync(
+                "INSERT INTO role_permissions (role_id, permission_key) VALUES (@id, @permission) ON CONFLICT (role_id, permission_key) DO NOTHING",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@permission", permission);
+                }, ct);
+        }
         await audit.LogAsync(http, "role.created", "Role", id,
             System.Text.Json.JsonSerializer.Serialize(new { name, permissionCount = permissionKeys.Count }), ct: ct);
         return Results.Created($"/api/admin/roles/{id}", ApiResponse<object>.Ok(new { id, name, permissions = permissionKeys }, "Role created"));
@@ -10172,7 +10564,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Role not found"));
 
-        var permissionKeys = ExtractPermissions(Get(body, "permissions") ?? Get(body, "permissionsJson") ?? existing.GetValueOrDefault("permissionsJson"));
+        var permissionsProvided = (body.ContainsKey("permissions") && Get(body, "permissions") is not (null or DBNull))
+            || (body.ContainsKey("permissionsJson") && Get(body, "permissionsJson") is not (null or DBNull));
+        var permissionKeys = ExtractPermissions(permissionsProvided
+            ? (Get(body, "permissions") is not (null or DBNull) ? Get(body, "permissions") : Get(body, "permissionsJson"))
+            : existing.GetValueOrDefault("permissionsJson"));
         if (ValidateRolePermissions(http, permissionKeys) is { } permissionError) return permissionError;
         var permissions = System.Text.Json.JsonSerializer.Serialize(permissionKeys);
         var name = Get(body, "name") ?? existing.GetValueOrDefault("name")?.ToString() ?? "Role";
@@ -10803,7 +11199,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }, "Platform info"));
     }
 
-    private static async Task<IResult> AboutHealthSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> AboutHealthSummary(IHostEnvironment env, Database db, CancellationToken ct)
     {
         long moduleCount;
         string dbStatus;
@@ -10814,18 +11210,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch
         {
-            moduleCount = 35;
+            moduleCount = 0;
             dbStatus    = "Degraded";
         }
 
+        var asm = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         return Results.Ok(ApiResponse<object>.Ok(new
         {
+            // apiStatus is truthful by construction — this API produced the response.
             apiStatus        = "Connected",
             databaseStatus   = dbStatus,
-            nodeEventsStatus = "Connected",
-            moduleCount      = moduleCount > 0 ? $"{moduleCount} tables" : "35+",
-            version          = "Enterprise Demo Build",
-            environment      = "Local / Demo"
+            // The Node side service has no health probe wired here; say so rather
+            // than fabricate a "Connected" claim.
+            nodeEventsStatus = "Not monitored",
+            moduleCount      = moduleCount > 0 ? $"{moduleCount} tables" : "—",
+            version          = asm is null ? "Enterprise" : $"Enterprise {asm.Major}.{asm.Minor}.{asm.Build}",
+            environment      = env.EnvironmentName
         }, "Health summary"));
     }
 
@@ -11087,18 +11487,33 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // 14. Upsert latest_vehicle_positions (one row per company+vehicle, O(1) via UNIQUE KEY)
         if (vehicleId.HasValue)
         {
+            // Additive provenance: native ELD HMAC ingest. Stamp source/device_fix_time/
+            // normalized_at ONLY when the columns exist (deploy-safe — production may
+            // pre-date migration 001). device_fix_time is the device-asserted GPS time
+            // (body.EventTime, already validated fresh); normalized_at is our ingest time.
+            var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+            object deviceFixTime = DBNull.Value;
+            if (hasProv && DateTimeOffset.TryParse(body.EventTime, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dft))
+                deviceFixTime = dft.UtcDateTime;
+            var provCols = hasProv ? ", source, device_fix_time, normalized_at" : "";
+            var provVals = hasProv ? $", '{TelemetryProvenance.SourceNativeEld}', @deviceFixTime, NOW()" : "";
+            var provUpd  = hasProv
+                ? $", source='{TelemetryProvenance.SourceNativeEld}', device_fix_time=EXCLUDED.device_fix_time, normalized_at=NOW()"
+                : "";
+
             await db.ExecuteAsync(
-                @"INSERT INTO latest_vehicle_positions
+                $@"INSERT INTO latest_vehicle_positions
                     (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
                      accuracy_meters, engine_status, fuel_level, odometer_miles, battery_voltage,
                      event_time, received_at, event_count, source_event_id, correlation_id,
                      causation_id, source_channel, telemetry_status, risk_level, alert_count,
-                     open_alert_count, next_action, summary_json, updated_at)
+                     open_alert_count, next_action, summary_json, updated_at{provCols})
                   VALUES
                     (@companyId, @vehicleId, @deviceId, @driverId, @lat, @lng, @speedMph, @heading,
                      @acc, @eng, @fuel, @odo, @batt, NOW(), NOW(), 1, @sourceEventId, @correlationId,
                      @causationId, @sourceChannel, @telemetryStatus, @riskLevel, @alertCount,
-                     @openAlertCount, @nextAction, @summaryJson::jsonb, NOW())
+                     @openAlertCount, @nextAction, @summaryJson::jsonb, NOW(){provVals})
                   ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                     device_id=EXCLUDED.device_id, driver_id=EXCLUDED.driver_id,
                     lat=EXCLUDED.lat, lng=EXCLUDED.lng, speed_mph=EXCLUDED.speed_mph,
@@ -11110,7 +11525,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     causation_id=EXCLUDED.causation_id, source_channel=EXCLUDED.source_channel,
                     telemetry_status=EXCLUDED.telemetry_status, risk_level=EXCLUDED.risk_level,
                     alert_count=EXCLUDED.alert_count, open_alert_count=EXCLUDED.open_alert_count,
-                    next_action=EXCLUDED.next_action, summary_json=EXCLUDED.summary_json, updated_at=NOW()",
+                    next_action=EXCLUDED.next_action, summary_json=EXCLUDED.summary_json, updated_at=NOW(){provUpd}",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -11136,6 +11551,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@openAlertCount", 0);
                     c.Parameters.AddWithValue("@nextAction", "No action required");
                     c.Parameters.AddWithValue("@summaryJson", JsonSerializer.Serialize(new { vehicleId, companyId, status = "healthy" }));
+                    if (hasProv) c.Parameters.AddWithValue("@deviceFixTime", deviceFixTime);
                 }, ct);
         }
 
@@ -11306,6 +11722,40 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         http.Response.Headers.Append("X-Accel-Buffering", "no");
 
         System.Threading.Interlocked.Increment(ref _activeSseClients);
+
+        // Additive provenance, probed ONCE per connection (cached process-wide). When
+        // the columns are absent (production pre-migration-001) we select NULL literals
+        // so every tick keeps a STABLE shape. `freshness` (live/delayed/stale) is derived
+        // from received_at and always emitted; is_stale (>900s) and every existing field
+        // are left untouched. Build the SQL once, reuse it every 3s tick.
+        var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+        var provSelect = hasProv
+            ? @"lvp.source, lvp.provider, lvp.protocol, lvp.confidence,
+                                 lvp.device_fix_time, lvp.gateway_received_at,"
+            : @"NULL::text source, NULL::text provider, NULL::text protocol,
+                                 NULL::numeric confidence, NULL::timestamptz device_fix_time,
+                                 NULL::timestamptz gateway_received_at,";
+        var streamSql =
+            $@"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
+                                 lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
+                                 lvp.accuracy_meters, lvp.engine_status,
+                                 lvp.fuel_level, lvp.odometer_miles, lvp.event_time,
+                                 lvp.received_at, lvp.event_count,
+                                 {provSelect}
+                                 v.vehicle_code, v.make, v.model, v.status vehicle_status,
+                                 d.full_name driver_name,
+                                 EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
+                                 CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale,
+                                 CASE
+                                   WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 120 THEN 'live'
+                                   WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 900 THEN 'delayed'
+                                   ELSE 'stale'
+                                 END freshness
+                          FROM latest_vehicle_positions lvp
+                          LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
+                          LEFT JOIN drivers  d ON d.id=lvp.driver_id
+                          WHERE lvp.company_id=@cid";
+
         try
         {
             await http.Response.WriteAsync($"event: connected\ndata: {{\"status\":\"streaming\",\"companyId\":{companyId}}}\n\n", ct);
@@ -11320,19 +11770,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     // tenant scope (RLS filters by company_id), commits, releases. No-op
                     // wrapper (fresh connection per read) when enforcement is off.
                     var positions = await db.RunInTenantScopeAsync(companyId, () => db.QueryAsync(
-                        @"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
-                                 lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
-                                 lvp.accuracy_meters, lvp.engine_status,
-                                 lvp.fuel_level, lvp.odometer_miles, lvp.event_time,
-                                 lvp.received_at, lvp.event_count,
-                                 v.vehicle_code, v.make, v.model, v.status vehicle_status,
-                                 d.full_name driver_name,
-                                 EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
-                                 CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale
-                          FROM latest_vehicle_positions lvp
-                          LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
-                          LEFT JOIN drivers  d ON d.id=lvp.driver_id
-                          WHERE lvp.company_id=@cid",
+                        streamSql,
                         c => c.Parameters.AddWithValue("@cid", companyId), ct), ct);
 
                     var json = System.Text.Json.JsonSerializer.Serialize(positions);
@@ -11357,16 +11795,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> TelemetryPositions(HttpContext http, Database db, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
+        // Additive provenance: select the source/trust columns only when they
+        // exist (deploy-safe — production may pre-date migration 001). Absent →
+        // NULL literals so the response keeps a STABLE shape (keys always present,
+        // null when unknown). `freshness` is server-computed from received_at and
+        // needs no provenance column, so it is always emitted; is_stale (>900s) and
+        // every existing field are left untouched.
+        var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+        var provSelect = hasProv
+            ? @"lvp.source, lvp.provider, lvp.protocol, lvp.confidence,
+                     lvp.device_fix_time, lvp.gateway_received_at,"
+            : @"NULL::text source, NULL::text provider, NULL::text protocol,
+                     NULL::numeric confidence, NULL::timestamptz device_fix_time,
+                     NULL::timestamptz gateway_received_at,";
+
         var positions = await db.QueryAsync(
-            @"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
+            $@"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
                      lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
                      lvp.accuracy_meters, lvp.engine_status, lvp.fuel_level,
                      lvp.odometer_miles, lvp.battery_voltage, lvp.event_time,
                      lvp.event_count, lvp.address,
+                     {provSelect}
                      v.vehicle_code, v.make, v.model, v.year, v.status vehicle_status,
                      d.full_name driver_name,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
-                     CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale
+                     CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale,
+                     CASE
+                       WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 120 THEN 'live'
+                       WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 900 THEN 'delayed'
+                       ELSE 'stale'
+                     END freshness
               FROM latest_vehicle_positions lvp
               LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
               LEFT JOIN drivers  d ON d.id=lvp.driver_id
@@ -11533,6 +11991,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 return Results.BadRequest(ApiResponse<object>.Fail("device timestamp is invalid or outside the accepted window"));
         }
 
+        // Additive provenance for the trusted-gateway path. Stamp source='gateway'
+        // plus the wire protocol/provider the forwarder reported (when present) ONLY
+        // when the columns exist (deploy-safe — production may pre-date migration 001).
+        // Probed once (cached) BEFORE the system scope so it doesn't nest a probe query
+        // inside the write transaction.
+        var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+        var provider = Str("provider", "vendor", "manufacturer", "oem");
+        var protocol = Str("protocol", "proto");
+
         await db.RunInSystemScopeAsync(async () =>
         {
             var eventId = await db.InsertAsync(
@@ -11561,20 +12028,26 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             if (vehicleId is not null)
             {
+                var provCols = hasProv ? ", source, provider, protocol, device_fix_time, gateway_received_at, normalized_at" : "";
+                var provVals = hasProv ? $", '{TelemetryProvenance.SourceGateway}', @provider, @protocol, @eventTime, NOW(), NOW()" : "";
+                var provUpd  = hasProv
+                    ? $", source='{TelemetryProvenance.SourceGateway}', provider=EXCLUDED.provider, protocol=EXCLUDED.protocol, device_fix_time=EXCLUDED.device_fix_time, gateway_received_at=EXCLUDED.gateway_received_at, normalized_at=NOW()"
+                    : "";
+
                 await db.ExecuteAsync(
-                    @"INSERT INTO latest_vehicle_positions
+                    $@"INSERT INTO latest_vehicle_positions
                         (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
                          engine_status, fuel_level, odometer_miles, event_time, received_at, event_count,
-                         source_event_id, source_channel, telemetry_status, risk_level, updated_at)
+                         source_event_id, source_channel, telemetry_status, risk_level, updated_at{provCols})
                       VALUES (@cid, @vid, @did, @drid, @lat, @lng, @spd, @hdg, @eng, @fuel, @odo, @eventTime, NOW(), 1,
-                              @eid, 'trusted-gateway', 'healthy', 'low', NOW())
+                              @eid, 'trusted-gateway', 'healthy', 'low', NOW(){provVals})
                       ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                         device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
                         speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
                         engine_status=EXCLUDED.engine_status, fuel_level=EXCLUDED.fuel_level,
                         odometer_miles=EXCLUDED.odometer_miles, event_time=EXCLUDED.event_time, received_at=NOW(),
                         event_count=latest_vehicle_positions.event_count+1, source_event_id=EXCLUDED.source_event_id,
-                        source_channel='trusted-gateway', telemetry_status='healthy', risk_level='low', updated_at=NOW()
+                        source_channel='trusted-gateway', telemetry_status='healthy', risk_level='low', updated_at=NOW(){provUpd}
                       WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
                     c =>
                     {
@@ -11591,6 +12064,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                         c.Parameters.AddWithValue("@odo", (object?)(odo is { } ov ? (decimal)ov : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@eid", eventId);
                         c.Parameters.AddWithValue("@eventTime", eventTime.UtcDateTime);
+                        if (hasProv)
+                        {
+                            c.Parameters.AddWithValue("@provider", (object?)provider ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@protocol", (object?)protocol ?? DBNull.Value);
+                        }
                     }, ct);
             }
 
@@ -17648,7 +18126,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var title      = body.GetValueOrDefault("title")?.ToString();
         var desc       = body.GetValueOrDefault("description")?.ToString();
         var reviewerId = body.TryGetValue("reviewerUserId", out var rv) && rv is not null
-            ? Convert.ToInt64(rv) : GetUserId(http);
+            && long.TryParse(rv.ToString(), out var parsedReviewer) && parsedReviewer > 0
+            ? parsedReviewer : GetUserId(http);
         DateOnly? due = null;
         if (body.TryGetValue("dueDate", out var dd) && dd is not null &&
             DateOnly.TryParse(dd.ToString(), out var parsedDate))

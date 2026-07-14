@@ -212,6 +212,9 @@ builder.Services.AddSingleton<TelemetryLiveStateService>();
 builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<CustomerPortalService>();
+// Computes customers' SLA health / delivery experience / risk from real delivery history
+// (jobs, POD, feedback, invoices). Replaces the hardcoded 94/92/18 scores.
+builder.Services.AddScoped<CustomerHealthService>();
 builder.Services.AddScoped<DemoTenantSeeder>();
 builder.Services.AddScoped<OpsMetricsService>();
 builder.Services.AddSingleton<FoundationSchemaService>();
@@ -363,6 +366,17 @@ using (var scope = app.Services.CreateScope())
     {
     await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
+    // Secure customer-ETA tracking token (breach-class P0 fix): the public /api/customer-eta/track
+    // endpoint must key on an unguessable 256-bit secret, never the enumerable jobs.tracking_code.
+    // Add the column, enforce uniqueness, and disable every legacy link that has no secure token so
+    // the old 'ETA-JOB-xxxx' / 'B2ETA-xxxx' codes stop resolving. Idempotent; safe to re-run.
+    await RunSchemaStep(app, "CustomerEtaSecureToken", async () =>
+    {
+        var etaDb = scope.ServiceProvider.GetRequiredService<Database>();
+        await etaDb.ExecuteAsync("ALTER TABLE customer_eta_links ADD COLUMN IF NOT EXISTS secure_token VARCHAR(80) NULL");
+        await etaDb.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_customer_eta_links_secure_token ON customer_eta_links (secure_token) WHERE secure_token IS NOT NULL");
+        await etaDb.ExecuteAsync("UPDATE customer_eta_links SET public_status='Disabled' WHERE secure_token IS NULL AND public_status <> 'Disabled'");
+    });
     await RunSchemaStep(app, "Batch3", () => scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch4", () => scope.ServiceProvider.GetRequiredService<Batch4SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch5", () => scope.ServiceProvider.GetRequiredService<Batch5SchemaService>().EnsureAsync());

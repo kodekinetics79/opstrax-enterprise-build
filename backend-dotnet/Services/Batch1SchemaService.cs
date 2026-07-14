@@ -63,9 +63,14 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         new("customers", "phone", "VARCHAR(50) NULL"),
         new("customers", "billing_address", "VARCHAR(300) NULL"),
         new("customers", "shipping_address", "VARCHAR(300) NULL"),
-        new("customers", "sla_health_score", "DECIMAL(6,2) NOT NULL DEFAULT 95"),
-        new("customers", "delivery_experience_score", "DECIMAL(6,2) NOT NULL DEFAULT 95"),
-        new("customers", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
+        // Health scores are COMPUTED from delivery history (CustomerHealthService), never
+        // defaulted. NULL is the honest value for a customer with no history — see the
+        // NOT NULL/DEFAULT drops in TableStatements below.
+        new("customers", "sla_health_score", "DECIMAL(6,2) NULL"),
+        new("customers", "delivery_experience_score", "DECIMAL(6,2) NULL"),
+        new("customers", "risk_score", "DECIMAL(6,2) NULL"),
+        new("customers", "health_state", "VARCHAR(24) NULL"),
+        new("customers", "health_computed_at", "TIMESTAMPTZ NULL"),
         new("customers", "deleted_at", "TIMESTAMPTZ NULL"),
         new("assets", "assigned_driver_id", "BIGINT NULL"),
         new("assets", "customer_id", "BIGINT NULL"),
@@ -192,7 +197,20 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         )",
         "CREATE INDEX IF NOT EXISTS idx_le_vehicle_time ON location_events (vehicle_id, event_time)",
         "CREATE INDEX IF NOT EXISTS idx_le_company_time ON location_events (company_id, event_time)",
-        "CREATE INDEX IF NOT EXISTS idx_le_vehicle_code ON location_events (vehicle_code)"
+        "CREATE INDEX IF NOT EXISTS idx_le_vehicle_code ON location_events (vehicle_code)",
+
+        // Customer health: NULL must be representable. Older databases created these three
+        // columns as NOT NULL DEFAULT 94/95/10, which is precisely how the fabricated
+        // "SLA Health 94%" reached the UI for customers that had never had a single job.
+        // CustomerHealthService writes a real score or NULL ("Not enough data") — so drop
+        // the NOT NULL and the flattering default. Idempotent.
+        "ALTER TABLE customers ALTER COLUMN sla_health_score DROP NOT NULL",
+        "ALTER TABLE customers ALTER COLUMN sla_health_score DROP DEFAULT",
+        "ALTER TABLE customers ALTER COLUMN delivery_experience_score DROP NOT NULL",
+        "ALTER TABLE customers ALTER COLUMN delivery_experience_score DROP DEFAULT",
+        "ALTER TABLE customers ALTER COLUMN risk_score DROP NOT NULL",
+        "ALTER TABLE customers ALTER COLUMN risk_score DROP DEFAULT",
+        "CREATE INDEX IF NOT EXISTS idx_customers_health_computed ON customers (company_id, health_computed_at)"
     ];
 
     private static readonly string[] SeedStatements =
@@ -203,12 +221,12 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         "UPDATE vehicles SET year=2018, odometer_miles=182250, readiness_score=77, risk_score=52 WHERE vehicle_code='REEFER-111' AND (year IS NULL OR year > 2019)",
         "UPDATE drivers SET risk_score=GREATEST(3, 100-readiness_score), compliance_score=82 + (id % 17) WHERE compliance_score=95",
         "UPDATE assets SET current_zone=COALESCE(current_zone,current_location), geofence_status=COALESCE(geofence_status,'Inside authorized zone'), utilization_score=CASE WHEN utilization_score=80 THEN 70 + (id % 25) ELSE utilization_score END, risk_score=CASE WHEN risk_score=10 THEN CASE WHEN id % 5 = 0 THEN 72 ELSE 18 + (id % 22) END ELSE risk_score END",
-        @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score)
-          SELECT 1,'CUS-009','Manassas Advanced Manufacturing','Elena Ward','elena@mamfg.example','+1 703 555 4109','9100 Balls Ford Rd, Manassas, VA','9100 Balls Ford Rd, Manassas, VA','Active','Gold',94,92,18
-          WHERE NOT EXISTS (SELECT 1 FROM customers WHERE customer_code='CUS-009')",
-        @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score)
-          SELECT 1,'CUS-010','Potomac Government Services','Victor James','victor@potomacgov.example','+1 202 555 4110','1200 Pennsylvania Ave NW, Washington DC','650 N Glebe Rd, Arlington, VA','At Risk','Platinum',82,79,42
-          WHERE NOT EXISTS (SELECT 1 FROM customers WHERE customer_code='CUS-010')",
+        // REMOVED: the 'CUS-009' Manassas Advanced Manufacturing and 'CUS-010' Potomac
+        // Government Services INSERTs. They wrote two invented customer accounts (with
+        // invented 94/92/18 health scores) into REAL tenant company_id=1 on boot, guarded
+        // only by a global, non-tenant-scoped WHERE NOT EXISTS on customer_code. A schema
+        // service must never fabricate business rows for a real tenant. Demo data belongs
+        // in DemoTenantSeeder (its own opt-in demo tenant).
         // Child-evidence rows derive company_id from their PARENT (never a hardcoded 1),
         // so a tenant's documents/contacts/addresses/timeline are stamped with that
         // tenant's company_id — not company 1. (Fixes the cross-tenant company_id
@@ -256,35 +274,13 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
           SELECT a.company_id, 'Asset', a.id, 'batch1.ready', a.asset_code || ' Batch 1 profile ready', 'Asset detail evidence backfilled by OpsTrax.', 'Info'
           FROM assets a WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Asset' AND x.entity_id=a.id)",
-        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, score)
-          SELECT 1, 1, 'batch1_action', m.module_key, 'Batch 1 ' || m.title || ' recommended action', m.body, m.body, 94, 82, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'Medium', 'Recommended', 94
-          FROM (
-            SELECT 'vehicles' module_key, 'vehicle' title, 'Review risk heat, data completeness, device status and driver assignment before dispatch.' body
-            UNION ALL SELECT 'drivers','driver','Review readiness, HOS, certification and coaching signals before assignment.'
-            UNION ALL SELECT 'customers','customer','Send proactive updates for SLA-sensitive customers and watch at-risk accounts.'
-            UNION ALL SELECT 'assets','asset','Review geofence status, utilization and assignment before route release.'
-          ) m
-          WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations r WHERE r.module_key=m.module_key AND r.title LIKE 'Batch 1%')",
-        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
-          SELECT 1, 'Brake inspection overdue', 'BOX-106 requires inspection before dispatch release.', 'Critical', 'Open', 'Maintenance', 'maintenance.overdue', 'Vehicle',
-                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 AND v.vehicle_code = 'BOX-106' LIMIT 1),
-                 'Ground the vehicle until the maintenance work order closes', NOW() - INTERVAL '35 minutes'
-          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Brake inspection overdue')",
-        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
-          SELECT 1, 'Driver coaching review', 'Recent HOS and safety activity require follow-up before the next shift.', 'High', 'Open', 'Safety', 'driver.coaching', 'Driver',
-                 (SELECT d.id FROM drivers d WHERE d.company_id = 1 ORDER BY d.id LIMIT 1),
-                 'Create a coaching task and review evidence before the next assignment', NOW() - INTERVAL '2 hours'
-          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Driver coaching review')",
-        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
-          SELECT 1, 'Customer SLA at risk', 'A delivery exception is threatening a customer-visible ETA.', 'High', 'Open', 'Customer', 'customer.sla.risk', 'Customer',
-                 (SELECT c.id FROM customers c WHERE c.company_id = 1 ORDER BY c.id LIMIT 1),
-                 'Send a proactive ETA update and keep the account owner informed', NOW() - INTERVAL '75 minutes'
-          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Customer SLA at risk')",
-        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
-          SELECT 1, 'Device heartbeat stale', 'The live telemetry stream has not reported in the last few minutes.', 'Warning', 'Open', 'Telematics', 'device.heartbeat.stale', 'Vehicle',
-                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 ORDER BY v.id DESC LIMIT 1),
-                 'Recheck the device and confirm connectivity with the driver', NOW() - INTERVAL '10 minutes'
-          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Device heartbeat stale')",
+        // REMOVED: the 'Batch 1 ... recommended action' ai_recommendations INSERT and the
+        // four ai_insights INSERTs ('Brake inspection overdue', 'Driver coaching review',
+        // 'Customer SLA at risk', 'Device heartbeat stale'). Every one of them hardcoded
+        // company_id=1 and invented an operational alert / AI recommendation (with an
+        // invented 94 confidence score) inside a REAL tenant. Insights and recommendations
+        // must be produced by the agentic/analytics services from real signals, not written
+        // into the tenant by a schema migration.
 
         @"INSERT INTO location_events (company_id, vehicle_id, vehicle_code, driver_id, lat, lng, speed_mph, heading, event_type, engine_status, fuel_level, odometer_miles, event_time)
           SELECT v.company_id, v.id, v.vehicle_code, v.assigned_driver_id,

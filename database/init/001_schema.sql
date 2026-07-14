@@ -27,13 +27,18 @@ CREATE TABLE IF NOT EXISTS users (
   company_id BIGINT NOT NULL,
   role_id BIGINT NULL,
   full_name VARCHAR(160) NOT NULL,
-  email VARCHAR(220) NOT NULL UNIQUE,
+  -- Email is unique PER TENANT, never globally: a global unique let tenant
+  -- provisioning's ON CONFLICT (email) relocate an existing user's row (with their
+  -- password_hash/role) into another tenant = cross-tenant account takeover. See
+  -- database/migrations/2026_07_13_users_email_per_tenant.sql.
+  email VARCHAR(220) NOT NULL,
   role_name VARCHAR(100) NOT NULL,
   demo_password VARCHAR(120),
   password_hash VARCHAR(255) NULL,
   permissions_json JSONB NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT users_company_email_key UNIQUE (company_id, email),
   CONSTRAINT fk_users_company FOREIGN KEY (company_id) REFERENCES companies(id),
   CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id)
 );

@@ -2,14 +2,22 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch6SchemaService(Database db)
+public sealed class Batch6SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
+        // Global reference/catalog data (no tenant business rows) — always applied.
+        foreach (var sql in ReferenceSeeds) await db.ExecuteAsync(sql, ct: ct);
+        // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
+        // These used to run on EVERY boot, inventing safety events / contracts / invoices /
+        // SLA + cost records that the product then presented as fact. Now they require the
+        // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
+        // schema only.
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -305,7 +313,7 @@ public sealed class Batch6SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_compliance_audit_packages_company ON compliance_audit_packages(company_id)",
     ];
 
-    private static readonly string[] Seeds =
+    private static readonly string[] ReferenceSeeds =
     [
         @"INSERT INTO countries (code,name,currency,distance_unit,volume_unit,hos_ruleset,rtl) VALUES
           ('US','United States','USD','Miles','Gallons','FMCSA 395.3',false),
@@ -322,12 +330,6 @@ public sealed class Batch6SchemaService(Database db)
           ('ar-SA','Arabic (Saudi Arabia)','العربية (السعودية)','SA',true),
           ('ar-AE','Arabic (UAE)','العربية (الإمارات)','AE',true),
           ('ur-PK','Urdu (Pakistan)','اردو (پاکستان)','PK',true)
-          ON CONFLICT DO NOTHING",
-
-        @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
-          OVERRIDING SYSTEM VALUE
-          SELECT 1,1,'en-US','US','America/New_York','MM/DD/YYYY','USD','Miles','Gallons'
-          WHERE NOT EXISTS (SELECT 1 FROM tenant_locale_settings WHERE id=1)
           ON CONFLICT DO NOTHING",
 
         @"INSERT INTO compliance_profiles (id,country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) OVERRIDING SYSTEM VALUE VALUES
@@ -350,6 +352,15 @@ public sealed class Batch6SchemaService(Database db)
           (8,4,'SA-HOS-10H','Saudi Arabia 10-Hour Limit','HOS','Maximum 10 hours driving per day under SASO regulations','High',10,'Hours'),
           (9,5,'AE-HOS-10H','UAE 10-Hour Driving Limit','HOS','UAE RTA: Maximum 10 hours driving per day','High',10,'Hours'),
           (10,6,'PK-NHA-10H','Pakistan 10-Hour Limit','HOS','NHA: Maximum 10 hours driving per day','Medium',10,'Hours')
+          ON CONFLICT DO NOTHING"
+    ];
+
+    private static readonly string[] DemoSeeds =
+    [
+        @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
+          OVERRIDING SYSTEM VALUE
+          SELECT 1,1,'en-US','US','America/New_York','MM/DD/YYYY','USD','Miles','Gallons'
+          WHERE NOT EXISTS (SELECT 1 FROM tenant_locale_settings WHERE id=1)
           ON CONFLICT DO NOTHING",
 
         @"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning) OVERRIDING SYSTEM VALUE VALUES
@@ -471,6 +482,6 @@ public sealed class Batch6SchemaService(Database db)
           (1,1,'hos_action','hos-eld','Driver 4 - Repeat 11-Hour Violation Pattern','Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.','Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.',97,95,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Critical','Recommended',97,'Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.','Critical','Review Schedule','hos_action'),
           (1,1,'hos_action','hos-eld','Driver 2 - 70-Hour Cycle Limit Warning','Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.','Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.',88,83,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'High','Recommended',88,'Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.','High','Plan Reset','hos_action'),
           (1,1,'eld_action','hos-eld','ELD-008 Firmware Update Available','Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.','Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.',55,50,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Low','Recommended',55,'Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.','Low','Schedule Update','eld_action')
-          ON CONFLICT DO NOTHING",
+          ON CONFLICT DO NOTHING"
     ];
 }

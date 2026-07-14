@@ -733,10 +733,18 @@ public static class PlatformEndpoints
         if (countryProfile is not null)
             cascade = await countries.ApplyToTenantAsync(companyId, countryCode!, principal!.Email, ct);
 
-        // Optional tenant admin invite
+        // Optional tenant admin invite. A cross-tenant email collision is REFUSED (never
+        // relocated) — the tenant is still created, but without an admin invite, and the
+        // response says so instead of silently stealing another tenant's account.
         var adminEmail = Str(body, "adminEmail");
+        object? adminInvite = null;
         if (!string.IsNullOrWhiteSpace(adminEmail))
-            await CreateAdminInviteAsync(db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+        {
+            var invite = await CreateAdminInviteAsync(http, db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+            adminInvite = invite.Status == AdminInviteStatus.CrossTenantConflict
+                ? new { email = adminEmail, sent = false, invited = false, error = "That email already belongs to another tenant; the tenant was created without an admin invite. Re-issue the invite with a different admin email." }
+                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null };
+        }
 
         // Give the new tenant the standard flag set (seeded enabled — these are kill
         // switches / ramp controls over features that already ship, not hidden features).
@@ -751,6 +759,7 @@ public static class PlatformEndpoints
             country = cascade?.CountryCode,
             currency = cascade?.Currency ?? currency,
             autoEnabledFeatures = cascade?.EnabledFeatures ?? [],
+            adminInvite,
         }, "Tenant created"));
     }
 
@@ -920,10 +929,10 @@ public static class PlatformEndpoints
         HttpContext http, Dictionary<string, object?> body, Database db, TenantOffboardingService offboarding, CancellationToken ct)
     {
         var action = (Str(body, "action") ?? "").ToLowerInvariant();
-        var allowed = new[] { "activate", "reactivate", "suspend", "cancel", "extend-trial", "manual-contract", "revoke-sessions", "delete" };
+        var allowed = new[] { "activate", "reactivate", "suspend", "cancel", "extend-trial", "manual-contract", "revoke-sessions", "assign-package", "delete" };
         if (!allowed.Contains(action))
             return Results.Json(ApiResponse<object>.Fail("Invalid action",
-                "Use activate|suspend|cancel|extend-trial|manual-contract|revoke-sessions|delete"),
+                "Use activate|suspend|cancel|extend-trial|manual-contract|revoke-sessions|assign-package|delete"),
                 statusCode: StatusCodes.Status400BadRequest);
 
         var ids = ReadLongArray(body, "ids").Distinct().ToList();
@@ -942,6 +951,13 @@ public static class PlatformEndpoints
             return Results.Json(ApiResponse<object>.Fail("Confirmation required",
                 "To permanently delete these tenants and ALL their data, send {\"confirm\":\"DELETE\"}."),
                 statusCode: StatusCodes.Status400BadRequest);
+
+        // assign-package needs a target package for the whole batch; seatLimit is an
+        // optional shared override (null → each tenant keeps its current seat_limit).
+        var assignPackageId = Long(body, "packageId");
+        var assignSeatOverride = Long(body, "seatLimit") is { } sl ? (int)sl : (int?)null;
+        if (action == "assign-package" && !assignPackageId.HasValue)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "packageId is required for assign-package"), statusCode: StatusCodes.Status400BadRequest);
 
         var days = (int)(Long(body, "days") ?? 14);
         var results = new List<object>();
@@ -965,6 +981,11 @@ public static class PlatformEndpoints
                     var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE company_id=@id",
                         c => c.Parameters.AddWithValue("@id", id), ct);
                     results.Add(new { id, ok = true, sessionsRevoked = revoked });
+                }
+                else if (action == "assign-package")
+                {
+                    var (seatLimit, mrrCents) = await ApplyAssignPackageAsync(db, id, assignPackageId!.Value, assignSeatOverride, principal!.Email, ct);
+                    results.Add(new { id, ok = true, packageId = assignPackageId, seatLimit, mrrCents });
                 }
                 else
                 {
@@ -996,11 +1017,25 @@ public static class PlatformEndpoints
         if (!packageId.HasValue)
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "packageId is required"), statusCode: StatusCodes.Status400BadRequest);
 
-        var seatLimit = (int)(Long(body, "seatLimit")
-            ?? await db.ScalarLongAsync("SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", id), ct));
+        var seatOverride = Long(body, "seatLimit") is { } s ? (int)s : (int?)null;
+        var (seatLimit, mrrCents) = await ApplyAssignPackageAsync(db, id, packageId.Value, seatOverride, principal!.Email, ct);
+
+        await AuditAsync(db, principal!, http, "tenant.package.assigned", "Tenant", id, id, new { packageId, seatLimit, mrrCents }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, packageId, mrrCents }, "Package assigned"));
+    }
+
+    // Core assign-package transition — shared by the single-tenant TenantAssignPackage
+    // handler and the bulk TenantBulk handler so the tenant_subscriptions upsert and the
+    // package entitlement seeding can never diverge between the two entry points. When
+    // seatOverride is null the tenant's current seat_limit is reused (falling back to 5).
+    private static async Task<(int SeatLimit, long MrrCents)> ApplyAssignPackageAsync(
+        Database db, long id, long packageId, int? seatOverride, string actor, CancellationToken ct)
+    {
+        var seatLimit = seatOverride ?? (int)await db.ScalarLongAsync(
+            "SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
         if (seatLimit <= 0) seatLimit = 5;
 
-        var mrrCents = await ComputeMrrAsync(db, packageId.Value, seatLimit, ct);
+        var mrrCents = await ComputeMrrAsync(db, packageId, seatLimit, ct);
 
         await db.ExecuteAsync(
             @"INSERT INTO tenant_subscriptions (company_id, package_id, seat_limit, mrr_cents, status)
@@ -1009,14 +1044,13 @@ public static class PlatformEndpoints
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@pid", packageId.Value);
+                c.Parameters.AddWithValue("@pid", packageId);
                 c.Parameters.AddWithValue("@seats", seatLimit);
                 c.Parameters.AddWithValue("@mrr", mrrCents);
             }, ct);
 
-        await SeedEntitlementsFromPackageAsync(db, id, packageId.Value, principal!.Email, ct);
-        await AuditAsync(db, principal!, http, "tenant.package.assigned", "Tenant", id, id, new { packageId, seatLimit, mrrCents }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, packageId, mrrCents }, "Package assigned"));
+        await SeedEntitlementsFromPackageAsync(db, id, packageId, actor, ct);
+        return (seatLimit, mrrCents);
     }
 
     internal static async Task<IResult> TenantResetInvite(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -1026,9 +1060,18 @@ public static class PlatformEndpoints
         var adminEmail = Str(body, "adminEmail");
         if (string.IsNullOrWhiteSpace(adminEmail))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "adminEmail is required"), statusCode: StatusCodes.Status400BadRequest);
-        await CreateAdminInviteAsync(db, id, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
-        await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail }, "Admin invite reset"));
+
+        var invite = await CreateAdminInviteAsync(http, db, id, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+        if (invite.Status == AdminInviteStatus.CrossTenantConflict)
+        {
+            await AuditAsync(db, principal!, http, "tenant.admin_invite.cross_tenant_denied", "Tenant", id, id, new { adminEmail }, ct);
+            return Results.Json(ApiResponse<object>.Fail("Conflict",
+                "That email already belongs to another tenant. Use a different admin email."),
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
+        await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail, emailSent = invite.EmailSent }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail, emailSent = invite.EmailSent }, "Admin invite reset"));
     }
 
     internal static async Task<IResult> TenantRevokeSessions(long id, HttpContext http, Database db, CancellationToken ct)
@@ -1720,18 +1763,141 @@ public static class PlatformEndpoints
         }
     }
 
-    private static async Task CreateAdminInviteAsync(Database db, long companyId, string email, string name, CancellationToken ct)
+    internal enum AdminInviteStatus { Sent, CrossTenantConflict }
+
+    // Result of a tenant-admin invite attempt. CrossTenantConflict means the email is
+    // bound to a DIFFERENT company and was REFUSED (never relocated); the caller decides
+    // how to surface that. EmailSent reports whether the accept link actually went out.
+    internal sealed record AdminInviteResult(AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId);
+
+    // Tenant-admin onboarding invite. Mirrors the platform-operator invite in
+    // PlatformAdminEndpoints: a single-use, hashed-at-rest token with a 7-day expiry is
+    // minted and the accept link is emailed; NO usable password is set until the invitee
+    // completes the flow.
+    //
+    // The tenant side reuses the canonical tenant onboarding path — the
+    // password_reset_tokens table + POST /api/auth/reset-password (ResetPassword flips a
+    // 'Pending' user to 'Active', which is exactly what the login gate at Login() requires),
+    // so no separate tenant accept-invite page/endpoint is needed. The emailed link targets
+    // the TENANT app's existing /reset-password?...&welcome=1 route. (The platform
+    // accept-invite page is a distinct flow for operators against platform_admins and is
+    // deliberately NOT reused here.)
+    //
+    // SECURITY — the reason this helper exists: users.email is now unique PER TENANT
+    // (2026_07_13_users_email_per_tenant.sql), not globally. An email already bound to a
+    // DIFFERENT company is REFUSED, never absorbed. The previous body did
+    // `ON CONFLICT (email) DO UPDATE SET company_id=@cid`, which relocated the victim's
+    // existing users row — carrying their password_hash / role / permissions — into the
+    // new tenant: a provisioning typo became a cross-tenant account takeover. Re-inviting
+    // WITHIN the same tenant is fine.
+    private static async Task<AdminInviteResult> CreateAdminInviteAsync(
+        HttpContext http, Database db, long companyId, string email, string name, CancellationToken ct)
     {
+        var normEmail = email.Trim();
+
+        // Look up any existing owner of this email (case-insensitively, matching the
+        // login lookup). A hit under another company_id is refused outright.
+        var existing = await db.QuerySingleAsync(
+            "SELECT id, company_id, status FROM users WHERE LOWER(email)=LOWER(@e) LIMIT 1",
+            c => c.Parameters.AddWithValue("@e", normEmail), ct);
+
+        long userId;
+        if (existing is not null)
+        {
+            var owner = Convert.ToInt64(existing["companyId"]);
+            if (owner != companyId)
+                return new AdminInviteResult(AdminInviteStatus.CrossTenantConflict, false, owner.ToString());
+
+            userId = Convert.ToInt64(existing["id"]);
+
+            // Same-tenant re-invite. Never downgrade an already-active admin (that would
+            // lock them out of a working account); only (re)arm the Pending onboarding
+            // state for a user who has not yet finished setting a password.
+            var status = existing["status"]?.ToString() ?? "";
+            if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
+            {
+                await db.ExecuteAsync(
+                    "UPDATE users SET full_name=@n, role_name='Company Admin', status='Pending' WHERE id=@id AND company_id=@cid",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@n", name);
+                        c.Parameters.AddWithValue("@id", userId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+            }
+        }
+        else
+        {
+            // Fresh admin: status 'Pending' (NOT the old 'Invited', which the login gate
+            // and ResetPassword both reject) and NO password_hash. ResetPassword flips
+            // 'Pending' -> 'Active' when the invite is accepted.
+            userId = await db.InsertAsync(
+                @"INSERT INTO users (company_id, full_name, email, role_name, status)
+                  VALUES (@cid, @name, @email, 'Company Admin', 'Pending')
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@name", name);
+                    c.Parameters.AddWithValue("@email", normEmail);
+                }, ct);
+        }
+
+        // Mint a single-use set-password token, hashed at rest, 7-day expiry — same shape
+        // and lifetime as the operator invite and the tenant activation-link path.
+        var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var tokenHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
         await db.ExecuteAsync(
-            @"INSERT INTO users (company_id, full_name, email, role_name, status)
-              VALUES (@cid, @name, @email, 'Company Admin', 'Invited')
-              ON CONFLICT (email) DO UPDATE SET company_id=@cid, status='Invited'",
+            @"INSERT INTO password_reset_tokens (user_id, company_id, token_hash, expires_at, request_ip_hash)
+              VALUES (@uid, @cid, @hash, NOW() + INTERVAL '7 days', @ip)
+              ON CONFLICT (user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash, expires_at=EXCLUDED.expires_at,
+                consumed_at=NULL, request_ip_hash=EXCLUDED.request_ip_hash, created_at=NOW()",
             c =>
             {
+                c.Parameters.AddWithValue("@uid", userId);
                 c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@name", name);
-                c.Parameters.AddWithValue("@email", email);
+                c.Parameters.AddWithValue("@hash", tokenHash);
+                c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
             }, ct);
+
+        var emailSent = await TrySendTenantInviteEmailAsync(http, normEmail, name, rawToken, ct);
+        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null);
+    }
+
+    private static string InviteRequestIpHash(HttpContext http) =>
+        Convert.ToHexString(SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(http.Connection.RemoteIpAddress?.ToString() ?? string.Empty)))[..16];
+
+    // Emails the tenant admin their set-password link. Unlike the operator invite (which
+    // derives its base URL from the request Origin / PLATFORM_PUBLIC_URL and targets the
+    // platform SPA), this must target the TENANT app: the request Origin here is the
+    // platform console, so the tenant app's public URL (FRONTEND_PUBLIC_URL /
+    // PUBLIC_APP_URL) is used, exactly like ForgotPassword. Returns false when no tenant
+    // base URL or SMTP is configured — the caller reports that truthfully.
+    private static async Task<bool> TrySendTenantInviteEmailAsync(
+        HttpContext http, string email, string fullName, string rawToken, CancellationToken ct)
+    {
+        var baseUrl = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+            ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return false;
+
+        var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
+        return await PlatformMailService.TrySendAsync(
+            email,
+            "OpsTrax — set up your administrator account",
+            $"""
+            Hello {fullName},
+
+            An OpsTrax administrator account has been created for you.
+
+            Set your password using this single-use link (valid for 7 days):
+            {link}
+
+            If you did not expect this, ignore this email and report it to your
+            administrator.
+            """,
+            ct);
     }
 
     internal static bool VerifyPassword(string password, string? storedHash)
