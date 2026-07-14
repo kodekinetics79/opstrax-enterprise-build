@@ -144,5 +144,22 @@ public sealed class TelemetryBackgroundService(
             ct: ct);
         if (deleted > 0)
             logger.LogDebug("Pruned {Count} expired telemetry nonces", deleted);
+
+        // Same bounded retention for the gps-ingest durable replay ledger. 24 h is far beyond
+        // the 300 s gateway freshness window, so pruning here can NEVER reopen the replay window
+        // (a >300 s-old signed message is already rejected by the freshness gate before it reaches
+        // the guard). Guarded so a pre-migration DB (table absent) doesn't break the nonce prune.
+        try
+        {
+            var replayDeleted = await db.ExecuteAsync(
+                "DELETE FROM gps_gateway_replay WHERE received_at < NOW() - 24 * INTERVAL '1 hour'",
+                ct: ct);
+            if (replayDeleted > 0)
+                logger.LogDebug("Pruned {Count} expired gps gateway replay records", replayDeleted);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "gps_gateway_replay prune skipped (table may not exist yet)");
+        }
     }
 }

@@ -32,7 +32,6 @@ public static partial class EndpointMappings
     {
         "Active", "Inactive", "Pending", "Suspended"
     };
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> GpsGatewayReplayCache = new();
 
     // True when the authenticated principal is a customer-portal user (bound to a
     // customer_id). Such principals may ONLY use customer_portal:* permissions.
@@ -5234,17 +5233,25 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
         var stops = await RouteStopsRows(id, db, ct);
+        // HONESTY: this is a heuristic PREVIEW, not a real route-optimization solver. There is
+        // no distance/time-window/traffic computation and the "recommended sequence" is just the
+        // route's existing stop order. The figures below are stop-count heuristics, surfaced only
+        // as a rough non-binding estimate — never quote them to a client as a computed result.
+        // A real optimizer (VRP with geodistance + time windows) is tracked as a follow-up.
         var score = Math.Min(98, 80 + stops.Count);
         await audit.LogAsync(http, "route.optimization.preview.run", "Route", id, ct: ct);
-        await AddTimeline(db, GetCompanyId(http), "Route", id, "route.optimized", "Route optimization preview generated", ct);
+        await AddTimeline(db, GetCompanyId(http), "Route", id, "route.optimized", "Route optimization heuristic preview generated (estimate)", ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             routeId = id,
+            isEstimate = true,
+            method = "heuristic-preview",
+            disclaimer = "Heuristic estimate from stop count — no route-optimization solver has run. Not a computed result.",
             efficiencyScore = score,
             estimatedSavingsMinutes = Math.Max(8, stops.Count * 4),
             costLeakageReduction = "$" + (stops.Count * 23),
-            recommendedSequence = stops.Select((stop, i) => new { stopId = stop["id"], sequence = i + 1, reason = "Balanced SLA and distance" })
-        }, "Optimization preview generated"));
+            recommendedSequence = stops.Select((stop, i) => new { stopId = stop["id"], sequence = i + 1, reason = "Original route order (no solver applied)" })
+        }, "Optimization preview (heuristic estimate)"));
     }
 
     private static async Task<IResult> AssignRoute(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -11922,7 +11929,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // Minimal payload: { "imei": "862464068456321", "lat": 34.05, "lng": -118.24 }
     // Aliases accepted: latitude/lng/longitude, speed/speedKmh/speedMph, heading/course/
     // bearing, alt/altitude, ts/timestamp/gpsTime, fuel, odometer.
-    private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, IConfiguration config, CancellationToken ct)
+    private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, IConfiguration config, AuditService audit, CancellationToken ct)
     {
         var gatewaySecret = config["Telemetry:GatewaySecret"];
         var timestampRaw = http.Request.Headers["X-Gateway-Timestamp"].FirstOrDefault();
@@ -11943,10 +11950,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expected, actual))
             return Results.Unauthorized();
 
-        var replayKey = $"{timestamp}:{signatureRaw}";
-        if (!GpsGatewayReplayCache.TryAdd(replayKey, timestamp)) return Results.Conflict();
-        foreach (var stale in GpsGatewayReplayCache.Where(pair => pair.Value < DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 300).Select(pair => pair.Key))
-            GpsGatewayReplayCache.TryRemove(stale, out _);
+        // Canonical per-message identity for replay defense: the LOWERCASE HEX of the verified
+        // HMAC bytes. HMAC decodes hex case-insensitively and compares bytes, so a captured packet
+        // re-sent with the signature hex re-cased authenticates as the SAME message — keying on the
+        // canonical bytes (not the raw header string) closes that replay bypass. Durable reservation
+        // happens after device resolution and inside the write transaction (see below).
+        var canonicalSig = Convert.ToHexString(expected).ToLowerInvariant();
 
         // Header override (X-Device-IMEI) OR body imei/deviceId/id.
         string? Str(params string[] keys)
@@ -12022,8 +12031,49 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var provider = Str("provider", "vendor", "manufacturer", "oem");
         var protocol = Str("protocol", "proto");
 
+        // Durable, cross-instance replay defense (TEL-P1-REPLAY-005). The canonical HMAC signature
+        // is the per-message identity. Determine the durable store's availability first:
+        //   ProbeError -> fail CLOSED (503): a transient DB error must never silently disable replay
+        //                 protection by falling through to the process-local path.
+        //   Absent     -> pre-migration; reserve in the in-memory fallback here (before any write).
+        //   Present    -> reserve durably INSIDE the write transaction below, so a write failure
+        //                 rolls the reservation back too (no burned nonce, legitimate retry works).
+        var replayAvail = await GpsGatewayReplayGuard.DetermineAvailabilityAsync(db, ct);
+        if (replayAvail == GpsGatewayReplayGuard.Availability.ProbeError)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            await audit.LogAsync(http, "telemetry.gps.replay_store_unavailable", "EldDevice", deviceId, "fail-closed", ct);
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+        if (replayAvail == GpsGatewayReplayGuard.Availability.Absent &&
+            !GpsGatewayReplayGuard.TryReserveInMemory(GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig, timestamp))
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            await audit.LogAsync(http, "telemetry.gps.replay_rejected", "EldDevice", deviceId, "gateway-replay", ct);
+            return Results.Conflict(ApiResponse<object>.Fail("Duplicate gateway submission — replay detected"));
+        }
+
+        // The durable reserve below runs inside this system-scope transaction, so a write failure
+        // rolls the reservation back with it — provided Rls:EnforceTenantContext is ON (the prod
+        // invariant this whole handler's write atomicity already depends on). The Absent (in-memory)
+        // path can't join the tx, so if the writes throw we compensate by releasing that reservation.
+        var durableReplayDuplicate = false;
+        try
+        {
         await db.RunInSystemScopeAsync(async () =>
         {
+            // Durable reservation, atomic with the writes below. A duplicate skips the writes so a
+            // replay never lands a row; a DB error here throws and aborts the whole transaction
+            // (fail closed — the request 500s, no partial write, reservation rolled back).
+            if (replayAvail == GpsGatewayReplayGuard.Availability.Present &&
+                !await GpsGatewayReplayGuard.TryReserveDurableAsync(
+                    db, GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig, timestamp, deviceId, companyId, ct))
+            {
+                durableReplayDuplicate = true;
+                return;
+            }
+
             var eventId = await db.InsertAsync(
                 @"INSERT INTO location_events
                     (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
@@ -12103,6 +12153,26 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   WHERE id=@id",
                 c => c.Parameters.AddWithValue("@id", deviceId), ct);
         }, ct);
+        }
+        catch
+        {
+            // Writes failed. The durable reservation (Present path) rolled back with the tx; the
+            // in-memory fallback (Absent path) did not, so release it here to keep a legitimate
+            // retry from being rejected as a replay.
+            if (replayAvail == GpsGatewayReplayGuard.Availability.Absent)
+                GpsGatewayReplayGuard.ReleaseInMemory(GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig);
+            throw;
+        }
+
+        // The durable reservation ran inside the transaction and found this signature already
+        // present: the transaction committed no fix (writes were skipped). Reject as a replay.
+        if (durableReplayDuplicate)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            await audit.LogAsync(http, "telemetry.gps.replay_rejected", "EldDevice", deviceId, "gateway-replay", ct);
+            return Results.Conflict(ApiResponse<object>.Fail("Duplicate gateway submission — replay detected"));
+        }
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {

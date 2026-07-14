@@ -121,6 +121,52 @@ All prod writes were read-back-verified, transactional, and idempotent.
 
 ---
 
+## Cycle 3 — 2026-07-14 (durable replay + route honesty)
+
+### TEL-P1-REPLAY-005 — Durable cross-instance gps-ingest replay protection — **FIXED (code) / prod migration PENDING**
+
+- **Severity:** P1. Replaced the process-local in-memory `GpsGatewayReplayCache` (reset on
+  restart, not shared across instances) with a durable DB-backed guard.
+- **Design:** `gps_gateway_replay` table, atomic `INSERT … ON CONFLICT (gateway_id, signature)
+  DO NOTHING`; the nonce is the **canonical lowercase hex of the verified HMAC bytes**
+  (`GpsGatewayReplayGuard`). Dual schema path (TelemetrySchemaService ensure + migration
+  `2026_07_14_stage33_gps_gateway_replay.sql`). Bounded 24 h retention (≫ 300 s freshness
+  window, so pruning can't reopen it). Metrics + audit added (gps-ingest previously logged
+  neither).
+- **Adversarial review (independent agent) found 3 real issues; all fixed and re-verified:**
+  1. **Hex-case replay bypass (HIGH):** HMAC verifies on bytes (case-insensitive) but the raw
+     signature string was the unique key → a captured packet re-cased was accepted. Fixed by
+     keying on `Convert.ToHexString(expected).ToLowerInvariant()`.
+  2. **Fail-open on cold probe error (HIGH):** a transient probe exception fell back to
+     in-memory (accept). Fixed with a tri-state probe (`Present`/`Absent`/`ProbeError`);
+     `ProbeError` → hard 503 (fail closed), only definitive `COUNT==0` falls back.
+  3. **TOCTOU nonce burn (MODERATE, fail-safe):** reservation was a separate tx from the
+     writes. Fixed by moving the durable reserve INSIDE the write transaction — a write
+     failure now rolls the reservation back (no burned nonce; legitimate retry works).
+- **Evidence (VERIFIED):** DDL + `ON CONFLICT` semantics run directly against **prod
+  Postgres 17 in a rollback transaction** (persists nothing): first-accepted, exact-duplicate
+  rejected (rows=0), different-gateway-scope accepted, raw-duplicate → 23505, retention prunes
+  only old rows. 7 source-inspection regression tests pin the handler/guard wiring
+  (canonical-key, in-tx reserve, ProbeError→503, atomic ON CONFLICT). Backend builds; 21
+  source-inspection tests green; telematics suite 104 green (no regression).
+- **Prod status:** migration **NOT applied** (task said do not deploy). Until an owner applies
+  it, gps-ingest uses the in-memory fallback = current behavior (no regression); durable
+  protection activates on the next restart after the migration is applied. See deployment
+  instructions in the change summary.
+- **Remaining risk:** single global gateway secret (a secret-holder can still mint distinct
+  signatures — out of scope for replay; addressed by future per-gateway creds). No endpoint
+  rate limit (defense-in-depth note). `location_events` is not deduped (by design).
+
+### TEL-P2-ROUTE-009 — "Route optimization" preview presented fabricated analytics as computed — **FIXED / VERIFIED**
+
+- **Severity:** P2 (integrity — the "Route intelligence" area the user flagged). The labels
+  front real DB data, but the adjacent `POST /api/routes/{id}/optimize-preview` returned
+  stop-count heuristics (`80 + stopCount`, `stopCount×4`, `"$"+stopCount×23`) and an unchanged
+  "recommended sequence" as if computed by a solver.
+- **Fix:** made it honest — response now carries `isEstimate: true`, `method:
+  "heuristic-preview"`, a `disclaimer`, and the sequence reason is "Original route order (no
+  solver applied)". A real VRP optimizer is a documented follow-up. Backend builds.
+
 ## Open items carried forward
 
 | ID | Sev | Title | Status | Blocker |

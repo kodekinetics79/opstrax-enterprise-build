@@ -141,6 +141,24 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE (device_id, nonce)
         )",
 
+        // Durable, cross-instance replay defense for the trusted-gateway path
+        // (POST /api/telemetry/gps-ingest). The HMAC signature is the per-message identity;
+        // UNIQUE(gateway_id, signature) makes 'already accepted?' atomic and shared across
+        // instances/restarts. Not tenant-scoped, no RLS (infra ledger written before ownership
+        // matters, like telemetry_nonces). device_id/company_id are recorded for audit scoping.
+        // Rows older than the retention window are pruned by TelemetryBackgroundService.
+        // Mirrored by migration 2026_07_14_stage33_gps_gateway_replay.sql for restricted prod.
+        @"CREATE TABLE IF NOT EXISTS gps_gateway_replay (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            gateway_id VARCHAR(120) NOT NULL DEFAULT 'default',
+            signature VARCHAR(256) NOT NULL,
+            signed_at TIMESTAMPTZ NOT NULL,
+            device_id BIGINT NULL,
+            company_id BIGINT NULL,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (gateway_id, signature)
+        )",
+
         // Per-tenant, per-rule configurable thresholds. Defaults seeded below.
         @"CREATE TABLE IF NOT EXISTS telemetry_rules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -203,6 +221,7 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
         "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ggr_received ON gps_gateway_replay(received_at)",
         "CREATE INDEX IF NOT EXISTS idx_tr_company ON telemetry_rules(company_id, rule_type, enabled)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_updated ON telemetry_live_asset_states(company_id, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_risk ON telemetry_live_asset_states(company_id, risk_level, open_alert_count)",
