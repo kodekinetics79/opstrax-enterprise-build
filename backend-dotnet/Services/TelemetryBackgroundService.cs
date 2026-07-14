@@ -34,6 +34,7 @@ public sealed class TelemetryBackgroundService(
                     await tickDb.RunInSystemScopeAsync(async () =>
                     {
                         await CheckStaleDevicesAsync(stoppingToken);
+                        await RecomputeVehicleDeviceStatusAsync(stoppingToken);
                         await PruneExpiredNoncesAsync(stoppingToken);
                     }, stoppingToken);
                 }
@@ -51,6 +52,34 @@ public sealed class TelemetryBackgroundService(
             try { await Task.Delay(CheckInterval, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    // Recompute vehicles.device_status from real telemetry freshness. Previously device_status was
+    // seed-only (default 'Online') and never updated, so a device that went silent still read
+    // 'Online' on every fleet/dispatch surface. Derive it from the age of the last received fix:
+    // Online <5min, Degraded <30min, Offline otherwise. Only changed rows are written (idempotent).
+    // Vehicles that have never reported are left at their default (no position row to derive from).
+    private async Task RecomputeVehicleDeviceStatusAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+        var updated = await db.ExecuteAsync(
+            @"UPDATE vehicles v SET device_status = c.new_status
+              FROM (
+                SELECT lvp.vehicle_id, lvp.company_id,
+                  CASE
+                    WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at)) < 300  THEN 'Online'
+                    WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at)) < 1800 THEN 'Degraded'
+                    ELSE 'Offline'
+                  END AS new_status
+                FROM latest_vehicle_positions lvp
+              ) c
+              WHERE c.vehicle_id = v.id AND c.company_id = v.company_id
+                AND v.deleted_at IS NULL
+                AND v.device_status IS DISTINCT FROM c.new_status",
+            ct: ct);
+        if (updated > 0)
+            logger.LogDebug("Recomputed device_status for {Count} vehicles from telemetry freshness", updated);
     }
 
     private async Task CheckStaleDevicesAsync(CancellationToken ct)
