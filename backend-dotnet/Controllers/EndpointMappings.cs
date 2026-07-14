@@ -1592,9 +1592,11 @@ public static partial class EndpointMappings
         app.MapGet("/api/eld/devices", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT e.*, v.vehicle_code, d.full_name driver_name, d.driver_code FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.company_id=@cid AND e.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Malfunction','Diagnostic','Active'], e.status), e.device_serial", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/eld/devices/{id:long}", (long id, HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT e.*, v.vehicle_code, d.full_name driver_name FROM eld_devices e LEFT JOIN vehicles v ON v.id=e.vehicle_id LEFT JOIN drivers d ON d.id=e.driver_id WHERE e.id=@id AND e.company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct));
         app.MapPost("/api/eld/devices/{id:long}/mark-malfunction", EldMarkMalfunction);
-        // eld_devices is RLS-forced but has no tenant column (policy scopes via a
-        // non-column mechanism); rely on RLS enforcement rather than a WHERE filter.
-        app.MapPost("/api/eld/devices/{id:long}/resolve-malfunction", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "eld_devices", id, "Active", "eld.malfunction.resolved", db, audit, ct, tenantColumn: null));
+        // eld_devices HAS company_id (its sibling reads/writes all filter on it, and RLS enrollment
+        // of this service-added column is not guaranteed), so scope the write explicitly by tenant —
+        // otherwise tenant A could clear tenant B's device malfunction by id (cross-tenant integrity
+        // write masking a compliance malfunction). This was the lone id-only eld mutation.
+        app.MapPost("/api/eld/devices/{id:long}/resolve-malfunction", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "eld_devices", id, "Active", "eld.malfunction.resolved", db, audit, ct, tenantColumn: "company_id"));
 
         // ===== BATCH 6: LOCALIZATION =============================================
         app.MapGet("/api/localization/countries", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM countries ORDER BY name", ct: ct));
@@ -4991,6 +4993,10 @@ public static partial class EndpointMappings
               FROM vehicles v
               WHERE v.company_id=@cid AND v.deleted_at IS NULL
                 AND v.status IN ('Available','Idle','Active')
+                -- Exclude maintenance-red-tagged assets from the assignable pool (the gate reads
+                -- status, but maintenance red-tags via out_of_service/availability_status only).
+                AND COALESCE(v.out_of_service, FALSE) = FALSE
+                AND COALESCE(v.availability_status, 'available') <> 'out_of_service'
               ORDER BY match_readiness DESC",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(rows));
@@ -7117,11 +7123,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var vehicleId = Get(body, "vehicleId");
         var overrideFlag = string.Equals(Get(body, "override")?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
         var driver = await db.QuerySingleAsync("SELECT status FROM drivers WHERE id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", driverId), ct);
-        var vehicle = await db.QuerySingleAsync("SELECT status FROM vehicles WHERE id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", vehicleId), ct);
+        // Read the maintenance-derived out-of-service signals too: the maintenance engine red-tags a
+        // vehicle by setting out_of_service / availability_status (from DVIR defects + blocking work
+        // orders) and NEVER touches vehicles.status, so gating on status alone let an out-of-service
+        // truck be dispatched (caught only by a reactive 15-min sweep). Block it at assignment time.
+        var vehicle = await db.QuerySingleAsync("SELECT status, out_of_service, availability_status FROM vehicles WHERE id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", vehicleId), ct);
         if (driver is null) errors.Add("Assigned driver must exist.");
         if (vehicle is null) errors.Add("Assigned vehicle must exist.");
         if (!overrideFlag && driver is not null && !new[] { "Available", "Idle" }.Contains(driver["status"]?.ToString())) errors.Add("Cannot assign unavailable driver without override.");
         if (!overrideFlag && vehicle is not null && !new[] { "Available", "Idle", "Active" }.Contains(vehicle["status"]?.ToString())) errors.Add("Cannot assign unavailable/maintenance vehicle without override.");
+        if (!overrideFlag && vehicle is not null &&
+            (vehicle["outOfService"] is bool oos && oos ||
+             string.Equals(vehicle["availabilityStatus"]?.ToString(), "out_of_service", StringComparison.OrdinalIgnoreCase)))
+            errors.Add("Cannot assign an out-of-service vehicle without override (maintenance red-tag).");
         return errors;
     }
 
@@ -15628,8 +15642,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (vehicleIdObj is not null and not DBNull)
         {
             var vehicleId = Convert.ToInt64(vehicleIdObj);
+            // Staleness = seconds since we last received a fix. Computed in SQL off received_at
+            // (always present; latest_vehicle_positions has NO recorded_at column — the previous
+            // query 42703'd and 500'd this customer-facing tracker). Follow-up: unify on the map's
+            // GREATEST(received_at-age, device_fix_time-age) rule via a shared freshness helper so
+            // ETA staleness matches the map exactly (see live-visibility connectivity audit).
             var pos = await db.QuerySingleAsync(
-                "SELECT recorded_at FROM latest_vehicle_positions WHERE vehicle_id=@vehicleId LIMIT 1",
+                "SELECT EXTRACT(EPOCH FROM (NOW() - received_at))::BIGINT AS stale_seconds FROM latest_vehicle_positions WHERE vehicle_id=@vehicleId LIMIT 1",
                 c => c.Parameters.AddWithValue("@vehicleId", vehicleId), ct);
 
             if (pos is null)
@@ -15637,10 +15656,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 telemetryStale = true;
                 reasonCodes.Add("no_telemetry");
             }
-            else if (pos["recordedAt"] is not null and not DBNull)
+            else if (pos["staleSeconds"] is not null and not DBNull)
             {
-                var lastAt = Convert.ToDateTime(pos["recordedAt"]);
-                if ((DateTime.UtcNow - lastAt).TotalMinutes > 30)
+                if (Convert.ToInt64(pos["staleSeconds"]) > 1800) // > 30 minutes since last fix
                 {
                     telemetryStale = true;
                     reasonCodes.Add("stale_telemetry");
