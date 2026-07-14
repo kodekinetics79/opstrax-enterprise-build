@@ -14806,9 +14806,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (asgn is null) return Results.NotFound(ApiResponse<object>.Fail("Assignment not found"));
 
-        // Mark assignment as exception.
+        // Mark assignment as exception via the shared transition (mirrors jobs.status — a direct
+        // write left the job stale), then bump the exception counter the transition doesn't own.
+        await ApplyAssignmentTransitionAsync(db, companyId, id, "exception", ct);
         await db.ExecuteAsync(
-            "UPDATE dispatch_assignments SET assignment_status='exception', status='Exception', exception_count=exception_count+1 WHERE id=@id AND company_id=@cid",
+            "UPDATE dispatch_assignments SET exception_count=exception_count+1 WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         var exId = await db.InsertAsync(
@@ -14842,15 +14844,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "dispatch:cancel") is { } denied) return denied;
         var companyId = GetCompanyId(http);
 
-        var rows = await db.ExecuteAsync(
-            @"UPDATE dispatch_assignments
-              SET assignment_status='cancelled', status='Cancelled', cancelled_at=NOW()
-              WHERE id=@id AND company_id=@cid
-                AND assignment_status NOT IN ('delivered','cancelled')",
+        // Guard: cancellable only if it exists in this tenant and isn't already delivered/cancelled.
+        var cancellable = await db.QuerySingleAsync(
+            @"SELECT id FROM dispatch_assignments
+              WHERE id=@id AND company_id=@cid AND assignment_status NOT IN ('delivered','cancelled')",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-
-        if (rows == 0)
+        if (cancellable is null)
             return Results.BadRequest(ApiResponse<object>.Fail("Assignment not found or already delivered/cancelled"));
+
+        // Route through the shared transition so jobs.status mirrors — a direct write here left the
+        // job (and every job-reading surface: board, shipment list, customer tracking) stale.
+        await ApplyAssignmentTransitionAsync(db, companyId, id, "cancelled", ct);
 
         await audit.LogAsync(http, "dispatch.assignment.cancelled", "DispatchAssignment", id, body.Notes, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "cancelled" }, "Assignment cancelled"));
