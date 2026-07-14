@@ -11258,7 +11258,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private sealed record DeviceProvisionBody(
         string DeviceSerial, string? DeviceModel = null, string? Provider = null,
         long? VehicleId = null, long? DriverId = null,
-        string? FirmwareVersion = null, string? Notes = null
+        string? FirmwareVersion = null, string? Notes = null,
+        // Hardware GPS-tracker IMEI (GT06/Concox/PT40-class). Optional — ELD units that
+        // authenticate by device_serial + HMAC leave it null. When present it is the key the
+        // trusted gateway resolves the device by, so it is globally unique (ux_eld_devices_imei).
+        string? Imei = null
     );
 
     private sealed record DeviceAssignBody(long? VehicleId, long? DriverId);
@@ -11725,9 +11729,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // Additive provenance, probed ONCE per connection (cached process-wide). When
         // the columns are absent (production pre-migration-001) we select NULL literals
-        // so every tick keeps a STABLE shape. `freshness` (live/delayed/stale) is derived
-        // from received_at and always emitted; is_stale (>900s) and every existing field
-        // are left untouched. Build the SQL once, reuse it every 3s tick.
+        // so every tick keeps a STABLE shape. `freshness` (live/delayed/stale) is the
+        // honest fix-currency label: when provenance columns exist it uses the WORST of
+        // receipt-age and device-fix-age (same rule as GET /positions) so a backdated /
+        // buffered / replayed frame cannot read 'live'; pre-migration it falls back to
+        // received_at only. is_stale (>900s receipt) and every existing field are left
+        // untouched. Build the SQL once, reuse it every 3s tick.
         var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
         var provSelect = hasProv
             ? @"lvp.source, lvp.provider, lvp.protocol, lvp.confidence,
@@ -11735,6 +11742,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : @"NULL::text source, NULL::text provider, NULL::text protocol,
                                  NULL::numeric confidence, NULL::timestamptz device_fix_time,
                                  NULL::timestamptz gateway_received_at,";
+        var freshAge = hasProv
+            ? @"GREATEST(EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT,
+                                     EXTRACT(EPOCH FROM (NOW() - COALESCE(lvp.device_fix_time, lvp.received_at)))::BIGINT)"
+            : "EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT";
         var streamSql =
             $@"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
                                  lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
@@ -11747,8 +11758,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                                  EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
                                  CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale,
                                  CASE
-                                   WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 120 THEN 'live'
-                                   WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 900 THEN 'delayed'
+                                   WHEN {freshAge} <= 120 THEN 'live'
+                                   WHEN {freshAge} <= 900 THEN 'delayed'
                                    ELSE 'stale'
                                  END freshness
                           FROM latest_vehicle_positions lvp
@@ -11798,9 +11809,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Additive provenance: select the source/trust columns only when they
         // exist (deploy-safe — production may pre-date migration 001). Absent →
         // NULL literals so the response keeps a STABLE shape (keys always present,
-        // null when unknown). `freshness` is server-computed from received_at and
-        // needs no provenance column, so it is always emitted; is_stale (>900s) and
-        // every existing field are left untouched.
+        // null when unknown). `freshness` is the honest truth-label the map shows: it
+        // must reflect the age of the actual GPS FIX, not merely when the pipeline last
+        // received a row. When the provenance columns exist we take the WORST (greatest)
+        // of receipt-age and device-fix-age (COALESCE to received_at when a fix has no
+        // device clock) so a backdated / offline-buffered / replayed frame — which lands
+        // with received_at=NOW() but an old device_fix_time — can never read as 'live'.
+        // Pre-migration (columns absent) we fall back to received_at only, unchanged.
+        // seconds_since_ping and is_stale keep their received_at meaning ("time since we
+        // last heard from the device / pipeline"); only the fix-currency label moves.
         var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
         var provSelect = hasProv
             ? @"lvp.source, lvp.provider, lvp.protocol, lvp.confidence,
@@ -11808,6 +11825,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : @"NULL::text source, NULL::text provider, NULL::text protocol,
                      NULL::numeric confidence, NULL::timestamptz device_fix_time,
                      NULL::timestamptz gateway_received_at,";
+        // Age (seconds) that drives the freshness label. hasProv → max(receipt-age, fix-age).
+        var freshAge = hasProv
+            ? @"GREATEST(EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT,
+                         EXTRACT(EPOCH FROM (NOW() - COALESCE(lvp.device_fix_time, lvp.received_at)))::BIGINT)"
+            : "EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT";
 
         var positions = await db.QueryAsync(
             $@"SELECT lvp.vehicle_id, lvp.device_id, lvp.driver_id,
@@ -11821,8 +11843,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping,
                      CASE WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > 900 THEN 1 ELSE 0 END is_stale,
                      CASE
-                       WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 120 THEN 'live'
-                       WHEN EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT <= 900 THEN 'delayed'
+                       WHEN {freshAge} <= 120 THEN 'live'
+                       WHEN {freshAge} <= 900 THEN 'delayed'
                        ELSE 'stale'
                      END freshness
               FROM latest_vehicle_positions lvp
@@ -12333,21 +12355,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var rawApiKey  = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var rawHmacSec = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        // Normalize IMEI: blank → null (so the partial unique index ignores it) and trim.
+        var imei = string.IsNullOrWhiteSpace(body.Imei) ? null : body.Imei.Trim();
 
         long deviceId;
         try
         {
             deviceId = await db.InsertAsync(
                 @"INSERT INTO eld_devices
-                    (company_id, device_serial, device_model, provider, vehicle_id, driver_id,
+                    (company_id, device_serial, imei, device_model, provider, vehicle_id, driver_id,
                      firmware_version, notes, api_key_hash, hmac_secret, status, created_at)
                   VALUES
-                    (@cid, @serial, @model, @provider, @vid, @did, @fw, @notes,
+                    (@cid, @serial, @imei, @model, @provider, @vid, @did, @fw, @notes,
                      encode(sha256(@rawKey::bytea), 'hex'), @hmac, 'Active', NOW())",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",      companyId);
                     c.Parameters.AddWithValue("@serial",   body.DeviceSerial);
+                    c.Parameters.AddWithValue("@imei",     (object?)imei        ?? DBNull.Value);
                     c.Parameters.AddWithValue("@model",    body.DeviceModel    ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@provider", body.Provider       ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@vid",      body.VehicleId      ?? (object)DBNull.Value);
@@ -12360,10 +12385,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
         {
-            return Results.Conflict(ApiResponse<object>.Fail("Device serial already registered"));
+            // 23505 covers both the device_serial unique constraint and ux_eld_devices_imei.
+            var field = ex.ConstraintName?.Contains("imei", StringComparison.OrdinalIgnoreCase) == true
+                ? "IMEI" : "Device serial";
+            return Results.Conflict(ApiResponse<object>.Fail($"{field} already registered"));
         }
 
-        await audit.LogAsync(http, "device.provisioned", "EldDevice", deviceId, $"serial:{body.DeviceSerial}", ct);
+        await audit.LogAsync(http, "device.provisioned", "EldDevice", deviceId,
+            imei is null ? $"serial:{body.DeviceSerial}" : $"serial:{body.DeviceSerial};imei:{imei}", ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             id           = deviceId,

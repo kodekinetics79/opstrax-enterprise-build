@@ -40,6 +40,16 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var db = scope.ServiceProvider.GetRequiredService<Database>();
         var telemetry = scope.ServiceProvider.GetService<TelemetryLiveStateService>();
 
+        // Additive provenance: partner/vendor API pull (Samsara). Stamp source/
+        // provider/protocol/device_fix_time/normalized_at ONLY when the columns exist
+        // (deploy-safe — production may pre-date migration 001). Probed once (cached).
+        var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+        var provCols = hasProv ? ", source, provider, protocol, device_fix_time, normalized_at" : "";
+        var provVals = hasProv ? $", '{TelemetryProvenance.SourcePartnerApi}', 'Samsara', 'rest_json', @etime, NOW()" : "";
+        var provUpd  = hasProv
+            ? $", source='{TelemetryProvenance.SourcePartnerApi}', provider='Samsara', protocol='rest_json', device_fix_time=EXCLUDED.device_fix_time, normalized_at=NOW()"
+            : "";
+
         var written = 0;
         var unmatched = 0;
         var touchedVehicles = new HashSet<long>();
@@ -80,12 +90,12 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
                 // Live snapshot — the UPSERT the map reads. Mirrors the ingest handler.
                 await db.ExecuteAsync(
-                    @"INSERT INTO latest_vehicle_positions
+                    $@"INSERT INTO latest_vehicle_positions
                         (company_id, vehicle_id, device_id, lat, lng, speed_mph, heading,
                          engine_status, odometer_miles, event_time, received_at, event_count,
-                         source_channel, telemetry_status, risk_level, updated_at)
+                         source_channel, telemetry_status, risk_level, updated_at{provCols})
                       VALUES (@cid, @vid, @did, @lat, @lng, @spd, @hdg, @eng, @odo, @etime, NOW(), 1,
-                              'samsara-api', 'healthy', 'low', NOW())
+                              'samsara-api', 'healthy', 'low', NOW(){provVals})
                       ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                         device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
                         speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
@@ -93,7 +103,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         event_time=EXCLUDED.event_time, received_at=EXCLUDED.received_at,
                         event_count=latest_vehicle_positions.event_count+1,
                         source_channel=EXCLUDED.source_channel, telemetry_status='healthy',
-                        risk_level='low', updated_at=NOW()",
+                        risk_level='low', updated_at=NOW(){provUpd}",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);

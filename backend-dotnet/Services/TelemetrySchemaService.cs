@@ -27,6 +27,11 @@ public sealed class TelemetrySchemaService(Database db)
     [
         // eld_devices security + lifecycle columns
         new("eld_devices", "company_id",   "BIGINT NOT NULL DEFAULT 1"),
+        // IMEI is the hardware GPS-tracker identifier (GT06/Concox/PT40-class) the trusted
+        // gateway resolves a device by. An identifier, never a credential. Also created by
+        // migration 2026_07_11_stage32_device_imei.sql for restricted-role prod that skips
+        // this ensure; kept here so owner-capable envs self-heal and provisioning can write it.
+        new("eld_devices", "imei",         "VARCHAR(32) NULL"),
         new("eld_devices", "api_key_hash", "VARCHAR(64) NULL"),
         new("eld_devices", "hmac_secret",  "VARCHAR(128) NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
@@ -63,6 +68,24 @@ public sealed class TelemetrySchemaService(Database db)
         new("latest_vehicle_positions", "next_action", "VARCHAR(160) NULL"),
         new("latest_vehicle_positions", "summary_json", "JSONB NULL"),
         new("latest_vehicle_positions", "updated_at", "TIMESTAMPTZ NULL"),
+        // Provenance & trust metadata — EXACTLY mirrors migration
+        // database/migrations/telematics/001_latest_position_provenance.sql so
+        // owner-capable environments auto-create them here and production (which
+        // runs as a restricted role and SKIPS this startup init) gets them from
+        // migration 001. correlation_id is intentionally NOT re-declared (already
+        // present above). Every read/write guards on
+        // TelemetryProvenance.ColumnsAvailableAsync, so an environment where these
+        // are still absent never 42703s ("column ... does not exist").
+        new("latest_vehicle_positions", "source",              "TEXT NULL"),
+        new("latest_vehicle_positions", "provider",            "TEXT NULL"),
+        new("latest_vehicle_positions", "protocol",            "TEXT NULL"),
+        new("latest_vehicle_positions", "adapter_version",     "TEXT NULL"),
+        new("latest_vehicle_positions", "device_fix_time",     "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "gateway_received_at", "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "normalized_at",       "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "confidence",          "NUMERIC(4,3) NULL"),
+        new("latest_vehicle_positions", "trust_score",         "NUMERIC(4,3) NULL"),
+        new("latest_vehicle_positions", "quality_flags",       "JSONB NULL"),
     ];
 
     private static readonly string[] Tables =
@@ -174,6 +197,9 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_le_received ON location_events(company_id, received_at)",
         "CREATE INDEX IF NOT EXISTS idx_eld_apikey ON eld_devices(api_key_hash)",
         "CREATE INDEX IF NOT EXISTS idx_eld_company ON eld_devices(company_id, status)",
+        // Globally-unique IMEI lookup (partial: many devices legitimately have no IMEI).
+        // Matches ux_eld_devices_imei from migration stage32 so both provisioning paths agree.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_eld_devices_imei ON eld_devices(imei) WHERE imei IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
         "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",

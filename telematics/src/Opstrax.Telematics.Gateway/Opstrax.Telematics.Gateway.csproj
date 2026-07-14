@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Ships as an assembly so IntegrationTests can reference it as a library while
+         it also runs as a generic-host worker via Program.cs. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <!-- OpenTelemetry instrumentation primitives (tracing + metrics): core SDK, OTLP exporter, and
+         the DiagnosticSource ActivitySource/Meter APIs. KNOWN GAP: the OTLP exporter package carries
+         an UNPATCHED moderate advisory (NU1902 / GHSA-4625-4j76-fww9) flagged on every released 1.x
+         version (verified 1.9, 1.10, 1.11.2, 1.12 all flag it), so no version bump clears it. It is
+         inert unless an OTLP endpoint is configured — the DoS surface is the exporter parsing a
+         malicious collector response, not device ingest. Tracked: drop/replace the exporter (the
+         ActivitySource/Meter primitives do not need it) or upgrade when a patched release ships. -->
+    <PackageReference Include="OpenTelemetry" Version="1.11.2" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.11.2" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0" />
+    <!-- Durable replay/sequence store (Security/Replay/PostgresReplayGuard). Contracts stays
+         dependency-free; only this Gateway project may reference a data-access driver. Pinned to
+         the same Npgsql major the primary backend uses (backend-dotnet/Opstrax.Api.csproj). -->
+    <PackageReference Include="Npgsql" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj" />
+    <ProjectReference Include="..\Opstrax.Telematics.Protocols.Gt06\Opstrax.Telematics.Protocols.Gt06.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Opstrax.Telematics.IntegrationTests" />
+    <InternalsVisibleTo Include="Opstrax.Telematics.Security.Tests" />
+  </ItemGroup>
+
+</Project>
