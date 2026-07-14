@@ -12308,7 +12308,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var devices = await db.QueryAsync(
-            @"SELECT e.id, e.device_serial, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
                      e.vehicle_id, e.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name,
@@ -12329,7 +12329,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var device = await db.QuerySingleAsync(
-            @"SELECT e.id, e.device_serial, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
                      e.vehicle_id, e.driver_id, e.firmware_version, e.notes,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name

@@ -683,11 +683,16 @@ export const telematicsService = {
   async provisionDevice(payload: DeviceMutationPayload): Promise<DeviceProvisionResult> {
     const session = getSession();
     ensureManagementAccess(session);
-    const serial = String(payload.serialNumber ?? payload.identifier ?? payload.imei ?? "").trim();
-    if (!serial) throw new Error("A device serial is required to establish a connection.");
+    // IMEI is its own field for hardware GPS trackers (GT06/Concox/PT40-class). It falls
+    // back to being the serial only when no separate serial was given, so device_serial
+    // (NOT NULL) is always populated and the device resolves by either key at ingest.
+    const imei = String(payload.imei ?? "").trim();
+    const serial = String(payload.serialNumber ?? payload.identifier ?? imei ?? "").trim();
+    if (!serial) throw new Error("A device serial or IMEI is required to establish a connection.");
     // POST /api/telemetry/devices/provision -> {id, deviceSerial, apiKey, hmacSecret, note}
     const provisioned = await unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/provision", {
       deviceSerial: serial,
+      imei: imei || null,
       deviceModel: payload.deviceName ?? payload.deviceType ?? "Device",
       provider: payload.provider ?? "",
       vehicleId: payload.assignedVehicleId ?? payload.vehicleId ?? null,

@@ -73,11 +73,13 @@ type FirmwareFormState = {
 };
 
 // Minimal, honest inputs for INITIATING A CONNECTION (the Render/Vercel model).
-// The device serial is the real key the backend provisions credentials against;
-// everything else is optional metadata. IMEI/SIM/firmware/power/compliance are
-// intentionally NOT collected here — they are not part of the connection handshake.
+// The device serial is the real key the backend provisions credentials against.
+// IMEI is collected too (optional): hardware GPS trackers (GT06/Concox/PT40-class)
+// are resolved by IMEI at the trusted-gateway ingest, so onboarding one end-to-end
+// needs it. SIM/firmware/power/compliance remain out of the connection handshake.
 type ConnectFormState = {
   serialNumber: string;
+  imei: string;
   provider: string;
   deviceModel: string;
   assignedVehicleId: string;
@@ -85,6 +87,7 @@ type ConnectFormState = {
 
 const defaultConnectForm: ConnectFormState = {
   serialNumber: "",
+  imei: "",
   provider: "",
   deviceModel: "",
   assignedVehicleId: "",
@@ -242,6 +245,7 @@ export function IotDevicesPage() {
     mutationFn: (payload: ConnectFormState) =>
       telematicsService.provisionDevice({
         serialNumber: payload.serialNumber.trim(),
+        imei: payload.imei.trim(),
         provider: payload.provider.trim(),
         deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
         deviceType: payload.deviceModel.trim() || "Device",
@@ -979,9 +983,10 @@ function DeviceDetailDrawer({
 
 // ── STEP 1: Register connection ─────────────────────────────────────────────
 // Minimal, honest form. Serial is the ONLY required field (the real key the
-// backend provisions credentials against). Provider is free text. Model/name
-// and assigned vehicle are optional. No IMEI/SIM/firmware/power/compliance —
-// none of those are part of the connection handshake.
+// backend provisions credentials against). IMEI is optional but is what a hardware
+// GPS tracker is resolved by at ingest, so it is collected for GT06/PT40-class units.
+// Provider, model/name and assigned vehicle are optional. SIM/firmware/power/
+// compliance remain out of the connection handshake.
 function ConnectDeviceDialog({
   form,
   onChange,
@@ -1030,6 +1035,16 @@ function ConnectDeviceDialog({
               required
               aria-required="true"
               aria-label="Device serial number, required"
+            />
+          </FormField>
+          <FormField label="IMEI (GPS trackers, optional)">
+            <input
+              className="field w-full font-mono"
+              value={form.imei}
+              onChange={(event) => onChange({ ...form, imei: event.target.value })}
+              placeholder="e.g. 862464068456321"
+              inputMode="numeric"
+              aria-label="Device IMEI, optional, for hardware GPS trackers"
             />
           </FormField>
           <FormField label="Provider">
