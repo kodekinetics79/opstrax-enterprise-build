@@ -1731,7 +1731,7 @@ public static partial class EndpointMappings
         // /api/kpi/metrics — computed from real fleet data; falls back to kpi_metrics table rows when real data is absent
         app.MapGet("/api/kpi/metrics", (HttpContext http, Database db, CancellationToken ct) => KpiMetricsComputed(http, db, ct));
         app.MapGet("/api/kpi/summary", KpiSummary);
-        app.MapGet("/api/kpi/targets", (Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code ORDER BY kt.effective_date DESC LIMIT 30", ct: ct));
+        app.MapGet("/api/kpi/targets", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code AND km.tenant_id=kt.tenant_id WHERE kt.tenant_id=@cid ORDER BY kt.effective_date DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
@@ -9659,8 +9659,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // BATCH 5 HANDLERS — COST LEAKAGE INTELLIGENCE
     // =====================================================================
 
-    private static async Task<IResult> CostLeakageSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> CostLeakageSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        var cid = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT
                 CONCAT('$', TO_CHAR((COALESCE(SUM(estimated_loss),0))::numeric, 'FM9,999,999,990.00')) total_estimated_leakage,
@@ -9669,40 +9670,52 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) critical_leakage_items,
                 SUM(CASE WHEN status='Acknowledged' THEN 1 ELSE 0 END) acknowledged_items,
                 SUM(CASE WHEN status='In Progress' THEN 1 ELSE 0 END) in_progress_items,
-                (SELECT COUNT(*) FROM cost_leakage_actions WHERE status='Open') open_actions,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_savings) FROM cost_leakage_actions WHERE status='Open'),0))::numeric, 'FM9,999,999,990.00')) recoverable_savings,
+                (SELECT COUNT(*) FROM cost_leakage_actions WHERE status='Open' AND company_id=@cid) open_actions,
+                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_savings) FROM cost_leakage_actions WHERE status='Open' AND company_id=@cid),0))::numeric, 'FM9,999,999,990.00')) recoverable_savings,
                 SUM(CASE WHEN category='Idle Time' THEN 1 ELSE 0 END) idle_leakage_count,
                 SUM(CASE WHEN category='Fuel Anomaly' THEN 1 ELSE 0 END) fuel_anomaly_count,
                 SUM(CASE WHEN category='Carrier Overcharge' THEN 1 ELSE 0 END) carrier_overcharge_count,
                 SUM(CASE WHEN category='Underpriced Contract' THEN 1 ELSE 0 END) underpriced_count,
                 COUNT(*) total
-              FROM cost_leakage_items", ct: ct);
+              FROM cost_leakage_items WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", cid), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> CostLeakageItems(Database db, CancellationToken ct)
+    private static Task<IResult> CostLeakageItems(HttpContext http, Database db, CancellationToken ct)
         => OkRows(db,
             @"SELECT cli.*,
                      (SELECT COUNT(*) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id AND a.status <> 'Cancelled') actions_count,
                      (SELECT ROUND(SUM(a.estimated_savings),2) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id) potential_savings
               FROM cost_leakage_items cli
-              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cli.severity), cli.estimated_loss DESC", ct: ct);
+              WHERE cli.company_id=@cid
+              ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cli.severity), cli.estimated_loss DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
 
     private static async Task<IResult> CostLeakageAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync("UPDATE cost_leakage_items SET status='Acknowledged' WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+        var affected = await db.ExecuteAsync("UPDATE cost_leakage_items SET status='Acknowledged' WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
         await audit.LogAsync(http, "cost.leakage.acknowledged", "CostLeakage", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Cost leakage item acknowledged"));
     }
 
     private static async Task<IResult> CostLeakageCreateAction(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var cid = GetCompanyId(http);
+        // Ownership guard FIRST: this tenant-scoped UPDATE also proves the item belongs to the
+        // caller's company — otherwise an action could be attached to another tenant's item by id.
+        var owned = await db.ExecuteAsync("UPDATE cost_leakage_items SET status='In Progress' WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+        if (owned == 0) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
+
         var actionId = await db.InsertAsync(
             @"INSERT INTO cost_leakage_actions (company_id, cost_leakage_item_id, action_title, action_description, estimated_savings, status, assigned_to_user_id, due_at)
               VALUES (@cid, @itemId, @title, @description, COALESCE(@savings,0), 'Open', @user, @due)",
             c =>
             {
-                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@cid", cid);
                 c.Parameters.AddWithValue("@itemId", id);
                 c.Parameters.AddWithValue("@title", Get(body, "actionTitle") ?? "Cost recovery action");
                 c.Parameters.AddWithValue("@description", Get(body, "actionDescription"));
@@ -9710,7 +9723,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@user", Get(body, "assignedToUserId") ?? 1);
                 c.Parameters.AddWithValue("@due", Get(body, "dueAt"));
             }, ct);
-        await db.ExecuteAsync("UPDATE cost_leakage_items SET status='In Progress' WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
         await audit.LogAsync(http, "cost.leakage.action.created", "CostLeakage", id, ct: ct);
         return Results.Created($"/api/cost-leakage/items/{id}/actions/{actionId}", ApiResponse<object>.Ok(new { id = actionId }, "Cost leakage action created"));
     }
@@ -10009,9 +10021,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var openIncidents  = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
         var maintenanceOverdue = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", companyId), ct);
 
-        // If no real fleet data, serve stored kpi_metrics rows
+        // If no real fleet data, serve stored kpi_metrics rows (tenant-scoped).
         if (vehicleTotal == 0 && driverTotal == 0)
-            return await OkRows(db, "SELECT * FROM kpi_metrics ORDER BY category, kpi_name", ct: ct);
+            return await OkRows(db, "SELECT * FROM kpi_metrics WHERE tenant_id=@c ORDER BY category, kpi_name", p => p.Parameters.AddWithValue("@c", companyId), ct: ct);
 
         decimal fleetUtil   = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : 0;
         decimal otdRate     = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : 0;
