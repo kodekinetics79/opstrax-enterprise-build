@@ -2459,6 +2459,11 @@ public static partial class EndpointMappings
             "billing.read" or "billing.view" => ["billing.read", "billing.view", "finance:view", "finance.view", "billing:view", "billing.view"],
             "billing.create" or "billing.update" or "billing.manage" or "billing.consolidate" => ["billing.create", "billing.update", "billing.manage", "billing.consolidate", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
 
+            // Revenue recognition sub-ledger — read/manage fold into finance; period-close is high-risk.
+            "revrec.read" or "revrec.view" => ["revrec.read", "revrec.view", "finance:view", "finance.view", "billing:view", "billing.view"],
+            "revrec.create" or "revrec.update" or "revrec.manage" => ["revrec.create", "revrec.update", "revrec.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+            "revrec.period.close" => ["revrec.period.close", "revrec.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+
             "finance.ar.summary.read" or "finance.ar.summary.view" => ["finance.ar.summary.read", "finance.ar.summary.view", "finance:view", "billing:view"],
             "finance.revenue.summary.read" or "finance.revenue.summary.view" => ["finance.revenue.summary.read", "finance.revenue.summary.view", "finance:view", "billing:view"],
             "customer.account.summary.read" or "customer.account.summary.view" => ["customer.account.summary.read", "customer.account.summary.view", "customer.account.read", "customer.account.view", "customers:view", "crm:view"],

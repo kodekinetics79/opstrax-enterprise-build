@@ -838,6 +838,8 @@ public sealed class RevenueReadinessService(
             // Copy the mutable tax breakdown into the immutable issued snapshot (asserts it still foots
             // to the draft tax_total). Append-only — corrections are reversing credit notes, never edits.
             await tax.SnapshotIssuedTaxLinesAsync(conn, tx, companyId, draftId, invoiceId, ct);
+            // NB: the post-commit events.Publish("invoice.issued") below already enqueues the durable
+            // outbox event that drives the rev-rec sub-ledger (derive-beside) — no explicit enqueue here.
 
             await using (var draftUpdate = new Npgsql.NpgsqlCommand(
                 @"UPDATE invoice_drafts

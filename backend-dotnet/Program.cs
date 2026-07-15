@@ -227,12 +227,15 @@ builder.Services.AddSingleton<FinanceActivationSchemaService>();
 builder.Services.AddSingleton<SettlementSchemaService>();
 builder.Services.AddSingleton<TaxSchemaService>();
 builder.Services.AddSingleton<BillingProfileSchemaService>();
+builder.Services.AddSingleton<RevenueRecognitionSchemaService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
 builder.Services.AddSingleton<SettlementService>();
 builder.Services.AddSingleton<TaxService>();
 builder.Services.AddSingleton<BillingConsolidationService>();
+builder.Services.AddSingleton<RevenueRecognitionService>();
+builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedRecognitionHandler>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
 builder.Services.AddSingleton<Stage9OperationalFoundationService>();
@@ -431,6 +434,11 @@ using (var scope = app.Services.CreateScope())
     if (billingSchemaEnabled)
     {
         await RunSchemaStep(app, "Billing", () => scope.ServiceProvider.GetRequiredService<BillingProfileSchemaService>().EnsureAsync());
+    }
+    var revrecSchemaEnabled = builder.Configuration.GetValue("RevRecSchema:Enabled", !app.Environment.IsProduction());
+    if (revrecSchemaEnabled)
+    {
+        await RunSchemaStep(app, "RevRec", () => scope.ServiceProvider.GetRequiredService<RevenueRecognitionSchemaService>().EnsureAsync());
     }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)
@@ -929,6 +937,7 @@ app.MapRatingEndpoints();
 app.MapSettlementEndpoints();
 app.MapTaxEndpoints();
 app.MapBillingEndpoints();
+app.MapRevenueRecognitionEndpoints();
 app.MapCustomerPortalEndpoints();
 app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();
