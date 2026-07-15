@@ -269,6 +269,9 @@ public sealed class FoundationSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_next_attempt ON outbox_messages (tenant_id, next_attempt_at)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_locked_until ON outbox_messages (tenant_id, locked_until)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_retry_pending ON outbox_messages (tenant_id, status, next_attempt_at)",
+        // Idempotent job.delivered enqueue (ADR-008 §B): at most one delivered event per (tenant, job),
+        // so a delivered transition fired twice enqueues once. Partial so it only constrains this type.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_job_delivered ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='job.delivered'",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_status ON inbox_messages (tenant_id, status, received_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_source_external ON inbox_messages (tenant_id, source, external_id)",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_locked_until ON inbox_messages (tenant_id, locked_until)",

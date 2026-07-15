@@ -14901,6 +14901,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   WHERE id=@id AND company_id=@cid
                     AND assignment_status IN ('arrived_delivery','in_transit')",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+            // Delivery -> billing automation (ADR-008 §B): proof-of-delivery is a second entry point to the
+            // delivered state, so it must enqueue the same durable job.delivered event as the status-transition
+            // path. Guarded on assignment_status='delivered' (only enqueue if the load is actually delivered)
+            // and idempotent via ux_outbox_job_delivered (proof re-submitted enqueues once).
+            await db.ExecuteAsync(
+                @"INSERT INTO outbox_messages
+                    (tenant_id, event_type, aggregate_type, aggregate_id, payload_json, created_at, status, retry_count)
+                  SELECT @cid, 'job.delivered', 'job', da.job_id::text,
+                         jsonb_build_object('jobId', da.job_id, 'companyId', @cid), NOW(), 'pending', 0
+                  FROM dispatch_assignments da
+                  WHERE da.id=@id AND da.company_id=@cid AND da.job_id IS NOT NULL
+                    AND da.assignment_status='delivered'
+                  ON CONFLICT (tenant_id, aggregate_id) WHERE event_type='job.delivered' DO NOTHING",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
         if ((body.ProofType ?? "delivery") == "pickup")
         {
@@ -15231,6 +15246,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   SET status='completed', actual_end_time=COALESCE(t.actual_end_time, NOW())
                   FROM dispatch_assignments da
                   WHERE da.trip_id=t.id AND da.id=@id AND t.company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", assignmentId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+            // Delivery -> billing automation (ADR-008 §B): enqueue a durable job.delivered event so a
+            // background handler rates the load + marks it ready-to-bill. Idempotent via the partial
+            // unique index (ux_outbox_job_delivered): delivered fired twice enqueues once. Billing runs
+            // downstream/retryable and never blocks or rolls back the delivery write.
+            await db.ExecuteAsync(
+                @"INSERT INTO outbox_messages
+                    (tenant_id, event_type, aggregate_type, aggregate_id, payload_json, created_at, status, retry_count)
+                  SELECT @cid, 'job.delivered', 'job', da.job_id::text,
+                         jsonb_build_object('jobId', da.job_id, 'companyId', @cid), NOW(), 'pending', 0
+                  FROM dispatch_assignments da
+                  WHERE da.id=@id AND da.company_id=@cid AND da.job_id IS NOT NULL
+                  ON CONFLICT (tenant_id, aggregate_id) WHERE event_type='job.delivered' DO NOTHING",
                 c => { c.Parameters.AddWithValue("@id", assignmentId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         }
     }

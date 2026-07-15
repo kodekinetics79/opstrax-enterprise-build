@@ -1,5 +1,6 @@
 using System.Globalization;
 using Npgsql;
+using NpgsqlTypes;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Foundation;
@@ -199,7 +200,7 @@ public sealed class PostgresOutboxDispatcher(
                 conn, tx))
             {
                 select.Parameters.AddWithValue("@limit", options.BatchSize);
-                select.Parameters.AddWithValue("@tenantIdFilter", (object?)options.TenantIdFilter ?? DBNull.Value);
+                select.Parameters.Add(new NpgsqlParameter("@tenantIdFilter", NpgsqlDbType.Bigint) { Value = (object?)options.TenantIdFilter ?? DBNull.Value });
                 await using var reader = await select.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                     ids.Add(reader.GetInt64(0));
@@ -248,7 +249,7 @@ public sealed class PostgresOutboxDispatcher(
                 conn, tx))
             {
                 select.Parameters.AddWithValue("@limit", options.BatchSize);
-                select.Parameters.AddWithValue("@tenantIdFilter", (object?)options.TenantIdFilter ?? DBNull.Value);
+                select.Parameters.Add(new NpgsqlParameter("@tenantIdFilter", NpgsqlDbType.Bigint) { Value = (object?)options.TenantIdFilter ?? DBNull.Value });
                 await using var reader = await select.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                     ids.Add(reader.GetInt64(0));

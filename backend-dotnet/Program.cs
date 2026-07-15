@@ -245,6 +245,7 @@ var outboxDispatcherOptions = builder.Configuration.GetSection("OutboxDispatcher
 builder.Services.AddSingleton(outboxDispatcherOptions);
 builder.Services.AddSingleton<IEventProcessingLogService, PostgresEventProcessingLogService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, FoundationSmokeRequestedHandler>();
+builder.Services.AddSingleton<IOutboxMessageHandler, JobDeliveredBillingHandler>();
 builder.Services.AddSingleton<IOutboxMessageHandlerRegistry, OutboxMessageHandlerRegistry>();
 builder.Services.AddSingleton<IOutboxDispatcher, PostgresOutboxDispatcher>();
 if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || outboxDispatcherOptions.AllowProduction))
