@@ -627,6 +627,17 @@ public sealed class RevenueReadinessService(
             return new InvoiceIssueOutcome(true, "Invoice already issued", Replay: true, Invoice: existingInvoice);
         }
 
+        // POD gate (ADR-008 billing Phase 1): when the tenant enables billing.require_pod_to_issue,
+        // a job-linked invoice can't issue without proof of delivery. Flag defaults OFF so existing
+        // issuance is unchanged; ad-hoc drafts (no JobId) are exempt. Evaluated live at issue time,
+        // so a POD captured after delivery just works on the next attempt.
+        if (draft.JobId is long podJobId
+            && await IsPodRequiredToIssueAsync(companyId, ct)
+            && !await HasDeliveryProofAsync(companyId, podJobId, ct))
+        {
+            return new InvoiceIssueOutcome(false, $"Cannot issue invoice: no proof of delivery captured for job {podJobId}");
+        }
+
         if (draft.ApprovalRequestId is null)
         {
             var approvalRequest = approval.CreateRequest(
@@ -1395,6 +1406,38 @@ public sealed class RevenueReadinessService(
             },
             ct);
         return row is null ? null : MapInvoiceDraft(row);
+    }
+
+    // Tenant opt-in to POD-gated issuance (feature_flags). Default OFF (no row -> false).
+    private async Task<bool> IsPodRequiredToIssueAsync(long companyId, CancellationToken ct)
+    {
+        try
+        {
+            var n = await db.ScalarLongAsync(
+                @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
+                    WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            return n == 1;
+        }
+        catch { return false; } // feature_flags absent (pre-migration) -> flag off, unchanged behavior
+    }
+
+    // A job "has POD" if EITHER store shows it: proof_of_delivery.status='Captured' (ops/job path)
+    // OR dispatch_proofs.proof_type='delivery' (driver/dispatch path). Neither alone is authoritative
+    // because the two capture surfaces write different tables; jobs.proof_status is not trustworthy
+    // (driver PODs never set it). Both sides are double-scoped by company_id.
+    private async Task<bool> HasDeliveryProofAsync(long companyId, long jobId, CancellationToken ct)
+    {
+        var n = await db.ScalarLongAsync(
+            @"SELECT CASE WHEN
+                EXISTS (SELECT 1 FROM proof_of_delivery
+                        WHERE company_id=@cid AND job_id=@jid AND status='Captured')
+                OR EXISTS (SELECT 1 FROM dispatch_proofs dp
+                        JOIN dispatch_assignments da ON da.id=dp.assignment_id AND da.company_id=@cid
+                        WHERE dp.company_id=@cid AND da.job_id=@jid AND dp.proof_type='delivery')
+              THEN 1 ELSE 0 END",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@jid", jobId); }, ct);
+        return n == 1;
     }
 
     private async Task<IssuedInvoiceRecord?> LoadIssuedInvoiceByDraftAsync(long companyId, Guid draftId, CancellationToken ct)

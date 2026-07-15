@@ -713,6 +713,59 @@ public class RevenueReadinessPostgresTests
             });
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task IssueInvoice_POD_Gate_Blocks_Without_Proof_When_Flag_On()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "cust-pod");
+        var spine = new BusinessSpineService(db);
+        var service = CreateRevenueService(db);
+
+        async Task<(long jobId, Guid draftId)> DraftAsync(string code)
+        {
+            var jobId = await SeedJobAsync(db, companyId, customerId, null, null, "delivered", code);
+            await spine.CreateJobChargeAsync(companyId, jobId, null, null, "BASE", "Base charge", "base", "line", 1m, 100m, 100m, "USD", "approved");
+            var d = await service.CreateInvoiceDraftFromJobAsync(companyId, jobId, code);
+            Assert.True(d.Success);
+            return (jobId, d.Draft!.Id);
+        }
+
+        try
+        {
+            // Flag OFF (default): issuance is not POD-gated.
+            var (_, draftOff) = await DraftAsync($"POD-OFF-{companyId}");
+            var off = await service.IssueInvoiceFromDraftAsync(companyId, draftOff, $"iss-off-{companyId}");
+            Assert.DoesNotContain("no proof of delivery", off.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Turn the gate on for this tenant.
+            await db.ExecuteAsync(
+                @"INSERT INTO feature_flags (company_id, flag_key, name, enabled)
+                  VALUES (@c, 'billing.require_pod_to_issue', 'Require POD to issue', TRUE)",
+                c => c.Parameters.AddWithValue("@c", companyId));
+
+            // Flag ON, no POD -> blocked.
+            var (_, draftNoPod) = await DraftAsync($"POD-NONE-{companyId}");
+            var blocked = await service.IssueInvoiceFromDraftAsync(companyId, draftNoPod, $"iss-nopod-{companyId}");
+            Assert.False(blocked.Success);
+            Assert.Contains("no proof of delivery", blocked.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Flag ON, POD captured (proof_of_delivery path) -> passes the gate.
+            var (jobPod, draftPod) = await DraftAsync($"POD-YES-{companyId}");
+            await db.ExecuteAsync(
+                "INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, status) VALUES (@c, @j, 'Jane Receiver', 'Captured')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobPod); });
+            var allowed = await service.IssueInvoiceFromDraftAsync(companyId, draftPod, $"iss-pod-{companyId}");
+            Assert.DoesNotContain("no proof of delivery", allowed.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM feature_flags WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
     private static RevenueReadinessService CreateRevenueService(Database db)
     {
         var correlation = new InMemoryCorrelationContext("corr-stage7", "cause-stage7", "req-stage7", null, ActorTypes.TenantUser, "42");
