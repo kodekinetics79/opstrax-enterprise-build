@@ -11,8 +11,7 @@ namespace Opstrax.Tests;
 // STEP-2 KPI spot-check (numbers are hand-calculated against what was seeded).
 public class DemoTenantSeederPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     // Isolated, throwaway tenant code — MUST differ from the production DemoTenantSeeder
     // code so this test never deletes/recreates the real runtime demo tenant a pilot uses.

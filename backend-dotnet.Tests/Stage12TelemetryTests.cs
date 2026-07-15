@@ -9,8 +9,7 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public class Stage12TelemetryTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task TelemetrySummary_Exposes_Live_State_Registry_Rules_Alerts_And_Recommendations()

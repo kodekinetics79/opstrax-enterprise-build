@@ -24,8 +24,7 @@ namespace Opstrax.Tests;
 /// asserting against anything else is precisely the mistake that let this bug ship.
 public class RolePermissionReconcilerPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     /// <summary>
     /// THE regression test for the P0. The seeded Driver role was
