@@ -92,11 +92,47 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         new("ai_insights", "company_id", "BIGINT NOT NULL DEFAULT 1"),
         new("location_events", "engine_status", "VARCHAR(40) NULL DEFAULT 'Running'"),
         new("location_events", "fuel_level", "DECIMAL(6,2) NULL"),
-        new("location_events", "odometer_miles", "DECIMAL(12,2) NULL")
+        new("location_events", "odometer_miles", "DECIMAL(12,2) NULL"),
+        // ai_recommendations drift: 001_schema.sql created the ORIGINAL (module_key/body)
+        // shape, but the AI foundation layer (PostgresAiFoundationService.CreateRecommendation)
+        // and the Batch/Stage seeds write the RICH shape. FoundationSchemaService owns the
+        // rich CREATE but runs AFTER these batch seeds, so reconcile the columns HERE (first
+        // schema step) so every later INSERT — batch seed, boot, and runtime — sees them.
+        // All nullable / defaulted so the ALTER is safe on tables that already hold rows.
+        new("ai_recommendations", "tenant_id", "BIGINT NULL"),
+        new("ai_recommendations", "recommendation_type", "VARCHAR(120) NULL"),
+        new("ai_recommendations", "summary", "TEXT NULL"),
+        new("ai_recommendations", "confidence_score", "NUMERIC(6,3) NOT NULL DEFAULT 0"),
+        new("ai_recommendations", "urgency_score", "NUMERIC(6,3) NOT NULL DEFAULT 0"),
+        new("ai_recommendations", "impact_json", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        new("ai_recommendations", "reason_json", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        new("ai_recommendations", "proposed_action_json", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        new("ai_recommendations", "risk_level", "VARCHAR(40) NOT NULL DEFAULT 'Medium'"),
+        new("ai_recommendations", "source_event_id", "VARCHAR(120) NULL"),
+        new("ai_recommendations", "actor_type", "VARCHAR(40) NULL"),
+        new("ai_recommendations", "actor_id", "VARCHAR(120) NULL"),
+        new("ai_recommendations", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
     ];
 
     private static readonly string[] TableStatements =
     [
+        // ai_recommendations legacy reconciliation: the ORIGINAL 001_schema shape made
+        // module_key/body NOT NULL, but the rich AI foundation INSERT
+        // (PostgresAiFoundationService.CreateRecommendation) does not populate them. Drop
+        // the NOT NULL on the legacy columns IF they exist (a fresh, rich-shape DB created
+        // by FoundationSchemaService has no such columns, so guard on existence).
+        @"DO $reco$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema=current_schema() AND table_name='ai_recommendations' AND column_name='module_key') THEN
+                ALTER TABLE ai_recommendations ALTER COLUMN module_key DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema=current_schema() AND table_name='ai_recommendations' AND column_name='body') THEN
+                ALTER TABLE ai_recommendations ALTER COLUMN body DROP NOT NULL;
+            END IF;
+          END
+          $reco$;",
         @"CREATE TABLE IF NOT EXISTS vehicle_documents (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
