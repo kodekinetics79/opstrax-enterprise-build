@@ -60,6 +60,46 @@ public class RatingServicePostgresTests
     }
 
     [Fact]
+    public async Task PerStop_Computes_From_Trip_Stop_Count()
+    {
+        var db = CreateDatabase();
+        var rating = new RatingService(db, new BusinessSpineService(db));
+        var cid = await SeedCompanyAsync(db);
+        try
+        {
+            var cardId = await SeedRateCardAsync(db, cid, "Per Stop", baseRate: 25m, min: null, fuelPct: 0m);
+            var jobId = await SeedJobAsync(db, cid, cardId);
+            await db.ExecuteAsync("INSERT INTO trips (company_id, job_id, total_planned_stops) VALUES (@c,@j,3)",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@j", jobId); });
+
+            var outcome = await rating.RateJobAsync(cid, jobId, RateMode.Commit);
+
+            Assert.Equal(75.00m, outcome.Lines.Single(l => l.ChargeType == "base").Amount); // 3 * 25
+        }
+        finally { await CleanupAsync(db, cid); }
+    }
+
+    [Fact]
+    public async Task PerHour_Computes_From_Trip_Duration()
+    {
+        var db = CreateDatabase();
+        var rating = new RatingService(db, new BusinessSpineService(db));
+        var cid = await SeedCompanyAsync(db);
+        try
+        {
+            var cardId = await SeedRateCardAsync(db, cid, "Hourly", baseRate: 20m, min: null, fuelPct: 0m);
+            var jobId = await SeedJobAsync(db, cid, cardId);
+            await db.ExecuteAsync("INSERT INTO trips (company_id, job_id, actual_duration_minutes) VALUES (@c,@j,180)",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@j", jobId); });
+
+            var outcome = await rating.RateJobAsync(cid, jobId, RateMode.Commit);
+
+            Assert.Equal(60.00m, outcome.Lines.Single(l => l.ChargeType == "base").Amount); // 180min/60 * 20
+        }
+        finally { await CleanupAsync(db, cid); }
+    }
+
+    [Fact]
     public async Task ReRating_Is_Idempotent_No_Duplicate_Charges()
     {
         var db = CreateDatabase();

@@ -41,16 +41,38 @@ public sealed class RatingService(Database db, BusinessSpineService spine)
 
         // Base quantity by basis.
         decimal qty;
-        if (basis == "flat")
+        switch (basis)
         {
-            qty = 1m;
-        }
-        else // per_mile / per_km
-        {
-            var miles = await ResolveMilesAsync(companyId, jobId, job, ct);
-            if (miles is null)
-                return Unpriced(jobId, "missing_distance", "Per-distance rate card but no distance available for job");
-            qty = basis == "per_km" ? Math.Round(miles.Value * 1.60934m, 3, MidpointRounding.AwayFromZero) : miles.Value;
+            case "flat":
+                qty = 1m;
+                break;
+            case "per_mile":
+            case "per_km":
+            {
+                var miles = await ResolveMilesAsync(companyId, jobId, job, ct);
+                if (miles is null)
+                    return Unpriced(jobId, "missing_distance", "Per-distance rate card but no distance available for job");
+                qty = basis == "per_km" ? Math.Round(miles.Value * 1.60934m, 3, MidpointRounding.AwayFromZero) : miles.Value;
+                break;
+            }
+            case "per_stop":
+            {
+                var stops = await ResolveStopsAsync(companyId, jobId, ct);
+                if (stops is null or 0)
+                    return Unpriced(jobId, "missing_stops", "Per-stop rate card but no stops recorded for job");
+                qty = stops.Value;
+                break;
+            }
+            case "per_hour":
+            {
+                var hours = await ResolveHoursAsync(companyId, jobId, ct);
+                if (hours is null or <= 0)
+                    return Unpriced(jobId, "missing_duration", "Per-hour rate card but no duration recorded for job");
+                qty = hours.Value;
+                break;
+            }
+            default:
+                return Unpriced(jobId, "unknown_billing_basis", $"Unsupported billing basis '{card.BillingBasis}'");
         }
 
         var lines = new List<ComputedCharge>();
@@ -167,6 +189,22 @@ public sealed class RatingService(Database db, BusinessSpineService spine)
         return null;
     }
 
+    private async Task<int?> ResolveStopsAsync(long companyId, long jobId, CancellationToken ct)
+    {
+        var n = await db.ScalarLongAsync(
+            @"SELECT COALESCE(MAX(total_planned_stops), 0) FROM trips WHERE company_id=@cid AND job_id=@jid",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@jid", jobId); }, ct);
+        return n > 0 ? (int)n : null;
+    }
+
+    private async Task<decimal?> ResolveHoursAsync(long companyId, long jobId, CancellationToken ct)
+    {
+        var mins = await db.ScalarDecimalAsync(
+            @"SELECT MAX(actual_duration_minutes) FROM trips WHERE company_id=@cid AND job_id=@jid",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@jid", jobId); }, ct);
+        return mins is > 0 ? Math.Round(mins.Value / 60m, 3, MidpointRounding.AwayFromZero) : null;
+    }
+
     private static decimal? D(Dictionary<string, object?> row, string key)
         => row.GetValueOrDefault(key) is { } v && v is not DBNull ? Convert.ToDecimal(v) : null;
 
@@ -176,6 +214,8 @@ public sealed class RatingService(Database db, BusinessSpineService spine)
         "flat rate" or "flat" or "per load" or "per_load" or "per unit" or "per_unit" => "flat",
         "per mile" or "per_mile" => "per_mile",
         "per kilometer" or "per_km" or "per km" => "per_km",
+        "per stop" or "per_stop" => "per_stop",
+        "hourly" or "per hour" or "per_hour" => "per_hour",
         _ => null,
     };
 
