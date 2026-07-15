@@ -119,7 +119,21 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
         new("proof_of_delivery", "signature_url", "VARCHAR(400) NULL"),
         new("proof_of_delivery", "received_by", "VARCHAR(160) NULL"),
         new("proof_of_delivery", "notes", "TEXT NULL"),
-        new("proof_of_delivery", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+        new("proof_of_delivery", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+        // ai_recommendations drift backfill: the CREATE TABLE defines these, but an ai_recommendations
+        // table that predates them (e.g. production, built before these columns were added) is skipped
+        // by CREATE IF NOT EXISTS and never gets them — so code that INSERTs/SELECTs them 42703's.
+        // Backfilling via EnsureColumnAsync fixes existing tables everywhere (prod, CI, dev).
+        new("ai_recommendations", "recommendation_type", "VARCHAR(80) NOT NULL DEFAULT 'general'"),
+        new("ai_recommendations", "tenant_id", "BIGINT NULL"),
+        new("ai_recommendations", "summary", "TEXT NULL"),
+        new("ai_recommendations", "confidence_score", "DECIMAL(5,2) NULL"),
+        new("ai_recommendations", "urgency_score", "DECIMAL(5,2) NULL"),
+        new("ai_recommendations", "impact_json", "JSONB NULL"),
+        new("ai_recommendations", "reason_json", "JSONB NULL"),
+        new("ai_recommendations", "proposed_action_json", "JSONB NULL"),
+        new("ai_recommendations", "risk_level", "VARCHAR(40) NULL"),
+        new("ai_recommendations", "source_event_id", "VARCHAR(120) NULL")
     ];
 
     private static readonly string[] TableStatements =
