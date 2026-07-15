@@ -2449,6 +2449,12 @@ public static partial class EndpointMappings
             "settlement.approve" => ["settlement.approve", "settlement.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
             "settlement.pay" or "settlement.payment.create" or "settlement.payment.record" => ["settlement.pay", "settlement.payment.create", "settlement.payment.record", "settlement.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
 
+            // Tax engine (AR indirect tax) — read folds into finance:view/billing:view; manage/publish
+            // fold into finance:manage/billing:manage so finance-capable roles reach tax with no new grant.
+            "tax.read" or "tax.view" => ["tax.read", "tax.view", "finance:view", "finance.view", "billing:view", "billing.view"],
+            "tax.create" or "tax.update" or "tax.manage" => ["tax.create", "tax.update", "tax.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+            "tax.publish" => ["tax.publish", "tax.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+
             "finance.ar.summary.read" or "finance.ar.summary.view" => ["finance.ar.summary.read", "finance.ar.summary.view", "finance:view", "billing:view"],
             "finance.revenue.summary.read" or "finance.revenue.summary.view" => ["finance.revenue.summary.read", "finance.revenue.summary.view", "finance:view", "billing:view"],
             "customer.account.summary.read" or "customer.account.summary.view" => ["customer.account.summary.read", "customer.account.summary.view", "customer.account.read", "customer.account.view", "customers:view", "crm:view"],

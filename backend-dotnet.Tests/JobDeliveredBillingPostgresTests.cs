@@ -55,7 +55,7 @@ public class JobDeliveredBillingPostgresTests
         var corr = new InMemoryCorrelationContext("corr-jdb", "cause-jdb", "req-jdb", null, ActorTypes.TenantUser, "42");
         return new RevenueReadinessService(db, new PostgresAiFoundationService(db, corr),
             new PostgresApprovalWorkflowService(db, corr), new PostgresIdempotencyService(db),
-            new PostgresDomainEventPublisher(db, corr), corr);
+            new PostgresDomainEventPublisher(db, corr), corr, new TaxService(db));
     }
 
     private static async Task<long> SeedCompanyAsync(Database db) =>

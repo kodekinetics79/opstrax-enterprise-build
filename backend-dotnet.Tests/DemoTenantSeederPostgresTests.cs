@@ -96,7 +96,7 @@ public class DemoTenantSeederPostgresTests
     private static RevenueReadinessService CreateRevenueService(Database db, long companyId)
     {
         var correlation = new InMemoryCorrelationContext("corr-demo", "cause-demo", "req-demo", companyId.ToString(), ActorTypes.TenantUser, "1");
-        return new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), new PostgresApprovalWorkflowService(db, correlation), new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation);
+        return new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), new PostgresApprovalWorkflowService(db, correlation), new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation, new TaxService(db));
     }
 
     private static Database CreateDatabase()

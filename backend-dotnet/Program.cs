@@ -225,10 +225,12 @@ builder.Services.AddSingleton<CommercialFoundationSchemaService>();
 builder.Services.AddSingleton<RevenueReadinessSchemaService>();
 builder.Services.AddSingleton<FinanceActivationSchemaService>();
 builder.Services.AddSingleton<SettlementSchemaService>();
+builder.Services.AddSingleton<TaxSchemaService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
 builder.Services.AddSingleton<SettlementService>();
+builder.Services.AddSingleton<TaxService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
 builder.Services.AddSingleton<Stage9OperationalFoundationService>();
@@ -417,6 +419,11 @@ using (var scope = app.Services.CreateScope())
     if (settlementSchemaEnabled)
     {
         await RunSchemaStep(app, "Settlement", () => scope.ServiceProvider.GetRequiredService<SettlementSchemaService>().EnsureAsync());
+    }
+    var taxSchemaEnabled = builder.Configuration.GetValue("TaxSchema:Enabled", !app.Environment.IsProduction());
+    if (taxSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Tax", () => scope.ServiceProvider.GetRequiredService<TaxSchemaService>().EnsureAsync());
     }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)
@@ -913,6 +920,7 @@ app.MapRevenueEndpoints();
 app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
 app.MapSettlementEndpoints();
+app.MapTaxEndpoints();
 app.MapCustomerPortalEndpoints();
 app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();

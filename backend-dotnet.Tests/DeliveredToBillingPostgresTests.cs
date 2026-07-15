@@ -95,7 +95,7 @@ public class DeliveredToBillingPostgresTests
         var corr = new InMemoryCorrelationContext("corr-d2b", "cause-d2b", "req-d2b", null, ActorTypes.TenantUser, "42");
         return new RevenueReadinessService(db, new PostgresAiFoundationService(db, corr),
             new PostgresApprovalWorkflowService(db, corr), new PostgresIdempotencyService(db),
-            new PostgresDomainEventPublisher(db, corr), corr);
+            new PostgresDomainEventPublisher(db, corr), corr, new TaxService(db));
     }
 
     private static async Task<long> SeedCompanyAsync(Database db) =>

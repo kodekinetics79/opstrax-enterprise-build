@@ -23,6 +23,56 @@ public class RevenueReadinessPostgresTests
     }
 
     [Fact]
+    public async Task Issue_With_Published_Tax_Profile_Taxes_Invoice_And_Snapshots_Breakdown()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-tax");
+        var contractId = await SeedContractAsync(db, companyId, customerId, "contract-tax");
+        var spine = new BusinessSpineService(db);
+        var rateCard = await spine.CreateRateCardAsync(companyId, "RC-TAX-1", "Tax rate card", customerId, contractId,
+            "Per Mile", "Metro", "North", "South", "Truck", "USD", 3.25m, 150m, 6.5m, "Base",
+            DateOnly.FromDateTime(DateTime.UtcNow.Date), null, "Active", "corr-tax", "cause-tax", "Tax rate card");
+        var jobId = await SeedJobAsync(db, companyId, customerId, contractId, rateCard.Id, "Completed", "JOB-TAX-1");
+        await spine.CreateJobChargeAsync(companyId, jobId, null, rateCard.Id, "BASE", "Base charge", "base", "Line", 1m, 1000m, 1000m, "USD", "approved");
+
+        // Publish a 15% VAT profile with a catch-all standard rule + seller registration.
+        var profileId = await db.InsertAsync(
+            @"INSERT INTO tax_profiles (company_id, profile_code, profile_name, regime, price_inclusive, currency, effective_date, status, author_user_id, published_by_user_id, published_at)
+              VALUES (@c, 'TP-ISSUE', 'P', 'vat', FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
+            c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("INSERT INTO tax_rules (company_id, tax_profile_id, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'STANDARD','S',0.15,TRUE,0)",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@p", profileId); });
+        await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX','vat','TRN', DATE '2025-01-01')",
+            c => c.Parameters.AddWithValue("@c", companyId));
+
+        var service = CreateRevenueService(db);
+        var draftOutcome = await service.CreateInvoiceDraftFromJobAsync(companyId, jobId, "tax-issue-draft");
+        Assert.True(draftOutcome.Success);
+        // Draft already carries the computed tax (1000 * 0.15 = 150).
+        var draft = await service.GetInvoiceDraftAsync(companyId, draftOutcome.Draft!.Id);
+        Assert.Equal(150m, draft!.TaxTotal);
+        Assert.Equal(1150m, draft.Total);
+
+        var gate = await service.UpdateInvoiceDraftAsync(companyId, draftOutcome.Draft.Id, "approved");
+        var approval = new PostgresApprovalWorkflowService(db, new InMemoryCorrelationContext("corr-ti", "cause-ti", "req-ti", companyId.ToString(), ActorTypes.TenantUser, "42"));
+        approval.Decide(gate.ApprovalRequestId!.Value, "approver-ti", "approved", "ok");
+
+        var issue = await service.IssueInvoiceFromDraftAsync(companyId, draftOutcome.Draft.Id, "tax-issue");
+        Assert.True(issue.Success);
+        // Issued invoice carries the fresh taxed figures.
+        Assert.Equal(150m, issue.Invoice!.TaxTotal);
+        Assert.Equal(1150m, issue.Invoice.Total);
+
+        // Immutable tax snapshot exists and foots to the header tax_total.
+        var snapSum = await db.ScalarDecimalAsync(
+            "SELECT COALESCE(SUM(tax_amount),0) FROM issued_invoice_tax_lines WHERE company_id=@c AND issued_invoice_id=@i",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@i", issue.Invoice.Id); });
+        Assert.Equal(150m, snapSum);
+    }
+
+    [Fact]
     public async Task MarkReadyToBill_WithCharges_Succeeds_And_Writes_Event()
     {
         var db = CreateDatabase();
@@ -775,7 +825,8 @@ public class RevenueReadinessPostgresTests
             new PostgresApprovalWorkflowService(db, correlation),
             new PostgresIdempotencyService(db),
             new PostgresDomainEventPublisher(db, correlation),
-            correlation);
+            correlation,
+            new TaxService(db));
     }
 
     private static Database CreateDatabase()
