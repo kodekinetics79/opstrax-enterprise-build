@@ -1668,7 +1668,8 @@ public static class PlatformEndpoints
     private static async Task<IResult> ReliabilityAckIncident(
         long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
     {
-        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        // Mutating an incident requires manage, not the read grant (a read-only role must not change state).
+        var (principal, error) = await RequireAsync(http, db, "platform:health:manage", ct);
         if (error is not null) return error;
 
         await incidents.AcknowledgeAsync(id, principal!.Email, ct);
@@ -1679,7 +1680,7 @@ public static class PlatformEndpoints
     private static async Task<IResult> ReliabilityResolveIncident(
         long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
     {
-        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        var (principal, error) = await RequireAsync(http, db, "platform:health:manage", ct);
         if (error is not null) return error;
 
         var body = await http.Request.ReadFromJsonAsync<PlatformIncidentResolve>(ct);

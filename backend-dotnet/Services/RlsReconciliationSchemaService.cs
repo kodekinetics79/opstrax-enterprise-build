@@ -105,6 +105,15 @@ public sealed class RlsReconciliationSchemaService(Database db)
             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_app') THEN
                 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO opstrax_app;
                 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO opstrax_app;
+
+                -- Append-only platform audit trail: the app role may INSERT/SELECT but never UPDATE/DELETE,
+                -- so a compromised app connection cannot rewrite or erase the control-plane audit history.
+                -- Runs AFTER the blanket grant above (this reconciler is the last boot step), so it wins.
+                -- The app only ever INSERTs platform_audit_log rows; sequence repair uses setval (no DML).
+                -- (Scoped to platform_audit_log; tenant audit_logs is left alone since retention purges it.)
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='platform_audit_log') THEN
+                    REVOKE UPDATE, DELETE ON platform_audit_log FROM opstrax_app;
+                END IF;
             END IF;
         END
         $grant$;
