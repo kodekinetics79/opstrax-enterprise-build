@@ -108,12 +108,20 @@ jobs:
           Jwt__Key: "ci-only-jwt-signing-key-at-least-32-chars-long-000"
           Telemetry__GatewaySecret: "ci-gateway-secret-at-least-32-characters-long-00"
         run: |
-          (dotnet run --no-build --project backend-dotnet & echo $! > /tmp/api.pid)
-          for i in $(seq 1 60); do
-            n=$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo 0)
-            [ "${n:-0}" -gt 120 ] && break; sleep 2
+          (dotnet run --no-build --project backend-dotnet > /tmp/api_boot.log 2>&1 & echo $! > /tmp/api.pid)
+          # Schema init (all *SchemaService.EnsureAsync) runs during startup and completes BEFORE the
+          # app begins listening — so wait for that signal, not an arbitrary table count (which fired
+          # mid-init and left issued_invoices/ai_action_outcomes uncreated + backfills unapplied).
+          ok=0
+          for i in $(seq 1 90); do
+            if grep -qiE "Now listening on|Application started" /tmp/api_boot.log 2>/dev/null; then ok=1; break; fi
+            if grep -qiE "Unhandled exception|Application startup exception|schema init.*fail" /tmp/api_boot.log 2>/dev/null; then echo "BOOT FAILED:"; tail -40 /tmp/api_boot.log; exit 1; fi
+            sleep 2
           done
+          sleep 8   # grace for any trailing ensure step
           kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
+          [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
+          echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
           psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -c "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO opstrax_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO opstrax_app;" || true
       - name: Run DB-backed integration suites
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
