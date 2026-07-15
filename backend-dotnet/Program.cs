@@ -226,11 +226,13 @@ builder.Services.AddSingleton<RevenueReadinessSchemaService>();
 builder.Services.AddSingleton<FinanceActivationSchemaService>();
 builder.Services.AddSingleton<SettlementSchemaService>();
 builder.Services.AddSingleton<TaxSchemaService>();
+builder.Services.AddSingleton<BillingProfileSchemaService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
 builder.Services.AddSingleton<SettlementService>();
 builder.Services.AddSingleton<TaxService>();
+builder.Services.AddSingleton<BillingConsolidationService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
 builder.Services.AddSingleton<Stage9OperationalFoundationService>();
@@ -424,6 +426,11 @@ using (var scope = app.Services.CreateScope())
     if (taxSchemaEnabled)
     {
         await RunSchemaStep(app, "Tax", () => scope.ServiceProvider.GetRequiredService<TaxSchemaService>().EnsureAsync());
+    }
+    var billingSchemaEnabled = builder.Configuration.GetValue("BillingSchema:Enabled", !app.Environment.IsProduction());
+    if (billingSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Billing", () => scope.ServiceProvider.GetRequiredService<BillingProfileSchemaService>().EnsureAsync());
     }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)
@@ -921,6 +928,7 @@ app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
 app.MapSettlementEndpoints();
 app.MapTaxEndpoints();
+app.MapBillingEndpoints();
 app.MapCustomerPortalEndpoints();
 app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();

@@ -2455,6 +2455,10 @@ public static partial class EndpointMappings
             "tax.create" or "tax.update" or "tax.manage" => ["tax.create", "tax.update", "tax.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
             "tax.publish" => ["tax.publish", "tax.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
 
+            // Billing consolidation — read/create fold into finance/billing view/manage.
+            "billing.read" or "billing.view" => ["billing.read", "billing.view", "finance:view", "finance.view", "billing:view", "billing.view"],
+            "billing.create" or "billing.update" or "billing.manage" or "billing.consolidate" => ["billing.create", "billing.update", "billing.manage", "billing.consolidate", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+
             "finance.ar.summary.read" or "finance.ar.summary.view" => ["finance.ar.summary.read", "finance.ar.summary.view", "finance:view", "billing:view"],
             "finance.revenue.summary.read" or "finance.revenue.summary.view" => ["finance.revenue.summary.read", "finance.revenue.summary.view", "finance:view", "billing:view"],
             "customer.account.summary.read" or "customer.account.summary.view" => ["customer.account.summary.read", "customer.account.summary.view", "customer.account.read", "customer.account.view", "customers:view", "crm:view"],
