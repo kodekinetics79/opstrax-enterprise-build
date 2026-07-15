@@ -2441,6 +2441,14 @@ public static partial class EndpointMappings
             "finance.invoice.read" or "finance.invoice.view" => ["finance.invoice.read", "finance.invoice.view", "finance:view", "billing:view"],
             "finance.invoice.issue" or "finance.invoice.approve" or "finance.invoice.issue.approve" => ["finance.invoice.issue", "finance.invoice.approve", "finance.invoice.issue.approve", "finance:manage", "billing:manage"],
             "finance.invoice.payment.record" or "finance.invoice.payment.create" => ["finance.invoice.payment.record", "finance.invoice.payment.create", "finance:manage", "billing:manage"],
+            // Settlement / carrier-&-driver-pay (AP) — mirror the AR/finance nouns. Read folds into
+            // finance:view/billing:view; create/approve/pay fold into finance:manage/billing:manage so
+            // existing finance-capable roles reach settlement without a new role grant.
+            "settlement.read" or "settlement.view" => ["settlement.read", "settlement.view", "finance:view", "finance.view", "billing:view", "billing.view"],
+            "settlement.create" or "settlement.update" or "settlement.generate" or "settlement.manage" => ["settlement.create", "settlement.update", "settlement.generate", "settlement.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+            "settlement.approve" => ["settlement.approve", "settlement.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+            "settlement.pay" or "settlement.payment.create" or "settlement.payment.record" => ["settlement.pay", "settlement.payment.create", "settlement.payment.record", "settlement.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+
             "finance.ar.summary.read" or "finance.ar.summary.view" => ["finance.ar.summary.read", "finance.ar.summary.view", "finance:view", "billing:view"],
             "finance.revenue.summary.read" or "finance.revenue.summary.view" => ["finance.revenue.summary.read", "finance.revenue.summary.view", "finance:view", "billing:view"],
             "customer.account.summary.read" or "customer.account.summary.view" => ["customer.account.summary.read", "customer.account.summary.view", "customer.account.read", "customer.account.view", "customers:view", "crm:view"],

@@ -302,6 +302,7 @@ public static class ApprovalPolicyCatalog
     {
         Normalize("finance.invoice.issue"),
         Normalize("finance.credit_note.approve"),
+        Normalize("settlement.approve"),
         Normalize("customer.contract.rate_change"),
         Normalize("dispatch.trip.reassign_high_value"),
         Normalize("iot.vehicle.immobilize"),

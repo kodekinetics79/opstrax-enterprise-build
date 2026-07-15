@@ -224,9 +224,11 @@ builder.Services.AddSingleton<BusinessSpineSchemaService>();
 builder.Services.AddSingleton<CommercialFoundationSchemaService>();
 builder.Services.AddSingleton<RevenueReadinessSchemaService>();
 builder.Services.AddSingleton<FinanceActivationSchemaService>();
+builder.Services.AddSingleton<SettlementSchemaService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
+builder.Services.AddSingleton<SettlementService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
 builder.Services.AddSingleton<Stage9OperationalFoundationService>();
@@ -410,6 +412,11 @@ using (var scope = app.Services.CreateScope())
     if (financeActivationSchemaEnabled)
     {
         await RunSchemaStep(app, "FinanceActivation", () => scope.ServiceProvider.GetRequiredService<FinanceActivationSchemaService>().EnsureAsync());
+    }
+    var settlementSchemaEnabled = builder.Configuration.GetValue("SettlementSchema:Enabled", !app.Environment.IsProduction());
+    if (settlementSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Settlement", () => scope.ServiceProvider.GetRequiredService<SettlementSchemaService>().EnsureAsync());
     }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)
@@ -905,6 +912,7 @@ app.MapFleetTmsLogisticsEndpoints();
 app.MapRevenueEndpoints();
 app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
+app.MapSettlementEndpoints();
 app.MapCustomerPortalEndpoints();
 app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();
