@@ -133,7 +133,9 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
         new("ai_recommendations", "reason_json", "JSONB NULL"),
         new("ai_recommendations", "proposed_action_json", "JSONB NULL"),
         new("ai_recommendations", "risk_level", "VARCHAR(40) NULL"),
-        new("ai_recommendations", "source_event_id", "VARCHAR(120) NULL")
+        new("ai_recommendations", "source_event_id", "VARCHAR(120) NULL"),
+        new("ai_recommendations", "actor_type", "VARCHAR(40) NULL"),
+        new("ai_recommendations", "actor_id", "VARCHAR(120) NULL")
     ];
 
     private static readonly string[] TableStatements =
