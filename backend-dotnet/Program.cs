@@ -281,6 +281,8 @@ builder.Services.AddSingleton<FleetTmsColdChainSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainFoundationSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainFoundationService>();
 builder.Services.AddSingleton<FleetTmsLogisticsSchemaService>();
+builder.Services.AddSingleton<FeatureFlagSchemaService>();
+builder.Services.AddSingleton<RlsReconciliationSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
 builder.Services.AddScoped<SecurityEventService>();
@@ -413,6 +415,7 @@ using (var scope = app.Services.CreateScope())
     {
         await RunSchemaStep(app, "Stage9", () => scope.ServiceProvider.GetRequiredService<Stage9SchemaService>().EnsureAsync());
     }
+    await RunSchemaStep(app, "FeatureFlags",       () => scope.ServiceProvider.GetRequiredService<FeatureFlagSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "TenantApi",         () => scope.ServiceProvider.GetRequiredService<TenantApiSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
@@ -426,6 +429,10 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "FleetTmsLogistics",  () => scope.ServiceProvider.GetRequiredService<FleetTmsLogisticsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
     await RunSchemaStep(app, "MarketPackSeed",      () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.MarketPackSeeder>().EnsureAsync());
+    // MUST run LAST: enrolls every tenant-scoped table created above (feature_flags and
+    // any table added by a later schema service) into RLS + FORCE, closing the coverage
+    // gap the point-in-time Stage 19/22 migrations cannot cover for boot-created tables.
+    await RunSchemaStep(app, "RlsReconciliation",   () => scope.ServiceProvider.GetRequiredService<RlsReconciliationSchemaService>().EnsureAsync());
     }
     else
     {
