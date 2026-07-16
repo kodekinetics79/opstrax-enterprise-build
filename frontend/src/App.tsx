@@ -77,6 +77,8 @@ const HosEldPage = lazy(() => import("@/pages/HosEldPage").then((module) => ({ d
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ControlTowerPage = lazy(() => import("@/pages/ControlTowerPage").then((module) => ({ default: module.ControlTowerPage })));
 const LiveMapPage = lazy(() => import("@/pages/LiveMapPage").then((module) => ({ default: module.LiveMapPage })));
+const FleetLiveWallPage = lazy(() => import("@/pages/FleetLiveWallPage").then((module) => ({ default: module.FleetLiveWallPage })));
+const VehicleLiveMonitorPage = lazy(() => import("@/pages/VehicleLiveMonitorPage").then((module) => ({ default: module.VehicleLiveMonitorPage })));
 const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.CustomerEtaPage })));
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const FleetWorkspacePage = lazy(() => import("@/pages/FleetWorkspacePage").then((module) => ({ default: module.FleetWorkspacePage })));
@@ -194,6 +196,8 @@ export default function App() {
         <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
         <Route path="/map-view" element={<RequirePermission permission="telemetry.live_state.read"><LiveMapPage /></RequirePermission>} />
+        <Route path="/fleet/live-wall" element={<RequirePermission permission="telemetry.live_state.read"><FleetLiveWallPage /></RequirePermission>} />
+        <Route path="/vehicles/:id/live" element={<RequirePermission permission="telemetry.live_state.read"><VehicleLiveMonitorPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
         <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
         <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
@@ -339,7 +343,7 @@ export default function App() {
         {/* ── Remaining module routes (permission from moduleConfig) ── */}
           {modules
             .filter((module) => ![
-              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","alerts-center",
+              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","fleet-live-wall","alerts-center",
               "dispatch","dispatch-board","vehicles","drivers","jobs","route-planning","routes","iot-devices","gps-tracking","obd-j1939","sensor-health","cold-chain",
               "customer-portal","customer-eta","maintenance","work-orders","dvir-inspections","documents",
               "safety","dashcam","coaching","incidents","evidence-packages","customers","assets",
