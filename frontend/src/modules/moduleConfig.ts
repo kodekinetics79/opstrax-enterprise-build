@@ -127,6 +127,7 @@ export const modules: ModuleConfig[] = [
   { key: "ar-aging",       title: "AR Aging",          route: "/ar-aging",       group: "Financials", description: "Outstanding receivables bucketed by days past due, per customer.", accent: "amber",  requiredPermission: "finance.view" },
   { key: "payments",       title: "Payments",          route: "/payments",       group: "Financials", description: "Collections, payment methods, unapplied cash and customer payment health.", accent: "green",  requiredPermission: "finance.view" },
   { key: "profitability",  title: "Profitability",     route: "/profitability",  group: "Financials", description: "Revenue by customer, route and shipment; cost by vehicle; margin leakage.", accent: "purple", requiredPermission: "finance.view" },
+  { key: "tax-config",     title: "Tax Configuration", route: "/finance/tax-config", group: "Financials", description: "VAT/GST/ZATCA tax profiles, decision-table rules, publish and seller registration.", accent: "blue",   requiredPermission: "tax.read" },
 
   { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users.manage" },
   { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "reports.manage" },
@@ -208,6 +209,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "fuel-idling": Fuel,
   expenses: WalletCards,
   invoices: DollarSign,
+  "tax-config": Receipt,
   "ar-aging": DollarSign,
   payments: CreditCard,
   profitability: BarChart3,
