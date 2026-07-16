@@ -11590,7 +11590,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     causation_id=EXCLUDED.causation_id, source_channel=EXCLUDED.source_channel,
                     telemetry_status=EXCLUDED.telemetry_status, risk_level=EXCLUDED.risk_level,
                     alert_count=EXCLUDED.alert_count, open_alert_count=EXCLUDED.open_alert_count,
-                    next_action=EXCLUDED.next_action, summary_json=EXCLUDED.summary_json, updated_at=NOW(){provUpd}",
+                    next_action=EXCLUDED.next_action, summary_json=EXCLUDED.summary_json, updated_at=NOW(){provUpd}
+                  WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);

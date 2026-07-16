@@ -103,7 +103,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         event_time=EXCLUDED.event_time, received_at=EXCLUDED.received_at,
                         event_count=latest_vehicle_positions.event_count+1,
                         source_channel=EXCLUDED.source_channel, telemetry_status='healthy',
-                        risk_level='low', updated_at=NOW(){provUpd}",
+                        risk_level='low', updated_at=NOW(){provUpd}
+                      WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
