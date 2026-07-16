@@ -2464,6 +2464,11 @@ public static partial class EndpointMappings
             "revrec.create" or "revrec.update" or "revrec.manage" => ["revrec.create", "revrec.update", "revrec.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
             "revrec.period.close" => ["revrec.period.close", "revrec.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
 
+            // Financial config envelope (ADR-008 meta-layer) — read/manage fold into finance; publish is high-risk.
+            "finance.config.read" or "finance.config.view" => ["finance.config.read", "finance.config.view", "finance:view", "finance.view", "billing:view", "billing.view"],
+            "finance.config.create" or "finance.config.update" or "finance.config.manage" => ["finance.config.create", "finance.config.update", "finance.config.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+            "finance.config.publish" => ["finance.config.publish", "finance.config.manage", "finance:manage", "finance.manage", "billing:manage", "billing.manage"],
+
             "finance.ar.summary.read" or "finance.ar.summary.view" => ["finance.ar.summary.read", "finance.ar.summary.view", "finance:view", "billing:view"],
             "finance.revenue.summary.read" or "finance.revenue.summary.view" => ["finance.revenue.summary.read", "finance.revenue.summary.view", "finance:view", "billing:view"],
             "customer.account.summary.read" or "customer.account.summary.view" => ["customer.account.summary.read", "customer.account.summary.view", "customer.account.read", "customer.account.view", "customers:view", "crm:view"],

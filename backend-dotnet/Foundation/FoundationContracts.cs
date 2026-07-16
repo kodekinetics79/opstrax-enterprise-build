@@ -305,6 +305,7 @@ public static class ApprovalPolicyCatalog
         Normalize("settlement.approve"),
         Normalize("finance.tax_profile.publish"),
         Normalize("revrec.period.close"),
+        Normalize("finance.config.publish"),
         Normalize("customer.contract.rate_change"),
         Normalize("dispatch.trip.reassign_high_value"),
         Normalize("iot.vehicle.immobilize"),
