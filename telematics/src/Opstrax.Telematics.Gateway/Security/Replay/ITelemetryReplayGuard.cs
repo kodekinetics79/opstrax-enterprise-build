@@ -132,4 +132,14 @@ public interface ITelemetryReplayGuard
     /// </param>
     /// <returns>The verdict for this frame.</returns>
     ReplayDecision Check(string deviceId, long protocolSerial, string contentHash, DateTime deviceFixTimeUtc);
+
+    /// <summary>
+    /// Asynchronous equivalent of <see cref="Check"/>. Connection-servicing call sites (the gateway
+    /// read loop) MUST use this: the durable implementation does a DB round-trip per frame, and doing
+    /// that synchronously parks a thread-pool thread per in-flight fix, starving the pool under fleet
+    /// load. In-memory guards complete synchronously and return an already-completed task.
+    /// </summary>
+    System.Threading.Tasks.Task<ReplayDecision> CheckAsync(
+        string deviceId, long protocolSerial, string contentHash, DateTime deviceFixTimeUtc,
+        System.Threading.CancellationToken cancellationToken = default);
 }

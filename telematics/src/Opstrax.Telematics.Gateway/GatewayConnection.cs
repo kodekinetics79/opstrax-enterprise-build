@@ -408,7 +408,7 @@ internal sealed class GatewayConnection
         ReplayDecision decision;
         using (Activity? validation = trace.StartValidation())
         {
-            decision = _replayGuard.Check(owner.DeviceId, serial, contentHash, evt.OccurredAtDeviceUtc);
+            decision = await _replayGuard.CheckAsync(owner.DeviceId, serial, contentHash, evt.OccurredAtDeviceUtc, cancellationToken).ConfigureAwait(false);
 
             switch (decision.Outcome)
             {

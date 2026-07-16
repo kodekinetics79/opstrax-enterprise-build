@@ -26,6 +26,18 @@ public class InMemoryReplayGuardTests
     }
 
     [Fact]
+    public async Task CheckAsync_IsBehaviorParity_And_Dedups()
+    {
+        var guard = new InMemoryReplayGuard();
+
+        // Async path (used by the gateway read loop) accepts first sight, then flags the exact replay.
+        var first = await guard.CheckAsync(Device, 10, "hashA", Fix);
+        Assert.Equal(ReplayOutcome.Accept, first.Outcome);
+        var replay = await guard.CheckAsync(Device, 10, "hashA", Fix);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, replay.Outcome);
+    }
+
+    [Fact]
     public void ExactDuplicate_IsDuplicateReplay()
     {
         var guard = new InMemoryReplayGuard();

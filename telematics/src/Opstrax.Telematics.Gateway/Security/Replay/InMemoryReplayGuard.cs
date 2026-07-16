@@ -67,6 +67,13 @@ public sealed class InMemoryReplayGuard : ITelemetryReplayGuard
     public int TrackedDeviceCount => _devices.Count;
 
     /// <inheritdoc />
+    public System.Threading.Tasks.Task<ReplayDecision> CheckAsync(
+        string deviceId, long protocolSerial, string contentHash, DateTime deviceFixTimeUtc,
+        System.Threading.CancellationToken cancellationToken = default)
+        // Pure in-memory lock work, no I/O — complete synchronously without parking a thread.
+        => System.Threading.Tasks.Task.FromResult(Check(deviceId, protocolSerial, contentHash, deviceFixTimeUtc));
+
+    /// <inheritdoc />
     public ReplayDecision Check(string deviceId, long protocolSerial, string contentHash, DateTime deviceFixTimeUtc)
     {
         if (string.IsNullOrEmpty(deviceId))
