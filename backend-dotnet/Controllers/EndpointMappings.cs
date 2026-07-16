@@ -12159,8 +12159,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // clause that closes the cross-tenant skeleton key (the legacy shared-secret path has no scope).
         if (gatewayScopeCompanyId is { } scope && scope != companyId)
         {
+            // NB: no audit.LogAsync here — this pre-auth gateway path has no tenant in the HTTP context,
+            // and AuditService.LogAsync derives the tenant from it (would throw "Missing tenant context").
+            // The denial is counted in the rejection metric; a tenant-context-free audit is a follow-up.
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
-            await audit.LogAsync(http, "telemetry.gps.gateway_scope_denied", "EldDevice", deviceId, $"gateway:{replayGatewayId}", ct);
             return Results.Json(ApiResponse<object>.Fail("Device is not authorized for this gateway"), statusCode: 403);
         }
 
