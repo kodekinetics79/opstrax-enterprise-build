@@ -11977,6 +11977,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     // ── POST /api/telemetry/gps-ingest ─────────────────────────────────────────────
+    // C2 — normalize a device/forwarder-reported harsh-event token to the canonical alert vocabulary.
+    // Accepts the many spellings trackers/forwarders use; returns null for a plain position fix or an
+    // unrecognized token (never invents an event).
+    private static string? NormalizeHarshEvent(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var v = raw.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+        return v switch
+        {
+            "harsh_braking" or "harshbraking" or "hard_brake" or "harsh_brake" or "braking" or "brake" => "harsh_braking",
+            "harsh_acceleration" or "harshacceleration" or "hard_accel" or "harsh_accel" or "acceleration" or "accel" => "harsh_acceleration",
+            "harsh_turn" or "harsh_cornering" or "hard_turn" or "cornering" or "turn" or "corner" => "harsh_turn",
+            "crash" or "collision" or "accident" or "impact" or "fall" => "crash",
+            "sos" or "panic" or "emergency" => "sos",
+            _ => null,
+        };
+    }
+
     // H3 — provision a per-gateway credential bound to the caller's tenant. Returns the HMAC secret
     // ONCE (never stored in the clear; persisted envelope-encrypted). The gateway then signs gps-ingest
     // with this secret and sends X-Gateway-Id, and may only submit for devices in this tenant.
@@ -12242,6 +12260,33 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@odo", (object?)(odo is { } ov ? (decimal)ov : (object?)null) ?? DBNull.Value);
                     c.Parameters.AddWithValue("@eventTime", eventTime.UtcDateTime);
                 }, ct);
+
+            // C2 — device-reported harsh-driving / crash / SOS event. Normalize the reported token to the
+            // canonical alert vocabulary and raise a telemetry_alert linked to this fix; the safety
+            // background service converts it into a safety_event (Harsh Braking / Crash / ...) so it lands
+            // on the safety dashboard and deducts the driver score. Magnitude (g-force) is kept in the
+            // message. Unknown/absent tokens do nothing (a plain position fix is unaffected).
+            var harshType = NormalizeHarshEvent(Str("harshEvent", "harsh_event", "event", "alarm", "alarmType"));
+            if (harshType is not null)
+            {
+                var mag = Num("magnitude", "gForce", "g_force", "g", "severityValue");
+                var harshSeverity = harshType is "crash" or "sos" ? "Critical" : "High";
+                await db.ExecuteAsync(
+                    @"INSERT INTO telemetry_alerts
+                        (company_id, vehicle_id, device_id, driver_id, alert_type, severity, message, source_event_id, status, source_channel, created_at)
+                      VALUES (@cid, @vid, @did, @drid, @type, @sev, @msg, @src, 'open', 'trusted-gateway', NOW())",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@vid", (object?)vehicleId ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@did", deviceId);
+                        c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@type", harshType);
+                        c.Parameters.AddWithValue("@sev", harshSeverity);
+                        c.Parameters.AddWithValue("@msg", mag is { } m ? $"Device-reported {harshType} (magnitude {m:0.##})" : $"Device-reported {harshType}");
+                        c.Parameters.AddWithValue("@src", eventId);
+                    }, ct);
+            }
 
             if (vehicleId is not null)
             {
