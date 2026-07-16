@@ -64,6 +64,9 @@ const MaintenanceCommandPage = lazy(() => import("@/pages/MaintenanceCommandPage
 const CustomerVisibilityPage = lazy(() => import("@/pages/CustomerVisibilityPage").then((module) => ({ default: module.CustomerVisibilityPage })));
 const FinancialAnalyticsPage = lazy(() => import("@/pages/FinancialAnalyticsPage").then((module) => ({ default: module.FinancialAnalyticsPage })));
 const TaxAdminPage = lazy(() => import("@/pages/TaxAdminPage").then((module) => ({ default: module.TaxAdminPage })));
+const BillingConsolidationPage = lazy(() => import("@/pages/BillingConsolidationPage").then((m) => ({ default: m.BillingConsolidationPage })));
+const SettlementPage = lazy(() => import("@/pages/SettlementPage").then((m) => ({ default: m.SettlementPage })));
+const RevenueRecognitionPage = lazy(() => import("@/pages/RevenueRecognitionPage").then((m) => ({ default: m.RevenueRecognitionPage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
@@ -299,6 +302,9 @@ export default function App() {
         <Route path="/payments"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/profitability" element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/finance/tax-config" element={<RequirePermission permission="tax.read"><TaxAdminPage /></RequirePermission>} />
+        <Route path="/finance/billing" element={<RequirePermission permission="billing.read"><BillingConsolidationPage /></RequirePermission>} />
+        <Route path="/finance/settlements" element={<RequirePermission permission="settlement.read"><SettlementPage /></RequirePermission>} />
+        <Route path="/finance/revenue-recognition" element={<RequirePermission permission="revrec.read"><RevenueRecognitionPage /></RequirePermission>} />
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
@@ -350,7 +356,7 @@ export default function App() {
               "customer-portal","customer-eta","maintenance","work-orders","dvir-inspections","documents",
               "safety","dashcam","coaching","incidents","evidence-packages","customers","assets",
               "ai-copilot","predictive-analytics","fuel-idling","expenses","contracts-rates","carrier-management","predictive-margin",
-              "tax-config","cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
+              "tax-config","billing-consolidation","driver-pay","revenue-recognition","cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
               "executive","about","reports","shipments","load-bookings","route-plans","proof-of-delivery",
               "last-mile-delivery","leads","sales-pipeline","opportunities","campaigns","account-health",
               "follow-ups","support-tickets","renewals","upsell-opportunities","contracts","rate-cards",
