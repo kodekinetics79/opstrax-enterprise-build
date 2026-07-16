@@ -159,6 +159,24 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE (gateway_id, signature)
         )",
 
+        // Per-gateway credentials (H3): each trusted forwarding gateway has its OWN HMAC secret and is
+        // bound to exactly one authorized tenant. Replaces the single shared fleet-wide secret; a device
+        // resolved outside the gateway's company_id is rejected, closing the cross-tenant skeleton key.
+        // secret_encrypted is envelope-encrypted (PiiProtectionService). company_id present but this is a
+        // control-plane lookup table read pre-tenant-context (system scope); RLS-enrolled for defense.
+        @"CREATE TABLE IF NOT EXISTS telemetry_gateways (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            gateway_id VARCHAR(120) NOT NULL,
+            company_id BIGINT NOT NULL,
+            gateway_name VARCHAR(220) NULL,
+            secret_encrypted TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            last_seen_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            UNIQUE (gateway_id)
+        )",
+
         // Per-tenant, per-rule configurable thresholds. Defaults seeded below.
         @"CREATE TABLE IF NOT EXISTS telemetry_rules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

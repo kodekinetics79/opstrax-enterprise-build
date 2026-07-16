@@ -157,6 +157,9 @@ public static partial class EndpointMappings
         // Device lifecycle
         app.MapGet("/api/telemetry/devices", TelemetryDeviceList);
         app.MapGet("/api/telemetry/devices/{id:long}", TelemetryDeviceDetail);
+        app.MapPost("/api/telemetry/gateways", TelemetryGatewayProvision);
+        app.MapGet("/api/telemetry/gateways", TelemetryGatewayList);
+        app.MapPost("/api/telemetry/gateways/{id:long}/revoke", TelemetryGatewayRevoke);
         app.MapPost("/api/telemetry/devices/provision", TelemetryDeviceProvision);
         app.MapPost("/api/telemetry/devices/{id:long}/rotate-secret", TelemetryDeviceRotateSecret);
         app.MapPost("/api/telemetry/devices/{id:long}/revoke", TelemetryDeviceRevoke);
@@ -11974,6 +11977,59 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     // ── POST /api/telemetry/gps-ingest ─────────────────────────────────────────────
+    // H3 — provision a per-gateway credential bound to the caller's tenant. Returns the HMAC secret
+    // ONCE (never stored in the clear; persisted envelope-encrypted). The gateway then signs gps-ingest
+    // with this secret and sends X-Gateway-Id, and may only submit for devices in this tenant.
+    private static async Task<IResult> TelemetryGatewayProvision(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var gatewayId = (body.TryGetValue("gatewayId", out var g) ? g?.ToString() : null)?.Trim();
+        if (string.IsNullOrWhiteSpace(gatewayId))
+            return Results.BadRequest(ApiResponse<object>.Fail("gatewayId is required"));
+        var name = body.TryGetValue("name", out var n) ? n?.ToString() : null;
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        // Refuse to mint a gateway secret unless envelope encryption is actually configured — otherwise
+        // Encrypt() passes the plaintext through and we would persist a live HMAC secret in the clear.
+        if (!pii.Enabled)
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var secret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var encrypted = pii.Encrypt(secret);
+        if (string.IsNullOrWhiteSpace(encrypted))
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        try
+        {
+            var id = await db.InsertAsync(
+                @"INSERT INTO telemetry_gateways (gateway_id, company_id, gateway_name, secret_encrypted, status)
+                  VALUES (@g, @c, @n, @s, 'active') RETURNING id",
+                c => { c.Parameters.AddWithValue("@g", gatewayId); c.Parameters.AddWithValue("@c", companyId);
+                       c.Parameters.AddWithValue("@n", (object?)name ?? DBNull.Value); c.Parameters.AddWithValue("@s", encrypted!); }, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, gatewayId, secret }, "Gateway provisioned — copy the secret now, it is shown only once"));
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("A gateway with that gatewayId already exists"));
+        }
+    }
+
+    private static async Task<IResult> TelemetryGatewayList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.read") is { } denied) return denied;
+        var rows = await db.QueryAsync(
+            "SELECT id, gateway_id, gateway_name, status, last_seen_at, created_at FROM telemetry_gateways WHERE company_id=@c ORDER BY created_at DESC",
+            c => c.Parameters.AddWithValue("@c", GetCompanyId(http)), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
+    }
+
+    private static async Task<IResult> TelemetryGatewayRevoke(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var rows = await db.ExecuteAsync("UPDATE telemetry_gateways SET status='revoked', updated_at=NOW() WHERE id=@id AND company_id=@c",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@c", GetCompanyId(http)); }, ct);
+        if (rows == 0) return Results.NotFound(ApiResponse<object>.Fail("Gateway not found"));
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "revoked" }, "Gateway revoked"));
+    }
+
     // Trusted-gateway GPS ingest for hardware trackers (GT06/Concox/Jimi PT40-class).
     // The field device talks its vendor protocol to a separately operated gateway; the
     // gateway authenticates here with HMAC. IMEI is only a provisioned lookup key and is
@@ -11986,7 +12042,30 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // bearing, alt/altitude, ts/timestamp/gpsTime, fuel, odometer.
     private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, IConfiguration config, AuditService audit, CancellationToken ct)
     {
-        var gatewaySecret = config["Telemetry:GatewaySecret"];
+        // H3 — per-gateway credentials. If the forwarder identifies itself with X-Gateway-Id, authenticate
+        // with THAT gateway's own secret and remember the single tenant it is authorized for (enforced
+        // after device resolution below). Absent the header, fall back to the legacy shared fleet secret
+        // (dual-run, so already-deployed forwarders like the PT40-Q keep working during migration).
+        var gatewayIdHeader = http.Request.Headers["X-Gateway-Id"].FirstOrDefault()?.Trim();
+        string? gatewaySecret;
+        long? gatewayScopeCompanyId = null;
+        var replayGatewayId = GpsGatewayReplayGuard.DefaultGatewayId;
+        if (!string.IsNullOrWhiteSpace(gatewayIdHeader))
+        {
+            var gw = await db.QuerySingleInSystemScopeAsync(
+                "SELECT company_id, secret_encrypted, status FROM telemetry_gateways WHERE gateway_id=@g LIMIT 1",
+                c => c.Parameters.AddWithValue("@g", gatewayIdHeader), ct);
+            if (gw is null || (gw.GetValueOrDefault("status")?.ToString() ?? "") != "active")
+                return Results.Unauthorized();
+            gatewaySecret = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()
+                .Decrypt(gw.GetValueOrDefault("secretEncrypted")?.ToString());
+            gatewayScopeCompanyId = Convert.ToInt64(gw["companyId"]);
+            replayGatewayId = gatewayIdHeader;
+        }
+        else
+        {
+            gatewaySecret = config["Telemetry:GatewaySecret"];
+        }
         var timestampRaw = http.Request.Headers["X-Gateway-Timestamp"].FirstOrDefault();
         var signatureRaw = http.Request.Headers["X-Gateway-Signature"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(gatewaySecret) || gatewaySecret.Length < 32)
@@ -12056,6 +12135,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var deviceId  = Convert.ToInt64(device["id"]);
         var companyId = Convert.ToInt64(device["companyId"]);
+
+        // H3 tenant-scope enforcement: a per-gateway credential may only submit for devices in the tenant
+        // it was provisioned for. A gateway asserting another tenant's IMEI is rejected — this is the
+        // clause that closes the cross-tenant skeleton key (the legacy shared-secret path has no scope).
+        if (gatewayScopeCompanyId is { } scope && scope != companyId)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            await audit.LogAsync(http, "telemetry.gps.gateway_scope_denied", "EldDevice", deviceId, $"gateway:{replayGatewayId}", ct);
+            return Results.Json(ApiResponse<object>.Fail("Device is not authorized for this gateway"), statusCode: 403);
+        }
+
         long? vehicleId = device["vehicleId"] is null or DBNull ? null : Convert.ToInt64(device["vehicleId"]);
         long? driverId  = device["driverId"]  is null or DBNull ? null : Convert.ToInt64(device["driverId"]);
 
@@ -12101,7 +12191,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
         if (replayAvail == GpsGatewayReplayGuard.Availability.Absent &&
-            !GpsGatewayReplayGuard.TryReserveInMemory(GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig, timestamp))
+            !GpsGatewayReplayGuard.TryReserveInMemory(replayGatewayId, canonicalSig, timestamp))
         {
             System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
@@ -12123,7 +12213,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // (fail closed — the request 500s, no partial write, reservation rolled back).
             if (replayAvail == GpsGatewayReplayGuard.Availability.Present &&
                 !await GpsGatewayReplayGuard.TryReserveDurableAsync(
-                    db, GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig, timestamp, deviceId, companyId, ct))
+                    db, replayGatewayId, canonicalSig, timestamp, deviceId, companyId, ct))
             {
                 durableReplayDuplicate = true;
                 return;
@@ -12215,7 +12305,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // in-memory fallback (Absent path) did not, so release it here to keep a legitimate
             // retry from being rejected as a replay.
             if (replayAvail == GpsGatewayReplayGuard.Availability.Absent)
-                GpsGatewayReplayGuard.ReleaseInMemory(GpsGatewayReplayGuard.DefaultGatewayId, canonicalSig);
+                GpsGatewayReplayGuard.ReleaseInMemory(replayGatewayId, canonicalSig);
             throw;
         }
 
