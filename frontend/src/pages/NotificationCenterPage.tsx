@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Bell, CheckCheck, Eye, Filter, RefreshCw, X } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notificationsApi } from "@/services/notificationsApi";
+import { Select } from "@/components/ui";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -110,26 +111,26 @@ export function NotificationCenterPage() {
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
-          <select
+          <Select
             value={filterSeverity}
             onChange={(e) => setFilterSeverity(e.target.value)}
-            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-700"
+            className="text-xs"
           >
             <option value="">All Severities</option>
             {["Critical","High","Medium","Low"].map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-700"
+            className="text-xs"
           >
             <option value="">All Statuses</option>
             {["unread","read","acknowledged","escalated"].map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
+          </Select>
         </div>
         <span className="ml-auto text-xs text-slate-400">{rows.length} notifications</span>
       </div>

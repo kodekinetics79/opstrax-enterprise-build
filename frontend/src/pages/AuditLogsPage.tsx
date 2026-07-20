@@ -1,11 +1,10 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  Activity, Bot, CheckCircle2, Download, FileDown, Filter, Layers,
-  Search, Shield, Users, X,
+  Bot, CheckCircle2, Download, Filter, Search, Shield, Sparkles, X,
 } from "lucide-react";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
-import { ClayCard, KpiCard } from "@/components/ui";
+import { Select } from "@/components/ui";
 import {
   useAuditLogs, useAuditExportRequests, useCreateAuditExport, useAuditAiRecs,
 } from "@/hooks/useBatch7";
@@ -70,72 +69,38 @@ export function AuditLogsPage() {
 
   const createExport = useCreateAuditExport();
 
-  // ---- Derived analytics (computed purely from data already fetched) ----
-  const stats = useMemo(() => {
-    const sevCounts: Record<string, number> = { Info: 0, Warning: 0, High: 0, Critical: 0 };
-    const actors = new Set<string>();
-    const modules = new Set<string>();
-    for (const log of logs) {
-      const sev = String(log.severity ?? "Info");
-      sevCounts[sev] = (sevCounts[sev] ?? 0) + 1;
-      const actor = String(log.actor_name ?? "system");
-      if (actor) actors.add(actor);
-      const mod = String(log.module_key ?? "");
-      if (mod) modules.add(mod);
-    }
-    const criticalHigh = (sevCounts.Critical ?? 0) + (sevCounts.High ?? 0);
-    const pendingExports = exports_.filter(
-      (e) => /pending|processing/i.test(String(e.status ?? "")),
-    ).length;
-    // Module event tallies for the side rail (top modules by activity).
-    const moduleTally: Record<string, number> = {};
-    for (const log of logs) {
-      const mod = String(log.module_key ?? "—");
-      moduleTally[mod] = (moduleTally[mod] ?? 0) + 1;
-    }
-    const topModules = Object.entries(moduleTally)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6);
-    // Most recent entries by timestamp for the "recent activity" side panel.
-    const recent = [...logs]
-      .sort((a, b) => {
-        const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;
-        const tb = b.created_at ? new Date(String(b.created_at)).getTime() : 0;
-        return tb - ta;
-      })
-      .slice(0, 6);
-    return {
-      total: logs.length,
-      sevCounts,
-      criticalHigh,
-      actors: actors.size,
-      modules: modules.size,
-      exportsTotal: exports_.length,
-      pendingExports,
-      topModules,
-      recent,
-    };
-  }, [logs, exports_]);
-
-  const maxModule = stats.topModules.length ? stats.topModules[0][1] : 0;
-
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900">Audit Logs</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Immutable record of all system actions across all modules</p>
+    <div className="space-y-6 pb-10">
+      {/* ── Hero ── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Shield className="h-3 w-3" /> Compliance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Immutable system activity record</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">Audit Logs</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Immutable record of all system actions across all modules</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="fh-btn-primary cursor-pointer flex items-center gap-2"
+                onClick={() => setExportOpen(true)}
+                disabled={!canExportReports}
+                title={!canExportReports ? "You do not have permission to perform this action." : undefined}
+              >
+                <Download className="h-4 w-4" /> Export Audit Log
+              </button>
+            </div>
+          </div>
         </div>
-        <button
-          className="btn-primary flex items-center gap-2"
-          onClick={() => setExportOpen(true)}
-          disabled={!canExportReports}
-          title={!canExportReports ? "You do not have permission to perform this action." : undefined}
-        >
-          <Download className="h-4 w-4" /> Export Audit Log
-        </button>
-      </div>
+      </header>
 
       {/* Compliance disclaimer */}
       <div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
@@ -148,47 +113,40 @@ export function AuditLogsPage() {
         </div>
       </div>
 
-      {/* KPI row — all values computed from data already in scope */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard
-          label="Total Events"
-          value={stats.total.toLocaleString()}
-          trend={`${stats.modules} module${stats.modules === 1 ? "" : "s"} active`}
-          icon={<Activity className="h-5 w-5" />}
-        />
-        <KpiCard
-          label="Critical & High"
-          value={stats.criticalHigh.toLocaleString()}
-          status={stats.criticalHigh > 0 ? "Critical" : undefined}
-          trend={stats.criticalHigh > 0 ? `${stats.sevCounts.Critical ?? 0} critical` : "No high-severity events"}
-          icon={<Shield className="h-5 w-5" />}
-        />
-        <KpiCard
-          label="Export Requests"
-          value={stats.exportsTotal.toLocaleString()}
-          status={stats.pendingExports > 0 ? "Pending" : undefined}
-          trend={stats.pendingExports > 0 ? `${stats.pendingExports} in progress` : "All resolved"}
-          icon={<FileDown className="h-5 w-5" />}
-        />
-        <KpiCard
-          label="Distinct Actors"
-          value={stats.actors.toLocaleString()}
-          trend={`${stats.modules} module${stats.modules === 1 ? "" : "s"} touched`}
-          icon={<Users className="h-5 w-5" />}
-        />
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Audit signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {logs.length > 0 ? `${logs.length} audit entries captured · ${exports_.length} export requests` : "No audit entries match current filters."}
+            </p>
+          </div>
+        </div>
+        <button className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto" onClick={() => setExportOpen(true)} disabled={!canExportReports}>
+          Request export <Download className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 pb-px">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-teal-50 text-teal-700 border border-b-0 border-teal-300" : "text-slate-500 hover:text-slate-700"}`}
-          >
-            {t}
-          </button>
-        ))}
+      {/* ── Tab navigation ── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-3 gap-1.5">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${tab === t ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t}</span>
+              <span className={`mt-0.5 text-sm font-bold ${tab === t ? "text-teal-700" : "text-slate-900"}`}>{t === "Audit Trail" ? logs.length : t === "Export Requests" ? exports_.length : aiRecs.length}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Audit Trail */}
@@ -197,7 +155,7 @@ export function AuditLogsPage() {
           {/* Filters */}
           <div className="flex flex-wrap gap-2">
             <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input
                 className="field w-full pl-9 text-sm"
                 placeholder="Search actor, entity, action…"
@@ -207,15 +165,15 @@ export function AuditLogsPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <Filter className="h-3.5 w-3.5 text-slate-500" />
-              <select className="field text-sm" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
+              <Select className="text-sm w-44" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
                 <option value="">All modules</option>
                 {MODULE_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              </Select>
             </div>
-            <select className="field text-sm" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
+            <Select className="text-sm w-44" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
               <option value="">All severities</option>
               {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
             {(search || filterModule || filterSev) && (
               <button className="icon-btn" onClick={() => { setSearch(""); setFilterModule(""); setFilterSev(""); }}>
                 <X className="h-3.5 w-3.5" />
@@ -223,162 +181,64 @@ export function AuditLogsPage() {
             )}
           </div>
 
-          {/* Two-column shell: log table (main) + analytics rail (side) */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="panel overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    {["Timestamp", "Actor", "Action", "Entity", "Module", "Severity"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {logs.map((log, i) => (
-                    <tr
-                      key={i}
-                      className="cursor-pointer transition hover:bg-slate-50"
-                      onClick={() => setDrawerLog(log)}
-                    >
-                      <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-                        {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">{String(log.actor_name ?? "system")}</td>
-                      <td className="px-4 py-3">
-                        <code className="rounded bg-teal-50 px-1.5 py-0.5 text-xs text-teal-700">{String(log.action_name ?? "")}</code>
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {String(log.entity_name ?? "")}
-                        {!!log.entity_id && <span className="ml-1 text-slate-500 text-xs">#{String(log.entity_id)}</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(log.module_key ?? "—")}</td>
-                      <td className="px-4 py-3"><SeverityBadge severity={String(log.severity ?? "Info")} /></td>
-                    </tr>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {["Timestamp", "Actor", "Action", "Entity", "Module", "Severity"].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-left">{h}</th>
                   ))}
-                </tbody>
-              </table>
-              {logs.length === 0 && (
-                <div className="py-12 text-center">
-                  <CheckCircle2 className="mx-auto h-8 w-8 text-slate-600" />
-                  <p className="mt-2 text-sm text-slate-500">No audit log entries match the current filters.</p>
-                </div>
-              )}
-            </div>
-
-            {/* Analytics rail — derived entirely from in-scope data */}
-            <div className="flex flex-col gap-4">
-              {/* Severity breakdown */}
-              <ClayCard className="p-4">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-teal-600" />
-                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Severity Breakdown</p>
-                </div>
-                <div className="mt-3 space-y-2.5">
-                  {SEVERITY_OPTIONS.map((sev) => {
-                    const count = stats.sevCounts[sev] ?? 0;
-                    const pct = stats.total > 0 ? Math.round((count / stats.total) * 100) : 0;
-                    return (
-                      <div key={sev}>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-600">{sev}</span>
-                          <span className="tabular-nums font-bold text-slate-800">{count}<span className="ml-1 font-medium text-slate-400">{pct}%</span></span>
-                        </div>
-                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className={`h-full rounded-full ${
-                              sev === "Critical" ? "bg-red-500"
-                              : sev === "High" ? "bg-orange-500"
-                              : sev === "Warning" ? "bg-amber-500"
-                              : "bg-sky-500"
-                            }`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </ClayCard>
-
-              {/* Activity by module */}
-              <ClayCard className="p-4">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-blue-600" />
-                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Activity by Module</p>
-                </div>
-                {stats.topModules.length === 0 ? (
-                  <p className="mt-3 text-xs text-slate-400">No module activity in view.</p>
-                ) : (
-                  <div className="mt-3 space-y-2.5">
-                    {stats.topModules.map(([mod, count]) => {
-                      const pct = maxModule > 0 ? Math.round((count / maxModule) * 100) : 0;
-                      return (
-                        <div key={mod}>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="truncate font-semibold text-slate-600">{mod}</span>
-                            <span className="ml-2 shrink-0 tabular-nums font-bold text-slate-800">{count}</span>
-                          </div>
-                          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                            <div className="h-full rounded-full bg-gradient-to-r from-teal-500 to-blue-500" style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </ClayCard>
-
-              {/* Recent activity */}
-              <ClayCard className="p-4">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-violet-600" />
-                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Recent Activity</p>
-                </div>
-                {stats.recent.length === 0 ? (
-                  <p className="mt-3 text-xs text-slate-400">No recent entries.</p>
-                ) : (
-                  <ul className="mt-3 space-y-2.5">
-                    {stats.recent.map((log, i) => (
-                      <li
-                        key={i}
-                        className="cursor-pointer rounded-lg border border-transparent p-1.5 transition hover:border-slate-200 hover:bg-slate-50"
-                        onClick={() => setDrawerLog(log)}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <code className="truncate rounded bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-700">{String(log.action_name ?? "")}</code>
-                          <SeverityBadge severity={String(log.severity ?? "Info")} />
-                        </div>
-                        <p className="mt-1 truncate text-[11px] text-slate-500">
-                          {String(log.actor_name ?? "system")}
-                          {" · "}
-                          {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </ClayCard>
-            </div>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {logs.map((log, i) => (
+                  <tr
+                    key={i}
+                    className="cursor-pointer transition-colors hover:bg-slate-50"
+                    onClick={() => setDrawerLog(log)}
+                  >
+                    <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+                      {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{String(log.actor_name ?? "system")}</td>
+                    <td className="px-4 py-3">
+                      <code className="rounded bg-teal-50 px-1.5 py-0.5 text-xs text-teal-700">{String(log.action_name ?? "")}</code>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {String(log.entity_name ?? "")}
+                      {!!log.entity_id && <span className="ml-1 text-slate-500 text-xs">#{String(log.entity_id)}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{String(log.module_key ?? "—")}</td>
+                    <td className="px-4 py-3"><SeverityBadge severity={String(log.severity ?? "Info")} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {logs.length === 0 && (
+              <div className="py-12 text-center">
+                <CheckCircle2 className="mx-auto h-8 w-8 text-slate-600" />
+                <p className="mt-2 text-sm text-slate-500">No audit log entries match the current filters.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Export Requests */}
       {tab === "Export Requests" && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="panel overflow-x-auto">
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200">
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   {["Requested By", "Date Range", "Format", "Status", "Requested At"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
+                    <th key={h} className="px-4 py-2.5 text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {exports_.map((e, i) => (
-                  <tr key={i} className="transition hover:bg-slate-50">
+                  <tr key={i} className="transition-colors hover:bg-slate-50">
                     <td className="px-4 py-3 text-slate-700">{String(e.requested_by_name ?? "")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {e.date_range_start ? new Date(String(e.date_range_start)).toLocaleDateString() : "—"}
@@ -392,74 +252,15 @@ export function AuditLogsPage() {
                 ))}
               </tbody>
             </table>
-            {exports_.length === 0 && (
-              <div className="py-12 text-center">
-                <FileDown className="mx-auto h-8 w-8 text-slate-400" />
-                <p className="mt-2 text-sm text-slate-500">No export requests yet.</p>
-              </div>
-            )}
-          </div>
-
-          {/* Export summary rail — derived from in-scope export data */}
-          <div className="flex flex-col gap-4">
-            <ClayCard className="p-4">
-              <div className="flex items-center gap-2">
-                <FileDown className="h-4 w-4 text-emerald-600" />
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Export Summary</p>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="text-[26px] font-black tabular-nums text-slate-900">{stats.exportsTotal}</p>
-                  <p className="text-[11px] font-semibold text-slate-500">Total requests</p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className={`text-[26px] font-black tabular-nums ${stats.pendingExports > 0 ? "text-amber-600" : "text-slate-900"}`}>{stats.pendingExports}</p>
-                  <p className="text-[11px] font-semibold text-slate-500">In progress</p>
-                </div>
-              </div>
-              <button
-                className="btn-primary mt-4 flex w-full items-center justify-center gap-2"
-                onClick={() => setExportOpen(true)}
-                disabled={!canExportReports}
-                title={!canExportReports ? "You do not have permission to perform this action." : undefined}
-              >
-                <Download className="h-4 w-4" /> New Export Request
-              </button>
-            </ClayCard>
-
-            <ClayCard className="p-4">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-blue-600" />
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Recent Requests</p>
-              </div>
-              {exports_.length === 0 ? (
-                <p className="mt-3 text-xs text-slate-400">No requests to show.</p>
-              ) : (
-                <ul className="mt-3 space-y-2.5">
-                  {exports_.slice(0, 6).map((e, i) => (
-                    <li key={i} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-slate-700">{String(e.requested_by_name ?? "—")}</p>
-                        <p className="truncate text-[11px] text-slate-400">
-                          {String(e.export_format ?? "")}
-                          {e.requested_at ? ` · ${new Date(String(e.requested_at)).toLocaleDateString()}` : ""}
-                        </p>
-                      </div>
-                      <ExportStatusBadge status={String(e.status ?? "")} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </ClayCard>
           </div>
         </div>
       )}
 
       {/* AI Advisor */}
       {tab === "Operations Advisor" && (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="space-y-3">
           {aiRecs.map((rec, i) => (
-            <ClayCard key={i} interactive className="flex items-start gap-4 p-4">
+            <div key={i} className="panel flex items-start gap-4 p-4">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
                 <Bot className="h-4 w-4 text-violet-600" />
               </div>
@@ -470,44 +271,42 @@ export function AuditLogsPage() {
                 </div>
                 <p className="mt-1 text-sm text-slate-600">{String(rec.body ?? rec.description ?? "")}</p>
               </div>
-            </ClayCard>
-          ))}
-          {aiRecs.length === 0 && (
-            <div className="lg:col-span-2 py-12 text-center">
-              <Bot className="mx-auto h-8 w-8 text-slate-400" />
-              <p className="mt-2 text-sm text-slate-500">No operations recommendations available.</p>
             </div>
-          )}
+          ))}
         </div>
       )}
 
       {/* Log detail drawer */}
       {drawerLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-sm" onClick={() => setDrawerLog(null)}>
-          <div className="h-full w-full max-w-md overflow-y-auto border-s border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-bold text-white">Audit Log Detail</h2>
-              <button className="icon-btn" onClick={() => setDrawerLog(null)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setDrawerLog(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="section-title text-teal-700">Audit Log Detail</p>
+                <button className="icon-btn cursor-pointer" onClick={() => setDrawerLog(null)}><X className="h-4 w-4" /></button>
+              </div>
             </div>
-            <div className="space-y-4 text-sm">
+            <div className="space-y-4 px-6 py-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-4 text-sm">
               {Object.entries(drawerLog).map(([k, v]) => (
-                <div key={k}>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{k.replace(/_/g, " ")}</p>
-                  <p className="mt-0.5 break-all text-slate-200">{v == null ? "—" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v)}</p>
+                <div key={k} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 mt-0.5">{k.replace(/_/g, " ")}</p>
+                  <p className="text-right text-sm font-medium text-slate-800 break-all">{v == null ? "—" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v)}</p>
                 </div>
               ))}
+              </div>
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
       {/* Export request modal */}
       {exportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="panel w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">Export Audit Log</h2>
-              <button className="icon-btn" onClick={() => setExportOpen(false)}><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-md overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">Export Audit Log</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setExportOpen(false)}><X className="h-4 w-4" /></button>
             </div>
             <form
               onSubmit={(e) => {
@@ -528,13 +327,13 @@ export function AuditLogsPage() {
                 <div><label className="label">To</label><input name="end" type="date" className="field w-full" /></div>
               </div>
               <div><label className="label">Format</label>
-                <select name="format" className="field w-full">
+                <Select name="format" className="w-full">
                   {["CSV", "PDF", "Excel", "JSON"].map((f) => <option key={f}>{f}</option>)}
-                </select>
+                </Select>
               </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" className="btn-ghost flex-1" onClick={() => setExportOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-primary flex-1" disabled={!canExportReports}>
+              <div className="mt-6 flex gap-2 border-t border-slate-200 pt-4">
+                <button type="button" className="fh-btn-ghost flex-1 cursor-pointer" onClick={() => setExportOpen(false)}>Cancel</button>
+                <button type="submit" className="fh-btn-primary flex-1 cursor-pointer" disabled={!canExportReports}>
                   Request Export
                 </button>
               </div>

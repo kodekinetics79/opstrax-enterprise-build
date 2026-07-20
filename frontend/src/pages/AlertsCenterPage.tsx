@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -9,13 +9,15 @@ import {
   Clock3,
   RefreshCw,
   Search,
+  Shield,
   ShieldAlert,
   Sparkles,
   Wrench,
+  Zap,
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, LoadingState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type Alert = {
@@ -201,26 +203,26 @@ function ActionModal({
     "bg-teal-600 hover:bg-teal-700";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="panel mx-4 w-full max-w-md" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+    <div className="ac-modal-overlay" onClick={onClose}>
+      <div className="ac-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <h3 className="ac-modal-title">{title}</h3>
           <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
-        <p className="mt-3 text-sm text-slate-600">
-          <span className="font-medium text-slate-900">{alert.title}</span> · {alert.severity} · {alert.category}
+        <p className="ac-modal-sub">
+          <span className="font-semibold text-slate-900">{alert.title}</span> · {alert.severity} · {alert.category}
         </p>
-        <div className="mt-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</label>
+        <div>
+          <label className="ac-modal-label">{label}</label>
           <textarea
-            className="min-h-[110px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+            className="ac-modal-textarea"
             value={note}
             onChange={(event) => setNote(event.target.value)}
             placeholder={type === "task" ? `Follow-up for ${alert.title}` : "Add context for the team"}
           />
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost h-10" onClick={onClose}>Cancel</button>
+          <button type="button" className="fh-btn-ghost h-10" onClick={onClose}>Cancel</button>
           <button
             type="button"
             className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition ${buttonClass}`}
@@ -255,37 +257,41 @@ function AlertCard({
   canClose: boolean;
   onAction: (type: ActionType, alert: Alert) => void;
 }) {
+  const sevKey = alert.severity.toLowerCase();
+  const toneClass =
+    sevKey === "critical" ? "ac-alert-card-critical" :
+    sevKey === "high" ? "ac-alert-card-high" :
+    sevKey === "warning" ? "ac-alert-card-warning" : "ac-alert-card-info";
+
   return (
-    <article
-      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,.07)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,.10)] ${active ? "border-sky-300 bg-[linear-gradient(180deg,rgba(248,252,255,.98),rgba(235,243,255,.94))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] ${severityTone(alert.severity)}`}`}
-    >
+    <article className={`ac-alert-card ${toneClass} ${active ? "ac-alert-card-active" : ""}`}>
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={alert.severity} />
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.severity)}`}>{alert.severity}</span>
               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-slate-900">{alert.title}</h3>
+            <h3 className="ac-alert-title">{alert.title}</h3>
           </div>
           <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
         </div>
-        <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+        <p className="ac-alert-entity">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
+        <p className="ac-alert-action">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
       </button>
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
+      <div className="ac-alert-actions">
         {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9 border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
+          <button type="button" className="fh-btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", alert)}>
             Acknowledge
           </button>
         )}
         {canAcknowledge && (
-          <button type="button" className="btn-ghost h-9 border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("task", alert)}>
             Create task
           </button>
         )}
         {canClose && !/closed/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", alert)}>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("close", alert)}>
             Close
           </button>
         )}
@@ -319,7 +325,7 @@ function DetailPanel({
 
   if (!record) {
     return (
-      <div className="panel p-5">
+      <div className="ac-detail">
         <EmptyState title="No alert selected" subtitle="Choose an alert from the live queue to inspect it in context." />
       </div>
     );
@@ -336,18 +342,18 @@ function DetailPanel({
           : "Informational signals should still stay linked to operational context so they can be audited later.";
 
   return (
-    <aside className="panel p-4 lg:p-5">
+    <aside className="ac-detail">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected alert</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">{record.title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{record.alertId} · {record.category}</p>
+          <p className="ac-detail-eyebrow">Selected alert</p>
+          <h2 className="ac-detail-title">{record.title}</h2>
+          <p className="ac-detail-sub">{record.alertId} · {record.category}</p>
         </div>
         {loading ? <RefreshCw className="h-4 w-4 animate-spin text-slate-400" /> : null}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <StatusBadge status={record.severity} />
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.severity)}`}>{record.severity}</span>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.status)}`}>{record.status}</span>
         {record.entity ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{record.entity}</span> : null}
       </div>
@@ -359,32 +365,32 @@ function DetailPanel({
         <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_22px_rgba(15,23,42,.05)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
-        <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
+      <div className="ac-info-block ac-info-block-teal">
+        <p className="ac-info-block-label ac-info-block-label-teal">Recommended action</p>
+        <p className="ac-info-block-body">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
-        <p className="mt-2 text-sm text-slate-600">{rationale}</p>
+      <div className="ac-info-block ac-info-block-violet">
+        <p className="ac-info-block-label ac-info-block-label-violet">Priority rationale</p>
+        <p className="ac-info-block-body">{rationale}</p>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
+      <div className="ac-info-block" style={{ background: 'rgba(248,250,252,.6)' }}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
+          <p className="ac-info-block-label ac-info-block-label-slate">Follow-up tasks</p>
           <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
         </div>
         <div className="mt-3 space-y-3">
           {tasks.length ? tasks.map((task) => (
-            <div key={String(task.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <div key={String(task.id)} className="ac-task-entry">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
+                  <p className="ac-task-title">{task.title}</p>
+                  <p className="ac-task-meta">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
                 </div>
                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(task.status || "Open")}`}>{task.status || "Open"}</span>
               </div>
-              {task.description ? <p className="mt-2 text-sm text-slate-600">{task.description}</p> : null}
+              {task.description ? <p className="ac-task-desc">{task.description}</p> : null}
             </div>
           )) : (
             <p className="text-sm text-slate-500">No follow-up task has been created from this alert yet.</p>
@@ -392,16 +398,16 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
+      <div className="ac-info-block" style={{ background: 'rgba(248,250,252,.6)' }}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
+          <p className="ac-info-block-label ac-info-block-label-slate">Audit trail</p>
           <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
         </div>
         <div className="mt-3 space-y-3">
           {auditTrail.length ? auditTrail.map((entry) => (
-            <div key={String(entry.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <p className="text-sm font-semibold text-slate-900">{entry.actionName || "Alert event"}</p>
-              <p className="mt-1 text-xs text-slate-500">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
+            <div key={String(entry.id)} className="ac-task-entry">
+              <p className="ac-task-title">{entry.actionName || "Alert event"}</p>
+              <p className="ac-task-meta">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
             </div>
           )) : (
             <p className="text-sm text-slate-500">No audit entries are available for this alert yet.</p>
@@ -409,15 +415,15 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
         {canAcknowledge && /open/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
+          <button type="button" className="fh-btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
             Acknowledge
           </button>
         )}
         {canClose && !/closed/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
+          <button type="button" className="fh-btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
         )}
       </div>
     </aside>
@@ -426,9 +432,9 @@ function DetailPanel({
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-3 py-2 shadow-[0_6px_14px_rgba(15,23,42,.04)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+    <div className="ac-meta-card">
+      <p className="ac-meta-label">{label}</p>
+      <p className="ac-meta-value">{value}</p>
     </div>
   );
 }
@@ -559,13 +565,6 @@ export function AlertsCenterPage() {
   const detailRecord = normalizeAlertDetail(detailQuery.data as AnyRecord | undefined);
   const liveDetail = detailRecord.alert;
 
-  useEffect(() => {
-    if (!filtered.length) return;
-    if (!selectedAlert || !filtered.some((alert) => alert.id === selectedAlert.id)) {
-      setSelectedAlert(filtered[0]);
-    }
-  }, [filtered, selectedAlert]);
-
   function handleAction(type: ActionType, alert: Alert) {
     setActionType(type);
     setActionAlert(alert);
@@ -582,39 +581,44 @@ export function AlertsCenterPage() {
   }
 
   if (alertsQuery.isLoading) return <LoadingState />;
-  if (alertsQuery.isError) {
-    return (
-      <ErrorState
-        message={alertsQuery.error instanceof Error ? alertsQuery.error.message : "Unable to load alerts."}
-        onRetry={() => void alertsQuery.refetch()}
-      />
-    );
-  }
+  if (alertsQuery.isError) return <ErrorState message={alertsQuery.error instanceof Error ? alertsQuery.error.message : "Unable to load alerts."} />;
 
   return (
-    <div className="alerts-command-room alerts-center-workbench space-y-4 pb-8">
+    <div className="space-y-6 pb-10">
       {toastMsg ? (
-        <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
-          {toastMsg}
-        </div>
+        <div className="ac-toast">{toastMsg}</div>
       ) : null}
 
-      <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,253,.96))] p-4 shadow-sm">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
-        <div className="pointer-events-none absolute -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
-        <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_0.85fr] lg:items-start">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
-              <BellRing className="h-3.5 w-3.5" /> Live alerts command room
+      {/* ── Hero banner ──────────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ShieldAlert className="h-3 w-3" /> Exception Command
+                </span>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live · 15s refresh</span>
+              </div>
+
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Alerts Center
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {summary.total} alerts tracked · {summary.open} open · {summary.critical} critical — action-first triage surface
+              </p>
             </div>
-            <h1 className="mt-3 text-[1.9rem] font-black tracking-tight text-slate-900 sm:text-[2.2rem]">
-              Alerts Center
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              A live, backend-backed triage surface for open alerts, ownership, audit trail, and resolution actions. Tight layout, no demo queue, no fake feed, and no hidden fallback layer.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-white">
+
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("alerts", filtered)} className="fh-btn-ghost">
                 Export live queue
               </button>
               <button
@@ -623,120 +627,157 @@ export function AlertsCenterPage() {
                   void queryClient.invalidateQueries({ queryKey: ["alerts"] });
                   void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
                 }}
-                className="btn-primary h-10 bg-gradient-to-r from-sky-600 via-teal-600 to-indigo-600 shadow-md shadow-sky-200/70 hover:from-sky-500 hover:via-teal-500 hover:to-indigo-500"
+                className="fh-btn-primary"
               >
-                Refresh alerts <RefreshCw className="h-4 w-4" />
+                Refresh alerts <RefreshCw className="h-3.5 w-3.5" />
               </button>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Auto refresh 15s</span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">No demo fallback</span>
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2 lg:self-start">
-            <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
-            <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
-            <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
-            <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
-          </div>
-        </div>
-
-        <div className="relative mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
-          <div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Live lanes</h2>
-                <p className="text-xs text-slate-500">Directly driven by the current queue, not static demo cards.</p>
-              </div>
-              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                {filtered.length} visible
-              </span>
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {categoryBuckets.slice(0, 4).map((bucket) => (
-                <button
-                  key={bucket.category}
-                  type="button"
-                  onClick={() => navigate(bucket.route)}
-                  className="rounded-2xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-                  </div>
-                  <p className="mt-1.5 text-xl font-black tracking-tight text-slate-900">{bucket.count}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_8px_18px_rgba(15,23,42,.05)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Queue health</h2>
-                <p className="text-xs text-slate-500">Live operating pressure from the current alert feed.</p>
-              </div>
-              <ShieldAlert className="h-4 w-4 text-sky-500" />
-            </div>
-            <div className="mt-2 space-y-2.5">
-              <HealthLine label="Critical open" value={summary.critical} total={Math.max(summary.open, 1)} tone="red" />
-              <HealthLine label="Aging 24h+" value={agingOpen} total={Math.max(summary.open, 1)} tone="amber" />
-              <HealthLine label="Unowned" value={unownedOpen} total={Math.max(summary.open, 1)} tone="sky" />
             </div>
           </div>
         </div>
       </header>
 
-      <section className="panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* ── KPI strip ────────────────────────────────────────────── */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="fo-kpi-card fo-kpi-active">
+          <div className="flex items-start gap-3">
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><BellRing className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-teal-500" /><span>{summary.open}</span></div>
+              <p className="fo-kpi-label text-slate-500">Open queue</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">{summary.critical} critical</p>
+            </div>
+          </div>
+        </div>
+        <div className="fo-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><Clock3 className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-amber-400" /><span>{agingOpen}</span></div>
+              <p className="fo-kpi-label text-slate-500">Aging open alerts</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">24h+ still active</p>
+            </div>
+          </div>
+        </div>
+        <div className="fo-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><AlertTriangle className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-rose-500" /><span>{unownedOpen}</span></div>
+              <p className="fo-kpi-label text-slate-500">Unowned alerts</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">Not yet acknowledged</p>
+            </div>
+          </div>
+        </div>
+        <div className="fo-kpi-card">
+          <div className="flex items-start gap-3">
+            <div className="fo-kpi-icon fo-kpi-icon-inactive"><BadgeCheck className="h-5 w-5 text-teal-600" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="fo-kpi-count"><span className="fo-kpi-dot bg-slate-400" /><span>{summary.closed}/{summary.total || 1}</span></div>
+              <p className="fo-kpi-label text-slate-500">Closed today posture</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">Closed versus total visible</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
+        <section className="ac-panel">
+          <div className="ac-panel-header">
+            <div>
+              <h2 className="ac-panel-title">Response lanes</h2>
+              <p className="ac-panel-subtitle">Where alert pressure is concentrating right now across operations domains.</p>
+            </div>
+            <span className="ac-panel-badge">
+              <Zap className="h-3 w-3" /> Live workload map
+            </span>
+          </div>
+          <div className="ac-lane-grid">
+            {categoryBuckets.slice(0, 6).map((bucket) => (
+              <button
+                key={bucket.category}
+                type="button"
+                onClick={() => navigate(bucket.route)}
+                className="ac-lane-card"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="ac-lane-name">{bucket.category}</p>
+                  <ArrowRight className="h-4 w-4 text-slate-300" />
+                </div>
+                <p className="ac-lane-count">{bucket.count}</p>
+                <p className="ac-lane-desc">Open alert{bucket.count === 1 ? "" : "s"} linked to this lane.</p>
+              </button>
+            ))}
+            {!categoryBuckets.length && (
+              <div className="ac-lane-empty md:col-span-2 xl:col-span-3">
+                No active alert pressure is being returned by the live backend at the moment.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="ac-panel">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Workspace controls</h2>
-            <p className="text-sm text-slate-500">Compact filters for a dense queue view.</p>
+            <h2 className="ac-panel-title">Triage guidance</h2>
+            <p className="ac-panel-subtitle">What a strong ops team should do next with the current queue shape.</p>
+          </div>
+          <div className="ac-guidance-list">
+            <GuidanceCard
+              icon={<ShieldAlert className="h-4 w-4" />}
+              title="Clear criticals first"
+              body={summary.critical > 0 ? `${summary.critical} critical alert${summary.critical === 1 ? "" : "s"} are still open. These should stay at the top of the shift board.` : "No critical alerts are currently open."}
+            />
+            <GuidanceCard
+              icon={<Clock3 className="h-4 w-4" />}
+              title="Stop queue aging"
+              body={agingOpen > 0 ? `${agingOpen} open or acknowledged alert${agingOpen === 1 ? "" : "s"} have been sitting for 24h or more.` : "No aging alert backlog is visible right now."}
+            />
+            <GuidanceCard
+              icon={<Wrench className="h-4 w-4" />}
+              title="Hand off by domain"
+              body={categoryBuckets[0] ? `${categoryBuckets[0].category} currently has the heaviest live alert concentration.` : "No single lane is overloaded from the returned dataset."}
+            />
+            <GuidanceCard
+              icon={<Sparkles className="h-4 w-4" />}
+              title="Make ownership visible"
+              body={unownedOpen > 0 ? `${unownedOpen} open alert${unownedOpen === 1 ? "" : "s"} still have no acknowledged owner.` : "Every open alert appears to have an owner or the queue is empty."}
+            />
+          </div>
+        </section>
+      </div>
+
+      <section className="ac-filter-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="ac-search-wrap">
+            <Search className="ac-search-icon" />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search alerts, entities, categories\u2026"
+              className="ac-search-input"
+            />
           </div>
           <div className="flex flex-wrap gap-2">
-            <div className="relative w-full min-w-[16rem] sm:w-[20rem]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search alerts, entities, categories…"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
-              />
-            </div>
-            <button type="button" className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
-              All lanes
-            </button>
+            {CATEGORIES.map((category) => (
+              <button
+                key={category}
+                type="button"
+                onClick={() => setCategoryFilter(category)}
+                className={`ac-chip ${categoryFilter === category ? "ac-chip-active" : ""}`}
+              >
+                {category}
+              </button>
+            ))}
           </div>
         </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          {CATEGORIES.filter((category) => category !== "All").map((category) => (
-            <button
-              key={category}
-              type="button"
-              onClick={() => setCategoryFilter(category)}
-              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                categoryFilter === category ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
+      
+        <div className="mt-4 flex flex-wrap gap-2">
           {SEVERITY_FILTERS.map((severity) => (
             <button
               key={severity}
               type="button"
               onClick={() => setSeverityFilter(severity)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
+              className={`ac-chip text-xs uppercase tracking-[0.16em] ${severityFilter === severity ? "ac-chip-sev-active" : ""}`}
             >
               {severity}
             </button>
@@ -746,9 +787,7 @@ export function AlertsCenterPage() {
               key={status}
               type="button"
               onClick={() => setStatusFilter(status)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
+              className={`ac-chip text-xs uppercase tracking-[0.16em] ${statusFilter === status ? "ac-chip-status-active" : ""}`}
             >
               {status}
             </button>
@@ -757,7 +796,7 @@ export function AlertsCenterPage() {
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
+        <section className="space-y-3">
           {openAlerts.length ? openAlerts.map((alert) => (
             <AlertCard
               key={String(alert.id)}
@@ -769,30 +808,26 @@ export function AlertsCenterPage() {
               onAction={handleAction}
             />
           )) : (
-            <div className="md:col-span-2">
-              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
-            </div>
+            <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
           )}
         </section>
 
-        <div className="xl:sticky xl:top-4 xl:self-start">
-          <DetailPanel
-            alert={selectedAlert}
-            liveDetail={liveDetail}
-            tasks={detailRecord.tasks}
-            auditTrail={detailRecord.auditTrail}
-            loading={detailQuery.isLoading}
-            onNavigate={navigate}
-            canAcknowledge={canAcknowledge}
-            canClose={canClose}
-            onAction={handleAction}
-          />
-        </div>
+        <DetailPanel
+          alert={selectedAlert}
+          liveDetail={liveDetail}
+          tasks={detailRecord.tasks}
+          auditTrail={detailRecord.auditTrail}
+          loading={detailQuery.isLoading}
+          onNavigate={navigate}
+          canAcknowledge={canAcknowledge}
+          canClose={canClose}
+          onAction={handleAction}
+        />
       </div>
 
-      <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+      <div className="ac-footer-strip">
         <Clock3 className="h-3.5 w-3.5" />
-        Refreshed every 15 seconds from the live backend. No fallback data layer is used here.
+        Refreshed every 15 seconds from the live backend. No demo fallback is used here.
       </div>
 
       <ActionModal
@@ -810,42 +845,12 @@ export function AlertsCenterPage() {
 
 function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_24px_rgba(15,23,42,.05)]">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600 shadow-sm">{icon}</div>
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
+    <div className="ac-guidance-card">
+      <div className="flex items-center gap-3">
+        <div className="ac-guidance-icon-wrap">{icon}</div>
+        <p className="ac-guidance-title">{title}</p>
       </div>
-      <p className="mt-3 text-sm text-slate-500">{body}</p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, sublabel }: { label: string; value: number | string; sublabel: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_8px_20px_rgba(15,23,42,.06)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
-      <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
-    </div>
-  );
-}
-
-function HealthLine({ label, value, total, tone }: { label: string; value: number; total: number; tone: "red" | "amber" | "sky" }) {
-  const pct = Math.min(100, Math.round((value / total) * 100));
-  const toneClass =
-    tone === "red" ? "bg-red-500" :
-    tone === "amber" ? "bg-amber-500" :
-    "bg-sky-500";
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
-        <span>{label}</span>
-        <span>{value}</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className={`h-full rounded-full ${toneClass}`} style={{ width: `${pct}%` }} />
-      </div>
+      <p className="ac-guidance-body">{body}</p>
     </div>
   );
 }

@@ -313,30 +313,49 @@ export function getDevelopmentDashboardSummary() {
         valueText: String(activeShipments || 14),
         status: "Active",
         trend: "9 in transit · 5 at stops",
+        delta: "+12%",
       },
       {
         id: "sla", label: "SLA Exceptions",
         valueText: String(slaExceptions || 3),
         status: slaExceptions > 0 ? "Risk" : "On Track",
         trend: slaExceptions > 0 ? `${slaExceptions} behind committed ETA` : "All shipments on time",
+        delta: "-8%",
       },
       {
         id: "assignments", label: "Overdue Assignments",
         valueText: "2",
         status: "Critical",
         trend: "Jobs past dispatch window",
+        delta: "+1",
       },
       {
         id: "fleet", label: "Fleet On Road",
         valueText: String(fleetOnRoad),
         status: "Active",
         trend: `${Math.max(drivingCount, 6)} driving · ${Math.max(idlingCount, 3)} idling`,
+        delta: "+3",
       },
       {
         id: "safety", label: "Safety Events (24h)",
         valueText: String(Math.max(openAlerts, 2)),
         status: openAlerts > 3 ? "Warning" : "Active",
         trend: openAlerts > 0 ? "Require acknowledgement" : "No events — all clear",
+        delta: "-2",
+      },
+      {
+        id: "readiness", label: "Fleet Readiness",
+        valueText: "94%",
+        status: "Healthy",
+        trend: "Above 90% target threshold",
+        delta: "+2%",
+      },
+      {
+        id: "fuel", label: "Fuel Efficiency",
+        valueText: "8.2",
+        status: "Active",
+        trend: "km/L fleet average · 4% improvement",
+        delta: "+4%",
       },
     ],
     fleetStatus: {
@@ -349,6 +368,8 @@ export function getDevelopmentDashboardSummary() {
       weeklyJobs:   [18, 22, 24, 19, 26, 29, 31],
       costLeakage:  [14, 18, 12, 20, 17, 15, 11],
       safetyScore:  [78, 80, 82, 79, 84, 86, 87],
+      monthlyVolume: [142, 156, 168, 174, 189, 201, 218, 225, 234, 248, 256, 271],
+      routeEfficiency: [87, 89, 86, 91, 88, 92, 90, 93, 91, 94, 92, 95],
     },
     mapPreview: vehicles.slice(0, 12).map((v) => ({ id: v.vehicleId, vehicleCode: v.vehicleId, status: v.status })),
     exceptions: [
@@ -408,6 +429,14 @@ export function getDevelopmentDashboardSummary() {
         actionLabel: "Open Coaching", actionRoute: "/coaching",
         timestamp: "2 hr ago",
       },
+      {
+        id: "exc-8", severity: "Info",
+        vehicle: "TRK-119", driver: "Faisal Al-Harthi",
+        event: "Route Deviation Detected",
+        slaImpact: "Vehicle deviated 2.3 km from planned route — Riyadh Eastern Ring",
+        actionLabel: "View Route", actionRoute: "/gps-tracking",
+        timestamp: "2 hr ago",
+      },
     ],
     briefItems: [
       `${fleetOnRoad} vehicles on road — TRK-114 and VAN-207 showing operational risk. Review before next dispatch window.`,
@@ -462,6 +491,13 @@ export function getDevelopmentDashboardSummary() {
       { id: "t5", title: "PM-A overdue — TRK-106",            eventType: "maintenance.created", eventTime: "1 hr ago" },
       { id: "t6", title: "TRK-119 dispatched — JOB-0488",     eventType: "dispatch.assigned",   eventTime: "52 min ago" },
     ],
+    fleetHealthRisks: [
+      { id: 1, entityCode: "KSA-REEFER-119", riskLabel: "Coolant Leak — Breakdown Risk", severity: "Critical", score: 91 },
+      { id: 2, entityCode: "BOX-106", riskLabel: "Brake defect — unresolved 18h", severity: "High", score: 78 },
+      { id: 3, entityCode: "TRK-114", riskLabel: "PM overdue — 2,400 km past interval", severity: "Medium", score: 61 },
+      { id: 4, entityCode: "VAN-207", riskLabel: "GPS offline 8h — Riyadh Ring Road", severity: "Medium", score: 48 },
+    ],
+    readinessTrend: [88, 89, 91, 90, 92, 93, 94],
   };
 }
 

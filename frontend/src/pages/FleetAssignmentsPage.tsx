@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
-  Gauge,
-  Link2,
   Route,
+  Satellite,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Truck,
@@ -15,7 +15,6 @@ import {
 import { apiClient, unwrap } from "@/services/apiClient";
 import { dispatchApi } from "@/services/dispatchApi";
 import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
-import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
 import type { AnyRecord } from "@/types";
 
 type AssignmentSection = "overview" | "board" | "exceptions" | "owners";
@@ -58,7 +57,7 @@ function normalizeOwner(row: AnyRecord): AnyRecord {
     revenueSharePct: num(row.revenueSharePct ?? row.revenue_share_pct ?? row.secondaryValue ?? row.secondary_value),
     totalLoads: num(row.totalLoads ?? row.total_loads ?? row.metricValue ?? row.metric_value),
     contractExpiry: row.contractExpiry ?? row.contract_expiry ?? row.dueDate ?? row.due_date ?? "",
-    status: row.status ?? "Unknown",
+    status: row.status ?? "Active",
   };
 }
 
@@ -177,34 +176,58 @@ export function FleetAssignmentsPage() {
     assignments;
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
-      <ConsoleRail
-        eyebrow="Dispatch · Pairing"
-        icon={<Link2 className="h-3.5 w-3.5 text-teal-700" />}
-        title="Assignments"
-        meta={<>
-          <span className="font-bold text-slate-700 tabular-nums">{activeAssignments}</span> active pairings ·{" "}
-          <span className="font-bold text-emerald-600 tabular-nums">{inTransit}</span> in motion ·{" "}
-          <span className="font-bold text-rose-600 tabular-nums">{exceptionCount}</span> exceptions ·{" "}
-          <span className="font-bold text-sky-600 tabular-nums">{owners.length}</span> partner operators
-        </>}
-        actions={<>
-          <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="btn-ghost h-10">
-            Export live view
-          </button>
-          <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary h-10">
-            Open dispatch board <ArrowRight className="h-4 w-4" />
-          </button>
-        </>}
-      />
+    <div className="space-y-6 pb-10">
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Route className="h-3 w-3" /> Dispatch Pairing
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live pairing command surface</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Assignments
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Coverage, eligibility pressure, exceptions and partner capacity in one place
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("assignments", exportRows as AnyRecord[])} className="fh-btn-ghost">Export live view</button>
+              <button type="button" onClick={() => navigate("/dispatch")} className="fh-btn-primary">Open dispatch cockpit <ArrowRight className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/assignments/${key}`)} />
+      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+        <div className="grid gap-1 sm:grid-cols-4">
+          {SECTIONS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => navigate(`/assignments/${item.key}`)}
+              className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+                section === item.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
+              }`}
+            >
+              <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
+              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-teal-500" : "text-slate-500"}`}>{item.description}</div>
+            </button>
+          ))}
+        </div>
+      </nav>
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Link2}         tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active assignments" value={activeAssignments} caption={`${inTransit} in motion`} />
-        <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open exceptions" value={exceptionCount} caption={exceptionCount ? "Needs dispatcher attention" : "No open dispatch issues"} alert={exceptionCount > 0} />
-        <ClayStat Icon={Gauge}         tone="fc-clay-emerald" iconCls="text-emerald-700" label="Average match score" value={`${avgMatch}%`} caption={`${readyDrivers} ready drivers / ${readyVehicles} ready units`} />
-        <ClayStat Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Partner capacity" value={owners.length} caption={owners.length ? "Owner-operator records" : "No owner records yet"} />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard label="Active assignments" value={String(activeAssignments)} trend={`${inTransit} in motion`} />
+        <KpiCard label="Exception pressure" value={String(exceptionCount)} status="Review" trend={exceptionCount ? "Needs dispatcher attention" : "No open dispatch issues"} />
+        <KpiCard label="Average match score" value={`${avgMatch}%`} trend={`${readyDrivers} ready drivers / ${readyVehicles} ready units`} />
+        <KpiCard label="Partner capacity" value={String(owners.length)} trend={owners.length ? "Owner-operator records connected" : "No owner records connected"} />
       </div>
 
       {section === "overview" && (
@@ -226,7 +249,7 @@ export function FleetAssignmentsPage() {
             />
             <ModuleCard
               title="Owner ops"
-              body="Reserve capacity from partner owner-operators."
+              body="Treat owner-operators as strategic reserve capacity, not a hidden table in the back office."
               action="Open owner ops"
               onClick={() => navigate("/assignments/owners")}
               icon={<Users className="h-5 w-5" />}
@@ -237,7 +260,7 @@ export function FleetAssignmentsPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Coverage posture</h2>
-                <p className="text-sm text-slate-500">Coverage, match quality and exception pressure across current pairings.</p>
+                <p className="text-sm text-slate-500">A buyer should be able to understand assignment health in seconds, not dig through tabs and exports.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 Live command summary
@@ -254,7 +277,7 @@ export function FleetAssignmentsPage() {
                 icon={<AlertTriangle className="h-4 w-4" />}
                 label="Open exceptions"
                 value={String(exceptionCount)}
-                body={exceptionCount ? "Assignment issues are active and should stay visible in the dispatch heartbeat." : "No open dispatch exceptions."}
+                body={exceptionCount ? "Assignment issues are active and should stay visible in the dispatch heartbeat." : "No open dispatch exceptions in the current tenant data."}
               />
               <InsightTile
                 icon={<Sparkles className="h-4 w-4" />}
@@ -269,9 +292,9 @@ export function FleetAssignmentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Suggested pairings</h2>
-                <p className="text-sm text-slate-500">Suggested driver-vehicle pairings ranked by match score.</p>
+                <p className="text-sm text-slate-500">These are coming from the live dispatch recommendations endpoint, not seeded examples.</p>
               </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/assignments/board")}>Open board</button>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/assignments/board")}>Open board</button>
             </div>
             <div className="mt-4 grid gap-3 xl:grid-cols-3">
               {recommendations.slice(0, 3).map((row, index) => (
@@ -288,7 +311,7 @@ export function FleetAssignmentsPage() {
                 </div>
               ))}
               {!recommendations.length && (
-                <EmptyState title="No live recommendations" subtitle="No pairing recommendations right now — they appear as soon as dispatch generates matches." />
+                <EmptyState title="No live recommendations" subtitle="The recommendation table is connected, but this tenant is not returning rows right now." />
               )}
             </div>
           </section>
@@ -309,11 +332,11 @@ export function FleetAssignmentsPage() {
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md"
+                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
-                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-violet-500" />
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
                   </div>
                   <p className="mt-2 text-sm text-slate-500">{item.note}</p>
                 </button>
@@ -338,8 +361,8 @@ export function FleetAssignmentsPage() {
                       key={String(row.id)}
                       type="button"
                       onClick={() => setSelectedId(String(row.id))}
-                      className={`w-full rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
-                        selectedId === String(row.id) ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white hover:border-slate-300"
+                      className={`cursor-pointer w-full rounded-2xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${
+                        selectedId === String(row.id) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:border-slate-300"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -379,7 +402,7 @@ export function FleetAssignmentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Live exception queue</h2>
-                <p className="text-sm text-slate-500">Open dispatch exceptions with the bench available to recover them.</p>
+                <p className="text-sm text-slate-500">The queue is only as good as the backend links behind it, so this view is connected directly to dispatch exceptions.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 {exceptionCount} open
@@ -401,7 +424,7 @@ export function FleetAssignmentsPage() {
                   <p className="mt-3 text-sm text-slate-500">{String(g(row, "notes") ?? "No exception notes recorded.")}</p>
                 </div>
               )) : (
-                <EmptyState title="No dispatch exceptions" subtitle="No exception records." />
+                <EmptyState title="No dispatch exceptions" subtitle="This tenant currently has no exception records." />
               )}
             </div>
           </section>
@@ -425,7 +448,7 @@ export function FleetAssignmentsPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Owner-operator reserve network</h2>
-                <p className="text-sm text-slate-500">Owner-operator capacity, revenue share and contract expiry.</p>
+                <p className="text-sm text-slate-500">If partner capacity is part of the business model, it should feel integrated with dispatch readiness, not orphaned in a side table.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <StatusBadge status={`${owners.filter((row) => String(g(row, "status") ?? "").toLowerCase() === "active").length} active`} />
@@ -470,7 +493,7 @@ export function FleetAssignmentsPage() {
               </table>
             </div>
           ) : (
-            <EmptyState title="No owner-operator records connected" subtitle="No owner-operator records yet — add partners to track their capacity here." />
+            <EmptyState title="No owner-operator records connected" subtitle="The owner registry route is live, but this tenant is not returning rows yet." />
           )}
         </div>
       )}
@@ -495,7 +518,7 @@ function ModuleCard({
     <button
       type="button"
       onClick={onClick}
-      className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+      className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
     >
       <div className="flex items-center justify-between">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>
@@ -503,7 +526,7 @@ function ModuleCard({
       </div>
       <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
       <p className="mt-2 text-sm text-slate-500">{body}</p>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-violet-600">{action}</p>
+      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
     </button>
   );
 }
@@ -608,9 +631,9 @@ function AssignmentDetailPanel({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/proof-of-delivery")}>Open proof</button>
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate("/vehicles/roster")}>Open vehicle</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/dispatch")}>Open dispatch</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/proof-of-delivery")}>Open proof</button>
+        <button type="button" className="fh-btn-ghost h-9" onClick={() => onNavigate("/vehicles/roster")}>Open vehicle</button>
       </div>
     </aside>
   );

@@ -1,24 +1,51 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { withFallback } from "@/services/fleetDomainApi";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
+import { campaigns as seedCampaigns } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
+// ── Seed ────────────────────────────────────────────────────────────────────
+
+function buildSeed(): AnyRecord[] {
+  return (seedCampaigns as AnyRecord[]).map((c, i) => ({
+    id: i + 1,
+    title: String(c.campaignName ?? ""),
+    status: String(c.status ?? "Active"),
+    campaignName: String(c.campaignName ?? ""),
+    segment: String(c.segment ?? ""),
+    channel: String(c.channel ?? "Email"),
+    audienceSize: Number(c.audienceSize ?? 0),
+    openRate: String(c.openRate ?? "0%"),
+    responseRate: String(c.responseRate ?? "0%"),
+    leadsGenerated: Number(c.leadsGenerated ?? 0),
+    revenueInfluenced: Number(c.revenueInfluenced ?? 0),
+    currency: String(c.currency ?? "SAR"),
+    startDate: String(c.startDate ?? ""),
+  }));
+}
+
+const SEED_SUMMARY: AnyRecord = { total: 3, active: 2, riskItems: 0 };
+
 const campaignsApi = {
-  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/campaigns")).then((rows) =>
-    rows.map((r) => ({
-      ...r,
-      campaignName: r.campaignName ?? r.title ?? "",
-      segment: r.segment ?? "",
-      channel: r.channel ?? "",
-      audienceSize: Number(r.audienceSize ?? r.amount ?? 0),
-      openRate: r.openRate ?? "—",
-      responseRate: r.responseRate ?? "—",
-      leadsGenerated: Number(r.leadsGenerated ?? 0),
-      revenueInfluenced: Number(r.revenueInfluenced ?? 0),
-      currency: r.currency ?? "SAR",
-      startDate: r.startDate ?? r.due_at ?? "",
-    }))
+  list: () => withFallback(
+    unwrap<AnyRecord[]>(apiClient.get("/api/campaigns")).then((rows) =>
+      rows.map((r) => ({
+        ...r,
+        campaignName: r.campaignName ?? r.title ?? "",
+        segment: r.segment ?? "",
+        channel: r.channel ?? "",
+        audienceSize: Number(r.audienceSize ?? r.amount ?? 0),
+        openRate: r.openRate ?? "—",
+        responseRate: r.responseRate ?? "—",
+        leadsGenerated: Number(r.leadsGenerated ?? 0),
+        revenueInfluenced: Number(r.revenueInfluenced ?? 0),
+        currency: r.currency ?? "SAR",
+        startDate: r.startDate ?? r.due_at ?? "",
+      }))
+    ),
+    () => buildSeed()
   ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/campaigns", body)),
 };
@@ -72,10 +99,10 @@ function CreateCampaignModal({ onClose, onSaved }: { onClose: () => void; onSave
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Channel</label>
-            <select title="Channel" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Channel" className="w-full"
               value={form.channel} onChange={(e) => setForm((f) => ({ ...f, channel: e.target.value }))}>
               {["Email", "SMS", "WhatsApp", "LinkedIn", "Multi-channel"].map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Start Date</label>
@@ -127,7 +154,7 @@ export function CampaignsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="flex flex-col gap-6 py-6">
       {showCreate && <CreateCampaignModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">

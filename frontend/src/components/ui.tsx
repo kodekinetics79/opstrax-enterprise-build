@@ -1,9 +1,9 @@
-import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useMemo, useId, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
-  ChevronUp, ChevronDown as ChevronDownIcon,
-  Loader2, Search,
+  Bot, CheckCircle2, ChevronDown, ChevronUp,
+  Loader2, Minus, Search, SlidersHorizontal,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
 import type { AnyRecord } from "@/types";
@@ -32,116 +32,28 @@ export function labelize(value: string) {
 }
 
 /* ============================================================
-   BUTTON  (v5.0 primitive — wraps the .btn-* design-system classes)
-   ============================================================ */
-type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
-
-const BUTTON_CLASS: Record<ButtonVariant, string> = {
-  primary: "btn-primary",
-  secondary: "btn-secondary",
-  danger: "btn-danger",
-  ghost: "btn-ghost",
-};
-
-export function Button({
-  variant = "primary", type = "button", className = "", loading = false, disabled, children, ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
-  return (
-    <button
-      type={type}
-      className={`${BUTTON_CLASS[variant]} ${className}`.trim()}
-      disabled={disabled || loading}
-      aria-busy={loading}
-      {...rest}
-    >
-      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-      {children}
-    </button>
-  );
-}
-
-/* ============================================================
-   SURFACES  (v5.0 primitives — clay + liquid glass)
-   ============================================================ */
-/** Opaque soft-molded card. Safe for any text content (no blur underneath). */
-export function ClayCard({ className = "", interactive = false, ...rest }: HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
-  return <div className={`clay-card ${interactive ? "card-hover" : ""} ${className}`.trim()} {...rest} />;
-}
-
-/** Translucent liquid-glass panel. Reserve for hero/header surfaces and small
-    overlays — not large scrolling lists (see index.css blur policy). */
-export function GlassPanel({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={`liquid-glass ${className}`.trim()} {...rest} />;
-}
-
-/* ============================================================
-   FORM FIELD  (v5.0 primitive — label + control + hint/error wiring)
-   ============================================================ */
-export function FormField({
-  label, hint, error, required, className = "", children,
-}: {
-  label: string; hint?: string; error?: string; required?: boolean; className?: string; children: ReactNode;
-}) {
-  const id = useId();
-  const messageId = `${id}-msg`;
-
-  // Wire aria attributes into the control when it is a single element
-  // (e.g. <input className="field" />) so screen readers announce the
-  // hint/error and invalid state without every call site doing it by hand.
-  const control = isValidElement(children)
-    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
-        id: (children.props as Record<string, unknown>).id ?? id,
-        "aria-describedby": hint || error ? messageId : undefined,
-        "aria-invalid": error ? true : undefined,
-        "aria-required": required || undefined,
-      })
-    : children;
-
-  return (
-    <div className={`flex flex-col gap-1.5 ${className}`.trim()}>
-      <label htmlFor={id} className="text-[12px] font-bold text-slate-700">
-        {label}
-        {required && <span aria-hidden className="ml-0.5 text-red-600">*</span>}
-      </label>
-      {control}
-      {error ? (
-        <p id={messageId} role="alert" className="text-xs font-semibold text-red-600">{error}</p>
-      ) : hint ? (
-        <p id={messageId} className="text-xs text-slate-500">{hint}</p>
-      ) : null}
-    </div>
-  );
-}
-
-/* ============================================================
    PAGE HEADER
    ============================================================ */
 export function PageHeader({
-  title, eyebrow, description, actions, footer,
+  title, eyebrow, description, actions,
 }: {
-  title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
+  title: string; eyebrow?: string; description: string; actions?: ReactNode;
 }) {
   return (
-    <div className="liquid-glass relative overflow-hidden px-5 py-6 lg:px-6">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
-      <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-3xl">
+    <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
+      <div className="max-w-3xl">
         {eyebrow && (
-          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-white/90 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-700 shadow-sm backdrop-blur">
+          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/25 bg-teal-400/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-teal-300">
             <span className="live-dot h-1.5 w-1.5" />
             {eyebrow}
           </span>
         )}
-          <h1 className="mt-3 text-[31px] font-black tracking-tight text-slate-950 md:text-[40px]">{title}</h1>
-          <p className="mt-2.5 max-w-3xl text-[14px] leading-7 text-slate-500">{description}</p>
-        </div>
-        {actions && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5 rounded-[22px] border border-slate-200/80 bg-white/85 p-2.5 shadow-sm backdrop-blur">
-            {actions}
-          </div>
-        )}
+        <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">{title}</h1>
+        <p className="mt-2.5 text-sm leading-6 text-slate-400">{description}</p>
       </div>
-      {footer && <div className="relative mt-5 border-t border-slate-200/70 pt-4">{footer}</div>}
+      {actions && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5">{actions}</div>
+      )}
     </div>
   );
 }
@@ -154,37 +66,52 @@ export function KpiCard({
 }: {
   label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string;
 }) {
-  const isCritical = /critical|overdue|breach|rejected/i.test(String(label) + String(status));
-  const isWarning  = !isCritical && /missing|anomal|unusual|pending|risk/i.test(String(label) + String(status));
+  const isReview = /review/i.test(String(status));
   const isUp   = delta?.startsWith("+") || /up|increase|improv/i.test(String(trend));
   const isDown = delta?.startsWith("-") || /down|decreas|drop/i.test(String(trend));
-  const valueColor = isCritical && Number(value) > 0
-    ? "text-red-600"
-    : isWarning && Number(value) > 0
-    ? "text-amber-700"
-    : "text-slate-950";
+  const DefaultIcon = isReview ? AlertTriangle : CheckCircle2;
 
   return (
-    <div className="clay-card card-hover relative overflow-hidden p-5">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">{label}</p>
-          <p className={`mt-3 text-[30px] font-black tracking-tight ${valueColor}`}>{value}</p>
-        </div>
-        {status || trend ? (
-          <span className={`badge shrink-0 ${isCritical ? "badge-danger" : isWarning ? "badge-warning" : "badge-info"}`}>
-            {status ?? trend}
-          </span>
-        ) : null}
+    <div className="fo-kpi-card">
+      <div className="fo-kpi-icon fo-kpi-icon-inactive">
+        {icon
+          ? cloneElement(icon as React.ReactElement<any>, { className: "h-5 w-5 text-teal-600" })
+          : <DefaultIcon className="h-5 w-5 text-teal-600" />}
       </div>
-      {(delta || trend) && (
-        <p className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-          {isDown ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> : isUp ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-500" /> : null}
-          {delta ?? trend}
-        </p>
-      )}
-      {icon ? <div className="absolute right-4 top-4 text-slate-300">{icon}</div> : null}
+      <div className="min-w-0 flex-1">
+        <div className="fo-kpi-count">
+          <span className={`fo-kpi-dot ${isReview ? "bg-amber-400" : "bg-teal-500"}`} />
+          <span className="text-slate-900">{value}</span>
+        </div>
+        <p className="fo-kpi-label text-slate-500">{label}</p>
+        {(trend || delta) && (
+          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
+            {isDown ? <ArrowDownRight className="h-3 w-3 text-red-400" /> : isUp ? <ArrowUpRight className="h-3 w-3 text-teal-500" /> : null}
+            {delta ?? trend}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   SELECT  (premium dropdown)
+   ============================================================ */
+export function Select({
+  children,
+  className = "",
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
+  return (
+    <div className="relative inline-flex">
+      <select
+        {...props}
+        className={`w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm transition cursor-pointer focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      >
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
     </div>
   );
 }
@@ -194,15 +121,12 @@ export function KpiCard({
    ============================================================ */
 export function SkeletonCard() {
   return (
-    <div className="clay-card flex flex-col justify-between p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="skeleton h-3 w-24 rounded-full" />
-        <div className="skeleton h-5 w-14 rounded-full" />
-      </div>
-      <div className="mt-4 skeleton h-10 w-32 rounded-2xl" />
-      <div className="mt-4 flex items-center justify-between">
-        <div className="skeleton h-3 w-20 rounded-full" />
-        <div className="skeleton h-3 w-16 rounded-full" />
+    <div className="panel flex flex-col justify-between p-5">
+      <div className="skeleton h-3 w-20 rounded" />
+      <div className="mt-4 skeleton h-8 w-28 rounded-lg" />
+      <div className="mt-3 flex items-center justify-between">
+        <div className="skeleton h-3 w-16 rounded" />
+        <div className="skeleton h-5 w-12 rounded-full" />
       </div>
     </div>
   );
@@ -221,32 +145,22 @@ export function StatusBadge({ status }: { status?: unknown }) {
   let cls: string;
   let pulse = false;
 
-  // Text colors use the 700-level ramp so the label meets WCAG AA (≥4.5:1)
-  // against the light tinted pill backgrounds. (300-level text was designed for
-  // dark surfaces and fails AA on the v4.0 light panels.)
-  // Tone map covers the canonical P4 dispatch vocabulary (assigned, accepted,
-  // en_route_pickup, arrived_*, loaded, in_transit, delivered, exception,
-  // cancelled) alongside the generic operational statuses.
-  if (/critical|failed|breach|expired|exception/i.test(text)) {
-    cls = "border-red-400/30 bg-red-500/10 text-red-700"; pulse = true;
+  if (/critical|failed|breach|expired/i.test(text)) {
+    cls = "border-red-400/30 bg-red-500/10 text-red-300"; pulse = true;
   } else if (/risk|anomaly|overdue|missing|rejected/i.test(text)) {
-    cls = "border-red-400/20 bg-red-500/8 text-red-700";
+    cls = "border-red-400/20 bg-red-500/8 text-red-300";
   } else if (/warning|review|pending|near|expiring|at.risk/i.test(text)) {
-    cls = "border-amber-400/28 bg-amber-500/10 text-amber-700";
-  } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant|delivered|resolved/i.test(text)) {
-    cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-700";
-  } else if (/in.?transit|en.?route|assigned|accepted|arrived|loaded|dispatch|scheduled/i.test(text)) {
-    cls = "border-sky-400/28 bg-sky-500/10 text-sky-700";
+    cls = "border-amber-400/28 bg-amber-500/10 text-amber-300";
+  } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant/i.test(text)) {
+    cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-300";
   } else if (/ai|intelligence|predict/i.test(text)) {
-    cls = "border-violet-400/28 bg-violet-500/10 text-violet-700";
-  } else if (/cancel|inactive|archived|offline/i.test(text)) {
-    cls = "border-slate-300 bg-slate-100 text-slate-500";
+    cls = "border-violet-400/28 bg-violet-500/10 text-violet-300";
   } else {
     cls = "border-slate-300 bg-slate-50 text-slate-600";
   }
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] shadow-sm ${cls}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-bold ${cls}`}>
       {pulse && <span className="live-dot h-1.5 w-1.5" />}
       {label}
     </span>
@@ -258,16 +172,15 @@ export function StatusBadge({ status }: { status?: unknown }) {
    ============================================================ */
 export function RiskBadge({ risk }: { risk?: unknown }) {
   const text = String(risk ?? "Low");
-  // 700-level text for WCAG AA contrast on the light tinted pill (see StatusBadge).
   const cls = /critical/i.test(text)
-    ? "border-red-400/35 bg-red-500/12 text-red-700 font-extrabold"
+    ? "border-red-400/35 bg-red-500/12 text-red-300 font-extrabold"
     : /high/i.test(text)
-    ? "border-red-400/25 bg-red-500/8 text-red-700"
+    ? "border-red-400/25 bg-red-500/8 text-red-300"
     : /medium|warning/i.test(text)
-    ? "border-amber-400/30 bg-amber-500/10 text-amber-700"
-    : "border-emerald-400/25 bg-emerald-500/8 text-emerald-700";
+    ? "border-amber-400/30 bg-amber-500/10 text-amber-300"
+    : "border-emerald-400/25 bg-emerald-500/8 text-emerald-300";
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] shadow-sm ${cls}`}>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[10px] font-bold ${cls}`}>
       {text}
     </span>
   );
@@ -298,8 +211,8 @@ export function ScoreRing({
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-xs font-extrabold text-slate-900 tabular-nums">{score}</span>
-        {label && <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</span>}
+        <span className="text-xs font-bold text-slate-800">{score}</span>
+        {label && <span className="text-[9px] text-slate-500 mt-0.5">{label}</span>}
       </div>
     </div>
   );
@@ -318,7 +231,7 @@ export function ProgressBar({
     <div className="w-full">
       {label && (
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-medium text-slate-500">{label}</span>
+          <span className="text-xs text-slate-400">{label}</span>
           <span className="text-xs font-bold text-slate-800">{Math.round(pct)}%</span>
         </div>
       )}
@@ -362,59 +275,48 @@ export function DataTable({
     else { setSortKey(col); setSortDir("asc"); }
   };
 
-  // Right-align numeric/currency columns (readability: numbers scan best
-  // ragged-left) — sampled from the first rows so headers align with cells.
-  const numericCols = useMemo(() => {
-    const sample = rows.slice(0, 20);
-    return new Set(columns.filter((col) => {
-      const values = sample.map((row) => row[col]).filter((v) => v !== null && v !== undefined && v !== "");
-      if (!values.length) return false;
-      return values.every((v) => typeof v === "number" || /^-?\$?[\d,]+(\.\d+)?%?$/.test(String(v)));
-    }));
-  }, [rows, columns]);
-
   return (
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
       <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3.5 md:flex-row md:items-center md:justify-between">
-        <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+        <div className="relative min-w-[220px] max-w-xs flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 shrink-0 -translate-y-1/2 text-slate-500" />
           <input
             className="field h-9 py-0 pl-9 pr-3 text-sm"
             placeholder="Search records..."
-            aria-label="Search records"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
-          {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
+            {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
+          </span>
+          <button className="btn-ghost h-9 py-0"><SlidersHorizontal className="h-3.5 w-3.5" /> Filters</button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50">
+          <thead className="border-b border-slate-100 bg-slate-50">
             <tr>
               {columns.map((col) => {
                 const isActive = sortKey === col;
-                const numeric = numericCols.has(col);
                 return (
                   <th
                     key={col}
                     onClick={() => handleSort(col)}
-                    aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
                     className={`sortable px-5 py-3.5 text-xs font-semibold uppercase tracking-wider transition ${
                       isActive ? "sort-active text-slate-700" : "text-slate-500"
                     }`}
                   >
-                    <span className={`flex items-center gap-1.5 ${numeric ? "justify-end" : ""}`}>
+                    <span className="flex items-center gap-1.5">
                       {labelize(col)}
                       <span className="sort-icon">
                         {isActive
                           ? sortDir === "asc"
                             ? <ChevronUp className="h-3 w-3" />
-                            : <ChevronDownIcon className="h-3 w-3" />
+                            : <ChevronDown className="h-3 w-3" />
                           : <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-40" />}
                       </span>
                     </span>
@@ -427,31 +329,18 @@ export function DataTable({
             {sorted.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-slate-500">
-                  No records found. Try a different search or filter.
+                  No records found
                 </td>
               </tr>
             ) : (
               sorted.map((row, index) => (
                 <tr
                   key={String(row.id ?? index)}
-                  onClick={onSelect ? () => onSelect(row) : undefined}
-                  onKeyDown={
-                    onSelect
-                      ? (e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            onSelect(row);
-                          }
-                        }
-                      : undefined
-                  }
-                  tabIndex={onSelect ? 0 : undefined}
-                  role={onSelect ? "button" : undefined}
-                  aria-label={onSelect ? "View record details" : undefined}
-                  className={`group transition-colors hover:bg-slate-50 ${onSelect ? "cursor-pointer" : ""}`}
+                  onClick={() => onSelect?.(row)}
+                  className="group cursor-pointer transition-colors hover:bg-slate-50"
                 >
                   {columns.map((col) => (
-                    <td key={col} className={`px-5 py-3.5 text-slate-600 ${numericCols.has(col) ? "text-right tabular-nums" : ""}`}>
+                    <td key={col} className="px-5 py-3.5 text-slate-600">
                       {renderCell(col, row[col])}
                     </td>
                   ))}
@@ -473,31 +362,15 @@ export function DataTable({
 }
 
 /* ============================================================
-   FILTER BAR  (chip row with a real active state)
+   FILTER BAR
    ============================================================ */
-export function FilterBar({
-  options, value, onChange, children,
-}: {
-  options?: string[]; value?: string; onChange?: (option: string) => void; children?: ReactNode;
-}) {
+export function FilterBar({ children }: { children?: ReactNode }) {
   return (
-    <div className="panel flex flex-wrap items-center gap-2 p-3">
-      {options
-        ? options.map((option) => {
-            const active = option === value;
-            return (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={active}
-                className={active ? "filter-chip filter-chip-active" : "filter-chip"}
-                onClick={() => onChange?.(option)}
-              >
-                {option}
-              </button>
-            );
-          })
-        : children}
+    <div className="panel flex flex-wrap items-center gap-2.5 p-3.5">
+      {children ||
+        ["All", "Active", "At Risk", "Completed", "Pending"].map((x) => (
+          <button key={x} className="btn-ghost py-1.5 text-xs">{x}</button>
+        ))}
     </div>
   );
 }
@@ -506,32 +379,13 @@ export function FilterBar({
    DETAIL DRAWER  (generic slot, used outside Batch pages)
    ============================================================ */
 export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const open = record !== null;
-
-  // Dialog behavior: Escape dismisses, focus lands on the close control.
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm anim-fade-in">
-      {/* Backdrop dismiss is mouse-only; keyboard users have Escape + the Close button */}
-      <div aria-hidden className="absolute inset-0" onClick={onClose} />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="Record details"
-        className="anim-slide-right relative h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl"
-      >
-        <button ref={closeRef} aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+      <aside className="anim-slide-right h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl">
+        <button className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         <p className="section-title text-teal-700">OpsTrax Detail</p>
-        <h2 className="mt-3 text-[28px] font-black tracking-tight text-slate-950">
+        <h2 className="mt-3 text-2xl font-bold text-slate-900">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}
         </h2>
         <div className="mt-6 space-y-2">
@@ -579,32 +433,26 @@ export function LoadingState() {
 /* ============================================================
    ERROR / EMPTY STATES
    ============================================================ */
-export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
+export function ErrorState({ message }: { message?: string }) {
   return (
-    <div className="panel flex flex-wrap items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-6" role="alert">
-      <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
-      <div className="min-w-0 flex-1">
-        <p className="font-semibold text-red-700">Unable to load data</p>
-        <p className="text-sm text-red-600/90">{message || "Check your connection and try again."}</p>
+    <div className="panel flex items-center gap-3 border-red-400/25 bg-red-500/5 p-6 text-red-300">
+      <AlertTriangle className="h-5 w-5 shrink-0" />
+      <div>
+        <p className="font-semibold">Unable to load data</p>
+        <p className="text-sm text-red-400/80">{message || "Check your connection and try again."}</p>
       </div>
-      {onRetry && (
-        <button type="button" className="btn-secondary shrink-0 py-2 text-xs" onClick={onRetry}>
-          Retry
-        </button>
-      )}
     </div>
   );
 }
 
-export function EmptyState({ title = "No records found", subtitle, action }: { title?: string; subtitle?: string; action?: ReactNode }) {
+export function EmptyState({ title = "No records found", subtitle }: { title?: string; subtitle?: string }) {
   return (
     <div className="panel flex flex-col items-center justify-center p-14 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400">
         <Search className="h-6 w-6" />
       </div>
-      <p className="font-semibold text-slate-800">{title}</p>
-      {subtitle && <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{subtitle}</p>}
-      {action && <div className="mt-4">{action}</div>}
+      <p className="font-semibold text-slate-600">{title}</p>
+      {subtitle && <p className="mt-1.5 max-w-xs text-sm text-slate-500">{subtitle}</p>}
     </div>
   );
 }
@@ -615,7 +463,7 @@ export function EmptyState({ title = "No records found", subtitle, action }: { t
 export function AiInsightCard({ insight }: { insight: AnyRecord }) {
   const score = Number(insight.score || insight.confidence || 0);
   return (
-    <div className="relative overflow-hidden rounded-[20px] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm">
+    <div className="relative overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
       {/* Glow blob */}
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-500/12 blur-2xl" />
       <div className="relative">
@@ -624,7 +472,7 @@ export function AiInsightCard({ insight }: { insight: AnyRecord }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
               <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">System Fleet Insight</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600">System Fleet Insight</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
@@ -670,7 +518,7 @@ export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
           const priority = String(action.priority || action.riskLevel || "Medium");
           const dot = priorityDot[priority] || "bg-slate-500";
           return (
-            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-[16px] border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
+            <div key={String(action.id || i)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 transition hover:border-slate-200 hover:bg-slate-50">
               <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{String(action.title)}</p>
@@ -754,4 +602,80 @@ function renderCell(column: string, value: unknown) {
   if (/^\d{4}-\d{2}-\d{2}/.test(str))
     return <span className="text-slate-400 font-mono text-xs">{str.slice(0, 10)}</span>;
   return <span>{str}</span>;
+}
+
+/* ============================================================
+   BUTTON (v5.0 — typed variants + loading state)
+   ============================================================ */
+type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+
+const BUTTON_CLASS: Record<ButtonVariant, string> = {
+  primary: "btn-primary",
+  secondary: "btn-secondary",
+  danger: "btn-danger",
+  ghost: "btn-ghost",
+};
+
+export function Button({
+  variant = "primary", type = "button", className = "", loading = false, disabled, children, ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
+  return (
+    <button
+      type={type}
+      className={`${BUTTON_CLASS[variant]} ${className}`.trim()}
+      disabled={disabled || loading}
+      aria-busy={loading}
+      {...rest}
+    >
+      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+      {children}
+    </button>
+  );
+}
+
+/* ============================================================
+   CLAY CARD & GLASS PANEL
+   ============================================================ */
+export function ClayCard({ className = "", interactive = false, ...rest }: HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
+  return <div className={`clay-card ${interactive ? "card-hover" : ""} ${className}`.trim()} {...rest} />;
+}
+
+export function GlassPanel({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={`liquid-glass ${className}`.trim()} {...rest} />;
+}
+
+/* ============================================================
+   FORM FIELD (v5.0 primitive — label + control + hint/error wiring)
+   ============================================================ */
+export function FormField({
+  label, hint, error, required, className = "", children,
+}: {
+  label: string; hint?: string; error?: string; required?: boolean; className?: string; children: ReactNode;
+}) {
+  const id = useId();
+  const messageId = `${id}-msg`;
+
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        id: (children.props as Record<string, unknown>).id ?? id,
+        "aria-describedby": hint || error ? messageId : undefined,
+        "aria-invalid": error ? true : undefined,
+        "aria-required": required || undefined,
+      })
+    : children;
+
+  return (
+    <div className={`flex flex-col gap-1.5 ${className}`.trim()}>
+      <label htmlFor={id} className="text-[12px] font-bold text-slate-700">
+        {label}
+        {required && <span aria-hidden className="ml-0.5 text-red-600">*</span>}
+      </label>
+      {control}
+      {error ? (
+        <p id={messageId} role="alert" className="text-xs font-semibold text-red-600">{error}</p>
+      ) : hint ? (
+        <p id={messageId} className="text-xs text-slate-500">{hint}</p>
+      ) : null}
+    </div>
+  );
 }

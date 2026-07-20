@@ -1,18 +1,18 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
+  ArrowRight, CheckCircle2, ClipboardList, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
   Search, Send, Sparkles, Trash2, TriangleAlert, Truck, X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
-  RiskBadge, StatusBadge, exportCsv, labelize,
+  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState,
+  RiskBadge, Select, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
-import { useJobDetail, useJobSummary } from "@/hooks/useBatch2";
+import { useJobDetail, useJobs, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
 import type { AnyRecord } from "@/types";
 
@@ -53,8 +53,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
 }> = {
   jobs: {
     eyebrow: "Jobs & Orders",
-    title: "Jobs & Orders",
-    description: "Create, assign, track, prove and audit every job with live SLA, proof and customer updates.",
+    title: "Order execution cockpit",
+    description: "Create, assign, track, prove and audit every job with live SLA, proof, customer update, and assignment logic in one operational surface.",
     exportName: "jobs",
     createLabel: "Create Job",
     tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "priority", "proofStatus", "recommendedAction"],
@@ -62,8 +62,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
   },
   "active-shipments": {
     eyebrow: "Active Shipments",
-    title: "Active Shipments",
-    description: "In-flight shipments only: dispatch state, ETA, proof readiness and customer updates.",
+    title: "Execution in motion",
+    description: "Live shipment execution board for in-flight work only: dispatch state, ETA confidence, proof readiness, and customer promise exposure.",
     exportName: "active-shipments",
     createLabel: "Create Shipment Job",
     tableColumns: ["jobNumber", "customerName", "timeWindow", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
@@ -71,8 +71,8 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
   },
   shipments: {
     eyebrow: "Shipments",
-    title: "Shipments",
-    description: "Every shipment from assignment through delivered proof, with stops, communication and audit history.",
+    title: "Shipment lifecycle register",
+    description: "Full shipment entity register from assignment through delivered proof, with stops, customer communication, and audit continuity tied to the underlying job.",
     exportName: "shipments",
     createLabel: "Create Shipment Job",
     tableColumns: ["jobNumber", "customerName", "trackingCode", "driverName", "vehicleCode", "status", "slaStatus", "proofStatus", "customerUpdateStatus", "recommendedAction"],
@@ -93,15 +93,7 @@ export function JobsPage() {
     const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
-  const JOBS_PAGE_SIZE = 50;
-  const [jobsOffset, setJobsOffset] = useState(0);
-  // Server-side paginated + searched — never fetches all 4000+ jobs at once.
-  const jobsPaged = useQuery({
-    queryKey: ["jobs", "paged", query.trim(), jobsOffset],
-    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query }),
-  });
-  const jobs = { data: jobsPaged.data?.rows ?? [], isLoading: jobsPaged.isLoading, isError: jobsPaged.isError, isFetching: jobsPaged.isFetching, error: jobsPaged.error };
-  const jobsTotal = jobsPaged.data?.total ?? (jobsPaged.data?.rows?.length ?? 0);
+  const jobs = useJobs();
   const summary = useJobSummary();
   const detail = useJobDetail(selected?.id as string | number | undefined);
   const qc = useQueryClient();
@@ -201,26 +193,48 @@ export function JobsPage() {
   const unassigned = Number(visibleSummary.unassignedJobs ?? 0);
 
   return (
-    <div className="fleet-console space-y-3">
+    <div className="space-y-6 pb-10">
       <Toaster toast={toast} onClose={() => setToast(null)} />
 
-      <PageHeader
-        eyebrow={surfaceConfig.eyebrow}
-        title={surfaceConfig.title}
-        description={surfaceConfig.description}
-        actions={<>
-          <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
-          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
-        </>}
-      />
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ClipboardList className="h-3 w-3" /> {surfaceConfig.eyebrow}
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Order execution and shipment tracking</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {surfaceConfig.title}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                {surfaceConfig.description}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary cursor-pointer" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
+              <button type="button" className="fh-btn-ghost cursor-pointer" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {/* Ops intelligence bar — derived from live data, one-click triage */}
-      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 text-white sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10"><Sparkles className="h-5 w-5 text-teal-300" /></span>
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Live operations signal</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-100">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
               {slaRisk + proofPending + unassigned === 0
                 ? surface === "active-shipments"
                   ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
@@ -236,7 +250,7 @@ export function JobsPage() {
           </div>
         </div>
         {slaRisk > 0 && (
-          <button type="button" onClick={() => setStatus("SLA At Risk")} className="inline-flex items-center gap-1.5 self-start rounded-lg bg-teal-500 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-teal-400 sm:self-auto">
+          <button type="button" onClick={() => setStatus("SLA At Risk")} className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto">
             Triage at-risk jobs <ArrowRight className="h-3.5 w-3.5" />
           </button>
         )}
@@ -266,25 +280,14 @@ export function JobsPage() {
 
       {/* Toolbar */}
       <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
-        <div className="relative flex-1 lg:max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field h-10 pl-9" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
+        <div className="relative min-w-[220px] flex-1 lg:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 shrink-0 -translate-y-1/2 text-slate-400" />
+          <input className="field h-10 pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
-        <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
+        <Select className="lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
-        </select>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} shown · {jobsTotal.toLocaleString()} total</span>
-        {jobsTotal > JOBS_PAGE_SIZE && (
-          <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-            <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
-            <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
-            <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
-          </span>
-        )}
+        </Select>
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} of {scopedRows.length} jobs</span>
       </div>
 
       {rows.length ? (
@@ -324,7 +327,7 @@ function Toaster({ toast, onClose }: { toast: Toast | null; onClose: () => void 
         <span className={`absolute left-0 top-0 h-full w-1 ${theme.bar}`} />
         {theme.icon}
         <p className="max-w-xs text-sm font-semibold text-slate-800">{toast.message}</p>
-        <button type="button" className="icon-btn ml-1" onClick={onClose} aria-label="Dismiss"><X className="h-4 w-4" /></button>
+        <button type="button" className="icon-btn ml-1 cursor-pointer" onClick={onClose} aria-label="Dismiss"><X className="h-4 w-4" /></button>
       </div>
     </div>
   );
@@ -336,7 +339,7 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${active ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
     >
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
       <span className={`mt-0.5 text-xl font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
@@ -365,14 +368,14 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-[3px] text-[10px] font-bold text-slate-600">Proof {String(record.proofStatus ?? "--")}</span>
               </div>
             </div>
-            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
+            <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
-            <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
+            <button type="button" className="fh-btn-primary h-9 py-0 cursor-pointer" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 cursor-pointer" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
+            <button type="button" className="fh-btn-ghost h-9 py-0 text-red-600 cursor-pointer" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
           </div>
         </div>
 
@@ -389,7 +392,7 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
                   <button
                     key={next}
                     type="button"
-                    className="btn-ghost h-9 py-0"
+                    className="fh-btn-ghost h-9 py-0 cursor-pointer"
                     disabled={!canDispatch || statusPending}
                     title={!canDispatch ? "You do not have permission to perform this action." : `Move job to ${next}`}
                     onClick={() => canDispatch && onStatus(String(record.id), next)}
@@ -435,7 +438,7 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
       <form className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl" onSubmit={submit}>
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <h2 className="text-2xl font-bold text-slate-900">{form.id ? "Edit Job" : "Create Job"}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
+          <button type="button" className="icon-btn cursor-pointer" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {fields.map(([key, label]) => (
@@ -446,8 +449,8 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
           ))}
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
+          <button type="button" className="fh-btn-ghost cursor-pointer" onClick={onClose}>Cancel</button>
+          <button type="submit" className="fh-btn-primary cursor-pointer" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
         </div>
       </form>
     </div>
@@ -483,8 +486,19 @@ function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; colu
       {!rows.length ? (
         <p className="mt-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">No records yet.</p>
       ) : (
-        <div className="mt-2">
-          <DataTable rows={rows.slice(0, 8)} columns={columns} />
+        <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>{columns.map((c) => <th key={c} className="px-4 py-2.5">{labelize(c)}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.slice(0, 8).map((row, i) => (
+                <tr key={String(row.id || i)} className="hover:bg-slate-50">
+                  {columns.map((c) => <td key={c} className="px-4 py-2.5 text-slate-600">{String(row[c] ?? "--")}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -536,15 +550,8 @@ function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, sess
   const completed = rows.filter((row) => /completed|delivered/i.test(String(row.status ?? ""))).length;
   const proofPending = rows.filter((row) => /pending/i.test(String(row.proofStatus ?? ""))).length;
   const updatesSent = rows.filter((row) => /sent|delivered/i.test(String(row.customerUpdateStatus ?? row.status ?? ""))).length;
-  // ETA accuracy: a row counts only when it has BOTH an eta and an SLA due timestamp
-  // (field name varies across endpoints), and both parse to valid dates.
-  const etaDue = (row: AnyRecord) => row.slaDueAt ?? row.sla_due_at ?? row.slaWindowEnd ?? row.sla_window_end;
-  const withEta = rows.filter((row) => {
-    const e = row.eta ? new Date(String(row.eta)).getTime() : NaN;
-    const d = etaDue(row) ? new Date(String(etaDue(row))).getTime() : NaN;
-    return !Number.isNaN(e) && !Number.isNaN(d);
-  });
-  const onTime = withEta.filter((row) => new Date(String(row.eta)) <= new Date(String(etaDue(row)))).length;
+  const withEta = rows.filter((row) => row.eta && row.slaDueAt);
+  const onTime = withEta.filter((row) => new Date(String(row.eta)) <= new Date(String(row.slaDueAt))).length;
   const revenueMargin = rows.reduce((acc, row) => acc + Number(row.marginEstimate ?? 0), 0);
   return {
     ...summary,

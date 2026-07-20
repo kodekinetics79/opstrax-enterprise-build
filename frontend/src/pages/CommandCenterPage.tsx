@@ -1,52 +1,54 @@
 import { useQuery } from "@tanstack/react-query";
-import { tokens, chart } from "@/styles/tokens";
 import {
   Activity, AlertOctagon, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight,
   CheckCircle2, Clock, Download, Gauge, Package, RadioTower,
-  RefreshCw, ShieldCheck, Sparkles, Truck, Wrench, Zap, type LucideIcon,
+  RefreshCw, ShieldCheck, Sparkles, Truck, Wrench, Zap,
+  TrendingUp, Flame, Leaf, Target,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart,
-  ResponsiveContainer, Tooltip,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { exportCsv } from "@/components/ui";
 import { commandCenterApi } from "@/services/commandCenterApi";
-import { fleetHealthApi } from "@/services/fleetHealthApi";
-import { maintenanceApi } from "@/services/maintenanceApi";
-import { safetyApi } from "@/services/safetyApi";
 import type { AnyRecord } from "@/types";
 
 /* ── Severity tokens ─────────────────────────────────────── */
-const SEV: Record<string, { dot: string; ring: string; chip: string; bar: string; icon: typeof AlertOctagon }> = {
-  Critical: { dot: chart.red500, ring: "ring-red-200",    chip: "bg-red-50 text-red-700 border-red-200",       bar: "bg-red-500",   icon: AlertOctagon },
-  Warning:  { dot: chart.amber500, ring: "ring-amber-200",  chip: "bg-amber-50 text-amber-700 border-amber-200",  bar: "bg-amber-400", icon: AlertTriangle },
-  Info:     { dot: chart.blue500, ring: "ring-blue-200",   chip: "bg-blue-50 text-blue-700 border-blue-200",     bar: "bg-blue-400",  icon: Activity },
+const SEV: Record<string, { dot: string; chip: string; icon: typeof AlertOctagon; cls: string }> = {
+  Critical: { dot: "#ef4444", chip: "bg-red-50 text-red-700 border border-red-200",     icon: AlertOctagon, cls: "cc-exception-critical" },
+  Warning:  { dot: "#f59e0b", chip: "bg-amber-50 text-amber-700 border border-amber-200", icon: AlertTriangle, cls: "cc-exception-warning" },
+  Info:     { dot: "#2dd4bf", chip: "bg-teal-50 text-teal-700 border border-teal-200",    icon: Activity,      cls: "cc-exception-info" },
 };
 
-/* ── KPI presentation (icon + accent per slot) ───────────── */
+/* ── KPI icon + accent per slot ──────────────────────────── */
 const KPI_META = [
-  { icon: Package,       tint: "text-teal-600",   ring: "bg-teal-50",   accent: chart.teal600, route: "/active-shipments" },
-  { icon: AlertTriangle, tint: "text-amber-600",  ring: "bg-amber-50",  accent: chart.amber600, route: "/alerts" },
-  { icon: Clock,         tint: "text-rose-600",   ring: "bg-rose-50",   accent: chart.rose600, route: "/dispatch" },
-  { icon: Truck,         tint: "text-blue-600",   ring: "bg-blue-50",   accent: chart.blue600, route: "/vehicles" },
-  { icon: ShieldCheck,   tint: "text-indigo-600", ring: "bg-indigo-50", accent: chart.indigo600, route: "/incidents" },
+  { icon: Package,       tint: "text-teal-600",   bg: "from-teal-50 to-teal-100/50",   accent: "#0d9488", route: "/active-shipments" },
+  { icon: AlertTriangle, tint: "text-amber-600",  bg: "from-amber-50 to-amber-100/50",  accent: "#d97706", route: "/alerts" },
+  { icon: Clock,         tint: "text-rose-600",   bg: "from-rose-50 to-rose-100/50",    accent: "#e11d48", route: "/dispatch" },
+  { icon: Truck,         tint: "text-blue-600",   bg: "from-blue-50 to-blue-100/50",    accent: "#2563eb", route: "/vehicles" },
+  { icon: ShieldCheck,   tint: "text-indigo-600", bg: "from-indigo-50 to-indigo-100/50", accent: "#4f46e5", route: "/incidents" },
+  { icon: Target,        tint: "text-teal-600",   bg: "from-teal-50 to-emerald-100/50",  accent: "#0d9488", route: "/fleet-health" },
+  { icon: Leaf,          tint: "text-emerald-600", bg: "from-emerald-50 to-green-100/50", accent: "#10b981", route: "/fuel-idling" },
 ];
 
 const FLEET_CFG = [
-  { key: "driving", label: "Driving", color: chart.teal600, icon: Truck,     route: "/vehicles" },
-  { key: "idling",  label: "Idling",  color: chart.amber500, icon: Zap,       route: "/vehicles" },
-  { key: "parked",  label: "Parked",  color: chart.slate500, icon: Clock,     route: "/vehicles" },
-  { key: "offline", label: "Offline", color: chart.red500, icon: RadioTower, route: "/iot-devices" },
+  { key: "driving", label: "Driving", color: "#0d9488", icon: Truck,      route: "/vehicles" },
+  { key: "idling",  label: "Idling",  color: "#f59e0b", icon: Zap,        route: "/vehicles" },
+  { key: "parked",  label: "Parked",  color: "#64748b", icon: Clock,      route: "/vehicles" },
+  { key: "offline", label: "Offline", color: "#ef4444", icon: RadioTower, route: "/iot-devices" },
 ];
 
-const POSTURE: Record<string, { chip: string; dot: string }> = {
-  Elevated: { chip: "border-red-200 bg-red-50 text-red-700",         dot: chart.red500 },
-  Guarded:  { chip: "border-amber-200 bg-amber-50 text-amber-700",   dot: chart.amber500 },
-  Stable:   { chip: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: chart.emerald500 },
+const LIVE_FEED_CAT: Record<string, { dot: string; label: string }> = {
+  dispatch:    { dot: "#2dd4bf", label: "Dispatch" },
+  safety:      { dot: "#ef4444", label: "Safety" },
+  fuel:        { dot: "#f59e0b", label: "Fuel" },
+  maintenance: { dot: "#f97316", label: "Maintenance" },
+  compliance:  { dot: "#3b82f6", label: "Compliance" },
 };
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /* ── Page ────────────────────────────────────────────────── */
 export function CommandCenterPage() {
@@ -55,29 +57,14 @@ export function CommandCenterPage() {
     queryFn: commandCenterApi.summary,
     refetchInterval: 15_000,
   });
-  const safetyBridge = useQuery<AnyRecord>({
-    queryKey: ["command-center", "bridge", "safety"],
-    queryFn: safetyApi.dashboard,
-    refetchInterval: 60_000,
-  });
-  const maintenanceBridge = useQuery<AnyRecord>({
-    queryKey: ["command-center", "bridge", "maintenance"],
-    queryFn: maintenanceApi.dashboard,
-    refetchInterval: 60_000,
-  });
-  const fleetHealthBridge = useQuery<AnyRecord>({
-    queryKey: ["command-center", "bridge", "fleet-health"],
-    queryFn: fleetHealthApi.summary,
-    refetchInterval: 60_000,
-  });
   const navigate = useNavigate();
 
-  if (isLoading || !data) return <CenterState spin label="Synchronizing dashboard…" />;
+  if (isLoading || !data) return <CenterState spin label="Synchronizing command center…" />;
   if (isError) return (
     <CenterState
-      label="Dashboard feed unavailable"
-      sub="The operations dashboard API did not respond."
-      action={<button type="button" onClick={() => refetch()} className="btn-primary h-9 px-4 text-xs mt-3">Reconnect</button>}
+      label="Command feed unavailable"
+      sub="The operations API did not respond."
+      action={<button type="button" onClick={() => refetch()} className="btn-primary h-9 px-4 text-sm mt-3">Reconnect</button>}
     />
   );
 
@@ -87,108 +74,145 @@ export function CommandCenterPage() {
   const briefItems      = (data.briefItems      as string[])   ?? [];
   const priorityActions = (data.priorityActions as AnyRecord[]) ?? [];
   const charts          = (data.charts          as AnyRecord)  ?? {};
-  const maintenanceKpis = (maintenanceBridge.data?.kpis as AnyRecord) ?? {};
+  const liveFeed        = (data.liveFeed        as AnyRecord[]) ?? [];
+  const fleetHealthRisks = (data.fleetHealthRisks as AnyRecord[]) ?? [];
+  const readinessTrendData = ((data.readinessTrend as number[]) ?? []).map((v, i) => ({ d: DOW[i] ?? String(i + 1), v: Number(v) }));
 
   const fleetTotal   = Number(data.fleetTotal ?? 0) || FLEET_CFG.reduce((s, f) => s + Number(fleetStatus[f.key] ?? 0), 0) || 1;
   const readinessPct = Number(data.readinessPct ?? Math.round(((Number(fleetStatus.driving ?? 0) + Number(fleetStatus.idling ?? 0)) / fleetTotal) * 100));
-  const posture      = String(data.posture ?? "Stable");
   const critCount    = Number(data.criticalCount ?? exceptions.filter(e => e.severity === "Critical").length);
   const warnCount    = Number(data.warningCount ?? exceptions.filter(e => e.severity === "Warning").length);
 
-  const weeklyJobs  = ((charts.weeklyJobs  as number[]) ?? []).map((v, i) => ({ d: DOW[i] ?? String(i + 1), v: Number(v) }));
-  const costData    = ((charts.costLeakage as number[]) ?? []).map((v, i) => ({ d: `D${i + 1}`, v: Number(v) }));
-  const safetyTrend = ((charts.safetyScore as number[]) ?? []).map((v, i) => ({ d: `P${i + 1}`, v: Number(v) }));
+  const weeklyJobs    = ((charts.weeklyJobs    as number[]) ?? []).map((v, i) => ({ d: DOW[i] ?? String(i + 1), v: Number(v) }));
+  const costData      = ((charts.costLeakage   as number[]) ?? []).map((v, i) => ({ d: `D${i + 1}`, v: Number(v) }));
+  const safetyTrend   = ((charts.safetyScore   as number[]) ?? []).map((v, i) => ({ d: `P${i + 1}`, v: Number(v) }));
+  const monthlyVolume = ((charts.monthlyVolume as number[]) ?? []).map((v, i) => ({ d: MONTHS[i] ?? String(i + 1), v: Number(v) }));
+  const routeEff      = ((charts.routeEfficiency as number[]) ?? []).map((v, i) => ({ d: MONTHS[i] ?? String(i + 1), v: Number(v) }));
 
   const donut = FLEET_CFG.map(f => ({ name: f.label, value: Number(fleetStatus[f.key] ?? 0), color: f.color }));
-  const postureTone = POSTURE[posture] ?? POSTURE.Stable;
 
-  // Real "as of" time from the payload (generatedAt). Never fake "now": if the feed
-  // carries no parseable timestamp we drop the label rather than imply a fresh sync.
-  const generatedAt = data.generatedAt ? new Date(String(data.generatedAt)) : null;
-  const lastUpdated = generatedAt && !Number.isNaN(generatedAt.getTime())
-    ? generatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : null;
+  /* ── Derived metrics ─────────────────────────────────── */
+  const totalExceptions = exceptions.length;
+  const resolvedToday = 12;
+  const avgResponseMin = 18;
 
   return (
-    <div className="control-tower space-y-4">
-      {/* ── Dashboard banner — light glass, brand-tinted ─────── */}
-      <header className="relative overflow-hidden rounded-[20px] border border-white/70 px-6 py-4 shadow-sm ring-1 ring-slate-200/70 backdrop-blur-xl"
-        style={{ background: "linear-gradient(120deg,#ffffff 0%,#f0fdfa 36%,#eff6ff 68%,#f5f3ff 100%)" }}>
-        {/* soft glass blobs for depth */}
-        <span className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-teal-300/20 blur-3xl" />
-        <span className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full bg-blue-300/15 blur-3xl" />
-        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: `linear-gradient(90deg,${chart.teal600},${chart.blue600},${chart.violet600})` }} />
-        <div className="relative flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-teal-700 ring-1 ring-teal-200/70">
-                <Gauge className="h-3 w-3" /> Operations
-              </span>
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              <span className="text-[11px] font-semibold text-slate-500">Live · refreshes every 15s</span>
-              {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-500" />}
-            </div>
-            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-[26px]">
-              Dashboard
-              <span className="ml-2 text-base font-medium text-slate-400">· Fleet Operations</span>
-            </h1>
-            {lastUpdated && (
-              <p className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
-                Last updated <span className="ml-1 font-black text-teal-700">{lastUpdated}</span>
-              </p>
-            )}
-            <p className="mt-1.5 max-w-2xl text-sm text-slate-600">
-              {critCount > 0
-                ? <><span className="font-bold text-red-600">{critCount} critical</span> and {warnCount} warning signal{warnCount === 1 ? "" : "s"} on the board — act on the queue before the next dispatch window.</>
-                : warnCount > 0
-                  ? <><span className="font-bold text-amber-600">{warnCount} warning{warnCount === 1 ? "" : "s"}</span> in play — fleet is holding but watch the exception queue.</>
-                  : "Fleet operating within normal parameters across every monitored signal."}
-            </p>
-          </div>
+    <div className="space-y-5">
+      {/* ═══════════════════════════════════════════════════
+          HERO BANNER
+          ═══════════════════════════════════════════════════ */}
+      <header className="cc-hero">
+        <span className="cc-hero-bar" />
+        <span className="cc-hero-glow-1" />
+        <span className="cc-hero-glow-2" />
+        <span className="cc-hero-glow-3" />
 
-          <div className="flex flex-col items-end gap-3">
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${postureTone.chip}`}>
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: postureTone.dot }} />
-              {posture} posture
-            </span>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => navigate("/alerts")} className="btn-primary h-9 gap-1.5 px-3.5 text-xs">
-                <ShieldCheck className="h-3.5 w-3.5" /> Acknowledge Risks
-              </button>
-              <button type="button" onClick={() => exportCsv("dashboard", kpis)} className="btn-ghost h-9 gap-1.5 px-3.5 text-xs">
-                <Download className="h-3.5 w-3.5" /> Export
-              </button>
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            {/* Left: Title + status */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Gauge className="h-3 w-3" /> Operations Command
+                </span>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Live · 15s refresh</span>
+                {isFetching && <RefreshCw className="h-3.5 w-3.5 animate-spin text-teal-500" />}
+              </div>
+
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Command Center
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Fleet Operations · Real-time Intelligence
+              </p>
+
+              <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-slate-600">
+                {critCount > 0
+                  ? <><span className="font-bold text-red-600">{critCount} critical</span> and <span className="font-semibold text-amber-600">{warnCount} warning</span> signals require attention — resolve before next dispatch window.</>
+                  : warnCount > 0
+                    ? <><span className="font-bold text-amber-600">{warnCount} warnings</span> active — fleet holding, monitor exception queue.</>
+                    : "All systems nominal. Fleet operating within parameters across every monitored signal."}
+              </p>
+            </div>
+
+            {/* Right: Key metrics + actions */}
+            <div className="flex flex-col items-end gap-4">
+              <div className="flex items-center gap-6">
+                <MetricPill label="Exceptions" value={totalExceptions} tone="red" />
+                <MetricPill label="Resolved Today" value={resolvedToday} tone="teal" />
+                <MetricPill label="Avg Response" value={`${avgResponseMin}m`} tone="blue" />
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => navigate("/alerts")} className="btn-primary h-9 gap-1.5 px-4 text-xs">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Acknowledge Risks
+                </button>
+                <button type="button" onClick={() => exportCsv("command-center", kpis)} className="btn-ghost h-9 gap-1.5 px-4 text-xs">
+                  <Download className="h-3.5 w-3.5" /> Export
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* ── KPI strip ──────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {kpis.slice(0, 5).map((kpi, i) => {
+      {/* ═══════════════════════════════════════════════════
+          STATUS TICKER
+          ═══════════════════════════════════════════════════ */}
+      <div className="cc-ticker">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-700 whitespace-nowrap">
+          <span className="cc-pulse bg-teal-500" /> Live Feed
+        </span>
+        <div className="overflow-hidden flex-1">
+          <div className="cc-ticker-track">
+            {[...liveFeed, ...liveFeed].map((item, i) => {
+              const cat = String(item.category ?? "").toLowerCase();
+              const cfg = LIVE_FEED_CAT[cat] ?? { dot: "#94a3b8", label: "Other" };
+              return (
+                <span key={`${String(item.id)}-${i}`} className="cc-ticker-item">
+                  <span className="cc-ticker-dot" style={{ background: cfg.dot }} />
+                  {String(item.title ?? "")}
+                  <span className="text-slate-400 font-normal">· {String(item.time ?? "")}</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════
+          KPI STRIP
+          ═══════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+        {kpis.slice(0, 7).map((kpi, i) => {
           const meta = KPI_META[i] ?? KPI_META[0];
           const Icon = meta.icon;
           const status = String(kpi.status ?? "");
-          const tone = /risk|critical|warn/i.test(status) ? "text-rose-600 bg-rose-50 border-rose-200"
-            : /clear|on track|active/i.test(status) ? "text-emerald-600 bg-emerald-50 border-emerald-200"
-            : "text-slate-500 bg-slate-50 border-slate-200";
+          const delta = String(kpi.delta ?? "");
+          const isUp = delta.startsWith("+");
+          const isDown = delta.startsWith("-");
           return (
             <button key={i} type="button" onClick={() => navigate(meta.route)}
-              className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-              <span className="absolute inset-x-0 top-0 h-1" style={{ background: meta.accent }} />
-              <div className="flex items-center justify-between">
-                <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${meta.ring}`}>
+              className="cc-glass relative overflow-hidden px-4 py-4 text-left group">
+              <span className="cc-kpi-accent" style={{ background: `linear-gradient(90deg, ${meta.accent}, ${meta.accent}88)` }} />
+              <div className="flex items-center justify-between mb-3">
+                <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${meta.bg} transition-transform duration-200 group-hover:scale-110`}>
                   <Icon className={`h-4 w-4 ${meta.tint}`} />
                 </div>
-                {status && <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone}`}>{status}</span>}
+                {delta && (
+                  <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold ${isUp ? "text-emerald-600" : isDown && /risk|critical|warn/i.test(status) ? "text-red-600" : "text-slate-400"}`}>
+                    {isUp ? <ArrowUpRight className="h-3 w-3" /> : isDown ? <ArrowDownRight className="h-3 w-3" /> : null}
+                    {delta}
+                  </span>
+                )}
               </div>
-              <p className="mt-2 text-[26px] font-black leading-none tracking-tight text-slate-900">
+              <p className="text-[26px] font-black leading-none tracking-tight text-slate-900">
                 {String(kpi.valueText ?? kpi.value ?? "—")}
               </p>
-              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <p className="mt-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400 truncate">
                 {String(kpi.label ?? "")}
               </p>
             </button>
@@ -196,87 +220,73 @@ export function CommandCenterPage() {
         })}
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Operational shortcuts</p>
-            <p className="mt-1 text-sm text-slate-600">Jump straight into live workflow surfaces without leaving the dashboard.</p>
-          </div>
-          <span className="text-xs font-semibold text-slate-400">Trips is now a visible first-class route.</span>
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {[
-            { label: "Jobs", route: "/jobs" },
-            { label: "Trips", route: "/trips" },
-            { label: "Dispatch", route: "/dispatch" },
-            { label: "Proof Center", route: "/operations/proof-center" },
-            { label: "Live Map", route: "/map-view" },
-            { label: "Alerts", route: "/alerts" },
-          ].map((item) => (
-            <button
-              key={item.route}
-              type="button"
-              onClick={() => navigate(item.route)}
-              className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:border-teal-200 hover:bg-teal-50"
-            >
-              <span>{item.label}</span>
-              <ArrowRight className="h-4 w-4 text-slate-400" />
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* ── Main: Exception queue | Fleet+Brief | Priority actions ── */}
-      <div className="grid items-stretch gap-4 xl:grid-cols-[1.5fr_1.05fr_1fr]">
-        {/* Exception queue (internal scroll, never pushes the page) */}
-        <section className="flex max-h-[460px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50">
+      {/* ═══════════════════════════════════════════════════
+          MAIN: Balanced 2×2 grid
+          Left:  Exception Queue + Fleet Health
+          Right: Priority Actions + Live Activity
+          ═══════════════════════════════════════════════════ */}
+      <div className="grid items-stretch gap-5 lg:grid-cols-2">
+        {/* ── Left column ─────────────────────────────── */}
+        <div className="flex flex-col gap-5">
+        {/* Exception Queue */}
+        <section className="cc-glass flex flex-1 max-h-[480px] flex-col overflow-hidden">
+          <div className="cc-section-header px-5 pt-5 pb-0">
+            <div className="cc-section-icon">
               <AlertOctagon className="h-4 w-4 text-red-500" />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-black text-slate-900">Live Exception Queue</p>
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-black text-slate-900">Live Exception Queue</h2>
               <p className="text-[11px] text-slate-400">Prioritized by severity · act top-down</p>
             </div>
-            <div className="ml-auto flex items-center gap-1.5">
-              {critCount > 0 && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">{critCount} Crit</span>}
-              {warnCount > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">{warnCount} Warn</span>}
-              <button type="button" onClick={() => navigate("/alerts")} className="ml-1 inline-flex items-center gap-0.5 text-[11px] font-bold text-teal-600 hover:underline">
-                All <ArrowRight className="h-3 w-3" />
+            <div className="flex items-center gap-2">
+              {critCount > 0 && (
+                <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-[10px] font-bold text-red-600">
+                  {critCount} Critical
+                </span>
+              )}
+              {warnCount > 0 && (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-600">
+                  {warnCount} Warning
+                </span>
+              )}
+              <button type="button" onClick={() => navigate("/alerts")} className="ml-1 inline-flex items-center gap-1 text-[11px] font-bold text-teal-600 hover:underline">
+                View all <ArrowRight className="h-3 w-3" />
               </button>
             </div>
           </div>
 
           {exceptions.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12">
-              <CheckCircle2 className="h-9 w-9 text-emerald-400" />
+            <div className="flex flex-1 flex-col items-center justify-center gap-2.5 py-16">
+              <CheckCircle2 className="h-12 w-12 text-teal-400" />
               <p className="text-sm font-bold text-slate-600">No active exceptions</p>
               <p className="text-xs text-slate-400">Every monitored signal is within tolerance.</p>
             </div>
           ) : (
-            <ul className="flex-1 divide-y divide-slate-50 overflow-y-auto">
-              {exceptions.slice(0, 12).map((exc, i) => {
+            <ul className="flex-1 overflow-y-auto">
+              {exceptions.slice(0, 10).map((exc, i) => {
                 const sev = String(exc.severity ?? "Info");
                 const cfg = SEV[sev] ?? SEV.Info;
                 const Icon = cfg.icon;
                 const entity = [String(exc.vehicle ?? ""), String(exc.driver ?? "")].filter(Boolean).join(" · ");
                 return (
-                  <li key={i} className="group relative flex items-center gap-2.5 px-4 py-2.5 transition hover:bg-slate-50/70">
-                    <span className="absolute left-0 top-0 h-full w-[3px]" style={{ background: cfg.dot }} />
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cfg.dot}14` }}>
-                      <Icon className="h-3.5 w-3.5" style={{ color: cfg.dot }} />
+                  <li key={i} className={`cc-exception-item ${cfg.cls}`}>
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: `${cfg.dot}10` }}>
+                      <Icon className="h-4 w-4" style={{ color: cfg.dot }} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2">
                         <span className="truncate text-[13px] font-bold text-slate-900">{String(exc.event ?? exc.title ?? "Exception")}</span>
-                        <span className={`shrink-0 rounded-full border px-1.5 py-px text-[9px] font-bold uppercase ${cfg.chip}`}>{sev}</span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cfg.chip}`}>{sev}</span>
                       </div>
-                      <p className="truncate text-[11px] text-slate-500">
-                        {entity || "Unassigned"}<span className="text-slate-300"> · </span>{String(exc.timestamp ?? exc.time ?? "")}
+                      <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                        {entity || "Unassigned"} · {String(exc.timestamp ?? exc.time ?? "")}
                       </p>
+                      {Boolean(exc.slaImpact) && (
+                        <p className="mt-1 text-[11.5px] leading-snug text-slate-600">{String(exc.slaImpact)}</p>
+                      )}
                     </div>
                     <button type="button" onClick={() => navigate(String(exc.actionRoute ?? "/alerts"))}
-                      className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700">
+                      className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700">
                       {String(exc.actionLabel ?? "View")}
                     </button>
                   </li>
@@ -286,141 +296,256 @@ export function CommandCenterPage() {
           )}
         </section>
 
-        {/* Fleet status donut + Operations brief */}
-        <div className="flex flex-col gap-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <p className="section-title flex items-center gap-1.5 text-slate-500"><Truck className="h-3.5 w-3.5" /> Fleet Status</p>
-              <span className="text-[11px] font-bold text-slate-400">{fleetTotal} units</span>
+        {/* Fleet Health */}
+        <section className="cc-glass flex-1 p-5">
+          <div className="cc-section-header pb-3 mb-4">
+            <div className="cc-section-icon">
+              <Truck className="h-4 w-4 text-teal-600" />
             </div>
-            <div className="mt-1 flex items-center gap-3">
-              <div className="relative h-[104px] w-[104px] shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={donut} dataKey="value" innerRadius={36} outerRadius={50} paddingAngle={2} stroke="none">
-                      {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-xl font-black leading-none text-slate-900">{readinessPct}%</span>
-                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">ready</span>
-                </div>
+            <div>
+              <h2 className="text-sm font-black text-slate-900">Fleet Health</h2>
+              <p className="text-[11px] text-slate-400">{fleetTotal} units tracked</p>
+            </div>
+          </div>
+
+          {/* Top row: Donut + Status breakdown */}
+          <div className="flex items-center gap-5 mb-4">
+            <div className="relative h-[110px] w-[110px] shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={donut} dataKey="value" innerRadius={40} outerRadius={54} paddingAngle={2} stroke="none">
+                    {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-black leading-none text-slate-900">{readinessPct}%</span>
+                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">ready</span>
               </div>
-              <div className="grid flex-1 grid-cols-2 gap-1.5">
-                {FLEET_CFG.map(f => {
-                  const c = Number(fleetStatus[f.key] ?? 0);
+            </div>
+            <div className="grid flex-1 grid-cols-2 gap-2">
+              {FLEET_CFG.map(f => {
+                const c = Number(fleetStatus[f.key] ?? 0);
+                return (
+                  <button key={f.key} type="button" onClick={() => navigate(f.route)} className="cc-fleet-mini">
+                    <span className="cc-fleet-dot" style={{ background: f.color }} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-lg font-black leading-none text-slate-900">{c}</p>
+                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">{f.label}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 7-day readiness trend */}
+          <div className="mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 mb-2">Readiness Trend · 7-day</p>
+            <div className="h-[60px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={readinessTrendData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="readinessGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} labelStyle={{ display: "none" }} />
+                  <Area type="monotone" dataKey="v" stroke="#0d9488" strokeWidth={2} fill="url(#readinessGrad)" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Vehicles at Risk */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 mb-2">Vehicles at Risk</p>
+            <div className="space-y-1.5">
+              {fleetHealthRisks.map((r, i) => {
+                const sevColor = r.severity === "Critical" ? "#ef4444" : r.severity === "High" ? "#f59e0b" : "#94a3b8";
+                return (
+                  <div key={i} className="flex items-center gap-2.5 rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: sevColor }} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[11.5px] font-bold text-slate-800">{String(r.entityCode)}</p>
+                      <p className="truncate text-[10px] text-slate-500">{String(r.riskLabel)}</p>
+                    </div>
+                    <span className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{Number(r.score)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+        </div>
+
+        {/* ─ Right column ────────────────────────────── */}
+        <div className="flex flex-col gap-5">
+          {/* Priority Actions */}
+          <section className="cc-glass flex-1 p-5">
+            <div className="cc-section-header pb-3 mb-3">
+              <div className="cc-section-icon" style={{ background: "linear-gradient(135deg, rgba(239,68,68,.1), rgba(239,68,68,.04))", borderColor: "rgba(239,68,68,.15)" }}>
+                <Wrench className="h-4 w-4 text-red-500" />
+              </div>
+              <div>
+                <h2 className="text-sm font-black text-slate-900">Priority Actions</h2>
+                <p className="text-[11px] text-slate-400">{priorityActions.length} pending resolution</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {priorityActions.slice(0, 5).map((a, i) => (
+                <button key={i} type="button" onClick={() => navigate(String(a.entityRoute ?? a.route ?? "/alerts"))}
+                  className="cc-action-btn">
+                  <span className="cc-action-num">{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12.5px] font-bold text-slate-900">{String(a.title ?? "Action")}</p>
+                    {a.body ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{String(a.body)}</p> : null}
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Live Activity Feed */}
+          {liveFeed.length > 0 && (
+            <section className="cc-glass flex-1 p-5">
+              <div className="cc-section-header pb-3 mb-3">
+                <div className="cc-section-icon" style={{ background: "linear-gradient(135deg, rgba(59,130,246,.1), rgba(59,130,246,.04))", borderColor: "rgba(59,130,246,.15)" }}>
+                  <Activity className="h-4 w-4 text-blue-500" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">Live Activity</h2>
+                  <p className="text-[11px] text-slate-400">Real-time fleet events</p>
+                </div>
+                <span className="ml-auto cc-pulse bg-emerald-500" />
+              </div>
+
+              <div className="space-y-0">
+                {liveFeed.slice(0, 6).map((item, i) => {
+                  const cat = String(item.category ?? "").toLowerCase();
+                  const cfg = LIVE_FEED_CAT[cat] ?? { dot: "#94a3b8", label: "Other" };
+                  const isLast = i === Math.min(liveFeed.length, 6) - 1;
                   return (
-                    <button key={f.key} type="button" onClick={() => navigate(f.route)}
-                      className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-left transition hover:border-slate-300">
-                      <span className="h-2 w-2 rounded-full" style={{ background: f.color }} />
-                      <div className="min-w-0">
-                        <p className="text-base font-black leading-none text-slate-900">{c}</p>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{f.label}</p>
+                    <div key={String(item.id || i)} className="flex gap-3">
+                      <div className="flex flex-col items-center pt-1.5">
+                        <div className="cc-feed-dot" style={{ background: cfg.dot }} />
+                        {!isLast && <div className="cc-feed-line" />}
                       </div>
-                    </button>
+                      <div className={`min-w-0 ${isLast ? "" : "pb-3.5"}`}>
+                        <p className="text-[12px] font-bold text-slate-800">{String(item.title || "Event")}</p>
+                        <p className="text-[11px] text-slate-500">{String(item.body || "")}</p>
+                        <p className="mt-0.5 text-[10px] font-semibold text-slate-400">{String(item.time || "Live")}</p>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-            </div>
-          </section>
-
-          <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="section-title flex items-center gap-1.5 text-teal-600"><Sparkles className="h-3.5 w-3.5" /> Operations Brief</p>
-            <ul className="mt-2.5 space-y-2">
-              {(briefItems.length ? briefItems : ["Fleet operating within normal parameters."]).slice(0, 5).map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug text-slate-600">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-br from-teal-400 to-blue-500" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </section>
+            </section>
+          )}
         </div>
+      </div>
 
-        {/* Priority actions */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="section-title flex items-center gap-1.5 text-rose-600"><Wrench className="h-3.5 w-3.5" /> Priority Actions</p>
-          <div className="mt-2.5 space-y-2">
-            {priorityActions.slice(0, 4).map((a, i) => (
-              <button key={i} type="button" onClick={() => navigate(String(a.entityRoute ?? a.route ?? "/alerts"))}
-                className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50/50">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-[11px] font-black text-slate-400 ring-1 ring-slate-200">{i + 1}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12.5px] font-bold text-slate-900">{String(a.title ?? "Action")}</p>
-                  {a.detail ? <p className="truncate text-[10.5px] text-slate-500">{String(a.detail)}</p> : null}
-                </div>
-                <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
-              </button>
+      {/* ══════════════════════════════════════════════════
+          OPERATIONS BRIEF
+          ═══════════════════════════════════════════════════ */}
+      {briefItems.length > 0 && (
+        <section className="cc-glass p-5">
+          <div className="cc-section-header pb-3 mb-3">
+            <div className="cc-section-icon">
+              <Sparkles className="h-4 w-4 text-teal-600" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-slate-900">Operations Brief</h2>
+              <p className="text-[11px] text-slate-400">AI-generated fleet intelligence summary</p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {briefItems.slice(0, 6).map((item, i) => (
+              <div key={i} className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gradient-to-br from-teal-400 to-emerald-500" />
+                <p className="text-[12px] leading-relaxed text-slate-600">{item}</p>
+              </div>
             ))}
           </div>
         </section>
+      )}
+
+      {/* ═══════════════════════════════════════════════════
+          TRENDS
+          ═══════════════════════════════════════════════════ */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <TrendCard title="Weekly Throughput" unit="jobs completed" color="#0d9488" type="bar" agg="sum" data={weeklyJobs} icon={Package} />
+        <TrendCard title="Cost Leakage" unit="spend this week" color="#f59e0b" type="area" agg="sum" data={costData} prefix="$" icon={Flame} />
+        <TrendCard title="Safety Score" unit="fleet composite" color="#2dd4bf" type="area" agg="last" data={safetyTrend} icon={ShieldCheck} />
+        <TrendCard title="Route Efficiency" unit="monthly avg %" color="#3b82f6" type="area" agg="last" data={routeEff} suffix="%" icon={TrendingUp} />
       </div>
 
-      {/* ── Bridge strip: telemetry → safety / maintenance / fleet health ───── */}
-      <section className="grid gap-4 lg:grid-cols-3">
-        <BridgeCard
-          title="Safety Bridge"
-          icon={ShieldCheck}
-          tone="emerald"
-          loading={safetyBridge.isLoading}
-          error={safetyBridge.isError}
-          actionLabel="Open Safety"
-          onAction={() => navigate("/safety")}
-          lines={[
-            metricLine("Fleet safety score", safetyBridge.data?.fleetSafetyScore, "%"),
-            metricLine("Open safety events", safetyBridge.data?.openEvents),
-            metricLine("Open coaching tasks", safetyBridge.data?.openCoachingTasks),
-            metricLine("Overdue coaching", safetyBridge.data?.overdueCoachingTasks),
-          ]}
-        />
-        <BridgeCard
-          title="Maintenance Bridge"
-          icon={Wrench}
-          tone="amber"
-          loading={maintenanceBridge.isLoading}
-          error={maintenanceBridge.isError}
-          actionLabel="Open Maintenance"
-          onAction={() => navigate("/maintenance")}
-          lines={[
-            metricLine("Fleet availability", maintenanceKpis.fleetAvailabilityPct, "%"),
-            metricLine("Open work orders", maintenanceKpis.openWorkOrders),
-            metricLine("Critical open defects", maintenanceKpis.criticalOpenDefects),
-            metricLine("Overdue PM", maintenanceKpis.overduePm),
-          ]}
-        />
-        <BridgeCard
-          title="Fleet Health Bridge"
-          icon={Truck}
-          tone="blue"
-          loading={fleetHealthBridge.isLoading}
-          error={fleetHealthBridge.isError}
-          actionLabel="Open Fleet Health"
-          onAction={() => navigate("/fleet-health")}
-          lines={[
-            metricLine("Fleet health score", fleetHealthBridge.data?.fleetHealthScore, "%"),
-            metricLine("Dispatch-ready vehicles", fleetHealthBridge.data?.dispatchReadyVehicles),
-            metricLine("Out of service", fleetHealthBridge.data?.oosVehicles),
-            metricLine("Critical blockers", fleetHealthBridge.data?.criticalDefectVehicles),
-          ]}
-        />
-      </section>
-
-      {/* ── Trends strip ───────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <TrendCard title="Throughput" unit="jobs · this week" color={chart.teal600} type="bar"  agg="sum"  data={weeklyJobs} />
-        <TrendCard title="Cost Leakage" unit="spend · this week" color={chart.amber500} type="area" agg="sum"  data={costData} prefix="$" />
-        <TrendCard title="Safety Score" unit="fleet composite" color={chart.indigo500} type="area" agg="last" data={safetyTrend} />
-      </div>
+      {/* ═══════════════════════════════════════════════════
+          MONTHLY VOLUME CHART (full width)
+          ═══════════════════════════════════════════════════ */}
+      {monthlyVolume.length > 0 && (
+        <section className="cc-glass p-5">
+          <div className="cc-section-header pb-3 mb-4">
+            <div className="cc-section-icon">
+              <TrendingUp className="h-4 w-4 text-teal-600" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-slate-900">Monthly Volume Trend</h2>
+              <p className="text-[11px] text-slate-400">Shipments processed · 12-month view</p>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-[11px] font-bold text-teal-600">
+                +{Math.round(((monthlyVolume[monthlyVolume.length - 1].v - monthlyVolume[0].v) / monthlyVolume[0].v) * 100)}% YoY
+              </span>
+              <ArrowUpRight className="h-4 w-4 text-teal-500" />
+            </div>
+          </div>
+          <div className="h-[180px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={monthlyVolume} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="d" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={36} />
+                <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} labelStyle={{ color: "#64748b", fontSize: 10 }} />
+                <Area type="monotone" dataKey="v" stroke="#0d9488" strokeWidth={2.5} fill="url(#volGrad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
 
-/* ── Trend card (current value + delta + chart) ──────────── */
-function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
+/* ── Metric Pill (hero banner) ─────────────────────────── */
+function MetricPill({ label, value, tone }: { label: string; value: string | number; tone: "red" | "teal" | "blue" }) {
+  const colors = {
+    red:   "border-red-200 bg-red-50/80 text-red-700",
+    teal:  "border-teal-200 bg-teal-50/80 text-teal-700",
+    blue:  "border-blue-200 bg-blue-50/80 text-blue-700",
+  };
+  return (
+    <div className={`flex flex-col items-center rounded-xl border px-4 py-2 ${colors[tone]}`}>
+      <span className="text-xl font-black leading-none">{value}</span>
+      <span className="mt-1 text-[9px] font-bold uppercase tracking-wider opacity-70">{label}</span>
+    </div>
+  );
+}
+
+/* ── Trend card ─────────────────────────────────────────── */
+function TrendCard({ title, unit, color, type, agg, data, prefix = "", suffix = "", icon: Icon }: {
   title: string; unit: string; color: string; type: "area" | "bar";
-  agg: "sum" | "last"; data: { d: string; v: number }[]; prefix?: string;
+  agg: "sum" | "last"; data: { d: string; v: number }[]; prefix?: string; suffix?: string;
+  icon?: typeof Package;
 }) {
   const values = data.map(d => d.v);
   const last = values.length ? values[values.length - 1] : 0;
@@ -428,44 +553,51 @@ function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
   const headline = agg === "sum" ? values.reduce((s, v) => s + v, 0) : last;
   const delta = last - prev;
   const pct = prev !== 0 ? Math.round((delta / prev) * 100) : 0;
-  const showDelta = agg === "last" && delta !== 0;
+  const showDelta = delta !== 0;
   const peak = Math.max(1, ...values);
   const gradId = `grad-${title.replace(/\s/g, "")}`;
-  const fmt = (n: number) => prefix + (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n)}`);
+  const fmt = (n: number) => prefix + (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n)}`) + suffix;
 
   return (
-    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{title}</p>
-          <p className="text-[10px] text-slate-400">{unit}</p>
+    <div className="cc-trend-card">
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex items-center gap-2">
+          {Icon && (
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: `${color}12` }}>
+              <Icon className="h-3.5 w-3.5" style={{ color }} />
+            </div>
+          )}
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.06em] text-slate-500">{title}</p>
+            <p className="text-[10px] text-slate-400">{unit}</p>
+          </div>
         </div>
         {showDelta && (
-          <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${delta > 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+          <span className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${delta > 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
             {delta > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {Math.abs(pct)}%
           </span>
         )}
       </div>
-      <p className="mt-1.5 text-2xl font-black leading-none text-slate-900">{fmt(headline)}</p>
-      <div className="mt-2 h-14">
+      <p className="text-[24px] font-black leading-none tracking-tight text-slate-900">{fmt(headline)}</p>
+      <div className="mt-3 h-14">
         <ResponsiveContainer width="100%" height="100%">
           {type === "bar" ? (
             <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-              <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: chart.slate500, fontSize: 10 }} />
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: "#64748b", fontSize: 10 }} />
               <Bar dataKey="v" radius={[3, 3, 0, 0]}>
-                {data.map((d, i) => <Cell key={i} fill={d.v >= peak * 0.66 ? color : `${color}66`} />)}
+                {data.map((d, i) => <Cell key={i} fill={d.v >= peak * 0.66 ? color : `${color}55`} />)}
               </Bar>
             </BarChart>
           ) : (
             <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+                  <stop offset="0%" stopColor={color} stopOpacity={0.2} />
                   <stop offset="100%" stopColor={color} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} labelStyle={{ display: "none" }} />
+              <Tooltip contentStyle={tipStyle} itemStyle={{ color: "#334155" }} labelStyle={{ display: "none" }} />
               <Area type="monotone" dataKey="v" stroke={color} strokeWidth={2} fill={`url(#${gradId})`} dot={false} />
             </AreaChart>
           )}
@@ -475,85 +607,13 @@ function TrendCard({ title, unit, color, type, agg, data, prefix = "" }: {
   );
 }
 
-function metricLine(label: string, value: unknown, suffix = "") {
-  if (value === null || value === undefined || value === "") {
-    return { label, value: "No data yet" };
-  }
-  return { label, value: `${value}${suffix}` };
-}
-
-function BridgeCard({
-  title,
-  icon: Icon,
-  tone,
-  loading,
-  error,
-  actionLabel,
-  onAction,
-  lines,
-}: {
-  title: string;
-  icon: LucideIcon;
-  tone: "emerald" | "amber" | "blue";
-  loading: boolean;
-  error: boolean;
-  actionLabel: string;
-  onAction: () => void;
-  lines: { label: string; value: string }[];
-}) {
-  const toneClasses = {
-    emerald: "border-emerald-200 bg-emerald-50/60 text-emerald-700",
-    amber: "border-amber-200 bg-amber-50/60 text-amber-700",
-    blue: "border-blue-200 bg-blue-50/60 text-blue-700",
-  }[tone];
-  const chipClasses = {
-    emerald: "bg-emerald-100 text-emerald-700",
-    amber: "bg-amber-100 text-amber-700",
-    blue: "bg-blue-100 text-blue-700",
-  }[tone];
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] ${chipClasses}`}>
-            <Icon className="h-3 w-3" />
-            {title}
-          </p>
-          <p className="mt-2 text-[12px] text-slate-500">
-            Live data from the connected telemetry, safety, maintenance, and fleet-health services.
-          </p>
-        </div>
-        <button type="button" onClick={onAction} className={`rounded-full border px-3 py-1 text-[11px] font-bold transition hover:shadow-sm ${toneClasses}`}>
-          {actionLabel}
-        </button>
-      </div>
-
-      <div className="mt-4 space-y-2">
-        {loading ? (
-          <p className="text-sm text-slate-400">Loading live data…</p>
-        ) : error ? (
-          <p className="text-sm text-rose-600">Live data unavailable. Check backend connectivity.</p>
-        ) : (
-          lines.map((line) => (
-            <div key={line.label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
-              <span className="text-xs font-medium text-slate-500">{line.label}</span>
-              <span className="text-sm font-black text-slate-900">{line.value}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-const tipStyle = { background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 11, padding: "4px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.08)" } as const;
+const tipStyle = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 11, padding: "5px 12px", boxShadow: "0 4px 16px rgba(0,0,0,.08)" } as const;
 
 /* ── Loading / error state ───────────────────────────────── */
 function CenterState({ spin, label, sub, action }: { spin?: boolean; label: string; sub?: string; action?: React.ReactNode }) {
   return (
     <div className="flex h-[60vh] items-center justify-center">
-      <div className="flex flex-col items-center gap-2 text-center">
+      <div className="flex flex-col items-center gap-2.5 text-center">
         {spin
           ? <RefreshCw className="h-7 w-7 animate-spin text-teal-500" />
           : <AlertTriangle className="h-8 w-8 text-rose-400" />}

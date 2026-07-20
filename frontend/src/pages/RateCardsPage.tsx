@@ -1,23 +1,50 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { withFallback } from "@/services/fleetDomainApi";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
+import { rateCards as seedRateCards } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
+// ── Seed ────────────────────────────────────────────────────────────────────
+
+function buildSeed(): AnyRecord[] {
+  return (seedRateCards as AnyRecord[]).map((r, i) => ({
+    id: i + 1,
+    title: String(r.customerContract ?? ""),
+    rateCardId: String(r.rateCardId ?? `RC-${7000 + i}`),
+    customerContract: String(r.customerContract ?? ""),
+    originZone: String(r.originZone ?? ""),
+    destinationZone: String(r.destinationZone ?? ""),
+    vehicleType: String(r.vehicleType ?? ""),
+    pricingMethod: String(r.pricingMethod ?? "Per KM"),
+    baseRate: Number(r.baseRate ?? 0),
+    perKmRate: Number(r.perKmRate ?? 0),
+    fuelSurcharge: String(r.fuelSurcharge ?? "0%"),
+    currency: String(r.currency ?? "SAR"),
+    effectiveFrom: String(r.effectiveFrom ?? ""),
+    effectiveTo: String(r.effectiveTo ?? ""),
+    status: String(r.status ?? "Active"),
+  }));
+}
+
 const rateCardsApi = {
-  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/rate-cards")).then((rows) =>
-    rows.map((r) => ({
-      ...r,
-      rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
-      customerContract: r.customerContract ?? r.title ?? "",
-      originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
-      destinationZone: r.destinationZone ?? r.destination ?? "",
-      baseRate: Number(r.baseRate ?? r.amount ?? 0),
-      perKmRate: Number(r.perKmRate ?? 0),
-      fuelSurcharge: r.fuelSurcharge ?? "0%",
-      effectiveFrom: r.effectiveFrom ?? "",
-      effectiveTo: r.effectiveTo ?? r.due_at ?? "",
-    }))
+  list: () => withFallback(
+    unwrap<AnyRecord[]>(apiClient.get("/api/rate-cards")).then((rows) =>
+      rows.map((r) => ({
+        ...r,
+        rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
+        customerContract: r.customerContract ?? r.title ?? "",
+        originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
+        destinationZone: r.destinationZone ?? r.destination ?? "",
+        baseRate: Number(r.baseRate ?? r.amount ?? 0),
+        perKmRate: Number(r.perKmRate ?? 0),
+        fuelSurcharge: r.fuelSurcharge ?? "0%",
+        effectiveFrom: r.effectiveFrom ?? "",
+        effectiveTo: r.effectiveTo ?? r.due_at ?? "",
+      }))
+    ),
+    () => buildSeed()
   ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/rate-cards", body)),
 };
@@ -76,17 +103,17 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Vehicle Type</label>
-            <select title="Vehicle Type" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Vehicle Type" className="w-full"
               value={form.vehicleType} onChange={(e) => setForm((f) => ({ ...f, vehicleType: e.target.value }))}>
               {["Dry Van", "Reefer", "Last-mile Van", "Flatbed", "Box Truck"].map((t) => <option key={t}>{t}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Pricing Method</label>
-            <select title="Pricing Method" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Pricing Method" className="w-full"
               value={form.pricingMethod} onChange={(e) => setForm((f) => ({ ...f, pricingMethod: e.target.value }))}>
               {["Per KM", "Fixed Trip", "Zone Based", "Per Pallet", "Weight Based"].map((m) => <option key={m}>{m}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Fuel Surcharge</label>
@@ -95,10 +122,10 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
-            <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Currency" className="w-full"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
               {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
@@ -142,7 +169,7 @@ export function RateCardsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="flex flex-col gap-6 py-6">
       {showCreate && <CreateRateCardModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

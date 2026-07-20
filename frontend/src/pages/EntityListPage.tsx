@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -388,7 +388,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
       <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative max-w-xl flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1157,10 +1157,10 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
             <label key={field.key} className="block">
               <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{field.label}</span>
               {field.type === "select" ? (
-                <select className="field" value={String(form[field.key] ?? "")} required={field.required} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}>
+                <Select className="w-full" value={String(form[field.key] ?? "")} required={field.required} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}>
                   <option value="">Select</option>
                   {field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
+                </Select>
               ) : (
                 <input className="field" type={field.type || "text"} value={String(form[field.key] ?? "")} required={field.required} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} />
               )}

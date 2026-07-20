@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, ClipboardCheck, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
+import { Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Sparkles, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
 import {
@@ -7,24 +7,20 @@ import {
   useAdminPermissions,
   useAdminRoles,
   useAdminUsers,
-  useAccessReview,
-  useAccessReviews,
-  useCompleteAccessReview,
-  useCreateAdminRole,
   useCreateAdminUser,
-  useCreateAccessReview,
-  useDecideAccessReviewItem,
   useDeleteAdminUser,
   useUpdateAdminRole,
   useUpdateAdminUser,
 } from "@/hooks/useAdmin";
 import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/hooks/useBatch7";
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
+import { adminApi } from "@/services/adminApi";
+import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, Select, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
+type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "settings" | "audit";
 
 type UserFormState = {
   id?: number;
@@ -39,6 +35,7 @@ type UserFormState = {
 
 type RoleFormState = {
   name: string;
+  scope: string;
   permissions: string[];
 };
 
@@ -47,10 +44,11 @@ const TAB_OPTIONS: Array<{ key: AdminTab; label: string }> = [
   { key: "users", label: "Users" },
   { key: "roles", label: "Roles" },
   { key: "permissions", label: "Permissions" },
-  { key: "access", label: "Access Reviews" },
   { key: "settings", label: "Settings" },
   { key: "audit", label: "Audit Logs" },
 ];
+
+const ROLE_OPTIONS = developmentFleetSeedData.roles;
 
 function csvValue(value: unknown) {
   const text = String(value ?? "");
@@ -90,18 +88,12 @@ function permissionsByGroup(permissions: string[]) {
     { title: "Settings", prefix: "settings:" },
     { title: "Audit", prefix: "audit:" },
   ];
-  const grouped = groups
+  return groups
     .map((group) => ({
       ...group,
       permissions: permissions.filter((permission) => permission.startsWith(group.prefix)),
     }))
     .filter((group) => group.permissions.length > 0);
-  // Catch-all so permissions with unknown prefixes (access_review:, telematics:, …)
-  // stay visible and grantable instead of silently disappearing from the editor.
-  const known = new Set(grouped.flatMap((g) => g.permissions));
-  const other = permissions.filter((p) => !known.has(p));
-  if (other.length > 0) grouped.push({ title: "Other", prefix: "", permissions: other });
-  return grouped;
 }
 
 function permissionList(value: unknown): string[] {
@@ -117,45 +109,6 @@ function permissionList(value: unknown): string[] {
   return [];
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "?";
-}
-
-/** Deterministic avatar hue per name so the roster is scannable at a glance. */
-function avatarHue(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return h;
-}
-
-function Avatar({ name }: { name: string }) {
-  const hue = avatarHue(name);
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_2px_5px_rgba(15,23,42,.25)]"
-      style={{ background: `linear-gradient(145deg, hsl(${hue} 55% 52%), hsl(${hue} 60% 40%))` }}
-    >
-      {initials(name)}
-    </span>
-  );
-}
-
-function MfaBadge({ status }: { status: unknown }) {
-  const enabled = String(status ?? "").toLowerCase() === "enabled";
-  return (
-    <span className={`iam-chip ${enabled ? "!text-emerald-700" : "!text-slate-400"}`} title={enabled ? "Multi-factor authentication enrolled" : "MFA not enrolled"}>
-      <ShieldCheck className={`h-3 w-3 shrink-0 ${enabled ? "text-emerald-600" : "text-slate-300"}`} />
-      <span>{enabled ? "MFA" : "No MFA"}</span>
-    </span>
-  );
-}
-
 export function AdminPage() {
   const { session } = useAuth();
   const hasPermission = useHasPermission();
@@ -164,14 +117,11 @@ export function AdminPage() {
   const canUpdateUsers = hasPermission(PERMISSIONS.USERS_UPDATE);
   const canDeleteUsers = hasPermission(PERMISSIONS.USERS_DELETE);
   const canViewRoles = hasPermission(PERMISSIONS.ROLES_VIEW);
-  const canCreateRoles = hasPermission(PERMISSIONS.ROLES_CREATE);
   const canUpdateRoles = hasPermission(PERMISSIONS.ROLES_UPDATE);
   const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
   const canUpdateSettings = hasPermission(PERMISSIONS.SETTINGS_UPDATE);
   const canViewAudit = hasPermission(PERMISSIONS.AUDIT_VIEW);
   const canExportReports = hasPermission(PERMISSIONS.REPORTS_EXPORT);
-  const canViewAccessReviews = hasPermission("access_review:view");
-  const canManageAccessReviews = hasPermission("access_review:manage");
 
   const [tab, setTab] = useState<AdminTab>("dashboard");
   const [search, setSearch] = useState("");
@@ -181,19 +131,18 @@ export function AdminPage() {
   const [userModal, setUserModal] = useState<"create" | "edit" | null>(null);
   const [roleModal, setRoleModal] = useState<AnyRecord | null>(null);
   const [permissionsExportNotice, setPermissionsExportNotice] = useState<string | null>(null);
-  const [selectedReviewId, setSelectedReviewId] = useState<number | null>(null);
-  const [reviewForm, setReviewForm] = useState({ title: "", description: "", dueDate: "" });
   const [userForm, setUserForm] = useState<UserFormState>({
     fullName: "",
     email: "",
-    companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
+    companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 1),
     roleId: "",
-    roleName: "",
+    roleName: "Tenant Admin",
     status: "Active",
-    password: "",
+    password: "demo123",
   });
   const [roleForm, setRoleForm] = useState<RoleFormState>({
     name: "",
+    scope: "Tenant",
     permissions: [],
   });
 
@@ -201,8 +150,6 @@ export function AdminPage() {
   const usersQ = useAdminUsers({ search, role: roleFilter, status: statusFilter });
   const rolesQ = useAdminRoles();
   const permissionsQ = useAdminPermissions();
-  const accessReviewsQ = useAccessReviews(canViewAccessReviews);
-  const accessReviewQ = useAccessReview(selectedReviewId);
   const localeQ = useLocalizationSettings();
   const auditLogsQ = useAuditLogs(undefined, canViewAudit);
   const auditExportsQ = useAuditExportRequests(canViewAudit);
@@ -212,20 +159,15 @@ export function AdminPage() {
   const updateUser = useUpdateAdminUser();
   const deleteUser = useDeleteAdminUser();
   const updateRole = useUpdateAdminRole();
-  const createRole = useCreateAdminRole();
   const updateSettings = useUpdateLocaleSettings();
-  const createAccessReview = useCreateAccessReview();
-  const decideAccessReviewItem = useDecideAccessReviewItem();
-  const completeAccessReview = useCompleteAccessReview();
 
   const users = usersQ.data ?? [];
   const roles = rolesQ.data ?? [];
-  const permissions = permissionsQ.data ?? [];
-  const roleOptions = roles;
+  const permissions = permissionsQ.data ?? developmentFleetSeedData.permissions;
 
   const filteredUsers = useMemo(() => users, [users]);
 
-  if (!canViewUsers && !canViewRoles && !canViewSettings && !canViewAudit && !canViewAccessReviews) {
+  if (!canViewUsers && !canViewRoles && !canViewSettings && !canViewAudit) {
     return <PermissionDenied permission="users:view" />;
   }
 
@@ -233,11 +175,11 @@ export function AdminPage() {
     setUserForm({
       fullName: "",
       email: "",
-      companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
+      companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 1),
       roleId: "",
-      roleName: String(roleOptions[0]?.name ?? ""),
+      roleName: "Tenant Admin",
       status: "Active",
-      password: "",
+      password: "demo123",
     });
     setUserModal("create");
   };
@@ -247,7 +189,7 @@ export function AdminPage() {
       id: Number(user.id),
       fullName: String(user.fullName ?? user.full_name ?? ""),
       email: String(user.email ?? ""),
-      companyId: Number(user.companyId ?? user.company_id ?? session?.company?.id ?? 0),
+      companyId: Number(user.companyId ?? user.company_id ?? session?.company?.id ?? 1),
       roleId: String(user.roleId ?? user.role_id ?? ""),
       roleName: String(user.roleName ?? user.role_name ?? ""),
       status: String(user.status ?? "Active"),
@@ -264,162 +206,187 @@ export function AdminPage() {
       roleId: userForm.roleId ? Number(userForm.roleId) : undefined,
       roleName: userForm.roleName,
       status: userForm.status,
+      password: userForm.password,
+      permissionsJson: JSON.stringify(permissionList(roleModal?.permissionsJson ?? [])),
     };
     if (userModal === "create") {
-      body.password = userForm.password;
       await createUser.mutateAsync(body);
+      await adminApi.auditLog({ actionName: "user.created", entityName: "User", detailsJson: JSON.stringify({ email: userForm.email }) });
     } else if (userModal === "edit" && userForm.id) {
-      if (userForm.password.trim()) body.password = userForm.password;
       await updateUser.mutateAsync({ id: Number(userForm.id), body });
+      await adminApi.auditLog({ actionName: "user.updated", entityName: "User", entityId: Number(userForm.id), detailsJson: JSON.stringify({ email: userForm.email }) });
     }
     setUserModal(null);
   };
 
   const saveRole = async () => {
-    if (roleModal?.id) {
-      await updateRole.mutateAsync({ id: Number(roleModal.id), body: roleForm });
-    } else {
-      await createRole.mutateAsync(roleForm);
-    }
+    if (!roleModal?.id) return;
+    await updateRole.mutateAsync({
+      id: Number(roleModal.id),
+      body: {
+        name: roleForm.name,
+        scope: roleForm.scope,
+        permissions: roleForm.permissions,
+      },
+    });
+    await adminApi.auditLog({ actionName: "role.updated", entityName: "Role", entityId: Number(roleModal.id), detailsJson: JSON.stringify({ permissions: roleForm.permissions }) });
     setRoleModal(null);
   };
 
   const exportUsers = async () => {
     downloadCsv("admin-users.csv", filteredUsers, ["fullName", "email", "companyName", "roleName", "status"]);
+    await adminApi.auditLog({
+      actionName: "export.action",
+      entityName: "Users",
+      detailsJson: JSON.stringify({ rows: filteredUsers.length, format: "CSV" }),
+    });
     setPermissionsExportNotice(`Exported ${filteredUsers.length} user rows to CSV.`);
     window.setTimeout(() => setPermissionsExportNotice(null), 3500);
   };
 
   const exportRoles = async () => {
     downloadCsv("admin-roles.csv", roles, ["name", "scope", "userCount"]);
+    await adminApi.auditLog({
+      actionName: "export.action",
+      entityName: "Roles",
+      detailsJson: JSON.stringify({ rows: roles.length, format: "CSV" }),
+    });
   };
 
   const openRoleEditor = (role: AnyRecord) => {
     setRoleModal(role);
     setRoleForm({
       name: String(role.name ?? ""),
+      scope: String(role.scope ?? "Tenant"),
       permissions: permissionList(role.permissions ?? role.permissions_json),
     });
   };
 
-  const openCreateRole = () => {
-    setRoleModal({});
-    setRoleForm({ name: "", permissions: [] });
-  };
-
   return (
-    <div className="iam flex h-full flex-col gap-6 overflow-y-auto">
-      <PageHeader
-        eyebrow="Governance"
-        title="Users & Roles"
-        description="Manage the people, roles, permissions and audit posture of this workspace."
-        actions={
-          <>
-            <button className="btn-ghost" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
-              <KeyRound className="h-4 w-4" />
-              Audit Logs
-            </button>
-            <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
-              <ShieldCheck className="h-4 w-4" />
-              Settings
-            </button>
-            <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
-              <LayoutDashboard className="h-4 w-4" />
-              Open Users
-            </button>
-          </>
-        }
-      />
+    <div className="space-y-6 pb-10">
+      {/* ── Hero ── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <ShieldCheck className="h-3 w-3" /> Governance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Users · Roles · Permissions · Settings</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">Admin Console</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Manage users, roles, permissions, settings and audit posture from a single commercial-grade control surface.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}><KeyRound className="h-4 w-4" /> Audit Logs</button>
+              <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}><ShieldCheck className="h-4 w-4" /> Settings</button>
+              <button className="fh-btn-primary cursor-pointer" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}><LayoutDashboard className="h-4 w-4" /> Open Users</button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Admin control signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {overviewQ.data ? `${overviewQ.data.activeUsers ?? 0} active users · ${overviewQ.data.roles ?? 0} roles · ${overviewQ.data.recentAuditEvents ?? 0} audit events today` : "Loading admin overview..."}
+            </p>
+          </div>
+        </div>
+        <button className="cursor-pointer inline-flex items-center gap-2 self-start rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-500/20 transition hover:from-teal-400 hover:to-teal-500 hover:shadow-teal-400/30 sm:self-auto" onClick={() => setTab("users")} disabled={!canViewUsers}>
+          Review users <Users className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* ── KPIs ── */}
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {[
-            { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, icon: <Users className="h-4 w-4" /> },
-            { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, icon: <Users className="h-4 w-4" /> },
-            { label: "Tenant Admins", value: overviewQ.data?.tenantAdmins ?? 0, icon: <UserCog className="h-4 w-4" /> },
-            { label: "Roles", value: overviewQ.data?.roles ?? 0, icon: <KeyRound className="h-4 w-4" /> },
-            { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, icon: <ShieldCheck className="h-4 w-4" /> },
-            { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, icon: <ShieldCheck className="h-4 w-4" /> },
+            { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, status: "Active", icon: <Users className="h-4 w-4" /> },
+            { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, status: "Healthy", icon: <Users className="h-4 w-4" /> },
+            { label: "Tenant Admins", value: overviewQ.data?.tenantAdmins ?? 0, status: "Review", icon: <UserCog className="h-4 w-4" /> },
+            { label: "Roles", value: overviewQ.data?.roles ?? 0, status: "Active", icon: <KeyRound className="h-4 w-4" /> },
+            { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, status: "Info", icon: <ShieldCheck className="h-4 w-4" /> },
+            { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, status: "Active", icon: <ShieldCheck className="h-4 w-4" /> },
           ].map((card) => (
-            <div key={card.label} className="iam-stat min-w-0">
-              <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500" title={card.label}>{card.label}</p>
-                <div className="shrink-0 rounded-xl border border-white/70 bg-white p-2 text-teal-600 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.24)]">{card.icon}</div>
-              </div>
-              <div className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
-            </div>
+            <KpiCard key={card.label} label={card.label} value={String(card.value)} status={card.status} />
           ))}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-px">
-        {TAB_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            onClick={() => setTab(option.key)}
-            disabled={
+      {/* ── Tab navigation ── */}
+      <div className="panel p-2">
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
+          {TAB_OPTIONS.map((option) => {
+            const disabled =
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
               (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
-              (option.key === "access" && !canViewAccessReviews) ||
               (option.key === "settings" && !canViewSettings) ||
-              (option.key === "audit" && !canViewAudit)
-            }
-            title={
-              (option.key === "users" && !canViewUsers) ||
-              (option.key === "roles" && !canViewRoles) ||
-              (option.key === "permissions" && !(canViewUsers || canViewRoles)) ||
-              (option.key === "access" && !canViewAccessReviews) ||
-              (option.key === "settings" && !canViewSettings) ||
-              (option.key === "audit" && !canViewAudit)
-                ? "You do not have permission to perform this action."
-                : undefined
-            }
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${
-              tab === option.key ? "border border-b-0 border-teal-300 bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"
-            } disabled:cursor-not-allowed disabled:opacity-40`}
-          >
-            {option.label}
-          </button>
-        ))}
+              (option.key === "audit" && !canViewAudit);
+            return (
+              <button
+                key={option.key}
+                onClick={() => !disabled && setTab(option.key)}
+                disabled={disabled}
+                title={disabled ? "You do not have permission to perform this action." : undefined}
+                className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                  tab === option.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{option.label}</span>
+                <span className={`mt-0.5 text-sm font-bold ${tab === option.key ? "text-teal-700" : "text-slate-900"}`}>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {tab === "dashboard" && (
         <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="iam-card space-y-3 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-bold text-slate-900">Admin Activity</h2>
-                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
+            <div className="panel space-y-3 p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="section-title">Admin Activity</h2>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
               </div>
             {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 6).map((entry: AnyRecord) => (
-              <div key={String(entry.id)} className="iam-kv">
-                <div className="min-w-0">
-                  <p className="font-semibold text-slate-900 truncate">{String(entry.actionName ?? entry.action_name ?? "Action")}</p>
-                  <p className="mt-1 text-xs text-slate-500 truncate">{String(entry.actorName ?? entry.actor_name ?? "system")} • {String(entry.entityName ?? entry.entity_name ?? "Admin")}</p>
+              <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-900">{String(entry.actionName ?? entry.action_name ?? "Action")}</p>
+                  <StatusBadge status={String(entry.severity ?? "Info")} />
                 </div>
-                <div className="shrink-0"><StatusBadge status={String(entry.severity ?? "Info")} /></div>
+                <p className="mt-1 text-xs text-slate-500">{String(entry.actorName ?? entry.actor_name ?? "system")} • {String(entry.entityName ?? entry.entity_name ?? "Admin")}</p>
               </div>
             ))}
-            {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).length === 0 && !auditLogsQ.isLoading && (
-              <EmptyState title="No recent admin activity" subtitle="IAM actions in this tenant will appear here as they happen." />
-            )}
           </div>
           <div className="space-y-4">
-            <div className="iam-card p-5">
-              <h3 className="font-bold text-slate-900">Quick Actions</h3>
+            <div className="panel p-5">
+              <h3 className="section-title">Quick Actions</h3>
               <div className="mt-4 grid gap-2">
-                <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
-                <button className="btn-ghost" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
-                <button className="btn-ghost" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
-                <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
+                <button className="fh-btn-primary cursor-pointer" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
+                <button className="fh-btn-ghost cursor-pointer" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
               </div>
             </div>
-            <div className="iam-card p-5">
-              <h3 className="font-bold text-slate-900">Current Tenant</h3>
-              <p className="mt-2 text-sm text-slate-600 truncate">{String(session?.company?.name ?? "Tenant")}</p>
-              <p className="mt-1 text-xs text-slate-500 truncate">Role: {String(session?.role ?? "Unknown")}</p>
+            <div className="panel p-5">
+              <h3 className="section-title">Current Tenant</h3>
+              <p className="mt-2 text-sm text-slate-600">{String(session?.company?.name ?? "Tenant")}</p>
+              <p className="mt-1 text-xs text-slate-500">Role: {String(session?.role ?? "Unknown")}</p>
             </div>
           </div>
         </div>
@@ -429,26 +396,26 @@ export function AdminPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
-            <select className="field" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <Select className="w-36" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
               <option value="">All roles</option>
-              {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
-            </select>
-            <select className="field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+            </Select>
+            <Select className="w-36" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
-            </select>
-            <button className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
+            </Select>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
               <X className="h-4 w-4" />
               Clear
             </button>
-            <button className="btn-ghost" onClick={exportUsers} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>
+            <button className="fh-btn-ghost cursor-pointer" onClick={exportUsers} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>
               <Download className="h-4 w-4" />
               Export
             </button>
-            <button className="btn-primary" onClick={openCreateUser} disabled={!canCreateUsers}>
+            <button className="fh-btn-primary cursor-pointer" onClick={openCreateUser} disabled={!canCreateUsers}>
               <Plus className="h-4 w-4" />
               Add User
             </button>
@@ -457,45 +424,38 @@ export function AdminPage() {
           {usersQ.isLoading ? <LoadingState /> : usersQ.isError ? <ErrorState message="Could not load users." /> : users.length === 0 ? (
             <EmptyState title="No users found" subtitle="Try another filter or add a new user for this tenant." />
           ) : (
-            <div className="iam-card overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200">
-                    {["User", "Company", "Role", "Security", "Status", "Last Login", "Actions"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">{header}</th>
+                  <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {["User", "Company", "Role", "Status", "Last Login", "Actions"].map((header) => (
+                      <th key={header} className="px-4 py-2.5 text-left">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((user: AnyRecord) => {
-                    const name = String(user.fullName ?? user.full_name ?? "User");
-                    return (
-                    <tr key={String(user.id)} className="transition hover:bg-white/60">
-                      <td className="px-4 py-3 max-w-[260px]">
-                        <button className="flex w-full min-w-0 items-center gap-3 text-left" onClick={() => setSelectedUser(user)}>
-                          <Avatar name={name} />
-                          <span className="min-w-0">
-                            <p className="font-semibold text-slate-900 truncate" title={name}>{name}</p>
-                            <p className="text-xs text-slate-400 truncate" title={String(user.email ?? "")}>{String(user.email ?? "")}</p>
-                          </span>
+                  {filteredUsers.map((user: AnyRecord) => (
+                    <tr key={String(user.id)} className="cursor-pointer transition-colors hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <button className="text-left" onClick={() => setSelectedUser(user)}>
+                          <p className="font-semibold text-slate-900">{String(user.fullName ?? user.full_name ?? "User")}</p>
+                          <p className="text-xs text-slate-400">{String(user.email ?? "")}</p>
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-slate-700 max-w-[160px]"><span className="block truncate" title={String(user.companyName ?? user.company_name ?? "—")}>{String(user.companyName ?? user.company_name ?? "—")}</span></td>
-                      <td className="px-4 py-3 max-w-[150px]">
-                        <span className="iam-chip"><span>{String(user.roleName ?? user.role_name ?? "—")}</span></span>
-                      </td>
-                      <td className="px-4 py-3"><MfaBadge status={user.mfaStatus ?? user.mfa_status} /></td>
+                      <td className="px-4 py-3 text-slate-700">{String(user.companyName ?? user.company_name ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-700">{String(user.roleName ?? user.role_name ?? "—")}</td>
                       <td className="px-4 py-3"><StatusBadge status={String(user.status ?? "Active")} /></td>
-                      <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "Never"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-400">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "—"}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button className="btn-ghost h-8 px-3" onClick={() => setSelectedUser(user)}>View</button>
-                          <button className="btn-ghost h-8 px-3" onClick={() => openEditUser(user)} disabled={!canUpdateUsers}>Edit</button>
+                          <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => setSelectedUser(user)}>View</button>
+                          <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => openEditUser(user)} disabled={!canUpdateUsers}>Edit</button>
                           <button
-                            className="btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700"
+                            className="fh-btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700 cursor-pointer"
                             onClick={async () => {
                               if (!window.confirm(`Deactivate ${String(user.fullName ?? user.email)}?`)) return;
                               await deleteUser.mutateAsync(Number(user.id));
+                              await adminApi.auditLog({ actionName: "user.deleted", entityName: "User", entityId: Number(user.id), detailsJson: JSON.stringify({ status: "Inactive" }) });
                             }}
                             disabled={!canDeleteUsers}
                             title={!canDeleteUsers ? "You do not have permission to perform this action." : "Deactivate user"}
@@ -506,7 +466,7 @@ export function AdminPage() {
                         </div>
                       </td>
                     </tr>
-                  );})}
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -517,34 +477,29 @@ export function AdminPage() {
       {tab === "roles" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">Roles list and permission bundles.</p>
-            <div className="flex items-center gap-2">
-              <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
-              <button className="btn-primary" onClick={openCreateRole} disabled={!canCreateRoles}>
-                <Plus className="h-4 w-4" /> Create role
-              </button>
-            </div>
+            <p className="text-sm text-slate-400">Roles list and permission bundles.</p>
+            <button className="fh-btn-ghost cursor-pointer" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
           </div>
           {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : (
             <div className="grid gap-4 xl:grid-cols-2">
               {roles.map((role: AnyRecord) => (
-                <div key={String(role.id)} className="iam-card p-5 min-w-0">
+                <div key={String(role.id)} className="panel p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="font-bold text-slate-900 truncate" title={String(role.name)}>{String(role.name)}</h3>
+                    <div>
+                      <h3 className="font-bold text-slate-900">{String(role.name)}</h3>
                       <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
                     </div>
-                    <button className="btn-ghost h-8 px-3 shrink-0" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
-                      {Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}
-                    </button>
+                    <button className="fh-btn-ghost h-8 px-3 cursor-pointer" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles}>Edit</button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {permissionList(role.permissions ?? role.permissions_json).slice(0, 8).map((permission) => (
-                      <span key={permission} className="iam-chip"><span>{permission}</span></span>
+                      <span key={permission} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">
+                        {permission}
+                      </span>
                     ))}
                     {permissionList(role.permissions ?? role.permissions_json).length > 8 && (
-                      <span className="iam-chip !text-slate-400">
-                        <span>+{permissionList(role.permissions ?? role.permissions_json).length - 8} more</span>
+                      <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+                        +{permissionList(role.permissions ?? role.permissions_json).length - 8} more
                       </span>
                     )}
                   </div>
@@ -557,120 +512,50 @@ export function AdminPage() {
 
       {tab === "permissions" && (
         <div className="space-y-4">
-          {permissionsQ.isError ? (
-            <ErrorState message="The live permissions endpoint failed, so the admin view is not showing a seed-backed replacement." />
-          ) : permissionsQ.isLoading && permissions.length === 0 ? (
-            <div className="space-y-3">
-              <p className="text-sm text-slate-500">Fetching the live RBAC catalog.</p>
-              <LoadingState />
-            </div>
-          ) : (
-            <>
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-slate-500">Canonical permission catalog used by the RBAC layer.</p>
+            <p className="text-sm text-slate-400">Canonical permission catalog used by the RBAC layer.</p>
+            <button className="fh-btn-ghost cursor-pointer" onClick={async () => {
+              await adminApi.auditLog({ actionName: "permissions.viewed", entityName: "Permissions", detailsJson: JSON.stringify({ total: permissions.length }) });
+            }}>
+              Audit view
+            </button>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             {permissionsByGroup(permissions).map((group) => (
-              <div key={group.title} className="iam-card p-5 min-w-0">
+              <div key={group.title} className="panel p-5">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-bold text-slate-900 truncate">{group.title}</h3>
+                  <h3 className="font-bold text-slate-900">{group.title}</h3>
                   <StatusBadge status={`${group.permissions.length} perms`} />
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {group.permissions.map((permission) => (
-                    <span key={permission} className="iam-chip"><span>{permission}</span></span>
+                    <span key={permission} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{permission}</span>
                   ))}
                 </div>
               </div>
             ))}
           </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === "access" && (
-        <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
-          <div className="space-y-4">
-            {canManageAccessReviews && (
-              <div className="iam-card space-y-3 p-5">
-                <div>
-                  <h2 className="font-bold text-slate-900">Start access certification</h2>
-                  <p className="mt-1 text-xs text-slate-500">Snapshots every active user and their current role permissions for this tenant.</p>
-                </div>
-                <input className="field w-full" value={reviewForm.title} onChange={(e) => setReviewForm((f) => ({ ...f, title: e.target.value }))} placeholder="Quarterly privileged access review" />
-                <textarea className="field min-h-20 w-full" value={reviewForm.description} onChange={(e) => setReviewForm((f) => ({ ...f, description: e.target.value }))} placeholder="Purpose and reviewer guidance" />
-                <div><label className="label">Due date</label><input className="field w-full" type="date" value={reviewForm.dueDate} onChange={(e) => setReviewForm((f) => ({ ...f, dueDate: e.target.value }))} /></div>
-                <button
-                  className="btn-primary w-full"
-                  disabled={!reviewForm.title.trim() || createAccessReview.isPending}
-                  onClick={async () => {
-                    const result = await createAccessReview.mutateAsync({ ...reviewForm, reviewerUserId: Number(session?.user?.id) });
-                    setReviewForm({ title: "", description: "", dueDate: "" });
-                    setSelectedReviewId(Number(result.id));
-                  }}
-                ><Plus className="h-4 w-4" />{createAccessReview.isPending ? "Creating…" : "Create review"}</button>
-              </div>
-            )}
-            <div className="iam-card overflow-hidden">
-              <div className="border-b border-slate-200 px-5 py-4"><h2 className="font-bold text-slate-900">Review campaigns</h2></div>
-              {accessReviewsQ.isLoading ? <LoadingState /> : accessReviewsQ.isError ? <ErrorState message="Could not load access reviews." /> : (accessReviewsQ.data ?? []).length === 0 ? (
-                <div className="p-5"><EmptyState title="No access reviews" subtitle="Create the first tenant access certification campaign." /></div>
-              ) : (accessReviewsQ.data ?? []).map((review) => (
-                <button key={review.id} className={`w-full border-b border-slate-100 px-5 py-4 text-left transition hover:bg-white/60 ${selectedReviewId === Number(review.id) ? "bg-teal-50/70" : ""}`} onClick={() => setSelectedReviewId(Number(review.id))}>
-                  <div className="flex items-start justify-between gap-3"><p className="font-semibold text-slate-900 truncate min-w-0">{String(review.title)}</p><div className="shrink-0"><StatusBadge status={String(review.status)} /></div></div>
-                  <p className="mt-2 text-xs text-slate-500">{Number(review.itemsPending ?? review.items_pending ?? 0)} pending · {Number(review.itemsApproved ?? review.items_approved ?? 0)} approved · {Number(review.itemsRevoked ?? review.items_revoked ?? 0)} revoked</p>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="iam-card min-h-80 overflow-hidden">
-            {!selectedReviewId ? (
-              <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><ClipboardCheck className="h-10 w-10 text-teal-500" /><h2 className="mt-3 font-bold text-slate-900">Select a review</h2><p className="mt-1 text-sm text-slate-500">Inspect each user’s snapshotted role and make an explicit retain or revoke decision.</p></div>
-            ) : accessReviewQ.isLoading ? <LoadingState /> : accessReviewQ.isError ? <ErrorState message="Could not load this access review." /> : (
-              <div>
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
-                  <div className="min-w-0"><h2 className="text-lg font-bold text-slate-900 truncate">{String(accessReviewQ.data?.title ?? "Access review")}</h2><p className="mt-1 text-sm text-slate-500">{String(accessReviewQ.data?.description ?? "Tenant access certification")}</p></div>
-                  <button className="btn-primary shrink-0" disabled={!canManageAccessReviews || Number(accessReviewQ.data?.itemsPending ?? accessReviewQ.data?.items_pending ?? 0) > 0 || String(accessReviewQ.data?.status) === "completed" || completeAccessReview.isPending} onClick={() => completeAccessReview.mutateAsync(selectedReviewId)}><Check className="h-4 w-4" />Complete review</button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm"><thead><tr className="border-b border-slate-200">{["User", "Role", "Permissions", "Decision"].map((h) => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>)}</tr></thead>
-                    <tbody className="divide-y divide-slate-100">{(((accessReviewQ.data?.items as AnyRecord[] | undefined) ?? [])).map((item) => {
-                      const pending = String(item.status) === "pending";
-                      return <tr key={String(item.id)}><td className="px-4 py-3 max-w-[220px]"><p className="font-semibold text-slate-900 truncate">{String(item.targetUserName ?? item.target_user_name ?? "User")}</p><p className="text-xs text-slate-500 truncate">{String(item.targetUserEmail ?? item.target_user_email ?? "")}</p></td><td className="px-4 py-3 text-slate-700 max-w-[140px]"><span className="block truncate">{String(item.roleName ?? item.role_name ?? "—")}</span></td><td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{permissionList(item.permissionsSnapshot ?? item.permissions_snapshot).length} granted</td><td className="px-4 py-3">{pending ? <div className="flex gap-2"><button className="btn-ghost h-8 px-3" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "approve" })}>Retain</button><button className="btn-ghost h-8 px-3 text-rose-600" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "revoke", notes: "Access removal required by reviewer" })}>Revoke</button></div> : <StatusBadge status={String(item.status)} />}</td></tr>;
-                    })}</tbody></table>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
       {tab === "settings" && (
-        <div className="iam-card p-5 space-y-4">
+        <div className="panel p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
+            <div>
               <h2 className="text-lg font-bold text-slate-900">Tenant Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Locale and operational preferences for this tenant.</p>
             </div>
-            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {Object.entries(
-              // The endpoint returns an array of tenant rows — unwrap the first row,
-              // otherwise Object.entries renders "[object Object]" tiles.
-              ((Array.isArray(localeQ.data) ? (localeQ.data as AnyRecord[])[0] : localeQ.data) as AnyRecord | undefined) ?? {}
-            )
-              .filter(([key]) => !["id", "tenant_id", "company_id", "created_at", "updated_at"].includes(key))
-              .slice(0, 6)
-              .map(([key, value]) => (
-              <div key={key} className="iam-kv flex-col !items-start gap-1 min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate w-full">{key.replace(/_/g, " ")}</p>
-                <p className="text-sm text-slate-700 break-words w-full">{String(value ?? "—")}</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {Object.entries((localeQ.data as AnyRecord | undefined) ?? []).slice(0, 6).map(([key, value]) => (
+              <div key={key} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{key.replace(/_/g, " ")}</p>
+                <p className="mt-1 text-sm text-slate-700">{String(value ?? "—")}</p>
               </div>
             ))}
           </div>
-          <button className="btn-primary w-fit" onClick={() => window.location.assign("/settings")} disabled={!canViewSettings || !canUpdateSettings}>
+          <button className="fh-btn-primary cursor-pointer w-fit" onClick={() => window.location.assign("/settings")} disabled={!canViewSettings || !canUpdateSettings}>
             <ShieldCheck className="h-4 w-4" />
             Update settings
           </button>
@@ -680,45 +565,42 @@ export function AdminPage() {
       {tab === "audit" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">Recent audit activity and export requests.</p>
-            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
+            <p className="text-sm text-slate-400">Recent audit activity and export requests.</p>
+            <button className="fh-btn-ghost cursor-pointer" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="iam-card overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200">
+                  <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     {["Action", "Actor", "Entity", "Severity"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                      <th key={header} className="px-4 py-2.5 text-left">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 8).map((log: AnyRecord) => (
                     <tr key={String(log.id)}>
-                      <td className="px-4 py-3 text-slate-900 max-w-[220px]"><span className="block truncate" title={String(log.actionName ?? log.action_name ?? "Action")}>{String(log.actionName ?? log.action_name ?? "Action")}</span></td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.actorName ?? log.actor_name ?? "system")}</span></td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.entityName ?? log.entity_name ?? "—")}</span></td>
+                      <td className="px-4 py-3 text-slate-900">{String(log.actionName ?? log.action_name ?? "Action")}</td>
+                      <td className="px-4 py-3 text-slate-600">{String(log.actorName ?? log.actor_name ?? "system")}</td>
+                      <td className="px-4 py-3 text-slate-600">{String(log.entityName ?? log.entity_name ?? "—")}</td>
                       <td className="px-4 py-3"><StatusBadge status={String(log.severity ?? "Info")} /></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div className="iam-card p-5 space-y-3">
-              <h3 className="font-bold text-slate-900">Export Requests</h3>
+            <div className="panel p-5 space-y-3">
+              <h3 className="section-title">Export Requests</h3>
               {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
-                <div key={String(entry.id)} className="iam-kv">
-                  <p className="text-sm font-semibold text-slate-900 truncate min-w-0">{String(entry.requested_by_name ?? "—")}</p>
-                  <p className="text-xs text-slate-500 shrink-0">{String(entry.status ?? "Pending")}</p>
+                <div key={String(entry.id)} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className="text-sm font-semibold text-slate-900">{String(entry.requested_by_name ?? "Admin")}</p>
+                  <p className="text-xs text-slate-500">{String(entry.status ?? "Pending")}</p>
                 </div>
               ))}
               <button
-                className="btn-ghost w-full"
-                onClick={() => createAuditExport.mutate({
-                  requestedByName: String(session?.user?.fullName ?? session?.user?.full_name ?? session?.user?.email ?? ""),
-                  exportFormat: "CSV",
-                })}
+                className="fh-btn-ghost w-full cursor-pointer"
+                onClick={() => createAuditExport.mutate({ requestedByName: "Admin", exportFormat: "CSV" })}
                 disabled={!canExportReports}
                 title={!canExportReports ? "You do not have permission to perform this action." : undefined}
               >
@@ -730,80 +612,63 @@ export function AdminPage() {
       )}
 
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={() => setSelectedUser(null)}>
-          <aside className="iam iam-drawer max-w-lg p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="User detail">
-            <button className="float-right icon-btn" onClick={() => setSelectedUser(null)} aria-label="Close user detail"><X className="h-4 w-4" /></button>
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">User Detail</p>
-            <div className="mt-4 flex items-center gap-3 min-w-0">
-              <Avatar name={String(selectedUser.fullName ?? selectedUser.full_name ?? "User")} />
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
-                <p className="text-xs text-slate-500 truncate">{String(selectedUser.email ?? "")}</p>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in" onClick={() => setSelectedUser(null)}>
+          <aside className="anim-slide-right flex h-full w-full max-w-lg flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="section-title text-teal-700">User Detail</p>
+                <button className="icon-btn cursor-pointer" onClick={() => setSelectedUser(null)}><X className="h-4 w-4" /></button>
               </div>
+              <h2 className="mt-1 text-2xl font-bold text-slate-900">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
             </div>
-            <div className="mt-6 space-y-2">
-              {([
-                ["Email", selectedUser.email],
-                ["Company", selectedUser.companyName ?? selectedUser.company_name],
-                ["Role", selectedUser.roleDisplayName ?? selectedUser.roleName ?? selectedUser.role_name],
-                ["Status", selectedUser.status],
-                ["Last login", selectedUser.lastLoginAt ?? selectedUser.last_login_at],
-                ["MFA", selectedUser.mfaStatus ?? selectedUser.mfa_status],
-                ["Created", selectedUser.createdAt ?? selectedUser.created_at],
-              ] as Array<[string, unknown]>).map(([key, value]) => (
-                <div key={key} className="iam-kv">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5 shrink-0">{key}</p>
-                  <p className="text-right text-sm font-medium text-slate-800 break-all min-w-0">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
+            <div className="space-y-4 px-6 py-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+              {Object.entries(selectedUser).slice(0, 20).map(([key, value]) => (
+                <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-2.5">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{key.replace(/_/g, " ")}</p>
+                  <p className="text-right text-sm font-medium text-slate-800 break-all">{value == null ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
                 </div>
               ))}
+              </div>
             </div>
-            {canUpdateUsers && (
-              <button className="btn-primary mt-6 w-full" onClick={() => { openEditUser(selectedUser); setSelectedUser(null); }}>
-                Edit User
-              </button>
-            )}
           </aside>
         </div>
       )}
 
       {userModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-2xl space-y-4 p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
-              <button className="icon-btn" onClick={() => setUserModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setUserModal(null)}><X className="h-4 w-4" /></button>
             </div>
               <div className="grid gap-3 md:grid-cols-2">
               <div><label className="label">Full Name</label><input className="field w-full" value={String(userForm.fullName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, fullName: e.target.value }))} /></div>
               <div><label className="label">Email</label><input className="field w-full" value={String(userForm.email ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, email: e.target.value }))} /></div>
               <div>
                 <label className="label">Role</label>
-                <select className="field w-full" value={String(userForm.roleId ?? "")} onChange={(e) => {
-                  const role = roleOptions.find((option) => String(option.id) === e.target.value);
-                  setUserForm((f) => ({ ...f, roleId: e.target.value, roleName: String(role?.name ?? "") }));
-                }}>
-                  <option value="" disabled>Select a role</option>
-                  {roleOptions.map((role) => <option key={role.id} value={String(role.id)}>{role.name}</option>)}
-                </select>
+                <Select className="w-full" value={String(userForm.roleName ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, roleName: e.target.value, roleId: "" }))}>
+                  {ROLE_OPTIONS.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
+                </Select>
               </div>
               <div>
                 <label className="label">Status</label>
-                <select className="field w-full" value={String(userForm.status ?? "Active")} onChange={(e) => setUserForm((f) => ({ ...f, status: e.target.value }))}>
+                <Select className="w-full" value={String(userForm.status ?? "Active")} onChange={(e) => setUserForm((f) => ({ ...f, status: e.target.value }))}>
                   {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <label className="label">Password</label>
-                <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder={userModal === "create" ? "Set initial password" : "Leave blank to keep current password"} />
+                <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} />
               </div>
               <div>
                 <label className="label">Company ID</label>
-                <input className="field w-full" type="number" value={Number(userForm.companyId || 0)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
+                <input className="field w-full" type="number" value={Number(userForm.companyId ?? 1)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
               </div>
             </div>
-            <div className="flex gap-2 pt-2">
-              <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || (userModal === "create" ? !canCreateUsers || !String(userForm.password ?? "").trim() : !canUpdateUsers)}>
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setUserModal(null)}>Cancel</button>
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={saveUser} disabled={userModal === "create" ? !canCreateUsers : !canUpdateUsers}>
                 Save User
               </button>
             </div>
@@ -812,14 +677,20 @@ export function AdminPage() {
       )}
 
       {roleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-3xl space-y-4 p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
-              <button className="icon-btn" onClick={() => setRoleModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+          <div className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <h2 className="text-2xl font-bold text-slate-900">Edit Role</h2>
+              <button className="icon-btn cursor-pointer" onClick={() => setRoleModal(null)}><X className="h-4 w-4" /></button>
             </div>
-            <div>
+            <div className="grid gap-3 md:grid-cols-2">
               <div><label className="label">Role Name</label><input className="field w-full" value={String(roleForm.name ?? "")} onChange={(e) => setRoleForm((f) => ({ ...f, name: e.target.value }))} /></div>
+              <div>
+                <label className="label">Scope</label>
+                <Select className="w-full" value={String(roleForm.scope ?? "Tenant")} onChange={(e) => setRoleForm((f) => ({ ...f, scope: e.target.value }))}>
+                  {["Platform", "Tenant", "Customer", "Partner"].map((scope) => <option key={scope} value={scope}>{scope}</option>)}
+                </Select>
+              </div>
             </div>
             <div className="max-h-[48vh] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
               {permissionsByGroup(permissions).map((group) => (
@@ -827,10 +698,9 @@ export function AdminPage() {
                   <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{group.title}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {group.permissions.map((permission) => (
-                      <label key={permission} className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm text-slate-700 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),2px_3px_6px_rgba(141,157,184,.14)]">
+                      <label key={permission} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm text-slate-700">
                         <input
                           type="checkbox"
-                          className="shrink-0 accent-teal-600"
                           checked={roleForm.permissions.includes(permission)}
                           onChange={(e) => setRoleForm((f) => ({
                             ...f,
@@ -839,16 +709,16 @@ export function AdminPage() {
                               : f.permissions.filter((value) => value !== permission),
                           }))}
                         />
-                        <span className="truncate" title={permission}>{permission}</span>
+                        <span>{permission}</span>
                       </label>
                     ))}
                   </div>
                 </div>
               ))}
             </div>
-            <div className="flex gap-2 pt-2">
-              <button type="button" className="btn-ghost flex-1" onClick={() => setRoleModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveRole} disabled={!roleForm.name.trim() || (roleModal.id ? !canUpdateRoles : !canCreateRoles)}>{roleModal.id ? "Save Role" : "Create Role"}</button>
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button type="button" className="fh-btn-ghost cursor-pointer" onClick={() => setRoleModal(null)}>Cancel</button>
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={saveRole} disabled={!canUpdateRoles}>Save Role</button>
             </div>
           </div>
         </div>

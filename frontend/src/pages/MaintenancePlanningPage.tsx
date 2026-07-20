@@ -1,26 +1,68 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
+import { Download, Sparkles, Wrench } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
-import {
-  exportCsv, LoadingState, EmptyState,
-  KpiCard, ClayCard, ProgressBar, Timeline, RiskBadge,
-} from "@/components/ui";
+import { exportCsv, LoadingState, EmptyState, KpiCard } from "@/components/ui";
+import { serviceHistory as seedServiceHistory, downtimeEvents as seedDowntimeEvents, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Live data builders ────────────────────────────────────────────────────────
+// ── Seed builders ─────────────────────────────────────────────────────────────
 
 function buildServiceHistorySeed(): AnyRecord[] {
-  return [];
+  return (seedServiceHistory as AnyRecord[]).map((r) => ({
+    id: Number(r.id),
+    workOrderCode: String(r.workOrderCode),
+    vehicleCode: String(r.vehicleCode),
+    serviceType: String(r.serviceType),
+    vendorName: String(r.vendorName),
+    priority: String(r.priority),
+    cost: Number(r.cost ?? 0),
+    currency: String(r.currency ?? "USD"),
+    downtimeHours: Number(r.downtimeHours ?? 0),
+    completedAt: String(r.completedAt),
+    issueType: String(r.issueType),
+    technicianName: String(r.technicianName ?? "—"),
+    partsReplaced: String(r.partsReplaced ?? "—"),
+  }));
 }
 
 function buildDowntimeSeed(): AnyRecord[] {
-  return [];
+  return (seedDowntimeEvents as AnyRecord[]).map((r) => ({
+    id: Number(r.id),
+    vehicleCode: String(r.vehicleCode),
+    downtimeReason: String(r.downtimeReason),
+    startDate: String(r.startDate),
+    endDate: String(r.endDate),
+    durationHours: Number(r.durationHours ?? 0),
+    affectedSystem: String(r.affectedSystem),
+    resolutionDescription: String(r.resolutionDescription),
+    costImpact: Number(r.costImpact ?? 0),
+    revenueLoss: Number(r.revenueLoss ?? 0),
+    priority: String(r.priority),
+    status: String(r.status),
+  }));
 }
 
 function buildPMSeed(): AnyRecord[] {
-  return [];
+  const vehicles = seedVehicles as AnyRecord[];
+  return vehicles.flatMap((v, vi) =>
+    (["Oil Change", "Tire Rotation", "Brake Inspection", "AC Service"] as const).slice(0, vi < 2 ? 4 : 2).map((title, i) => ({
+      id: vi * 4 + i + 1,
+      title,
+      category: (["Preventive", "Safety", "Preventive", "Comfort"] as const)[i % 4],
+      vehicleCode: String(v.vehicleId ?? ""),
+      currentOdometer: Number(v.odometer ?? 85000) + vi * 30000,
+      dueDate: `2026-0${6 + i}-${String(15 + vi * 5).padStart(2, "0")}`,
+      dueOdometer: Number(v.odometer ?? 85000) + vi * 30000 + 5000,
+      serviceIntervalDays: [90, 180, 365, 180][i % 4],
+      estimatedCost: [350, 180, 280, 420][i % 4],
+      riskLevel: (["Medium", "Low", "High", "Low"] as const)[i % 4],
+      pmStatus: (["Due Soon", "Scheduled", "Scheduled", "Overdue"] as const)[i % 4],
+      daysUntilDue: [-2, 14, 28, 7][i % 4],
+    }))
+  );
 }
 
 const serviceHistoryApi = () => withFallback(
@@ -78,37 +120,6 @@ function PmStatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
 }
 
-/** Section wrapper: a claymorphic rail card with a small titled header. */
-function RailCard({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
-  return (
-    <ClayCard className="p-5">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <h2 className="section-title">{title}</h2>
-        {count !== undefined && (
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-            {count}
-          </span>
-        )}
-      </div>
-      {children}
-    </ClayCard>
-  );
-}
-
-/** A single labelled distribution row with a live proportion bar. */
-function BreakdownRow({ label, value, total, color }: { label: string; value: number; total: number; color?: string }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-3">
-        <span className="truncate text-sm font-semibold text-slate-700">{label}</span>
-        <span className="shrink-0 text-xs font-bold text-slate-500 tabular-nums">{value} · {pct}%</span>
-      </div>
-      <ProgressBar value={value} max={total || 1} color={color} />
-    </div>
-  );
-}
-
 // ── Route → tab mapping ───────────────────────────────────────────────────────
 
 const ROUTE_TAB: Record<string, string> = {
@@ -130,85 +141,47 @@ const TABS: { key: Tab; label: string }[] = [
 function ServiceHistoryTab() {
   const q = useQuery({ queryKey: ["service-history"], queryFn: serviceHistoryApi });
   const rows = (q.data ?? []) as AnyRecord[];
-
   const totalCost = rows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
   const totalDowntime = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
-  const avgCost = rows.length ? totalCost / rows.length : 0;
-
-  // Per-vendor cost + downtime rollup, all from the fetched rows.
-  const vendorRollup = useMemo(() => {
-    const map = new Map<string, { cost: number; downtime: number; count: number }>();
-    for (const r of rows) {
-      const key = String(r.vendorName ?? "Internal");
-      const cur = map.get(key) ?? { cost: 0, downtime: 0, count: 0 };
-      cur.cost += Number(r.cost ?? 0);
-      cur.downtime += Number(r.downtimeHours ?? 0);
-      cur.count += 1;
-      map.set(key, cur);
-    }
-    return Array.from(map.entries())
-      .map(([vendor, v]) => ({ vendor, ...v }))
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 6);
-  }, [rows]);
-
+  const uniqueVehicles = new Set(rows.map((r) => String(r.vehicleCode))).size;
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="fleet-console flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Completed Services" value={rows.length} />
-        <KpiCard label="Total Cost" value={`$${totalCost.toLocaleString()}`} delta={`$${Math.round(avgCost).toLocaleString()} avg / order`} />
-        <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 0 ? "Impact" : undefined} />
-        <KpiCard label="Vendors Engaged" value={vendorRollup.length} />
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Completed Services" value={String(rows.length)} status="Active" />
+        <KpiCard label="Total Cost" value={`$${totalCost.toLocaleString()}`} status={totalCost > 10000 ? "Warning" : "Active"} />
+        <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 20 ? "Critical" : "Active"} />
+        <KpiCard label="Vehicles Serviced" value={String(uniqueVehicles)} status="Active" />
       </div>
-
       {rows.length === 0 ? <EmptyState title="No completed service records" /> : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <ClayCard className="overflow-hidden p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rows.map((r, i) => (
-                    <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
-                      <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
-                      <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                      <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </ClayCard>
-
-          <RailCard title="Spend by Vendor" count={vendorRollup.length}>
-            <div className="flex flex-col gap-4">
-              {vendorRollup.map((v) => (
-                <div key={v.vendor} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm font-semibold text-slate-700">{v.vendor}</span>
-                    <span className="shrink-0 text-xs font-bold text-slate-800 tabular-nums">${v.cost.toLocaleString()}</span>
-                  </div>
-                  <ProgressBar value={v.cost} max={vendorRollup[0]?.cost || 1} color="var(--teal)" />
-                  <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>{v.count} order{v.count === 1 ? "" : "s"}</span>
-                    <span>{v.downtime.toFixed(1)}h downtime</span>
-                  </div>
-                </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Work Order", "Vehicle", "Service Type", "Issue", "Vendor / Technician", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
+                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.serviceType ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.issueType ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    <div>{String(r.vendorName ?? "Internal")}</div>
+                    <div className="text-slate-400">{String(r.technicianName ?? "")}</div>
+                  </td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
+                  <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
+                </tr>
               ))}
-            </div>
-          </RailCard>
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -218,109 +191,49 @@ function ServiceHistoryTab() {
 function DowntimeTab() {
   const q = useQuery({ queryKey: ["downtime"], queryFn: downtimeApi });
   const rows = (q.data ?? []) as AnyRecord[];
-
-  const totalHours = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
-  const worstHours = rows.reduce((m, r) => Math.max(m, Number(r.downtimeHours ?? 0)), 0);
-
-  // Per-vehicle downtime rollup — from the same fetched rows.
-  const vehicleRollup = useMemo(() => {
-    const map = new Map<string, { hours: number; count: number }>();
-    for (const r of rows) {
-      const key = String(r.vehicleCode || "Unassigned");
-      const cur = map.get(key) ?? { hours: 0, count: 0 };
-      cur.hours += Number(r.downtimeHours ?? 0);
-      cur.count += 1;
-      map.set(key, cur);
-    }
-    return Array.from(map.entries())
-      .map(([vehicle, v]) => ({ vehicle, ...v }))
-      .sort((a, b) => b.hours - a.hours)
-      .slice(0, 7);
-  }, [rows]);
-
-  // Priority distribution — from the same fetched rows.
-  const priorityDist = useMemo(() => {
-    const order = ["Critical", "High", "Medium", "Normal"];
-    const counts = new Map<string, number>();
-    for (const r of rows) {
-      const p = String(r.priority ?? "Normal");
-      counts.set(p, (counts.get(p) ?? 0) + 1);
-    }
-    return order
-      .map((p) => ({ label: p, value: counts.get(p) ?? 0 }))
-      .filter((d) => d.value > 0);
-  }, [rows]);
-
-  const priorityColor: Record<string, string> = {
-    Critical: "#dc2626", High: "#ef4444", Medium: "#f59e0b", Normal: "#64748b",
-  };
-
+  const totalHours = rows.reduce((s, r) => s + Number(r.durationHours ?? r.downtimeHours ?? 0), 0);
+  const totalRevenueLoss = rows.reduce((s, r) => s + Number(r.revenueLoss ?? 0), 0);
+  const uniqueSystems = new Set(rows.map((r) => String(r.affectedSystem))).size;
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="fleet-console flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Downtime Events" value={rows.length} />
-        <KpiCard label="Total Hours" value={`${totalHours.toFixed(1)}h`} status={totalHours > 0 ? "Risk" : undefined} />
-        <KpiCard label="Est. Revenue Loss" value={`$${(totalHours * 280).toLocaleString()}`} delta="@ $280 / hr" />
-        <KpiCard label="Longest Event" value={`${worstHours.toFixed(1)}h`} />
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Downtime Events" value={String(rows.length)} status={rows.length > 5 ? "Warning" : "Active"} />
+        <KpiCard label="Total Hours Off-Road" value={`${totalHours.toFixed(1)}h`} status={totalHours > 20 ? "Critical" : "Active"} />
+        <KpiCard label="Est. Revenue Loss" value={`$${totalRevenueLoss.toLocaleString()}`} status={totalRevenueLoss > 5000 ? "Warning" : "Active"} />
+        <KpiCard label="Systems Affected" value={String(uniqueSystems)} status="Active" />
       </div>
-
       {rows.length === 0 ? <EmptyState title="No downtime events recorded" /> : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <ClayCard className="overflow-hidden p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rows.map((r, i) => (
-                    <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
-                      <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{String(r.title ?? "—")}</td>
-                      <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                      <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
-                      <td className="px-4 py-3 text-slate-700 text-xs">${Number(r.cost ?? 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </ClayCard>
-
-          <div className="flex flex-col gap-4">
-            <RailCard title="Top Downtime by Vehicle" count={vehicleRollup.length}>
-              <div className="flex flex-col gap-4">
-                {vehicleRollup.map((v) => (
-                  <div key={v.vehicle} className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-semibold text-slate-700">{v.vehicle}</span>
-                      <span className="shrink-0 text-xs font-bold text-red-700 tabular-nums">{v.hours.toFixed(1)}h</span>
-                    </div>
-                    <ProgressBar value={v.hours} max={vehicleRollup[0]?.hours || 1} color="#ef4444" />
-                    <span className="text-[11px] text-slate-500">{v.count} event{v.count === 1 ? "" : "s"}</span>
-                  </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Vehicle", "Downtime Reason", "Affected System", "Duration", "Start", "Resolved", "Cost Impact", "Revenue Loss", "Priority"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
                 ))}
-              </div>
-            </RailCard>
-
-            {priorityDist.length > 0 && (
-              <RailCard title="By Priority">
-                <div className="flex flex-col gap-3.5">
-                  {priorityDist.map((d) => (
-                    <BreakdownRow key={d.label} label={d.label} value={d.value} total={rows.length} color={priorityColor[d.label] ?? "#64748b"} />
-                  ))}
-                </div>
-              </RailCard>
-            )}
-          </div>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    <div>{String(r.downtimeReason ?? r.title ?? "—")}</div>
+                    <div className="mt-0.5 text-slate-400">{String(r.resolutionDescription ?? "")}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex text-xs px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 font-medium text-slate-600">{String(r.affectedSystem ?? "—")}</span>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-red-700">{Number(r.durationHours ?? r.downtimeHours ?? 0).toFixed(1)}h</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.startDate ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.endDate ?? "—")}</td>
+                  <td className="px-4 py-3 font-medium text-slate-700">${Number(r.costImpact ?? r.cost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs font-medium text-amber-700">${Number(r.revenueLoss ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -330,88 +243,46 @@ function DowntimeTab() {
 function PMScheduleTab() {
   const q = useQuery({ queryKey: ["preventive-maintenance"], queryFn: pmApi });
   const rows = (q.data ?? []) as AnyRecord[];
-
   const overdue = rows.filter((r) => r.pmStatus === "Overdue").length;
   const dueSoon = rows.filter((r) => r.pmStatus === "Due Soon").length;
-  const scheduled = rows.filter((r) => r.pmStatus === "Scheduled").length;
-
-  // Nearest-due items → Timeline (from the same fetched rows).
-  const upcoming = useMemo(() => {
-    return [...rows]
-      .sort((a, b) => Number(a.daysUntilDue ?? 9999) - Number(b.daysUntilDue ?? 9999))
-      .slice(0, 8)
-      .map((r) => {
-        const days = Number(r.daysUntilDue ?? 0);
-        return {
-          id: r.id,
-          type: "maintenance",
-          title: `${String(r.title ?? "PM item")} · ${String(r.vehicleCode || "—")}`,
-          eventTime: days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "Due today" : `Due in ${days}d`,
-        } as AnyRecord;
-      });
-  }, [rows]);
-
   if (q.isLoading) return <LoadingState />;
   return (
-    <div className="fleet-console flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Total PM Items" value={rows.length} />
-        <KpiCard label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : undefined} />
-        <KpiCard label="Due Soon" value={dueSoon} status={dueSoon > 0 ? "Risk" : undefined} />
-        <KpiCard label="Scheduled" value={scheduled} />
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Total PM Items" value={String(rows.length)} status="Active" />
+        <KpiCard label="Overdue" value={String(overdue)} status={overdue > 0 ? "Critical" : "Active"} />
+        <KpiCard label="Due Soon" value={String(dueSoon)} status={dueSoon > 2 ? "Warning" : "Active"} />
+        <KpiCard label="Scheduled" value={String(rows.filter((r) => r.pmStatus === "Scheduled").length)} status="Active" />
       </div>
-
       {rows.length === 0 ? <EmptyState title="No PM items scheduled" /> : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <ClayCard className="overflow-hidden p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rows.map((r, i) => (
-                    <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-900">{String(r.title ?? "--")}</td>
-                      <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.category ?? "—")}</td>
-                      <td className="px-4 py-3"><PmStatusBadge status={String(r.pmStatus ?? "Scheduled")} /></td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{String(r.dueDate ?? "—")}</td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs font-medium ${Number(r.daysUntilDue) < 0 ? "text-red-700" : Number(r.daysUntilDue) < 7 ? "text-amber-700" : "text-slate-600"}`}>
-                          {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-600">${Number(r.estimatedCost ?? 0).toLocaleString()}</td>
-                      <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </ClayCard>
-
-          <div className="flex flex-col gap-4">
-            <RailCard title="Readiness Breakdown">
-              <div className="flex flex-col gap-3.5">
-                <BreakdownRow label="Overdue" value={overdue} total={rows.length} color="#dc2626" />
-                <BreakdownRow label="Due Soon" value={dueSoon} total={rows.length} color="#f59e0b" />
-                <BreakdownRow label="Scheduled" value={scheduled} total={rows.length} color="var(--teal)" />
-              </div>
-              {(overdue > 0 || dueSoon > 0) && (
-                <p className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                  <RiskBadge risk={overdue > 0 ? "High" : "Medium"} />
-                  {overdue + dueSoon} item{overdue + dueSoon === 1 ? "" : "s"} need attention
-                </p>
-              )}
-            </RailCard>
-
-            <Timeline items={upcoming} />
-          </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk"].map((h) => (
+                  <th key={h} className="px-4 py-2.5">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={String(r.id ?? i)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-medium text-slate-900">{String(r.title ?? "--")}</td>
+                  <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
+                  <td className="px-4 py-3 text-xs text-slate-500">{String(r.category ?? "—")}</td>
+                  <td className="px-4 py-3"><PmStatusBadge status={String(r.pmStatus ?? "Scheduled")} /></td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{String(r.dueDate ?? "—")}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-medium ${Number(r.daysUntilDue) < 0 ? "text-red-700" : Number(r.daysUntilDue) < 7 ? "text-amber-700" : "text-slate-600"}`}>
+                      {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">${Number(r.estimatedCost ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -424,6 +295,12 @@ export function MaintenancePlanningPage() {
   const { pathname } = useLocation();
   const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "history";
   const [tab, setTab] = useState<Tab>(defaultTab);
+
+  // Sync tab with route when navigating between /service-history, /downtime, /preventive-maintenance
+  useEffect(() => {
+    const routeTab = ROUTE_TAB[pathname] as Tab | undefined;
+    if (routeTab) setTab(routeTab);
+  }, [pathname]);
 
   const exportFns: Record<Tab, () => void> = {
     history: () => exportCsv("service-history", buildServiceHistorySeed()),
@@ -444,22 +321,80 @@ export function MaintenancePlanningPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 py-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{descriptions[tab]}</p>
+    <div className="space-y-6 pb-10">
+      {/* ── fh-hero header ─────────────────────────────────────── */}
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Wrench className="h-3 w-3" /> Maintenance
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">{descriptions[tab]}</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                {titles[tab]}
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Service history, downtime tracking, and preventive maintenance scheduling
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="fh-btn-primary cursor-pointer" onClick={exportFns[tab]}>
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
+          </div>
         </div>
-        <button type="button" className="btn-secondary text-sm" onClick={exportFns[tab]}>Export CSV</button>
+      </header>
+
+      {/* ── Ops intelligence bar ─────────────────────────────── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Live operations signal</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {tab === "history"
+                ? "Service history loaded — review completed maintenance costs, downtime, and vendor performance."
+                : tab === "downtime"
+                ? "Downtime events tracked — analyze fleet availability and estimated revenue impact."
+                : "Preventive maintenance schedule active — monitor upcoming due dates and risk levels."}
+            </p>
+          </div>
+        </div>
+        <div className="relative flex items-center gap-6 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-slate-300">{tab === "pm" ? "PM schedule active" : tab === "downtime" ? "Downtime tracked" : "History loaded"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Wrench className="h-3.5 w-3.5 text-teal-400" />
+            <span className="text-slate-300">RBAC Enforced</span>
+          </div>
+        </div>
       </div>
 
-      <div className="panel flex gap-1 p-1.5">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
-            }`}>{t.label}</button>
-        ))}
+      {/* ── Tab bar ──────────────────────────────────────────── */}
+      <div className="panel p-2">
+        <div className="flex flex-wrap gap-2">
+          {TABS.map((t) => (
+            <button key={t.key} type="button" onClick={() => setTab(t.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition cursor-pointer ${
+                tab === t.key
+                  ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              }`}>{t.label}</button>
+          ))}
+        </div>
       </div>
 
       {tab === "history"  && <ServiceHistoryTab />}

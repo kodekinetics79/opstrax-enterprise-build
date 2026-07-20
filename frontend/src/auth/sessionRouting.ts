@@ -8,7 +8,7 @@ export function getLandingRouteForSession(session: UserSession | null): string {
     return "/driver";
   }
   if (hasPermission(permissions, "dashboard:view")) {
-    return "/live-dashboard";
+    return "/command-center";
   }
   if (hasPermission(permissions, "customer_portal:view")) {
     return "/customer-portal";
@@ -20,5 +20,5 @@ export function getLandingRouteForSession(session: UserSession | null): string {
     return "/drivers";
   }
 
-  return "/live-dashboard";
+  return "/command-center";
 }

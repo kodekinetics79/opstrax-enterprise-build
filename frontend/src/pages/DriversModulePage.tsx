@@ -1,26 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, ShieldAlert, UserCheck, Users } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
-import { EntityImportExport } from "@/components/EntityImportExport";
+import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, Satellite, ShieldAlert, Sparkles, UserCheck, Users } from "lucide-react";
+import { LoadingState, ErrorState, KpiCard, EmptyState, exportCsv, labelize } from "@/components/ui";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
-import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { EntityListPage } from "@/pages/EntityListPage";
-
-const DRIVER_IMPORT_EXPORT = {
-  entity: "drivers",
-  columns: ["driverCode", "fullName", "phone", "email", "licenseNumber", "status"],
-  requiredColumns: ["driverCode", "fullName"],
-  templateEndpoint: "/api/drivers/import-template",
-  exportEndpoint: "/api/drivers/export",
-  importPreview: driversApi.importPreview,
-  importCommit: driversApi.importCommit,
-  invalidateKey: "drivers",
-} as const;
 
 type DriverSection = "overview" | "roster" | "readiness" | "safety" | "records";
 
@@ -125,7 +112,6 @@ export function DriversModulePage() {
   const location = useLocation();
   const section = readSection(location.pathname);
   const { session } = useAuth();
-  const hasPermission = useHasPermission();
 
   const list = useQuery({ queryKey: ["drivers"], queryFn: driversApi.list });
   const summary = useQuery({ queryKey: ["drivers", "summary"], queryFn: driversApi.summary });
@@ -147,110 +133,115 @@ export function DriversModulePage() {
   const assigned = rows.filter((row) => g(row, "assignedVehicle", "assigned_vehicle")).length;
 
   return (
-    <div className="fleet-console space-y-3 pb-6">
-      <header className="fc-rail relative px-6 py-4">
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <span className="section-title inline-flex items-center gap-2">
-              <Users className="h-3.5 w-3.5 text-teal-700" /> Workforce · Master Data
-            </span>
-            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Drivers</h1>
-            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-              <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> operators in the live registry ·{" "}
-              <span className="font-bold text-emerald-600 tabular-nums">{ready}</span> available ·{" "}
-              <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <EntityImportExport
-              config={DRIVER_IMPORT_EXPORT}
-              canImport={hasPermission("fleet:manage")}
-              canExport={hasPermission("drivers:view")}
-            />
-            <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary h-10">
-              Open roster <ArrowRight className="h-4 w-4" />
-            </button>
+    <div className="space-y-6 pb-10">
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Users className="h-3 w-3" /> Driver Module
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Readiness, workflow and compliance</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                Drivers
+              </h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                Organized around the real driver workflow — readiness, coaching, HOS, compliance and records
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => exportCsv("drivers", rows)} className="fh-btn-ghost">Export drivers</button>
+              <button type="button" onClick={() => navigate("/drivers/roster")} className="fh-btn-primary">Open roster <ArrowRight className="h-3.5 w-3.5" /></button>
+            </div>
           </div>
         </div>
       </header>
 
-      <nav className="fc-neumo sticky top-4 z-20 p-2">
+      <nav className="sticky top-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
         <div className="grid gap-1 sm:grid-cols-5">
           {SECTIONS.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => navigate(`/drivers/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "fc-seg-btn-active rounded-xl" : "hover:bg-white/60"
+              className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition ${
+                section === item.key ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60" : "bg-slate-50/40 hover:bg-slate-100"
               }`}
             >
-              <div className={`text-xs font-bold uppercase tracking-[0.14em] ${section === item.key ? "text-teal-800" : "text-slate-700"}`}>{item.label}</div>
-              <div className="mt-0.5 text-[11px] text-slate-500">{item.description}</div>
+              <div className="text-xs font-bold uppercase tracking-[0.14em]">{item.label}</div>
+              <div className={`mt-0.5 text-[11px] ${section === item.key ? "text-teal-500" : "text-slate-500"}`}>{item.description}</div>
             </button>
           ))}
         </div>
       </nav>
 
       {section === "overview" && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <OverviewClay Icon={UserCheck}     tone="fc-clay-teal"    iconCls="text-teal-700"    label="Driver readiness" value={`${readiness}%`} caption={`${rows.length} live operators`} />
-            <OverviewClay Icon={ShieldAlert}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Safety average"   value={safetyAvg}       caption="Fleet-wide behavior score" />
-            <OverviewClay Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Available now"    value={ready}           caption="Ready for dispatch" />
-            <OverviewClay Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"          value={atRisk}          caption="Compliance or safety watch" alert={atRisk > 0} />
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiCard label="Driver readiness" value={`${readiness}%`} icon={<UserCheck className="h-4 w-4" />} />
+            <KpiCard label="Safety average" value={`${safetyAvg}`} icon={<ShieldAlert className="h-4 w-4" />} />
+            <KpiCard label="Available now" value={String(ready)} icon={<Users className="h-4 w-4" />} />
+            <KpiCard label="At risk" value={String(atRisk)} status="Review" icon={<AlertTriangle className="h-4 w-4" />} />
           </div>
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-3">
             <ModuleCard title="Roster" body="Browse, search, edit, assign and export live driver records." action="Open roster" onClick={() => navigate("/drivers/roster")} icon={<Users className="h-5 w-5" />} />
-            <ModuleCard title="Readiness" body="Driver availability, HOS pressure and compliance gaps from live records." action="Open readiness" onClick={() => navigate("/drivers/readiness")} icon={<BadgeCheck className="h-5 w-5" />} />
-            <ModuleCard title="Safety" body="Coaching load, risk posture and communication touchpoints per driver." action="Open safety" onClick={() => navigate("/drivers/safety")} icon={<ShieldAlert className="h-5 w-5" />} />
+            <ModuleCard title="Readiness" body="Review driver availability, HOS pressure and compliance gaps." action="Open readiness" onClick={() => navigate("/drivers/readiness")} icon={<BadgeCheck className="h-5 w-5" />} />
+            <ModuleCard title="Safety" body="Track coaching needs, safety posture and communication touchpoints." action="Open safety" onClick={() => navigate("/drivers/safety")} icon={<ShieldAlert className="h-5 w-5" />} />
           </div>
-          <div className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
-            <section className="fc-neumo p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-black text-slate-900">Latest operators</h2>
-                  <p className="text-xs font-medium text-slate-500">Most recent records from the live registry.</p>
-                </div>
-                <button type="button" className="btn-ghost h-9" onClick={() => navigate("/drivers/roster")}>Go to roster</button>
-              </div>
-              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
-                {rows.slice(0, 4).map((row) => (
-                  <div key={rowId(row)} className="deck-inset rounded-xl p-3.5">
-                    <p className="text-base font-bold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">{String(g(row, "driverCode", "driver_code") ?? "")}</p>
-                    <div className="mt-2.5 flex items-center justify-between text-xs text-slate-500">
-                      <StatusBadge status={String(g(row, "status") ?? "--")} />
-                      <span className="truncate pl-2">{String(g(row, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")}</span>
-                    </div>
-                  </div>
-                ))}
-                {rows.length === 0 && <p className="deck-inset col-span-full rounded-xl px-3 py-4 text-sm text-slate-400">No drivers in the registry yet — import a CSV or add one from the roster.</p>}
-              </div>
-            </section>
-            <section className="fc-neumo p-4">
+          <section className="panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-black text-slate-900">Related workflows</h2>
-                <p className="text-xs font-medium text-slate-500">HOS, compliance, coaching and messaging for this workforce.</p>
+                <h2 className="text-lg font-semibold text-slate-900">Important surfaces we were missing from the main entry</h2>
+                <p className="text-sm text-slate-500">The driver module now calls out the linked operational areas that were previously buried in separate pages.</p>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {RELATED_ENTITIES.map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => navigate(item.route)}
-                    className="deck-alert group flex items-center justify-between px-3.5 py-2.5 text-left"
-                  >
-                    <span>
-                      <span className="block text-[13px] font-bold text-slate-800">{item.label}</span>
-                      <span className="block text-[10.5px] font-medium text-slate-400">{item.note}</span>
-                    </span>
-                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
-                  </button>
-                ))}
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Related workflows
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {RELATED_ENTITIES.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => navigate(item.route)}
+                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-900">{item.label}</span>
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-500">{item.note}</p>
+                </button>
+              ))}
+            </div>
+          </section>
+          <section className="panel p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Live driver snapshot</h2>
+                <p className="text-sm text-slate-500">A fast, readable cross-section of the drivers currently feeding the module.</p>
               </div>
-            </section>
-          </div>
+              <button type="button" className="fh-btn-ghost h-9" onClick={() => navigate("/drivers/roster")}>Go to roster</button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {rows.slice(0, 4).map((row) => (
+                <div key={rowId(row)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Driver</p>
+                  <p className="mt-1 text-base font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</p>
+                  <p className="mt-1 text-sm text-slate-500">{String(g(row, "driverCode", "driver_code") ?? "")}</p>
+                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                    <span>{String(g(row, "status") ?? "--")}</span>
+                    <span>{String(g(row, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
 
@@ -262,32 +253,16 @@ export function DriversModulePage() {
   );
 }
 
-function OverviewClay({ Icon, tone, iconCls, label, value, caption, alert }:
-  { Icon: React.ElementType; tone: string; iconCls: string; label: string; value: React.ReactNode; caption?: string; alert?: boolean }) {
-  const n = Number(value);
-  const valueColor = alert && Number.isFinite(n) && n > 0 ? "text-rose-600" : "text-slate-900";
-  return (
-    <div className={`fc-clay ${tone} p-4`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-600">{label}</span>
-        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
-      </div>
-      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
-      {caption ? <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p> : null}
-    </div>
-  );
-}
-
 function ModuleCard({ title, body, action, onClick, icon }: { title: string; body: string; action: string; onClick: () => void; icon: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="fc-neumo group p-5 text-left transition hover:-translate-y-0.5">
+    <button type="button" onClick={onClick} className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
       <div className="flex items-center justify-between">
-        <div className="fc-blob h-10 w-10 text-slate-500">{icon}</div>
-        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>
+        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5" />
       </div>
-      <h3 className="mt-4 text-base font-black text-slate-900">{title}</h3>
-      <p className="mt-1.5 text-sm text-slate-500">{body}</p>
-      <p className="mt-3 text-xs font-bold uppercase tracking-[0.14em] text-teal-700">{action}</p>
+      <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
+      <p className="mt-2 text-sm text-slate-500">{body}</p>
+      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
     </button>
   );
 }
@@ -314,7 +289,7 @@ function ReadinessView({
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-black text-slate-900">Readiness</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Readiness view</h2>
         <p className="mt-1 text-sm text-slate-500">A focused view for who is dispatchable, who is nearing HOS trouble, and where compliance is weak.</p>
       </section>
       <div className="grid gap-4 xl:grid-cols-4">
@@ -337,8 +312,8 @@ function SafetyView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rout
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-black text-slate-900">Safety</h2>
-        <p className="mt-1 text-sm text-slate-500">Coaching load, risk posture and communication touchpoints across the driver pool.</p>
+        <h2 className="text-lg font-semibold text-slate-900">Safety view</h2>
+        <p className="mt-1 text-sm text-slate-500">Brings coaching, risk and driver communications into one place instead of scattering them across unrelated screens.</p>
       </section>
       <div className="grid gap-4 xl:grid-cols-4">
         <KpiCard label="Fleet safety avg" value={`${Math.round(avg(rows, "safetyScore"))}`} />
@@ -370,8 +345,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
   }, [rows, selectedId]);
 
   const detailPayload = (detail.data as AnyRecord) || {};
-  const selectedRow = rows.find((row) => rowId(row) === selectedId) || null;
-  const record = (detailPayload.record as AnyRecord) || selectedRow;
+  const record = (detailPayload.record as AnyRecord) || null;
   const documents = (detailPayload.documents as AnyRecord[]) || [];
   const certifications = (detailPayload.certifications as AnyRecord[]) || [];
   const complianceStatus = (detailPayload.complianceStatus as AnyRecord) || null;
@@ -424,8 +398,8 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
   return (
     <div className="space-y-5">
       <section className="panel p-5">
-        <h2 className="text-lg font-black text-slate-900">Records</h2>
-        <p className="mt-1 text-sm text-slate-500">Certifications, HOS, inspections and audit history for the selected driver.</p>
+        <h2 className="text-lg font-semibold text-slate-900">Records view</h2>
+        <p className="mt-1 text-sm text-slate-500">Keeps certifications, HOS, inspections and audit history in a focused record workspace instead of burying them under the roster.</p>
       </section>
       <RelatedJumpRow onNavigate={onNavigate} />
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
@@ -437,11 +411,11 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                 key={rowId(row)}
                 type="button"
                 onClick={() => setSelectedId(rowId(row))}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                className={`cursor-pointer w-full rounded-xl border px-3 py-2.5 text-left transition ${selectedId === rowId(row) ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
               >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-900">{String(g(row, "fullName", "driverName", "full_name") ?? `Driver ${rowId(row)}`)}</span>
-                  <StatusBadge status={String(g(row, "status") ?? "--")} />
+                  <span className="text-xs text-slate-500">{String(g(row, "status") ?? "--")}</span>
                 </div>
                 <div className="mt-1 text-xs text-slate-500">{String(g(row, "driverCode", "driver_code") ?? "")} · {String(g(row, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")}</div>
               </button>
@@ -450,7 +424,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
         </div>
         <div className="space-y-4">
           {record ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-1 xl:grid-cols-2">
               <KpiCard label="Driver" value={String(g(record, "fullName", "driverName", "full_name") ?? `Driver ${record.id}`)} />
               <KpiCard label="Status" value={String(g(record, "status") ?? "--")} />
               <KpiCard label="Vehicle" value={String(g(record, "assignedVehicle", "assigned_vehicle") ?? "Unassigned")} />
@@ -482,7 +456,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                     <p className="text-xs text-slate-500">License, medical and insurance evidence surfaced from live documents and certifications.</p>
                   </div>
                 </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <CredentialCard
                     title="Driver license / CDL"
                     status={String(g(licenseDoc || record, "status") ?? "Missing")}
@@ -547,7 +521,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
           ))}
         </div>
       </div>
-          {detail.isLoading && !record ? <LoadingState /> : null}
+      {detail.isLoading ? <LoadingState /> : null}
     </div>
   );
 }
@@ -609,8 +583,19 @@ function SimpleListCard({ title, rows, fields }: { title: string; rows: AnyRecor
       {!rows.length ? (
         <p className="mt-3 rounded-xl border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-400">No linked records.</p>
       ) : (
-        <div className="mt-3">
-          <DataTable rows={rows.slice(0, 6)} columns={fields} />
+        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+              <tr>{fields.map((field) => <th key={field} className="px-3 py-2 font-semibold">{labelize(field)}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.slice(0, 6).map((row, index) => (
+                <tr key={String(row.id ?? index)} className="text-slate-600">
+                  {fields.map((field) => <td key={field} className="px-3 py-2">{fmt(row[field])}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -625,7 +610,7 @@ function RelatedJumpRow({ onNavigate }: { onNavigate: (route: string) => void })
           key={item.label}
           type="button"
           onClick={() => onNavigate(item.route)}
-          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50/50"
+          className="cursor-pointer rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-sm shadow-sm transition hover:border-teal-200 hover:bg-teal-50/50"
         >
           <div className="font-semibold text-slate-900">{item.label}</div>
           <div className="mt-1 text-xs text-slate-500">{item.note}</div>
@@ -640,7 +625,7 @@ function RelatedChip({ label, onClick }: { label: string; onClick: () => void })
     <button
       type="button"
       onClick={onClick}
-      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-white"
+      className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:border-teal-200 hover:bg-white"
     >
       {label}
     </button>

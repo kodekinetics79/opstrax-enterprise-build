@@ -4,6 +4,7 @@ import { BellRing, BatteryCharging, FlaskConical, Gauge, Layers3, Thermometer, T
 import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetColdChainApi, type ColdChainReport, type TemperatureAlert, type TemperatureDevice, type TemperatureZone } from '@/services/fleetTmsApi';
+import { Select } from '@/components/ui';
 
 type SummaryState = {
   generatedAtUtc: string;
@@ -365,9 +366,9 @@ export function FleetColdChainPage() {
                     <input value={form.deviceCode} onChange={(e) => setForm((current) => ({ ...current, deviceCode: e.target.value }))} placeholder="Device code" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                     <input value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} placeholder="Device name" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                     <input value={form.vehicleNumber} onChange={(e) => setForm((current) => ({ ...current, vehicleNumber: e.target.value }))} placeholder="Vehicle number" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
-                    <select value={selectedZoneId} onChange={(e) => setSelectedZoneId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+                    <Select value={selectedZoneId} onChange={(e) => setSelectedZoneId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
                       {summary.zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
-                    </select>
+                    </Select>
                     <input value={form.temperature} onChange={(e) => setForm((current) => ({ ...current, temperature: e.target.value }))} placeholder="Temperature °C" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                     <input value={form.batteryPercent} onChange={(e) => setForm((current) => ({ ...current, batteryPercent: e.target.value }))} placeholder="Battery %" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                   </div>

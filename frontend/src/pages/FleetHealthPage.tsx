@@ -1,9 +1,8 @@
 import React, { useState } from "react";
-import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, AlertTriangle, CheckCircle, ChevronRight,
-  Clock, RefreshCw, Shield, Truck, User, Wrench, X,
+  Activity, AlertTriangle, ArrowRight, CheckCircle, ChevronRight,
+  Clock, Gauge, RefreshCw, Shield, Truck, User, Wrench, X,
   XCircle, Zap,
 } from "lucide-react";
 import { fleetHealthApi } from "@/services/fleetHealthApi";
@@ -11,7 +10,6 @@ import { maintenanceApi } from "@/services/maintenanceApi";
 import { safetyApi } from "@/services/safetyApi";
 import { coachingApi } from "@/services/coachingApi";
 import { useHasPermission } from "@/hooks/usePermission";
-import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Severity helpers ────────────────────────────────────────────────────────
@@ -64,30 +62,6 @@ function scoreColor(score: number): string {
   return "text-red-600";
 }
 
-function DrawerSkeleton() {
-  return (
-    <div className="space-y-4 p-6">
-      <div className="grid grid-cols-2 gap-3">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="h-2.5 w-16 rounded bg-slate-200/80" />
-            <div className="mt-2 h-4 w-28 rounded bg-slate-200/80" />
-          </div>
-        ))}
-      </div>
-      <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="h-3 w-24 rounded bg-slate-200/80" />
-            <div className="mt-3 h-4 w-full rounded bg-slate-100" />
-            <div className="mt-2 h-4 w-5/6 rounded bg-slate-100" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Readiness gauge strip ───────────────────────────────────────────────────
 
 function ReadinessStrip({ summary }: { summary: AnyRecord }) {
@@ -97,63 +71,72 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   const oos       = num(summary.oosVehicles);
   const blockers  = num(summary.criticalDefectVehicles);
   const avgSafety = num(summary.avgSafetyScore, 100);
+  const strokeColor = score >= 80 ? "#10b981" : score >= 60 ? "#f59e0b" : "#ef4444";
+  const circumference = 2 * Math.PI * 44;
+  const dashOffset = circumference - (score / 100) * circumference;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
-      {/* Fleet health score */}
-      <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
-        <div className="relative h-16 w-16 shrink-0">
-          <svg viewBox="0 0 36 36" className="h-16 w-16 -rotate-90">
-            <circle cx="18" cy="18" r="14" fill="none" stroke={tokens.border} strokeWidth="3" />
-            <circle
-              cx="18" cy="18" r="14" fill="none"
-              stroke={score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
-              strokeWidth="3"
-              strokeDasharray={`${(score / 100) * 87.96} 87.96`}
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${scoreColor(score)}`}>
-            {score}%
-          </span>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Fleet Health</p>
-          <p className={`text-2xl font-bold ${scoreColor(score)}`}>{score}%</p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
-          </p>
-        </div>
-      </div>
+    <div className="fh-readiness relative">
+      <span className="fh-accent-bar" style={{ background: "linear-gradient(90deg, #2dd4bf, #14b8a6, #0d9488)" }} />
+      <div className="relative px-6 py-5">
+        <div className="flex flex-wrap items-center gap-6">
+          {/* Score ring */}
+          <div className="flex items-center gap-5 pr-6 border-r border-slate-200/70">
+            <div className="relative h-[88px] w-[88px] shrink-0">
+              <svg viewBox="0 0 100 100" className="h-[88px] w-[88px] -rotate-90">
+                <circle cx="50" cy="50" r="44" className="fh-score-ring-track" strokeWidth="6" />
+                <circle
+                  cx="50" cy="50" r="44"
+                  className="fh-score-ring-fill"
+                  stroke={strokeColor}
+                  strokeWidth="6"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={dashOffset}
+                />
+              </svg>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className={`text-xl font-black leading-none ${scoreColor(score)}`}>{score}%</span>
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">Fleet Health</p>
+              <p className={`text-2xl font-black leading-none mt-1 ${scoreColor(score)}`}>{score}%</p>
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                {score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
+              </p>
+            </div>
+          </div>
 
-      {/* KPIs */}
-      <div className="flex flex-wrap gap-8">
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Ready</p>
-          <p className="text-xl font-bold text-emerald-600">{ready}<span className="text-slate-400 font-normal text-sm">/{total}</span></p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Out of Service</p>
-          <p className={`text-xl font-bold ${oos > 0 ? "text-red-600" : "text-slate-400"}`}>{oos}</p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Blockers</p>
-          <p className={`text-xl font-bold ${blockers > 0 ? "text-red-600" : "text-slate-400"}`}>{blockers}</p>
-          <p className="text-xs text-slate-500">critical defects</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Safety Score</p>
-          <p className={`text-xl font-bold ${scoreColor(avgSafety)}`}>{avgSafety}%</p>
-          <p className="text-xs text-slate-500">fleet avg</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Overdue PM</p>
-          <p className={`text-xl font-bold ${num(summary.overduePmVehicles) > 0 ? "text-amber-500" : "text-slate-400"}`}>
-            {num(summary.overduePmVehicles)}
-          </p>
-          <p className="text-xs text-slate-500">vehicles</p>
+          {/* KPIs */}
+          <div className="flex flex-wrap gap-3">
+            <div className="fh-kpi-box">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Dispatch Ready</p>
+              <p className="text-xl font-black leading-none text-emerald-600">{ready}<span className="text-slate-400 font-normal text-sm">/{total}</span></p>
+              <p className="text-[10px] text-slate-400 mt-0.5">vehicles</p>
+            </div>
+            <div className="fh-kpi-box">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Out of Service</p>
+              <p className={`text-xl font-black leading-none ${oos > 0 ? "text-red-600" : "text-slate-400"}`}>{oos}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">vehicles</p>
+            </div>
+            <div className="fh-kpi-box">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Blockers</p>
+              <p className={`text-xl font-black leading-none ${blockers > 0 ? "text-red-600" : "text-slate-400"}`}>{blockers}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">critical defects</p>
+            </div>
+            <div className="fh-kpi-box">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Safety Score</p>
+              <p className={`text-xl font-black leading-none ${scoreColor(avgSafety)}`}>{avgSafety}%</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">fleet avg</p>
+            </div>
+            <div className="fh-kpi-box">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Overdue PM</p>
+              <p className={`text-xl font-black leading-none ${num(summary.overduePmVehicles) > 0 ? "text-amber-500" : "text-slate-400"}`}>
+                {num(summary.overduePmVehicles)}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">vehicles</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -165,24 +148,25 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
 function InsightPanel({ insights }: { insights: AnyRecord[] }) {
   if (!insights.length) return null;
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-        <Activity className="h-4 w-4 text-slate-500" />
-        <span className="text-xs font-bold uppercase tracking-widest text-slate-500">
-          System Fleet Insight
-        </span>
-        <span className="ml-auto text-[10px] text-slate-400 font-medium">
-          Rule-based · Real data
-        </span>
+    <div className="fh-glass relative overflow-hidden">
+      <span className="fh-accent-bar" style={{ background: "linear-gradient(90deg, #3b82f6, #60a5fa)" }} />
+      <div className="fh-section-header px-5 pt-5 pb-0">
+        <div className="fh-section-icon" style={{ background: "linear-gradient(135deg, rgba(59,130,246,.12), rgba(96,165,250,.06))", borderColor: "rgba(59,130,246,.15)" }}>
+          <Activity className="h-4 w-4 text-blue-500" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-black text-slate-900">System Fleet Insight</h2>
+          <p className="text-[11px] text-slate-400">Rule-based · Real data</p>
+        </div>
       </div>
-      <ul className="divide-y divide-slate-100">
+      <ul>
         {insights.map((ins, i) => {
           const sev = String(ins.severity ?? "medium") as Sev;
           return (
-            <li key={i} className="flex items-start gap-3 px-5 py-3">
-              <span className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${sevDot(sev)}`} />
-              <div className="min-w-0">
-                <p className="text-sm text-slate-700 leading-snug">{String(ins.message ?? "")}</p>
+            <li key={i} className="fh-insight-item">
+              <span className={`mt-1 h-2.5 w-2.5 rounded-full shrink-0 ${sevDot(sev)}`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] text-slate-700 leading-snug font-medium">{String(ins.message ?? "")}</p>
                 <p className="text-[10px] text-slate-400 mt-0.5">{String(ins.dataSource ?? "")}</p>
               </div>
             </li>
@@ -250,10 +234,15 @@ function RiskCard({
   const blocking  = Boolean(item.blockingDispatch);
 
 
+  const accentColor = sev === "critical" ? "#ef4444" : sev === "high" ? "#f97316" : sev === "medium" ? "#f59e0b" : "#94a3b8";
+
   const body = (
     <>
+      {/* Accent bar */}
+      <span className="fh-accent-bar" style={{ background: `linear-gradient(90deg, ${accentColor}, ${accentColor}88)` }} />
+
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100">
+      <div className="fh-risk-header">
         <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${sevDot(sev)}`} />
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {isVehicle
@@ -271,15 +260,15 @@ function RiskCard({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {blocking && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 rounded-full px-2 py-0.5 uppercase tracking-wide">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold fh-badge-blocked rounded-full px-2 py-0.5 uppercase tracking-wide">
               <XCircle className="h-3 w-3" />Blocked
             </span>
           )}
           <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border ${
-            sev === "critical" ? "bg-red-100 text-red-700 border-red-200" :
-            sev === "high"     ? "bg-orange-100 text-orange-700 border-orange-200" :
-            sev === "medium"   ? "bg-amber-100 text-amber-700 border-amber-200" :
-                                 "bg-slate-100 text-slate-600 border-slate-200"}`}>
+            sev === "critical" ? "fh-badge-critical" :
+            sev === "high"     ? "fh-badge-high" :
+            sev === "medium"   ? "fh-badge-medium" :
+                                 "fh-badge-low"}`}>
             {sevLabel(sev)}
           </span>
           <span className="text-[10px] text-slate-400 font-mono">#{Math.round(score)}</span>
@@ -287,7 +276,7 @@ function RiskCard({
       </div>
 
       {/* Metrics strip */}
-      <div className="flex gap-4 px-4 py-2 bg-slate-50/70 text-xs text-slate-600 flex-wrap">
+      <div className="fh-risk-metrics">
         {isVehicle && Boolean(metrics.outOfService) && <span className="text-red-600 font-semibold">Out of Service</span>}
         {isVehicle && num(metrics.criticalDefects) > 0 && <span className="text-red-600">{num(metrics.criticalDefects)} critical defect{num(metrics.criticalDefects) > 1 ? "s" : ""}</span>}
         {isVehicle && num(metrics.activeFaultCodes) > 0 && <span className="text-orange-600">{num(metrics.activeFaultCodes)} fault code{num(metrics.activeFaultCodes) > 1 ? "s" : ""}</span>}
@@ -302,10 +291,10 @@ function RiskCard({
 
       {/* Reasons */}
       {reasons.length > 0 && (
-        <ul className="px-4 py-2 space-y-0.5">
+        <ul className="fh-risk-reasons">
           {reasons.slice(0, 3).map((r, i) => (
-            <li key={i} className="text-xs text-slate-600 flex items-center gap-1.5">
-              <span className="h-1 w-1 rounded-full bg-slate-400 shrink-0" />{r}
+            <li key={i} className="fh-risk-reason">
+              <span className="fh-risk-reason-dot" />{r}
             </li>
           ))}
         </ul>
@@ -313,19 +302,17 @@ function RiskCard({
 
       {/* Recommended action */}
       {item.recommendedAction && (
-        <div className="px-4 py-2 bg-blue-50/50 border-t border-blue-100">
-          <p className="text-xs text-blue-700">
-            <span className="font-semibold">Recommended:</span> {String(item.recommendedAction)}
-          </p>
+        <div className="fh-risk-recommendation">
+          <span className="font-bold">Recommended:</span> {String(item.recommendedAction)}
         </div>
       )}
 
       {/* Actions */}
-      <div className="flex gap-2 px-4 py-3 border-t border-slate-100 mt-auto flex-wrap">
+      <div className="fh-risk-action-bar">
         <button
           type="button"
           onClick={() => isVehicle ? onVehicleClick(id) : onDriverClick(id)}
-          className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+          className="fh-btn-ghost"
         >
           <ChevronRight className="h-3.5 w-3.5" />View Detail
         </button>
@@ -335,7 +322,7 @@ function RiskCard({
               type="button"
               disabled={isMutating}
               onClick={() => onCreateWO(id)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-800 border border-slate-800 rounded-lg px-3 py-1.5 hover:bg-slate-700 transition-colors disabled:opacity-50"
+              className="fh-btn-primary"
             >
               <Wrench className="h-3.5 w-3.5" />Create WO
             </button>
@@ -344,7 +331,7 @@ function RiskCard({
                 type="button"
                 disabled={isMutating}
                 onClick={() => onAckDefect(id)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="fh-btn-amber"
               >
                 <CheckCircle className="h-3.5 w-3.5" />Ack Defect
               </button>
@@ -356,7 +343,7 @@ function RiskCard({
             type="button"
             disabled={isMutating}
             onClick={() => onAssignCoaching(id)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-800 border border-slate-800 rounded-lg px-3 py-1.5 hover:bg-slate-700 transition-colors disabled:opacity-50"
+            className="fh-btn-primary"
           >
             <Shield className="h-3.5 w-3.5" />Assign Coaching
           </button>
@@ -365,7 +352,7 @@ function RiskCard({
     </>
   );
   return (
-    <div className={`border rounded-xl bg-white shadow-sm flex flex-col overflow-hidden ${sevBg(sev)}`}>
+    <div className="fh-risk-card flex flex-col">
       {body}
     </div>
   );
@@ -401,13 +388,7 @@ function VehicleDrawer({
 
   const createWO = useMutation({
     mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({
-        vehicleId,
-        serviceType: "fleet_health",
-        title: "Fleet health review",
-        description: "Created from Fleet Health to track critical readiness issues.",
-        priority: "High",
-      }),
+      maintenanceApi.createWorkOrder({ vehicleId, title: "Fleet health review", priority: "High" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["fleet-health"] });
       onWOCreated();
@@ -434,21 +415,23 @@ function VehicleDrawer({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end">
-      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col overflow-hidden">
+    <div className="fh-drawer-overlay">
+      <div className="fh-drawer-backdrop" onClick={onClose} />
+      <div className="fh-drawer-panel">
         {/* Drawer header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white shrink-0">
-          <Truck className="h-5 w-5 text-slate-500" />
+        <div className="fh-drawer-header">
+          <div className="fh-section-icon">
+            <Truck className="h-4 w-4 text-teal-600" />
+          </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle Detail</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Vehicle Detail</p>
             <h2 className="font-bold text-slate-900 text-base truncate">
               {String(veh.vehicle_code ?? `Vehicle #${vehicleId}`)}
             </h2>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {oos && (
-              <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 rounded-full px-2 py-0.5 uppercase">
+              <span className="text-[10px] font-bold fh-badge-blocked rounded-full px-2 py-0.5 uppercase">
                 Out of Service
               </span>
             )}
@@ -458,7 +441,11 @@ function VehicleDrawer({
           </button>
         </div>
 
-        {isLoading && <DrawerSkeleton />}
+        {isLoading && (
+          <div className="flex-1 flex items-center justify-center">
+            <RefreshCw className="h-6 w-6 text-slate-400 animate-spin" />
+          </div>
+        )}
         {isError && (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-sm text-red-600">Failed to load vehicle detail.</p>
@@ -466,13 +453,13 @@ function VehicleDrawer({
         )}
 
         {data && !isLoading && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="fh-drawer-body space-y-5">
             {/* Vehicle overview */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="fh-drawer-info-grid">
               {vehicleInfoRows.map(([label, value]) => (
-                <div key={label} className="bg-slate-50 rounded-lg px-3 py-2">
+                <div key={label} className="fh-drawer-info-cell">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}</p>
-                  <p className="text-sm font-semibold text-slate-800 mt-0.5">{value}</p>
+                  <p className="text-sm font-bold text-slate-800 mt-0.5">{value}</p>
                 </div>
               ))}
             </div>
@@ -480,9 +467,9 @@ function VehicleDrawer({
             {/* Dispatch status */}
             {assignment ? (
               <Section title="Active Assignment" icon={<Activity className="h-4 w-4" />}>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm space-y-1">
-                  <p className="text-blue-800 font-semibold">{String(assignment.status ?? "")}</p>
-                  {!!assignment.pickup_address && <p className="text-blue-700 text-xs">From: {String(assignment.pickup_address)}</p>}
+                <div className="fh-drawer-item fh-drawer-item-info">
+                  <p className="text-blue-800 font-bold">{String(assignment.status ?? "")}</p>
+                  {!!assignment.pickup_address && <p className="text-blue-700 text-xs mt-0.5">From: {String(assignment.pickup_address)}</p>}
                   {!!assignment.delivery_address && <p className="text-blue-700 text-xs">To: {String(assignment.delivery_address)}</p>}
                   {!!assignment.driver_name && <p className="text-blue-700 text-xs">Driver: {String(assignment.driver_name)}</p>}
                 </div>
@@ -506,29 +493,31 @@ function VehicleDrawer({
                 : defects.map((d, i) => {
                     const isCrit = Boolean(d.out_of_service);
                     return (
-                      <div key={i} className={`flex items-start justify-between gap-2 rounded-lg px-3 py-2 text-sm border ${isCrit ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}>
-                        <div className="flex-1 min-w-0">
-                          <p className={`font-semibold ${isCrit ? "text-red-700" : "text-slate-700"}`}>
-                            {isCrit ? "⚠ " : ""}{String(d.defect_description ?? d.id)}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-0.5">{String(d.severity ?? "")} · {String(d.status ?? "")}</p>
-                        </div>
-                        {canManageMaint && (
-                          <div className="flex gap-1 shrink-0">
-                            <button
-                              type="button"
-                              disabled={ackDefect.isPending}
-                              onClick={() => ackDefect.mutate(num(d.id))}
-                              className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 hover:bg-amber-100 disabled:opacity-50"
-                            >Ack</button>
-                            <button
-                              type="button"
-                              disabled={resolveDefect.isPending}
-                              onClick={() => resolveDefect.mutate(num(d.id))}
-                              className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5 hover:bg-emerald-100 disabled:opacity-50"
-                            >Resolve</button>
+                      <div key={i} className={`fh-drawer-item ${isCrit ? "fh-drawer-item-critical" : "fh-drawer-item-neutral"}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className={`font-bold ${isCrit ? "text-red-700" : "text-slate-700"}`}>
+                              {isCrit ? "⚠ " : ""}{String(d.defect_description ?? d.id)}
+                            </p>
+                            <p className="text-xs text-slate-500 mt-0.5">{String(d.severity ?? "")} · {String(d.status ?? "")}</p>
                           </div>
-                        )}
+                          {canManageMaint && (
+                            <div className="flex gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={ackDefect.isPending}
+                                onClick={() => ackDefect.mutate(num(d.id))}
+                                className="fh-btn-amber"
+                              >Ack</button>
+                              <button
+                                type="button"
+                                disabled={resolveDefect.isPending}
+                                onClick={() => resolveDefect.mutate(num(d.id))}
+                                className="fh-btn-emerald"
+                              >Resolve</button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -542,8 +531,8 @@ function VehicleDrawer({
               {faults.length === 0
                 ? <p className="text-sm text-slate-500 italic">No active fault codes.</p>
                 : faults.map((f, i) => (
-                    <div key={i} className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-sm">
-                      <p className="font-semibold text-orange-800">{String(f.code ?? "")} — {String(f.component ?? "")}</p>
+                    <div key={i} className="fh-drawer-item fh-drawer-item-warning">
+                      <p className="font-bold text-orange-800">{String(f.code ?? "")} — {String(f.component ?? "")}</p>
                       {!!f.description && <p className="text-xs text-orange-600 mt-0.5">{String(f.description)}</p>}
                       {num(f.recurrence_count) > 1 && (
                         <p className="text-xs text-orange-500 mt-0.5">Recurred {num(f.recurrence_count)} times</p>
@@ -560,8 +549,8 @@ function VehicleDrawer({
               {workOrders.length === 0
                 ? <p className="text-sm text-slate-500 italic">No open work orders.</p>
                 : workOrders.map((wo, i) => (
-                    <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm">
-                      <p className="font-semibold text-slate-800">{String(wo.work_order_number ?? "")} — {String(wo.title ?? wo.service_type ?? "")}</p>
+                    <div key={i} className="fh-drawer-item fh-drawer-item-neutral">
+                      <p className="font-bold text-slate-800">{String(wo.work_order_number ?? "")} — {String(wo.title ?? wo.service_type ?? "")}</p>
                       <div className="flex gap-3 text-xs text-slate-500 mt-0.5">
                         <span>Priority: {String(wo.priority ?? "Normal")}</span>
                         <span>Status: {String(wo.status ?? "")}</span>
@@ -580,8 +569,8 @@ function VehicleDrawer({
               {pmItems.length === 0
                 ? <p className="text-sm text-slate-500 italic">No overdue PM items.</p>
                 : pmItems.map((pm, i) => (
-                    <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
-                      <p className="font-semibold text-amber-800">{String(pm.service_type ?? "")}</p>
+                    <div key={i} className="fh-drawer-item fh-drawer-item-warning">
+                      <p className="font-bold text-amber-800">{String(pm.service_type ?? "")}</p>
                       <p className="text-xs text-amber-600 mt-0.5">
                         Due: {pm.due_date ? String(pm.due_date) : "—"} · Status: {String(pm.status ?? "")}
                       </p>
@@ -594,9 +583,9 @@ function VehicleDrawer({
               {inspections.length === 0
                 ? <p className="text-sm text-slate-500 italic">No recent inspections.</p>
                 : inspections.map((ins, i) => (
-                    <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm flex items-center justify-between">
+                    <div key={i} className="fh-drawer-item fh-drawer-item-neutral flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-slate-800">{String(ins.inspection_type ?? "Inspection")}</p>
+                        <p className="font-bold text-slate-800">{String(ins.inspection_type ?? "Inspection")}</p>
                         <p className="text-xs text-slate-500">{String(ins.submitted_at ?? "")}</p>
                       </div>
                       <div className="text-right shrink-0">
@@ -615,12 +604,12 @@ function VehicleDrawer({
 
         {/* Drawer footer */}
         {data && canManageMaint && (
-          <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 shrink-0">
+          <div className="fh-drawer-footer">
             <button
               type="button"
               disabled={createWO.isPending}
               onClick={() => createWO.mutate(vehicleId)}
-              className="w-full flex items-center justify-center gap-2 text-sm font-bold text-white bg-slate-800 rounded-xl px-4 py-2.5 hover:bg-slate-700 transition-colors disabled:opacity-50"
+              className="w-full fh-btn-primary justify-center text-sm py-2.5 rounded-xl"
             >
               <Wrench className="h-4 w-4" />
               {createWO.isPending ? "Creating…" : "Create Work Order"}
@@ -684,14 +673,16 @@ function DriverDrawer({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end">
-      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col overflow-hidden">
+    <div className="fh-drawer-overlay">
+      <div className="fh-drawer-backdrop" onClick={onClose} />
+      <div className="fh-drawer-panel">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-white shrink-0">
-          <User className="h-5 w-5 text-slate-500" />
+        <div className="fh-drawer-header">
+          <div className="fh-section-icon">
+            <User className="h-4 w-4 text-teal-600" />
+          </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Driver Risk Detail</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Driver Risk Detail</p>
             <h2 className="font-bold text-slate-900 text-base truncate">
               {String(drv.full_name ?? `Driver #${driverId}`)}
             </h2>
@@ -704,7 +695,11 @@ function DriverDrawer({
           </button>
         </div>
 
-        {isLoading && <DrawerSkeleton />}
+        {isLoading && (
+          <div className="flex-1 flex items-center justify-center">
+            <RefreshCw className="h-6 w-6 text-slate-400 animate-spin" />
+          </div>
+        )}
         {isError && (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-sm text-red-600">Failed to load driver detail.</p>
@@ -712,13 +707,13 @@ function DriverDrawer({
         )}
 
         {data && !isLoading && (
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="fh-drawer-body space-y-5">
             {/* Driver overview */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="fh-drawer-info-grid">
               {driverInfoRows.map(([label, value]) => (
-                <div key={label} className="bg-slate-50 rounded-lg px-3 py-2">
+                <div key={label} className="fh-drawer-info-cell">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}</p>
-                  <p className={`text-sm font-semibold mt-0.5 ${label === "Safety Score" ? scoreColor(safetyScore) : "text-slate-800"}`}>
+                  <p className={`text-sm font-bold mt-0.5 ${label === "Safety Score" ? scoreColor(safetyScore) : "text-slate-800"}`}>
                     {value}
                   </p>
                 </div>
@@ -728,8 +723,8 @@ function DriverDrawer({
             {/* Current assignment */}
             {assignment ? (
               <Section title="Current Assignment" icon={<Activity className="h-4 w-4" />}>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-                  <p className="text-blue-800 font-semibold">{String(assignment.status ?? "")}</p>
+                <div className="fh-drawer-item fh-drawer-item-info">
+                  <p className="text-blue-800 font-bold">{String(assignment.status ?? "")}</p>
                   {!!assignment.pickup_address && <p className="text-blue-700 text-xs mt-0.5">From: {String(assignment.pickup_address)}</p>}
                   {!!assignment.delivery_address && <p className="text-blue-700 text-xs">To: {String(assignment.delivery_address)}</p>}
                   {!!assignment.vehicle_code && <p className="text-blue-700 text-xs">Vehicle: {String(assignment.vehicle_code)}</p>}
@@ -740,8 +735,8 @@ function DriverDrawer({
             {/* HOS */}
             <Section title="Hours of Service" icon={<Clock className="h-4 w-4" />}>
               {hos ? (
-                <div className={`border rounded-lg p-3 text-sm ${String(hos.hos_status) === "Violation" ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}>
-                  <div className="flex gap-4">
+                <div className={`fh-drawer-item ${String(hos.hos_status) === "Violation" ? "fh-drawer-item-critical" : "fh-drawer-item-neutral"}`}>
+                  <div className="flex gap-6">
                     <div>
                       <p className="text-[10px] text-slate-400 uppercase font-bold">Drive Remaining</p>
                       <p className="font-bold text-slate-800">
@@ -772,9 +767,9 @@ function DriverDrawer({
               {events.length === 0
                 ? <p className="text-sm text-slate-500 italic">No open safety events.</p>
                 : events.map((ev, i) => (
-                    <div key={i} className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-sm flex items-start justify-between gap-2">
+                    <div key={i} className="fh-drawer-item fh-drawer-item-warning flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-orange-800">{String(ev.event_type ?? "")}</p>
+                        <p className="font-bold text-orange-800">{String(ev.event_type ?? "")}</p>
                         <p className="text-xs text-orange-600 mt-0.5">{String(ev.severity ?? "")} · {String(ev.review_status ?? "")}</p>
                         {!!ev.description && <p className="text-xs text-orange-600 truncate">{String(ev.description)}</p>}
                       </div>
@@ -783,7 +778,7 @@ function DriverDrawer({
                           type="button"
                           disabled={ackEvent.isPending}
                           onClick={() => ackEvent.mutate(num(ev.id))}
-                          className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 hover:bg-amber-100 shrink-0 disabled:opacity-50"
+                          className="fh-btn-amber shrink-0"
                         >Acknowledge</button>
                       )}
                     </div>
@@ -801,9 +796,9 @@ function DriverDrawer({
                 : coachingTasks.map((ct, i) => {
                     const overdue = ct.due_at && new Date(String(ct.due_at)) < new Date();
                     return (
-                      <div key={i} className={`border rounded-lg px-3 py-2 text-sm flex items-start justify-between gap-2 ${overdue ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200"}`}>
+                      <div key={i} className={`fh-drawer-item ${overdue ? "fh-drawer-item-warning" : "fh-drawer-item-neutral"} flex items-start justify-between gap-2`}>
                         <div className="flex-1 min-w-0">
-                          <p className={`font-semibold ${overdue ? "text-amber-800" : "text-slate-800"}`}>
+                          <p className={`font-bold ${overdue ? "text-amber-800" : "text-slate-800"}`}>
                             {overdue ? "⚠ " : ""}{String(ct.title ?? ct.coaching_type ?? "")}
                           </p>
                           <div className="flex gap-2 text-xs mt-0.5">
@@ -818,7 +813,7 @@ function DriverDrawer({
                             type="button"
                             disabled={completeCoaching.isPending}
                             onClick={() => completeCoaching.mutate(num(ct.id))}
-                            className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5 hover:bg-emerald-100 shrink-0 disabled:opacity-50"
+                            className="fh-btn-emerald shrink-0"
                           >Complete</button>
                         )}
                       </div>
@@ -843,16 +838,16 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
+    <div className="fh-drawer-section">
+      <div className="fh-drawer-section-title">
         {icon && <span className="text-slate-400">{icon}</span>}
-        <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">{title}</h3>
+        <h3>{title}</h3>
         {badge && (
-          <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-            badge === "critical" ? "bg-red-100 text-red-700" :
-            badge === "high"     ? "bg-orange-100 text-orange-700" :
-            badge === "medium"   ? "bg-amber-100 text-amber-700" :
-                                   "bg-slate-100 text-slate-600"}`}>
+          <span className={`fh-drawer-section-badge ${
+            badge === "critical" ? "fh-badge-critical" :
+            badge === "high"     ? "fh-badge-high" :
+            badge === "medium"   ? "fh-badge-medium" :
+                                   "fh-badge-low"}`}>
             {badge}
           </span>
         )}
@@ -887,26 +882,22 @@ function FilterBar({
     { label: "Medium", value: "medium" },
   ];
 
-  const chipBase = "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer";
-  const chipActive = "bg-slate-900 text-white border-slate-900";
-  const chipInactive = "bg-white text-slate-600 border-slate-200 hover:border-slate-400";
-
   return (
     <div className="flex flex-wrap gap-4 items-center">
       <div className="flex gap-1.5">
         {catOpts.map((o) => (
           <button key={o.value} type="button"
-            className={`${chipBase} ${category === o.value ? chipActive : chipInactive}`}
+            className={`fh-chip ${category === o.value ? "fh-chip-active" : ""}`}
             onClick={() => onCategory(o.value)}>
             {o.label}
           </button>
         ))}
       </div>
-      <div className="h-4 w-px bg-slate-200" />
+      <div className="h-4 w-px bg-slate-200/70" />
       <div className="flex gap-1.5">
         {sevOpts.map((o) => (
           <button key={o.value} type="button"
-            className={`${chipBase} ${severity === o.value ? chipActive : chipInactive}`}
+            className={`fh-chip ${severity === o.value ? "fh-chip-active" : ""}`}
             onClick={() => onSeverity(o.value)}>
             {o.label}
           </button>
@@ -945,13 +936,7 @@ export function FleetHealthPage() {
 
   const createWO = useMutation({
     mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({
-        vehicleId,
-        serviceType: "fleet_health",
-        title: "Fleet health review",
-        description: "Created from Fleet Health to track critical readiness issues.",
-        priority: "High",
-      }),
+      maintenanceApi.createWorkOrder({ vehicleId, title: "Fleet health review", priority: "High" }),
     onMutate:  (id) => setMutatingId(id),
     onSettled: () => { setMutatingId(null); qc.invalidateQueries({ queryKey: ["fleet-health"] }); },
   });
@@ -998,19 +983,38 @@ export function FleetHealthPage() {
   const summaryData = summary.data ?? {};
   const insights    = (summaryData.systemInsights as AnyRecord[]) ?? [];
 
-  if (summary.isLoading) return <LoadingState />;
+  if (summary.isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <RefreshCw className="h-8 w-8 animate-spin" />
+          <p className="text-sm font-medium">Loading fleet health data…</p>
+        </div>
+      </div>
+    );
+  }
 
   if (summary.isError) {
     return (
-      <ErrorState
-        message="Failed to load fleet health data. Check backend connectivity and try refreshing."
-        onRetry={() => void summary.refetch()}
-      />
+      <div className="flex items-center justify-center py-24 px-8">
+        <div className="text-center max-w-sm">
+          <XCircle className="h-10 w-10 text-red-400 mx-auto mb-3" />
+          <p className="text-base font-semibold text-slate-700 mb-1">Failed to load fleet health data</p>
+          <p className="text-sm text-slate-500">Check backend connectivity and try refreshing.</p>
+          <button
+            type="button"
+            onClick={() => summary.refetch()}
+            className="mt-4 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="space-y-6">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}
@@ -1025,52 +1029,80 @@ export function FleetHealthPage() {
         onActionTaken={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
 
-      <div className="space-y-6">
-        {/* Page header */}
-        <PageHeader
-          eyebrow="Operations"
-          title="Fleet Health & Safety"
-          description="Dispatch readiness · Maintenance risk · Driver safety — unified operating view"
-          actions={
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => {
-                summary.refetch();
-                risks.refetch();
-              }}
-            >
-              <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-blue-500" : ""}`} />
-              Refresh
-            </button>
-          }
-        />
+      <div className="space-y-5">
+        {/* ═══════════════════════════════════════════════════
+            HERO BANNER
+            ═══════════════════════════════════════════════════ */}
+        <header className="fh-hero relative">
+          <span className="fh-hero-bar" />
+          <span className="fh-hero-glow-1" />
+          <span className="fh-hero-glow-2" />
+
+          <div className="relative px-7 py-6">
+            <div className="flex flex-wrap items-start justify-between gap-6">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                    <Gauge className="h-3 w-3" /> Fleet Health
+                  </span>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500">Live · 60s refresh</span>
+                  {(summary.isFetching || risks.isFetching) && <RefreshCw className="h-3.5 w-3.5 animate-spin text-teal-500" />}
+                </div>
+
+                <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">
+                  Fleet Health & Safety
+                </h1>
+                <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">
+                  Dispatch readiness · Maintenance risk · Driver safety — unified operating view
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { summary.refetch(); risks.refetch(); }}
+                  className="fh-btn-ghost"
+                >
+                  <RefreshCw className={`h-4 w-4 ${(summary.isFetching || risks.isFetching) ? "animate-spin text-teal-500" : ""}`} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
 
         {/* Readiness strip */}
         <ReadinessStrip summary={summaryData} />
 
         {/* Urgent actions — top critical/high risks */}
         {topUrgent.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-red-200">
-              <AlertTriangle className="h-4 w-4 text-red-600" />
-              <span className="text-xs font-bold uppercase tracking-widest text-red-700">
-                Urgent Actions Required
-              </span>
-              <span className="ml-auto text-xs text-red-500">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</span>
+          <div className="fh-glass relative overflow-hidden">
+            <span className="fh-accent-bar" style={{ background: "linear-gradient(90deg, #ef4444, #f87171)" }} />
+            <div className="fh-section-header px-5 pt-5 pb-0">
+              <div className="fh-section-icon" style={{ background: "linear-gradient(135deg, rgba(239,68,68,.12), rgba(248,113,113,.06))", borderColor: "rgba(239,68,68,.15)" }}>
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-black text-slate-900">Urgent Actions Required</h2>
+                <p className="text-[11px] text-slate-400">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</p>
+              </div>
             </div>
-            <div className="px-5 py-3 space-y-2">
+            <div className="px-5 py-4 space-y-2">
               {topUrgent.map((item, i) => {
                 const isVehicle = item.entityType === "vehicle";
                 const id        = num(item.entityId);
                 return (
-                  <div key={i} className="flex items-center gap-3 bg-white border border-red-200 rounded-lg px-4 py-2.5">
-                    <span className={`h-2 w-2 rounded-full shrink-0 ${sevDot(String(item.severity))}`} />
+                  <div key={i} className="fh-urgent-item">
+                    <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${sevDot(String(item.severity))}`} />
                     {isVehicle
                       ? <Truck className="h-4 w-4 text-slate-400 shrink-0" />
                       : <User className="h-4 w-4 text-slate-400 shrink-0" />}
                     <div className="flex-1 min-w-0">
-                      <span className="font-semibold text-sm text-slate-800">{String(item.displayName ?? "")}</span>
+                      <span className="font-bold text-sm text-slate-800">{String(item.displayName ?? "")}</span>
                       <span className="text-xs text-slate-500 ml-2">
                         {((item.reasons as string[]) ?? []).slice(0, 1).join("")}
                       </span>
@@ -1081,9 +1113,9 @@ export function FleetHealthPage() {
                     <button
                       type="button"
                       onClick={() => isVehicle ? setVehicleDrawerId(id) : setDriverDrawerId(id)}
-                      className="flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-900 shrink-0"
+                      className="inline-flex items-center gap-1 text-xs font-bold text-teal-600 hover:underline shrink-0"
                     >
-                      View <ChevronRight className="h-3.5 w-3.5" />
+                      View <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 );
@@ -1101,35 +1133,37 @@ export function FleetHealthPage() {
         />
 
         {risks.isLoading ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-48 bg-white border border-slate-200 rounded-xl animate-pulse" />
+              <div key={i} className="fh-skeleton" />
             ))}
           </div>
         ) : risks.isError ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-            <p className="text-sm text-red-600">Failed to load risk data. Check backend connectivity.</p>
+          <div className="fh-glass p-6 text-center">
+            <p className="text-sm text-red-600 font-medium">Failed to load risk data. Check backend connectivity.</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-            <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
-            <p className="text-base font-semibold text-slate-700 mb-1">No risk items match the current filter</p>
-            <p className="text-sm text-slate-500">
-              {allRisks.length === 0
-                ? "All vehicles and drivers are currently within acceptable operational parameters."
-                : "Try adjusting the severity or category filters."}
-            </p>
+          <div className="fh-glass">
+            <div className="fh-empty">
+              <CheckCircle className="h-10 w-10 text-emerald-400" />
+              <p className="text-base font-bold text-slate-700">No risk items match the current filter</p>
+              <p className="text-sm text-slate-500">
+                {allRisks.length === 0
+                  ? "All vehicles and drivers are currently within acceptable operational parameters."
+                  : "Try adjusting the severity or category filters."}
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             {/* Vehicle risks */}
             {(categoryFilter === "all" || categoryFilter === "vehicle") && vehicleRisks.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-slate-500" />
-                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">
-                    Vehicle Risks ({vehicleRisks.length})
-                  </h2>
+                <div className="fh-col-header">
+                  <div className="fh-section-icon" style={{ width: 28, height: 28 }}>
+                    <Truck className="h-3.5 w-3.5 text-teal-600" />
+                  </div>
+                  <h2>Vehicle Risks ({vehicleRisks.length})</h2>
                 </div>
                 {vehicleRisks.map((item, i) => (
                   <RiskCard
@@ -1151,11 +1185,11 @@ export function FleetHealthPage() {
             {/* Driver risks */}
             {(categoryFilter === "all" || categoryFilter === "driver") && driverRisks.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-slate-500" />
-                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">
-                    Driver Risks ({driverRisks.length})
-                  </h2>
+                <div className="fh-col-header">
+                  <div className="fh-section-icon" style={{ width: 28, height: 28 }}>
+                    <User className="h-3.5 w-3.5 text-teal-600" />
+                  </div>
+                  <h2>Driver Risks ({driverRisks.length})</h2>
                 </div>
                 {driverRisks.map((item, i) => (
                   <RiskCard
@@ -1177,27 +1211,35 @@ export function FleetHealthPage() {
             {/* Empty column placeholder when only one column is shown */}
             {categoryFilter === "all" && vehicleRisks.length > 0 && driverRisks.length === 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-slate-500" />
-                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Driver Risks</h2>
+                <div className="fh-col-header">
+                  <div className="fh-section-icon" style={{ width: 28, height: 28 }}>
+                    <User className="h-3.5 w-3.5 text-teal-600" />
+                  </div>
+                  <h2>Driver Risks</h2>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-                  <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All drivers within normal parameters</p>
-                  <p className="text-xs text-slate-400">No drivers currently exceed the risk threshold.</p>
+                <div className="fh-glass">
+                  <div className="fh-empty">
+                    <CheckCircle className="h-8 w-8 text-emerald-400" />
+                    <p className="text-sm font-bold text-slate-600">All drivers within normal parameters</p>
+                    <p className="text-xs text-slate-400">No drivers currently exceed the risk threshold.</p>
+                  </div>
                 </div>
               </div>
             )}
             {categoryFilter === "all" && driverRisks.length > 0 && vehicleRisks.length === 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-slate-500" />
-                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vehicle Risks</h2>
+                <div className="fh-col-header">
+                  <div className="fh-section-icon" style={{ width: 28, height: 28 }}>
+                    <Truck className="h-3.5 w-3.5 text-teal-600" />
+                  </div>
+                  <h2>Vehicle Risks</h2>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-                  <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All vehicles within normal parameters</p>
-                  <p className="text-xs text-slate-400">No vehicles currently exceed the risk threshold.</p>
+                <div className="fh-glass">
+                  <div className="fh-empty">
+                    <CheckCircle className="h-8 w-8 text-emerald-400" />
+                    <p className="text-sm font-bold text-slate-600">All vehicles within normal parameters</p>
+                    <p className="text-xs text-slate-400">No vehicles currently exceed the risk threshold.</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -1206,35 +1248,36 @@ export function FleetHealthPage() {
 
         {/* Dispatch blockers */}
         {blockers.length > 0 && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-100">
-              <XCircle className="h-4 w-4 text-red-500" />
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-600">
-                Dispatch Blockers
-              </span>
-              <span className="ml-1 text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">
-                {blockers.length}
-              </span>
+          <div className="fh-glass relative overflow-hidden">
+            <span className="fh-accent-bar" style={{ background: "linear-gradient(90deg, #ef4444, #f87171)" }} />
+            <div className="fh-section-header px-5 pt-5 pb-0">
+              <div className="fh-section-icon" style={{ background: "linear-gradient(135deg, rgba(239,68,68,.12), rgba(248,113,113,.06))", borderColor: "rgba(239,68,68,.15)" }}>
+                <XCircle className="h-4 w-4 text-red-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-black text-slate-900">Dispatch Blockers</h2>
+                <p className="text-[11px] text-slate-400">{blockers.length} vehicle{blockers.length > 1 ? "s" : ""} cannot be dispatched</p>
+              </div>
             </div>
-            <div className="divide-y divide-slate-100">
+            <div>
               {blockers.map((item, i) => (
-                <div key={i} className="flex items-center gap-3 px-5 py-3">
+                <div key={i} className="fh-blocker-item">
                   <Truck className="h-4 w-4 text-slate-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-slate-800">{String(item.displayName ?? "")}</p>
+                    <p className="font-bold text-sm text-slate-800">{String(item.displayName ?? "")}</p>
                     <p className="text-xs text-red-600 mt-0.5">
                       {((item.reasons as string[]) ?? []).slice(0, 2).join(" · ")}
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 rounded-full px-2 py-0.5 uppercase shrink-0">
+                  <span className="text-[10px] font-bold fh-badge-blocked rounded-full px-2 py-0.5 uppercase shrink-0">
                     Blocked
                   </span>
                   <button
                     type="button"
                     onClick={() => setVehicleDrawerId(num(item.entityId))}
-                    className="text-xs font-semibold text-slate-600 hover:text-slate-900 shrink-0"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-teal-600 hover:underline shrink-0"
                   >
-                    View →
+                    View <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </div>
               ))}

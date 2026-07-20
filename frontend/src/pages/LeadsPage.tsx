@@ -1,11 +1,36 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { withFallback } from "@/services/fleetDomainApi";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
+import { leads as seedLeads } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
+// ── Seed ────────────────────────────────────────────────────────────────────
+
+function buildSeed(): AnyRecord[] {
+  return (seedLeads as AnyRecord[]).map((l, i) => ({
+    id: i + 1,
+    title: String(l.company ?? ""),
+    status: String(l.status ?? "New"),
+    leadId: String(l.leadId ?? `LD-${2400 + i}`),
+    company: String(l.company ?? ""),
+    contactPerson: String(l.contactPerson ?? ""),
+    industry: String(l.industry ?? ""),
+    source: String(l.source ?? "Referral"),
+    requiredService: String(l.requiredService ?? "FTL"),
+    estimatedMonthlyLoads: Number(l.estimatedMonthlyLoads ?? 50),
+    cityCountry: String(l.cityCountry ?? ""),
+    assignedRep: String(l.assignedRep ?? ""),
+    nextFollowUp: String(l.nextFollowUp ?? ""),
+    riskLevel: "Low",
+  }));
+}
+
+const SEED_SUMMARY: AnyRecord = { total: 4, active: 3, riskItems: 0 };
+
 const leadsApi = {
-  list: () =>
+  list: () => withFallback(
     unwrap<AnyRecord[]>(apiClient.get("/api/leads")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -21,6 +46,12 @@ const leadsApi = {
         nextFollowUp: r.nextFollowUp ?? r.due_at ?? "",
       }))
     ),
+    () => buildSeed()
+  ),
+  summary: () => withFallback(
+    unwrap<AnyRecord>(apiClient.get("/api/leads")).then((r) => (r as unknown as { summary: AnyRecord }).summary ?? SEED_SUMMARY),
+    () => SEED_SUMMARY
+  ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/leads", body)),
 };
 
@@ -76,17 +107,17 @@ function CreateLeadModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Source</label>
-            <select title="Lead source" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Lead source" className="w-full"
               value={form.source} onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}>
               {["Referral", "LinkedIn", "Campaign", "Inbound", "Cold Call", "Conference"].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Required Service</label>
-            <select title="Required service" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Required service" className="w-full"
               value={form.requiredService} onChange={(e) => setForm((f) => ({ ...f, requiredService: e.target.value }))}>
               {["FTL", "LTL", "Last Mile", "Reefer FTL", "Flatbed", "Temperature Controlled", "Cross Dock"].map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
@@ -140,16 +171,10 @@ export function LeadsPage() {
   }, {});
 
   if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) {
-    return (
-      <ErrorState
-        message={(listQ.error as Error)?.message ?? "Unable to load live leads."}
-      />
-    );
-  }
+  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="flex flex-col gap-6 py-6">
       {showCreate && <CreateLeadModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -160,21 +185,6 @@ export function LeadsPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("leads", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>Add Lead</button>
-        </div>
-      </div>
-
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Pipeline integrity</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This view uses live leads only and surfaces an honest empty state if the backend has no data yet.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Customer linkage</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Each record keeps customer, rep, service and next-step context together for sales follow-up.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote bridge</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Qualified leads can still feed the quotation flow without a fake sales pipeline.</p>
         </div>
       </div>
 

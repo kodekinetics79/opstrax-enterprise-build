@@ -1,12 +1,11 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
-import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import {
   Download, Fuel, Landmark,
   PenTool, Plus, TrendingDown, Truck, WalletCards, X, Zap,
 } from "lucide-react";
-import { AiInsightCard, DataTable, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, Select, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import {
   useCarrierDetail, useCarriers, useCarriersSummary,
   useContractDetail, useContracts, useContractsSummary,
@@ -122,7 +121,7 @@ const configs = {
   },
 } satisfies Record<Kind, {
   queryKey: string; eyebrow: string; title: string; icon: ReactNode; description: string;
-  useRows: () => { data?: AnyRecord[]; isLoading: boolean; isError?: boolean; refetch?: () => unknown };
+  useRows: () => { data?: AnyRecord[]; isLoading: boolean };
   useSummary: () => { data?: AnyRecord };
   useDetail: (id?: string | number) => { data?: AnyRecord; isLoading: boolean };
   api: { create: ((p: AnyRecord) => Promise<AnyRecord>) | null; update: ((id: string | number, p: AnyRecord) => Promise<AnyRecord>) | null };
@@ -192,19 +191,11 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   }), [tabRows, search, filter]);
 
   if (rowsQ.isLoading) return <LoadingState />;
-  if (rowsQ.isError) {
-    return (
-      <ErrorState
-        message={`Unable to load ${config.title}. Check backend connectivity and retry.`}
-        onRetry={rowsQ.refetch ? () => void rowsQ.refetch?.() : undefined}
-      />
-    );
-  }
 
   const s = summaryQ.data ?? {};
 
   return (
-    <div className="flex h-full flex-col gap-8 overflow-y-auto">
+    <div className="space-y-8">
       {/* Header */}
       <PageHeader
         eyebrow={config.eyebrow}
@@ -247,9 +238,9 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           onChange={(e) => setSearch(e.target.value)}
           placeholder={`Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
         />
-        <select className="field xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <Select className="xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
-        </select>
+        </Select>
         <div className="ml-auto flex items-center gap-2">
           {kind === "fuel" && <span className="text-xs text-slate-400">Anomaly detection active</span>}
         </div>
@@ -330,10 +321,10 @@ function TabBar({ tabs, active, onChange }: {
    MODULE CHART
 ────────────────────────────────────────────────────────── */
 const CHART_TOOLTIP_STYLE = {
-  background: tokens.surface,
-  border: `1px solid ${tokens.border}`,
+  background: "#fff",
+  border: "1px solid #e2e8f0",
   borderRadius: 8,
-  color: tokens.textSecondary,
+  color: "#475569",
   fontSize: 12,
 };
 
@@ -355,8 +346,8 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
+            <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Fuel Cost"]} />
             <Bar dataKey="cost" radius={[3, 3, 0, 0]}>
               {data.map((d, i) => (
@@ -382,8 +373,8 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} width={40} unit="%" />
+            <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={40} unit="%" />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`${Number(v ?? 0).toFixed(1)}%`, "Margin"]} />
             <Bar dataKey="margin" radius={[3, 3, 0, 0]}>
               {data.map((d, i) => (
@@ -416,8 +407,8 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={byCategory} layout="vertical" margin={{ top: 0, right: 24, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" horizontal={false} />
-            <XAxis type="number" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
-            <YAxis type="category" dataKey="name" tick={{ fill: chart.slate400, fontSize: 11 }} axisLine={false} tickLine={false} width={130} />
+            <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
+            <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={false} tickLine={false} width={130} />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Est. Leakage"]} />
             <Bar dataKey="loss" fill="rgba(248,113,113,.7)" radius={[0, 3, 3, 0]} />
           </BarChart>

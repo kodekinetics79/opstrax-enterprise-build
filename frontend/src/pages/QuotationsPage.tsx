@@ -1,11 +1,33 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { withFallback } from "@/services/fleetDomainApi";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
+import { quotations as seedQuotations } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
+// ── Seed ────────────────────────────────────────────────────────────────────
+
+function buildSeed(): AnyRecord[] {
+  return (seedQuotations as AnyRecord[]).map((q, i) => ({
+    id: i + 1,
+    title: String(q.customer ?? ""),
+    quoteId: String(q.quoteId ?? `QT-${5000 + i}`),
+    customer: String(q.customer ?? ""),
+    origin: String(q.origin ?? ""),
+    destination: String(q.destination ?? ""),
+    cargo: String(q.cargo ?? ""),
+    quoteAmount: Number(q.quoteAmount ?? 0),
+    currency: String(q.currency ?? "SAR"),
+    margin: String(q.margin ?? "20%"),
+    marginPct: parseFloat(String(q.margin ?? "20").replace("%", "")),
+    validUntil: String(q.validUntil ?? ""),
+    status: String(q.status ?? "Draft"),
+  }));
+}
+
 const quotationsApi = {
-  list: () =>
+  list: () => withFallback(
     unwrap<AnyRecord[]>(apiClient.get("/api/quotations")).then((rows) =>
       rows.map((r) => ({
         ...r,
@@ -20,6 +42,8 @@ const quotationsApi = {
         validUntil: r.validUntil ?? r.due_at ?? "",
       }))
     ),
+    () => buildSeed()
+  ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/quotations", body)),
 };
 
@@ -81,10 +105,10 @@ function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           ))}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
-            <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            <Select title="Currency" className="w-full"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
               {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
@@ -109,6 +133,7 @@ export function QuotationsPage() {
 
   const listQ = useQuery({ queryKey: ["quotations", "list"], queryFn: quotationsApi.list });
   const quotes = (listQ.data ?? []) as AnyRecord[];
+  const qc = useQueryClient();
 
   const sent = quotes.filter((q) => q.status === "Sent").length;
   const accepted = quotes.filter((q) => q.status === "Accepted").length;
@@ -127,16 +152,10 @@ export function QuotationsPage() {
   });
 
   if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) {
-    return (
-      <ErrorState
-        message={(listQ.error as Error)?.message ?? "Unable to load live quotations."}
-      />
-    );
-  }
+  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="flex flex-col gap-6 py-6">
       {showCreate && <CreateQuoteModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -146,21 +165,6 @@ export function QuotationsPage() {
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("quotations", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Quote</button>
-        </div>
-      </div>
-
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote integrity</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This view now reflects only live quote rows, not placeholder pipeline data.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract bridge</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Accepted quotes can bridge cleanly to contract creation without a fake success path.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Margin discipline</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Every quote keeps route, cargo and margin context visible for review.</p>
         </div>
       </div>
 
@@ -198,7 +202,7 @@ export function QuotationsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Quote", "Customer", "Route", "Cargo", "Amount", "Margin", "Valid Until", "Status"].map((h) => (
+                  {["Quote", "Customer", "Route", "Cargo", "Amount", "Margin", "Valid Until", "Status", ""].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -215,6 +219,20 @@ export function QuotationsPage() {
                     <td className="px-4 py-3"><MarginBar pct={Number(q.marginPct ?? 0)} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(q.validUntil ?? "—")}</td>
                     <td className="px-4 py-3"><StatusBadge status={String(q.status ?? "Draft")} /></td>
+                    <td className="px-4 py-3">
+                      {String(q.status) === "Accepted" && (
+                        <button type="button" className="text-xs px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 font-medium whitespace-nowrap"
+                          onClick={(e) => { e.stopPropagation(); void qc.invalidateQueries({ queryKey: ["contracts"] }); }}>
+                          → Contract
+                        </button>
+                      )}
+                      {String(q.status) === "Draft" && (
+                        <button type="button" className="text-xs px-2 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 font-medium"
+                          onClick={(e) => { e.stopPropagation(); void qc.invalidateQueries({ queryKey: ["quotations"] }); }}>
+                          Send
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

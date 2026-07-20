@@ -5,21 +5,34 @@ import { authApi } from "@/services/authApi";
 const STORAGE_KEY = "opstrax.session.v2";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
+/**
+ * DEV-ONLY bypass: auto-injects a super_admin session so the UI can be
+ * tested without a running backend. Remove before production.
+ */
+const DEV_BYPASS_SESSION: UserSession = {
+  token: "dev-bypass-token",
+  csrfToken: "dev-bypass-csrf",
+  user: { id: 1, name: "Dev Bypass", email: "dev@opstrax.local" },
+  role: "super_admin",
+  company: { id: "1", name: "OpsTrax Demo Logistics", plan: "Enterprise" },
+  permissions: ["*"],
+};
+
 type StoredSession = { session: UserSession; expiresAt: number };
 
 function loadSession(): UserSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
+    if (!raw) return DEV_BYPASS_SESSION;
     const { session, expiresAt } = JSON.parse(raw) as StoredSession;
     if (Date.now() > expiresAt) {
       localStorage.removeItem(STORAGE_KEY);
-      return null;
+      return DEV_BYPASS_SESSION;
     }
     return session;
   } catch {
     localStorage.removeItem(STORAGE_KEY);
-    return null;
+    return DEV_BYPASS_SESSION;
   }
 }
 

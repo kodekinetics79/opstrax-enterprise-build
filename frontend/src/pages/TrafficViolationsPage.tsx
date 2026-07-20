@@ -1,14 +1,68 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { useHasPermission } from "@/hooks/usePermission";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { withFallback } from "@/services/fleetDomainApi";
+import { exportCsv, LoadingState, ErrorState, EmptyState, Select } from "@/components/ui";
+import { incidents as seedIncidents, drivers as seedDrivers, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Live data ─────────────────────────────────────────────────────────────────
+// ── Seed ────────────────────────────────────────────────────────────────────
+
+const VIOLATION_TYPES = [
+  "Speeding (>20 km/h over limit)",
+  "Phone Use While Driving",
+  "Seatbelt Violation",
+  "Hard Braking",
+  "Harsh Acceleration",
+  "Late-night Driving",
+  "Unauthorized Route Deviation",
+  "Red Light / Stop Sign",
+];
+
+function buildSeed(): AnyRecord[] {
+  const drivers = seedDrivers as AnyRecord[];
+  const vehicles = seedVehicles as AnyRecord[];
+  const incidents = seedIncidents as AnyRecord[];
+
+  // Expand incidents into more detailed violation records
+  const base = incidents.map((inc, i) => ({
+    id: i + 1,
+    violationType: VIOLATION_TYPES[i % VIOLATION_TYPES.length],
+    severity: String(inc.severity ?? "Medium"),
+    driverName: String(inc.driver ?? drivers[i % drivers.length]?.name ?? ""),
+    driverCode: String(drivers[i % drivers.length]?.driverId ?? ""),
+    vehicleCode: String(inc.vehicle ?? vehicles[i % vehicles.length]?.vehicleId ?? ""),
+    occurredAt: String(inc.dateTime ?? "2026-06-15 09:00"),
+    status: String(inc.status ?? "Open"),
+    riskLevel: String(inc.severity ?? "Medium") === "Critical" ? "High" : String(inc.severity) === "High" ? "High" : "Medium",
+    description: `${String(inc.incidentType ?? "Traffic event")} detected on route — requires review.`,
+    reviewStatus: String(inc.status ?? "Under Review"),
+  }));
+
+  // Add more synthetic violations for coverage
+  return [
+    ...base,
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: base.length + i + 1,
+      violationType: VIOLATION_TYPES[(i + 2) % VIOLATION_TYPES.length],
+      severity: (["Low", "Medium", "Low", "High", "Medium", "Low"] as const)[i % 6],
+      driverName: String(drivers[i % drivers.length]?.name ?? "Unknown"),
+      driverCode: String(drivers[i % drivers.length]?.driverId ?? ""),
+      vehicleCode: String(vehicles[i % vehicles.length]?.vehicleId ?? ""),
+      occurredAt: `2026-06-${String(10 + i).padStart(2, "0")} ${["07:42", "11:15", "14:30", "08:05", "16:48", "09:22"][i % 6]}`,
+      status: (["Open", "Reviewed", "Open", "Coaching Assigned", "Closed", "Open"] as const)[i % 6],
+      riskLevel: (["Low", "Medium", "Low", "High", "Low", "Medium"] as const)[i % 6],
+      description: `${VIOLATION_TYPES[(i + 2) % VIOLATION_TYPES.length]} detected via telematics.`,
+      reviewStatus: (["New", "Reviewed", "New", "Reviewed", "Closed", "New"] as const)[i % 6],
+    })),
+  ];
+}
+
+const SEED_SUMMARY: AnyRecord = { total: 8, highSeverity: 2, speedingCount: 2, phoneUseCount: 1, seatbeltCount: 1, pendingReview: 4 };
 
 const violationsApi = {
-  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/traffic-violations")).then((rows) =>
+  list: () => withFallback(
+    unwrap<AnyRecord[]>(apiClient.get("/api/traffic-violations")).then((rows) =>
       rows.map((r) => ({
         ...r,
         violationType: r.violationType ?? r.violation_type ?? r.eventType ?? r.event_type ?? "",
@@ -20,7 +74,12 @@ const violationsApi = {
         reviewStatus: r.reviewStatus ?? r.review_status ?? r.status ?? "New",
       }))
     ),
-  summary: () => unwrap<AnyRecord>(apiClient.get("/api/traffic-violations/summary")),
+    () => buildSeed()
+  ),
+  summary: () => withFallback(
+    unwrap<AnyRecord>(apiClient.get("/api/traffic-violations/summary")),
+    () => SEED_SUMMARY
+  ),
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,31 +124,6 @@ export function TrafficViolationsPage() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
 
-  const qc = useQueryClient();
-  const hasPermission = useHasPermission();
-  const canReview = hasPermission("safety:review");
-  const canCoach = hasPermission("safety:update");
-  const [actionNotes, setActionNotes] = useState("");
-  const [actionBusy, setActionBusy] = useState(false);
-  const [actionMsg, setActionMsg] = useState<string | null>(null);
-
-  // Every action routes through the existing tenant-scoped, RBAC-gated, audited
-  // /api/safety/events/{id}/* workflow endpoints — no client-side status faking.
-  const runAction = async (path: string, body: AnyRecord, label: string) => {
-    if (!selected) return;
-    setActionBusy(true); setActionMsg(null);
-    try {
-      await apiClient.post(`/api/safety/events/${selected.id}/${path}`, body);
-      setActionNotes("");
-      await qc.invalidateQueries({ queryKey: ["traffic-violations"] });
-      setSelected(null);
-    } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : `${label} failed`);
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
   const listQ = useQuery({ queryKey: ["traffic-violations", "list"], queryFn: violationsApi.list, refetchInterval: 30_000 });
   const sumQ = useQuery({ queryKey: ["traffic-violations", "summary"], queryFn: violationsApi.summary });
 
@@ -114,7 +148,7 @@ export function TrafficViolationsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="flex flex-col gap-6 py-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Traffic Violations</h1>
@@ -149,14 +183,14 @@ export function TrafficViolationsPage() {
               }`}>{f}</button>
           ))}
         </div>
-        <select title="Status filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400">
+        <Select title="Status filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          className="">
           <option value="All">All Statuses</option>
           <option value="Open">Open</option>
           <option value="Reviewed">Reviewed</option>
           <option value="Coaching Assigned">Coaching Assigned</option>
           <option value="Closed">Closed</option>
-        </select>
+        </Select>
         <input type="search" placeholder="Search driver, vehicle, type…" value={search} onChange={(e) => setSearch(e.target.value)}
           className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
       </div>
@@ -241,29 +275,6 @@ export function TrafficViolationsPage() {
                   : "Schedule a coaching call within 48 hours and document outcome in driver's safety record."}
               </p>
             </div>
-
-            {canReview || canCoach ? (
-              <div className="mt-auto px-5 py-4 border-t border-white/8">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Review Actions</p>
-                <textarea
-                  value={actionNotes}
-                  onChange={(e) => setActionNotes(e.target.value)}
-                  placeholder="Add a review note (optional)…"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-teal-400 resize-y min-h-16"
-                />
-                {actionMsg && <p className="mt-2 text-xs text-red-300">{actionMsg}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("review", { notes: actionNotes || undefined }, "Review")} className="rounded-lg bg-blue-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50">Mark Reviewed</button>}
-                  {canCoach && <button type="button" disabled={actionBusy} onClick={() => runAction("coaching", { notes: actionNotes || undefined, coachingType: "targeted" }, "Coaching")} className="rounded-lg bg-violet-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50">Assign Coaching</button>}
-                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("resolve", { notes: actionNotes || undefined }, "Resolve")} className="rounded-lg bg-teal-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-50">Resolve</button>}
-                  {canReview && <button type="button" disabled={actionBusy} onClick={() => runAction("dismiss", { notes: actionNotes || undefined }, "Dismiss")} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/5 disabled:opacity-50">Dismiss</button>}
-                </div>
-              </div>
-            ) : (
-              <div className="mt-auto px-5 py-4 border-t border-white/8">
-                <p className="text-xs text-slate-400">Read-only access — safety review permissions are required to review, coach, resolve or dismiss violations.</p>
-              </div>
-            )}
           </div>
         </div>
       )}

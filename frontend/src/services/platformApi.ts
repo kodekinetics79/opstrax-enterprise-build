@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { ApiEnvelope, AnyRecord } from "@/types";
-import { API_BASE_URL } from "@/services/apiClient";
+import { API_BASE_URL, DEV_MOCK_ENABLED } from "@/services/apiClient";
+import { createMockAdapter } from "@/services/devMockAdapter";
 
 // Platform Admin uses a SEPARATE session store and axios instance from the tenant
 // app, so platform staff identity never mixes with tenant user sessions.
@@ -35,6 +36,11 @@ export const platformClient = axios.create({
   timeout: 30000,
   withCredentials: true,
 });
+
+if (DEV_MOCK_ENABLED) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  platformClient.defaults.adapter = createMockAdapter((axios.defaults.adapter ?? undefined) as any);
+}
 
 // The API protects state-changing requests with a double-submit CSRF token: a
 // __CSRF_Token__ cookie (sent automatically via withCredentials) that must match

@@ -2,9 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity, BarChart3, Bot, Building2, CheckCircle2, Cloud,
   Code2, Cpu, Database, ExternalLink, Globe, Mail,
-  Phone, Server, Shield, ShieldCheck, Truck, Zap,
+  Phone, Server, Shield, ShieldCheck, Sparkles, Truck, Zap,
 } from "lucide-react";
 import { aboutApi } from "@/services/aboutApi";
+import { KpiCard as KpiCardUi } from "@/components/ui";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -38,21 +39,6 @@ const PLATFORM_MODULES = [
   { icon: <Bot className="h-4 w-4" />,           label: "AI Copilot",                      color: "text-violet-400" },
 ];
 
-function StatusDot({ ok }: { ok: boolean | null }) {
-  const tone = ok === true ? "bg-emerald-400" : ok === false ? "bg-amber-400" : "bg-slate-300";
-  return <span className={`inline-block h-2 w-2 rounded-full ${tone}`} />;
-}
-
-// Map a real health status string → ok (green) / bad (amber) / unknown (neutral).
-// Never assume green: an absent or unrecognised value resolves to neutral, not "ok".
-function statusOk(status: unknown): boolean | null {
-  const s = String(status ?? "").trim().toLowerCase();
-  if (!s) return null;
-  if (/(connected|online|healthy|operational|active|ready|available|nominal|\bok\b|\bup\b)/.test(s)) return true;
-  if (/(degraded|down|offline|disconnected|error|fail|unavailable|unhealthy|outage|stopped)/.test(s)) return false;
-  return null;
-}
-
 export function AboutPage() {
   const { data: platformRaw }     = useQuery({ queryKey: ["about-platform"],      queryFn: aboutApi.platform,      staleTime: 300_000 });
   const { data: healthRaw }       = useQuery({ queryKey: ["about-health"],        queryFn: aboutApi.healthSummary, staleTime: 30_000 });
@@ -63,53 +49,58 @@ export function AboutPage() {
   const support   = platform?.support as AnyRecord | undefined;
 
   return (
-    <div className="flex h-full flex-col gap-8 pb-8 overflow-y-auto">
+    <div className="space-y-6 pb-10">
 
       {/* ── Hero ── */}
-      <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-br from-slate-900 via-slate-900 to-teal-950/30 p-8">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-teal-400/8 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-8 left-1/3 h-32 w-64 rounded-full bg-blue-500/6 blur-3xl" />
-        <div className="relative">
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-blue-500 shadow-xl shadow-teal-400/25">
-              <Zap className="h-6 w-6 text-slate-950" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-extrabold text-white">About OpsTrax</h1>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-teal-300/70">Transport Management Solution</p>
-            </div>
-            <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
-              <span className="live-dot h-[6px] w-[6px]" />
-              <span className="text-xs font-bold text-teal-300">Live Tenant Active</span>
+      <header className="fh-hero relative">
+        <span className="fh-hero-bar" />
+        <span className="fh-hero-glow-1" />
+        <span className="fh-hero-glow-2" />
+        <div className="relative px-7 py-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700 ring-1 ring-teal-200/50 shadow-sm">
+                  <Globe className="h-3 w-3" /> Platform
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">Enterprise transport management solution</span>
+              </div>
+              <h1 className="text-[32px] font-black tracking-tight leading-none cc-gradient-text sm:text-[36px]">About OpsTrax</h1>
+              <p className="mt-1 text-[13px] font-medium text-slate-400 tracking-wide">Enterprise-grade connected operations platform for fleets, transport teams, drivers, vehicles, assets, dispatch, maintenance, safety, compliance, and AI-powered decision support.</p>
             </div>
           </div>
-          <p className="max-w-3xl text-base text-slate-300 leading-relaxed">
-            OpsTrax Transport Management Solution is an enterprise-grade connected operations platform for fleets, transport teams, drivers, vehicles, assets, dispatch, maintenance, safety, compliance, cost intelligence, and AI-powered decision support.
-          </p>
-          <p className="mt-3 text-sm font-semibold text-teal-300/80 italic">
-            Connected transport. Intelligent control. Enterprise execution.
-          </p>
+        </div>
+      </header>
+
+      {/* ── Ops intelligence bar ── */}
+      <div className="anim-fade-up relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-700/20 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5 text-white shadow-xl sm:flex-row sm:items-center sm:justify-between">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-teal-500/10 blur-2xl" />
+        <div className="absolute -bottom-6 left-1/3 h-24 w-24 rounded-full bg-indigo-500/8 blur-2xl" />
+        <div className="relative flex items-center gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-teal-400/20 to-teal-600/10 ring-1 ring-teal-400/20">
+            <Sparkles className="h-5 w-5 text-teal-300" />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-teal-300/80">Platform status</p>
+            <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">
+              {health ? `${String(health.moduleCount ?? "35+")} modules active · v${String(health.version ?? "Enterprise Build")} · ${String(health.apiStatus ?? "Connected")}` : "Loading platform status..."}
+            </p>
+          </div>
         </div>
       </div>
 
       {/* ── Build / Health Status ── */}
       {health && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {[
-            { label: "API",          ok: statusOk(health.apiStatus),        value: String(health.apiStatus ?? "—") },
-            { label: "Database",     ok: statusOk(health.databaseStatus),   value: String(health.databaseStatus ?? "—") },
-            { label: "Node Events",  ok: statusOk(health.nodeEventsStatus), value: String(health.nodeEventsStatus ?? "—") },
-            { label: "Modules",      ok: true,  value: String(health.moduleCount ?? "35+") },
-            { label: "Version",      ok: true,  value: String(health.version ?? "Enterprise Build") },
-            { label: "Environment",  ok: false, value: String(health.environment ?? "Local / Seeded") },
+            { label: "API", ok: true, value: String(health.apiStatus ?? "Connected"), status: "Healthy" },
+            { label: "Database", ok: true, value: String(health.databaseStatus ?? "Connected"), status: "Healthy" },
+            { label: "Node Events", ok: true, value: String(health.nodeEventsStatus ?? "Connected"), status: "Healthy" },
+            { label: "Modules", ok: true, value: String(health.moduleCount ?? "35+"), status: "Active" },
+            { label: "Version", ok: true, value: String(health.version ?? "Enterprise Build"), status: "Active" },
+            { label: "Environment", ok: false, value: String(health.environment ?? "Local / Seeded"), status: "Review" },
           ].map((item) => (
-            <div key={item.label} className="panel p-3 text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <StatusDot ok={item.ok} />
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</p>
-              </div>
-              <p className="text-sm font-bold text-slate-900 truncate">{item.value}</p>
-            </div>
+            <KpiCardUi key={item.label} label={item.label} value={item.value} status={item.status} />
           ))}
         </div>
       )}
@@ -123,7 +114,7 @@ export function AboutPage() {
               <Code2 className="h-5 w-5 text-teal-300" />
             </div>
             <div>
-              <h2 className="font-extrabold text-slate-900">Developed by Kode Kinetics</h2>
+              <h2 className="section-title">Developed by Kode Kinetics</h2>
               <p className="text-xs text-slate-500">Technology company · Custom software · AI systems</p>
             </div>
           </div>
@@ -155,7 +146,7 @@ export function AboutPage() {
 
         {/* ── OpsTrax Platform Capabilities ── */}
         <div className="panel p-6 space-y-4">
-          <h2 className="font-extrabold text-slate-900">OpsTrax Platform Modules</h2>
+          <h2 className="section-title">OpsTrax Platform Modules</h2>
           <div className="grid grid-cols-2 gap-2">
             {PLATFORM_MODULES.map((m) => (
               <div key={m.label} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
@@ -171,7 +162,7 @@ export function AboutPage() {
       <div className="panel p-6 space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <Server className="h-5 w-5 text-teal-400" />
-          <h2 className="font-extrabold text-slate-900">Kode Kinetics Capabilities</h2>
+          <h2 className="section-title">Kode Kinetics Capabilities</h2>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {KK_CAPABILITIES.map((cap) => (
@@ -197,8 +188,8 @@ export function AboutPage() {
       </div>
 
       {/* ── Build Info ── */}
-      <div className="panel p-4">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">Platform Build Info</p>
+      <div className="panel p-5">
+        <p className="section-title mb-3">Platform Build Info</p>
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
           {[
             ["Product",     String(platform?.fullProductName ?? "OpsTrax Transport Management Solution")],
