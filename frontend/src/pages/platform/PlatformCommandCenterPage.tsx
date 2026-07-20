@@ -20,7 +20,7 @@ export function PlatformCommandCenterPage() {
   return (
     <div className="space-y-7">
       <PHeader
-        eyebrow="Platform Command Center"
+        eyebrow="Platform Dashboard"
         title="Business at a glance"
         description="Revenue, tenants, risk and recommended actions across the entire SaaS business."
       />

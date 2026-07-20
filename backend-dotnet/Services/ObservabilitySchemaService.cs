@@ -87,5 +87,26 @@ public sealed class ObservabilitySchemaService(Database db)
         await db.ExecuteAsync("""
             CREATE INDEX IF NOT EXISTS idx_pi_opened ON platform_incidents (opened_at)
             """);
+
+        // ── Incident audit-trail columns (Requirement 9) ─────────────────────────
+        // Additive-only ALTERs so existing incident rows are preserved. Every
+        // incident can now record its full lifecycle (ack → resolve), the affected
+        // service/tenants, root cause + actions taken, and be linked back to the
+        // trace_id and deployment_version that produced it — closing the loop from
+        // an alert to the exact request that failed.
+        foreach (var alter in new[]
+        {
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS acknowledged_at    TIMESTAMPTZ  NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS acknowledged_by    VARCHAR(200) NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS affected_service    VARCHAR(100) NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS affected_tenants    TEXT         NULL", // JSON array of company ids
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS root_cause          TEXT         NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS actions_taken       TEXT         NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS trace_id            VARCHAR(64)  NULL",
+            "ALTER TABLE platform_incidents ADD COLUMN IF NOT EXISTS deployment_version  VARCHAR(100) NULL",
+        })
+        {
+            await db.ExecuteAsync(alter);
+        }
     }
 }

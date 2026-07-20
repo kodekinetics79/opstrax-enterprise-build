@@ -2,12 +2,10 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Bot, Calendar, CheckCircle2, Clock, Download, Moon,
-  Plus, Sun, Users, X,
+  Sun, Users, X,
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState } from "@/components/ui";
-import { drivers as seedDrivers } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -24,66 +22,45 @@ const SHIFT_META: Record<ShiftType, { label: string; bg: string; text: string; h
   "Rest (HOS)": { label: "HOS Rest",   bg: "bg-red-50",     text: "text-red-600",    hours: "Mandatory rest" },
 };
 
-// ── Seed data ─────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
-function buildDriverPool(): AnyRecord[] {
-  const raw = seedDrivers as AnyRecord[];
-  const vehicles = ["BOX-104","REF-209","TRK-316","VAN-512","BOX-218","REF-401","TRK-107","VAN-303","BOX-501","REF-110"];
-  return raw.slice(0, 10).map((d, i) => ({
-    id: i + 1,
-    driverId: d.id ?? i + 1,
-    name: String(d.name ?? `Driver ${i + 1}`),
-    code: `DRV-${String(i + 1).padStart(3, "0")}`,
-    licenceClass: (["B", "C", "C+E", "C+E", "C", "B", "C+E", "C", "B", "C+E"] as const)[i],
-    vehicleCode: vehicles[i],
-    hoursThisWeek: [38, 42, 35, 55, 48, 41, 62, 37, 44, 29][i],
-    hosLimit: 70,
-    status: (["Available", "On Shift", "Off", "On Shift", "Rest (HOS)", "Available", "On Shift", "Off", "Available", "Available"] as const)[i],
-    safetyScore: [94, 88, 91, 79, 85, 72, 84, 96, 77, 90][i],
+// The schedule grid columns are generic Mon–Sun (not tied to specific dates from
+// the API), so the header always describes the current calendar week.
+function currentWeekLabel(): string {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + mondayOffset);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const fmtDay = (d: Date) => d.getDate();
+  const fmtMonth = (d: Date) => d.toLocaleDateString(undefined, { month: "short" });
+  const sameMonth = monday.getMonth() === sunday.getMonth();
+  const range = sameMonth
+    ? `${fmtDay(monday)}–${fmtDay(sunday)} ${fmtMonth(sunday)}`
+    : `${fmtDay(monday)} ${fmtMonth(monday)} – ${fmtDay(sunday)} ${fmtMonth(sunday)}`;
+  return `Week of ${range} ${sunday.getFullYear()}`;
+}
+
+function normalizeDrivers(rows: AnyRecord[]): AnyRecord[] {
+  return rows.map((d, i) => ({
+    id: d.id ?? i + 1,
+    driverId: d.id ?? d.driverId ?? i + 1,
+    name: String(d.fullName ?? d.name ?? d.driverName ?? `Driver ${i + 1}`),
+    code: String(d.driverCode ?? d.code ?? `DRV-${String(i + 1).padStart(3, "0")}`),
+    licenceClass: String(d.licenceClass ?? d.licenseClass ?? "C"),
+    vehicleCode: String(d.assignedVehicleCode ?? d.vehicleCode ?? d.assignedVehicle ?? ""),
+    hoursThisWeek: Number(d.hoursThisWeek ?? d.hours ?? 0),
+    hosLimit: Number(d.hosLimit ?? 70),
+    status: String(d.status ?? "Available"),
+    safetyScore: Number(d.safetyScore ?? d.score ?? 0),
   }));
 }
 
-const SCHEDULE_SHIFTS: ShiftType[] = [
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Rest (HOS)", "Off", "Morning",
-  "Afternoon", "Afternoon", "Morning", "Night",
-  "Off", "Morning", "Afternoon", "Off",
-  "Night", "Off", "Morning", "Afternoon",
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Afternoon", "Off", "Morning",
-  "Off", "Morning", "Afternoon", "Night",
-  "Morning", "Off", "Morning", "Afternoon",
-  "Afternoon", "Morning", "Night", "Rest (HOS)",
-  "Morning", "Afternoon", "Night", "Off",
-  "Morning", "Rest (HOS)", "Off", "Morning",
-  "Afternoon", "Morning", "Off", "Afternoon",
-  "Night", "Off", "Morning", "Afternoon",
-  "Morning", "Morning", "Night", "Off",
-  "Afternoon", "Morning", "Off", "Night",
-  "Morning", "Afternoon", "Rest (HOS)", "Morning",
-  "Night", "Off", "Morning", "Afternoon",
-  "Off", "Morning", "Afternoon", "Night",
-  "Morning", "Afternoon", "Off", "Morning",
-];
-
-function buildSchedule(drivers: AnyRecord[]): AnyRecord[] {
-  return drivers.map((d, di) =>
-    DAYS.reduce<AnyRecord>((acc, day, dayIdx) => {
-      acc[day] = SCHEDULE_SHIFTS[(di * 7 + dayIdx) % SCHEDULE_SHIFTS.length];
-      return acc;
-    }, { driverId: d.id, driverName: String(d.name), code: String(d.code) })
-  );
-}
-
 const workforceApi = {
-  drivers: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/workforce/drivers")),
-    () => buildDriverPool()
-  ),
-  schedule: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/workforce/schedule")),
-    () => buildSchedule(buildDriverPool())
-  ),
+  drivers: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/drivers")).then(normalizeDrivers),
+  schedule: () => unwrap<AnyRecord[]>(apiClient.get("/api/workforce/schedule")),
   assign: (driverId: number, day: string, shift: ShiftType) =>
     apiClient.post("/api/workforce/schedule/assign", { driverId, day, shift }),
 };
@@ -160,6 +137,36 @@ export function WorkforceManagementPage() {
   const hosRest    = drivers.filter((d) => String(d.status) === "Rest (HOS)").length;
   const nearHosLimit = drivers.filter((d) => Number(d.hoursThisWeek) >= 60).length;
 
+  // Real, data-derived workforce insights (no fabricated recommendations).
+  const workforceInsights = (() => {
+    const out: { title: string; body: string; priority: "High" | "Medium" | "Low" }[] = [];
+    const hosDrivers = drivers.filter((d) => Number(d.hoursThisWeek) >= 60);
+    if (hosDrivers.length > 0) {
+      out.push({
+        title: `${hosDrivers.length} driver${hosDrivers.length > 1 ? "s" : ""} approaching the HOS weekly limit`,
+        body: `${hosDrivers.map((d) => `${String(d.name)} (${Number(d.hoursThisWeek)}h)`).join(", ")} — near the ${Number(hosDrivers[0].hosLimit ?? 70)}h ceiling. Rebalance upcoming shifts to avoid forced rest disruption.`,
+        priority: "High",
+      });
+    }
+    const lowSafety = drivers.filter((d) => Number(d.safetyScore) > 0 && Number(d.safetyScore) < 70);
+    if (lowSafety.length > 0) {
+      out.push({
+        title: `${lowSafety.length} driver${lowSafety.length > 1 ? "s" : ""} below the safety-score threshold`,
+        body: `${lowSafety.map((d) => `${String(d.name)} (${Number(d.safetyScore)})`).join(", ")} scored under 70. Review recent safety events and assign coaching.`,
+        priority: "Medium",
+      });
+    }
+    const restNeeded = drivers.filter((d) => String(d.status) === "Rest (HOS)");
+    if (restNeeded.length > 0) {
+      out.push({
+        title: `${restNeeded.length} driver${restNeeded.length > 1 ? "s" : ""} on mandatory HOS rest`,
+        body: `${restNeeded.map((d) => String(d.name)).join(", ")} ${restNeeded.length > 1 ? "are" : "is"} in a required rest period and unavailable for dispatch. Plan coverage accordingly.`,
+        priority: "Low",
+      });
+    }
+    return out;
+  })();
+
   const filteredDrivers = filterStatus
     ? drivers.filter((d) => String(d.status) === filterStatus)
     : drivers;
@@ -183,7 +190,7 @@ export function WorkforceManagementPage() {
   if (isLoading) return <LoadingState />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       <AssignModal cell={cell} onClose={() => setCell(null)} onSave={handleSave} />
 
       {/* Header */}
@@ -195,9 +202,6 @@ export function WorkforceManagementPage() {
         <div className="flex items-center gap-2">
           <button type="button" className="btn-secondary flex items-center gap-2 text-sm" onClick={() => exportCsv("workforce-schedule", schedule)}>
             <Download className="h-4 w-4" />Export Schedule
-          </button>
-          <button type="button" className="btn-primary flex items-center gap-2 text-sm">
-            <Plus className="h-4 w-4" />Add Driver
           </button>
         </div>
       </div>
@@ -242,7 +246,7 @@ export function WorkforceManagementPage() {
         <div className="panel overflow-x-auto">
           <div className="min-w-[720px]">
             <div className="p-4 pb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-700">Week of 16–22 Jun 2026 <span className="text-xs text-slate-400 ml-2">Click any cell to reassign</span></p>
+              <p className="text-sm font-semibold text-slate-700">{currentWeekLabel()} <span className="text-xs text-slate-400 ml-2">Click any cell to reassign</span></p>
               <div className="flex gap-2">
                 {(Object.entries(SHIFT_META) as [ShiftType, typeof SHIFT_META[ShiftType]][]).map(([key, meta]) => (
                   <span key={key} className={`text-[10px] px-2 py-0.5 rounded-full ${meta.bg} ${meta.text} font-semibold`}>{meta.label}</span>
@@ -283,6 +287,11 @@ export function WorkforceManagementPage() {
                     })}
                   </tr>
                 ))}
+                {schedule.length === 0 && (
+                  <tr><td colSpan={DAYS.length + 1} className="px-4 py-10 text-center text-sm text-slate-400">
+                    No shifts scheduled yet. Assign shifts from the roster to build this week's plan.
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -352,16 +361,16 @@ export function WorkforceManagementPage() {
         </div>
       )}
 
-      {/* ── AI Insights Tab ── */}
+      {/* ── Insights Tab ── derived from real driver data, not fabricated ── */}
       {tab === "Insights" && (
         <div className="flex flex-col gap-3">
-          {[
-            { title: `${nearHosLimit} drivers approaching HOS 70-hour weekly limit`, body: "Drivers DRV-007, DRV-005 and DRV-009 have 62h, 55h and 44h respectively. Reassign weekend runs to DRV-010 (29h) to prevent forced rest-day disruption.", priority: "High", action: "Rebalance Roster" },
-            { title: "Schedule coverage gap: Saturday Night shift understaffed", body: "Current schedule leaves only 1 driver on Night shift Saturday. 3 active jobs require Night-shift coverage. Move DRV-002 from Off to Night to resolve.", priority: "High", action: "Fix Coverage" },
-            { title: "Optimize Morning shift distribution for fuel efficiency", body: "Clustering Morning drivers in DXB-North routes reduces average deadhead by 18km per trip. AI routing overlay can implement automatically.", priority: "Medium", action: "Apply Routing" },
-            { title: "2 drivers with C+E licence underutilized this week", body: "DRV-004 and DRV-010 hold C+E truck licences but are scheduled for van routes. Reassigning heavy loads frees up 2 C-licence drivers for multi-stop city runs.", priority: "Medium", action: "Optimize Assignment" },
-            { title: "Driver DRV-007 flagged for 3 consecutive Night shifts", body: "Regulatory guidelines recommend no more than 2 consecutive Night shifts without a day break. Reschedule Thursday to Off to maintain driver health compliance.", priority: "Low", action: "Adjust Roster" },
-          ].map((rec, i) => (
+          {workforceInsights.length === 0 ? (
+            <div className="panel py-10 text-center">
+              <Bot className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-2 text-sm font-semibold text-slate-500">No workforce risks detected</p>
+              <p className="mt-1 text-xs text-slate-400">All drivers are within HOS limits, assigned, and clear of safety flags.</p>
+            </div>
+          ) : workforceInsights.map((rec, i) => (
             <div key={i} className="panel flex items-start gap-4 p-4">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
                 <Bot className="h-4 w-4 text-violet-600" />
@@ -372,7 +381,6 @@ export function WorkforceManagementPage() {
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${rec.priority === "High" ? "border-red-200 bg-red-50 text-red-700" : rec.priority === "Medium" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{rec.priority}</span>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">{rec.body}</p>
-                <button type="button" className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition">{rec.action} →</button>
               </div>
               <Clock className="h-4 w-4 shrink-0 text-slate-400 mt-0.5" />
             </div>

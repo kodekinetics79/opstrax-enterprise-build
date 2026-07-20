@@ -1,6 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 
 namespace Opstrax.Api.Services;
 
@@ -9,6 +13,7 @@ namespace Opstrax.Api.Services;
 //  2. Generate maintenance_items entries when PM thresholds are reached.
 //  3. Update vehicle availability based on open critical defects and WO status.
 public sealed class MaintenanceBackgroundService(
+    IServiceScopeFactory scopeFactory,
     Database db, ILogger<MaintenanceBackgroundService> log, ServiceRunTracker tracker)
     : BackgroundService
 {
@@ -24,7 +29,13 @@ public sealed class MaintenanceBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
-                await RunCycleAsync(ct);
+                // Cross-tenant worker (all-company PM rules, filtered by company_id):
+                // run the whole tick under the platform-admin bypass scope.
+                await db.RunInSystemScopeAsync(async () =>
+                {
+                    await RunCycleAsync(ct);
+                    await RefreshFleetHealthSnapshotsAsync(ct);
+                }, ct);
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, ct);
             }
@@ -172,6 +183,7 @@ public sealed class MaintenanceBackgroundService(
                     }, ct);
 
                 log.LogInformation("[MaintBgSvc] PM item {Id} created: {ServiceType} for vehicle {VehicleId} ({Reason})", itemId, serviceType, vehicleId, dueReason);
+                await CreateMaintenanceRecommendationAsync(companyId, itemId, vehicleId, serviceType, status, dueReason, ct);
             }
         }
     }
@@ -302,4 +314,43 @@ public sealed class MaintenanceBackgroundService(
 
     private async Task UpdateVehicleAvailabilityAsync(CancellationToken ct)
         => await UpdateVehicleAvailabilityAsync(db, ct);
+
+    private async Task RefreshFleetHealthSnapshotsAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var foundation = scope.ServiceProvider.GetRequiredService<SafetyMaintenanceFoundationService>();
+        await foundation.RefreshAllFleetHealthSnapshotsAsync(ct);
+    }
+
+    private async Task CreateMaintenanceRecommendationAsync(long companyId, long itemId, long vehicleId, string serviceType, string status, string? dueReason, CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+        var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
+        var sourceEventId = $"maintenance-item:{itemId}";
+        var existing = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@tenantId AND recommendation_type='maintenance.pm.review' AND source_event_id=@sourceEventId",
+            c =>
+            {
+                c.Parameters.AddWithValue("@tenantId", companyId);
+                c.Parameters.AddWithValue("@sourceEventId", sourceEventId);
+            }, ct);
+        if (existing > 0) return;
+
+        _ = ai.CreateRecommendation(
+            companyId.ToString(CultureInfo.InvariantCulture),
+            "maintenance.pm.review",
+            $"{serviceType} review required",
+            $"{status} maintenance item {itemId} for vehicle {vehicleId}. {dueReason ?? "Review scheduling and parts availability."}",
+            0.88m,
+            status.Equals("Overdue", StringComparison.OrdinalIgnoreCase) ? 0.90m : 0.68m,
+            JsonSerializer.Serialize(new { itemId, vehicleId, serviceType, status, dueReason }),
+            JsonSerializer.Serialize(new { source = "pm_rule", itemId, vehicleId, serviceType, status }),
+            JsonSerializer.Serialize(new { action = "review_maintenance_item", itemId, vehicleId, serviceType }),
+            status.Equals("Overdue", StringComparison.OrdinalIgnoreCase) ? "high" : "medium",
+            sourceEventId,
+            ActorTypes.System,
+            "MaintenanceBackgroundService",
+            status: "active");
+    }
 }

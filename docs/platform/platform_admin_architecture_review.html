@@ -1,0 +1,569 @@
+<style>
+  :root {
+    --ground: #0f1419;
+    --surface: #171d25;
+    --surface-2: #1e2732;
+    --line: #2a3540;
+    --ink: #e8edf2;
+    --muted: #8b97a3;
+    --faint: #5c6773;
+    --accent: #2dd4bf;
+    --accent-dim: #14b8a6;
+    --crit: #f87171;
+    --high: #fb923c;
+    --med: #fbbf24;
+    --good: #34d399;
+    --info: #60a5fa;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* ---- Masthead ---- */
+  .masthead {
+    padding: 56px 0 32px;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-size: clamp(28px, 5vw, 42px);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    margin: 0 0 16px;
+    text-wrap: balance;
+    max-width: 20ch;
+  }
+  .dek {
+    font-size: 17px;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0;
+    line-height: 1.55;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin-top: 28px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .meta b { color: var(--muted); font-weight: 500; }
+  .meta .ok { color: var(--good); }
+
+  /* ---- Verdict banner ---- */
+  .verdict {
+    margin: 28px 0 8px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--med);
+    background: linear-gradient(180deg, var(--surface) 0%, var(--ground) 100%);
+    border-radius: 10px;
+    padding: 22px 24px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 20px;
+    align-items: center;
+  }
+  .verdict .stamp {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    color: var(--med);
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .verdict .stamp b { display: block; font-size: 18px; letter-spacing: 0; margin-top: 3px; }
+  .verdict p { margin: 0; font-size: 14.5px; color: var(--muted); }
+  .verdict p b { color: var(--ink); font-weight: 600; }
+
+  /* ---- Section scaffolding ---- */
+  section { padding-top: 52px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+    margin-bottom: 26px;
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+  .sec-head h2 {
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0;
+    flex: 1;
+  }
+  .sec-head .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  h3 {
+    font-size: 15.5px;
+    font-weight: 650;
+    margin: 30px 0 10px;
+    color: var(--ink);
+  }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  .lead { color: var(--muted); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: #a5f3ec;
+    white-space: nowrap;
+  }
+  strong { color: var(--ink); font-weight: 650; }
+
+  /* ---- Callout ---- */
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 20px 0;
+  }
+  .callout.finding { border-left: 3px solid var(--accent); }
+  .callout-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ---- Tables ---- */
+  .table-scroll { overflow-x: auto; margin: 18px 0 8px; border: 1px solid var(--line); border-radius: 10px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    min-width: 640px;
+  }
+  thead th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+    padding: 12px 16px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    color: var(--muted);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(45, 212, 191, 0.03); }
+  td b, td strong { color: var(--ink); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+
+  /* ---- Severity chips ---- */
+  .sev {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+    line-height: 1.3;
+  }
+  .sev.crit { background: rgba(248,113,113,.13); color: var(--crit); border: 1px solid rgba(248,113,113,.3); }
+  .sev.high { background: rgba(251,146,60,.13); color: var(--high); border: 1px solid rgba(251,146,60,.3); }
+  .sev.med  { background: rgba(251,191,36,.12); color: var(--med);  border: 1px solid rgba(251,191,36,.3); }
+  .sev.good { background: rgba(52,211,153,.12); color: var(--good); border: 1px solid rgba(52,211,153,.3); }
+  .sev.info { background: rgba(96,165,250,.12); color: var(--info); border: 1px solid rgba(96,165,250,.3); }
+
+  .yes { color: var(--good); font-weight: 600; }
+  .no  { color: var(--crit); font-weight: 600; }
+  .part { color: var(--med); font-weight: 600; }
+
+  /* ---- Stat row ---- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 20px 0;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 18px 20px;
+  }
+  .stat .n {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .stat .n.crit { color: var(--crit); }
+  .stat .n.good { color: var(--good); }
+  .stat .n.accent { color: var(--accent); }
+  .stat .l {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+    line-height: 1.4;
+  }
+
+  /* ---- Recommendation list ---- */
+  .recs { list-style: none; padding: 0; margin: 16px 0; display: flex; flex-direction: column; gap: 10px; }
+  .recs li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px 14px 18px;
+    position: relative;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .recs li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 8px 0 0 8px;
+    background: var(--accent);
+  }
+  .recs li.p0::before { background: var(--crit); }
+  .recs li.p1::before { background: var(--high); }
+  .recs li.p2::before { background: var(--med); }
+  .recs li b { color: var(--ink); }
+  .recs .rlabel {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-right: 10px;
+  }
+
+  .divider-note {
+    font-size: 13px;
+    color: var(--faint);
+    font-style: italic;
+    margin: 8px 0 0;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+    line-height: 1.8;
+  }
+  footer b { color: var(--muted); font-weight: 500; }
+
+  @media (max-width: 620px) {
+    .verdict { grid-template-columns: 1fr; }
+    .masthead { padding-top: 40px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">OpsTrax · Platform Control Plane · Architecture Review</p>
+    <h1>Platform Admin: connectivity, control, data &amp; integration readiness</h1>
+    <p class="dek">A four-part technical review of the System Owner Console — what it can see and govern today, how the multi-tenant data layer is positioned for growth, and what stands between OpsTrax and its first serious third-party integration.</p>
+    <div class="meta">
+      <span><b>Branch</b> harden/platform-admin-control-plane</span>
+      <span><b>Backend</b> <span class="ok">live</span> · Render + Neon</span>
+      <span><b>Method</b> source audit · 4 parallel deep passes</span>
+      <span><b>Date</b> 2026-07-03</span>
+    </div>
+  </header>
+
+  <div class="verdict">
+    <div class="stamp">Verdict<b>SOLID CORE</b>WORK TO SCALE</div>
+    <p>The platform admin control plane is <b>architecturally sound and safe</b> — tenant/platform isolation is real, mutations are audited, and the commercial control surface (lifecycle, billing, entitlements) is proven live. The gaps are ones of <b>reach and readiness, not correctness</b>: only 8 of ~30 modules are actually governable, the RBAC model out-promises what's wired, the database has no single source of truth, and there is no external integration surface yet. None block the pilot; all matter before scale.</p>
+  </div>
+
+  <!-- ============ SECTION 1 ============ -->
+  <section id="connectivity">
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>Entity-level connectivity</h2>
+      <span class="tag">what admin can reach</span>
+    </div>
+
+    <p class="lead">The commissioned question: is every feature wired to the platform admin layer? The honest answer is that a well-built control surface currently reaches a <strong>minority of the product</strong>, and two separate "module" vocabularies exist that were never reconciled.</p>
+
+    <div class="stats">
+      <div class="stat"><div class="n accent tabnum">~30</div><div class="l">distinct product modules in the tenant app</div></div>
+      <div class="stat"><div class="n tabnum">8</div><div class="l">actually enforceable per-tenant by admin</div></div>
+      <div class="stat"><div class="n crit tabnum">22+</div><div class="l">modules with <em>no</em> entitlement gate at all</div></div>
+      <div class="stat"><div class="n tabnum">5<span style="font-size:16px">/13</span></div><div class="l">usage meters that actually increment</div></div>
+    </div>
+
+    <div class="callout finding">
+      <p class="callout-label">Core finding — two disconnected vocabularies</p>
+      <p>The system has <strong>two parallel module-key systems, and only one is enforced.</strong> The runtime gate (<code>ModuleKeyForPath</code> in <code>Program.cs</code>) maps just 8 URL prefixes to keys and blocks disabled modules with a 403. A separate 17-key <code>fleet.*</code> billing catalog (<code>RevenueSchemaService</code>) exists purely for pricing display — its enforcement method <code>CheckModuleAsync</code> is called from exactly <strong>one</strong> place in the whole backend. The frontend's <code>GATED_MODULES</code> list mirrors the 8 enforced keys but matches neither the billing catalog nor the real product surface.</p>
+    </div>
+
+    <p><strong>What this means for the CTO:</strong> a platform admin cannot enforce a lower-tier plan by disabling Vehicles, Drivers, Jobs, Fuel, Geofencing, Cold Chain, CRM leads, Notifications, Branches, Workforce, or AI Copilot — those modules have no gate to flip. Commercial packaging is only skin-deep until those gates exist.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Module</th><th>Entitlement gate</th><th>Admin visibility</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>Dispatch</b> / Trips</td><td><span class="yes">Yes</span> · <code>dispatch</code></td><td class="no">Toggle only</td><td>Runtime-enforced; no record count</td></tr>
+          <tr><td><b>Safety</b> / Scorecards</td><td><span class="yes">Yes</span> · <code>safety</code></td><td class="no">Toggle only</td><td>—</td></tr>
+          <tr><td><b>Maintenance</b> / Work Orders</td><td><span class="yes">Yes</span> · <code>maintenance</code></td><td class="no">Toggle only</td><td>—</td></tr>
+          <tr><td><b>Telemetry / IoT</b></td><td><span class="yes">Yes</span> · <code>telematics</code></td><td class="no">Toggle only</td><td>—</td></tr>
+          <tr><td><b>CRM</b> (Customers, Contracts)</td><td><span class="yes">Yes</span> · <code>crm</code></td><td class="no">Toggle only</td><td>Leads / Opportunities / Campaigns <em>not</em> covered</td></tr>
+          <tr><td><b>Customer Portal</b></td><td><span class="yes">Yes</span> · <code>customer_portal</code></td><td class="no">Toggle only</td><td>—</td></tr>
+          <tr><td><b>Reports</b></td><td><span class="part">Fixed</span> · <code>reports</code></td><td class="no">Toggle only</td><td>Gate pointed at wrong prefix — <strong>fixed this pass</strong></td></tr>
+          <tr><td><b>Compliance</b> (HOS/ZATCA)</td><td><span class="yes">Yes</span> · <code>compliance</code></td><td class="part">Partial usage</td><td><code>/api/hos</code>, <code>/api/eld</code> are separate &amp; ungated</td></tr>
+          <tr><td><b>Vehicles / Fleet core</b></td><td class="no">None</td><td class="no">None</td><td><code>vehicles.count</code> meter defined, never recorded</td></tr>
+          <tr><td><b>Drivers</b></td><td class="no">None</td><td class="no">None</td><td>Core entity, no gate, always reads 0</td></tr>
+          <tr><td><b>Jobs / Shipments</b></td><td class="no">None</td><td class="no">None</td><td>Operational core — top-level route, ungated</td></tr>
+          <tr><td>Fuel · Geofencing · Cold Chain</td><td class="no">None</td><td class="no">None</td><td>Meters seeded, never incremented</td></tr>
+          <tr><td>Last-Mile · Branches · Workforce</td><td class="no">None</td><td class="no">None</td><td>No matching gate prefix</td></tr>
+          <tr><td>AI Copilot · Notifications · Digital Forms</td><td class="no">None</td><td class="no">None</td><td>Ungated</td></tr>
+          <tr><td><b>Market Packs</b> (CA/SA)</td><td><span class="yes">Yes</span> · separate</td><td class="yes">Visible</td><td>Deny-by-default mechanism, distinct from the 8</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="divider-note">Fix applied during this review: the <code>reports</code> gate was pointed at <code>/api/reporting</code> while the real routes live at <code>/api/reports</code> — dead code, now corrected and build-verified.</p>
+
+    <h3>Usage visibility is thinner than it looks</h3>
+    <p>The <code>PlatformRevenuePage</code> is designed to show per-tenant usage, but of 13 seeded meters only 5 are ever written to. <strong>Vehicle, driver, shipment, user, asset and API-call counts are seeded but never incremented</strong> — they render as 0. Admin cannot see real operational counts anywhere; this needs either live <code>COUNT(*)</code> aggregates or <code>RecordAsync</code> wired into each module's create/update path.</p>
+  </section>
+
+  <!-- ============ SECTION 2 ============ -->
+  <section id="access">
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>Access control — a critical review</h2>
+      <span class="tag">what admin should govern</span>
+    </div>
+
+    <p class="lead">You said "control everything." My counsel as CISO is <strong>control everything <em>about the tenant as a business</em> — and almost nothing <em>inside</em> the tenant's data</strong>. That line is the single most important design decision in a multi-tenant control plane, and OpsTrax already draws it correctly. The work is finishing the model, not widening it.</p>
+
+    <div class="callout">
+      <p class="callout-label">The governing principle</p>
+      <p>A platform admin who can silently read or edit any tenant's jobs, customers, and finances is not an admin — it's a breach waiting for an audit. The value of "everything" is <strong>governance</strong> (lifecycle, plan, limits, features, security posture, health), not <strong>operational reach</strong> (dispatching a truck, editing an invoice line). OpsTrax's existing standard enshrines this. Keep it.</p>
+    </div>
+
+    <h3>What platform admin <em>should</em> control — and today's status</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Capability domain</th><th>Should admin control?</th><th>Built today?</th></tr></thead>
+        <tbody>
+          <tr><td>Tenant lifecycle (create/suspend/cancel/offboard)</td><td class="yes">Yes — core</td><td><span class="sev good">Proven live</span></td></tr>
+          <tr><td>Billing &amp; subscription status</td><td class="yes">Yes — core</td><td><span class="sev good">Proven live</span></td></tr>
+          <tr><td>Feature / module entitlements</td><td class="yes">Yes — core</td><td><span class="sev med">8 of ~30 modules</span></td></tr>
+          <tr><td>Limits &amp; quotas (seats, resources)</td><td class="yes">Yes</td><td><span class="sev med">Seats only</span></td></tr>
+          <tr><td>Session revocation &amp; emergency lockout</td><td class="yes">Yes</td><td><span class="sev good">Proven live</span></td></tr>
+          <tr><td>Audit &amp; security event visibility</td><td class="yes">Yes</td><td><span class="sev good">Built + immutable</span></td></tr>
+          <tr><td>Tenant health / usage aggregates</td><td class="yes">Yes (aggregate only)</td><td><span class="sev med">Commercial only</span></td></tr>
+          <tr><td>Support access to tenant <em>data</em></td><td class="part">Only via audited, time-boxed, tenant-visible flow</td><td><span class="sev info">Reserved, not built</span></td></tr>
+          <tr><td>Direct edit of tenant operational data</td><td class="no">No — never as a convenience</td><td><span class="sev good">Correctly absent</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout finding">
+      <p class="callout-label">Finding — the RBAC model out-promises the build</p>
+      <p>Nine platform roles are seeded (<code>sales_admin</code>, <code>marketing_admin</code>, <code>support_admin</code>, <code>finance_admin</code>, and more), but <strong>7 permission keys they grant have zero enforcing endpoints</strong>: <code>crm:*</code>, <code>marketing:*</code>, <code>proposals:*</code>, <code>support:view</code>, <code>impersonation:start</code>, and <code>health:manage</code>. A Sales Admin or Support Admin can log in and hold permissions that gate nothing — not a security hole (the endpoints simply don't exist), but a credibility gap between the role model's ambition and the current surface. Either build the endpoints or trim the roles to what's real.</p>
+    </div>
+
+    <h3>The one thing not to build carelessly: impersonation</h3>
+    <p>Support access to live tenant data is the most-requested and most-dangerous capability. The <code>platform_impersonation_sessions</code> table and <code>impersonation:start</code> permission are <strong>reserved but deliberately unimplemented</strong> — the right call. When it is built it must be time-boxed, reason-required, read-only by default, and <strong>visible to the tenant it targets</strong>. Do not ship silent impersonation to close a support ticket faster; that single shortcut undoes the entire isolation model.</p>
+  </section>
+
+  <!-- ============ SECTION 3 ============ -->
+  <section id="database">
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>Database architecture for expansion</h2>
+      <span class="tag">the foundation under it all</span>
+    </div>
+
+    <p class="lead">The tenancy model is sound and consistent — <code>company_id</code> everywhere, real composite indexes where migrations exist. But three structural issues will bite at scale, and one of them makes the current "flip a switch to enforce security" plan unsafe as-is.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Finding</th><th>Severity</th><th>One-line recommendation</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>No single source of truth for schema.</b> ~80% of tables (≈177) exist only as runtime <code>EnsureAsync()</code> code with no migration file. A fresh RLS-enforced environment built "from migrations alone" would be missing most of the schema.</td>
+            <td><span class="sev crit">Critical</span></td>
+            <td>Generate migrations for all 32 remaining schema-services, <em>or</em> keep schema-init as an owner-role deploy job and treat migrations as its versioned record.</td>
+          </tr>
+          <tr>
+            <td><b>RLS enrollment is manual, not automatic.</b> A new tenant table is invisible to Row-Level Security until someone re-runs the reconcile migration by hand. The maintainers already flagged "enroll-on-create" as unsolved.</td>
+            <td><span class="sev crit">Critical</span></td>
+            <td>Implement enroll-on-create (DDL event trigger or CI gate) <em>before</em> enabling RLS in production.</td>
+          </tr>
+          <tr>
+            <td><b>Telemetry / audit tables have no retention.</b> Pure accumulation on a storage-billed Neon database; the retention doc is qualitative with no enforced thresholds or archival job.</td>
+            <td><span class="sev high">High</span></td>
+            <td>Ship a scheduled partition-and-drop / delete-by-age job before telemetry volume compounds.</td>
+          </tr>
+          <tr>
+            <td><b>Historical isolation gaps recur by pattern.</b> Past migrations fixed tables shipped with no <code>company_id</code> at all (Stage 24) and tables never RLS-enrolled (Stage 22). Nothing prevents the next module repeating either.</td>
+            <td><span class="sev high">High</span></td>
+            <td>Add a CI lint that fails any PR introducing a tenant table without <code>company_id</code> + RLS enrollment.</td>
+          </tr>
+          <tr>
+            <td><b>Stale RLS exclusion list.</b> The skip-list names <code>platform_admin_users</code> / <code>platform_packages</code> — tables that don't exist (real names: <code>platform_admins</code>, <code>packages</code>). Harmless today by coincidence; latent drift.</td>
+            <td><span class="sev med">Medium</span></td>
+            <td>Replace hardcoded skip-list with a <code>platform_*</code> naming rule + a test asserting every entry resolves to a real table.</td>
+          </tr>
+          <tr>
+            <td><b>Untuned connection pooling.</b> Relies on Npgsql defaults; the transaction-per-request RLS model consumes a connection for each in-flight request's full duration.</td>
+            <td><span class="sev med">Medium</span></td>
+            <td>Set <code>Max Pool Size</code> explicitly and load-test the per-request transaction model before high-concurrency rollout.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="callout-label">The load-bearing insight</p>
+      <p>Today's production database connects as the <strong>owner role with RLS off</strong>, so <code>EnsureAsync()</code> runs on every boot and the runtime code <em>is</em> the working source of truth. That's fine now — but it means the RLS cutover is not a config flip. The moment you connect as the restricted role, schema-init stops running and the ~177 migration-less tables must already exist. <strong>Sequence the schema-source-of-truth fix before the RLS-enforcement fix, or the cutover breaks the database.</strong></p>
+    </div>
+
+    <h3>Adding a new module today — the copy-paste trap</h3>
+    <p>There's no template or checklist, so a developer cloning an existing schema-service would likely forget: the migration file (table missing under RLS), RLS re-enrollment (cross-tenant leak once RLS is on), the entitlement gate (feature given away free), and audit wiring. A one-page "new tenant module" checklist plus a scaffolding template would close the most expensive recurring gap on the team.</p>
+  </section>
+
+  <!-- ============ SECTION 4 ============ -->
+  <section id="integration">
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>Integration readiness</h2>
+      <span class="tag">open to everything, honestly</span>
+    </div>
+
+    <p class="lead">You asked to be open to any integration. The right posture is exactly that — with clear eyes about what exists. One integration surface is genuinely production-shaped; the rest range from strong plumbing missing its last mile, to documented-only, to a mock catalog that must not be mistaken for real.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Surface</th><th>State</th><th>Reality</th></tr></thead>
+        <tbody>
+          <tr><td><b>IoT / hardware (GPS, ELD)</b></td><td><span class="sev good">Production-shaped</span></td><td>Real HMAC device auth, provisioning, rotation, revocation, freshness + nonce checks. A vendor could integrate today. Strongest surface.</td></tr>
+          <tr><td><b>Outbound webhooks</b></td><td><span class="sev med">Plumbing only</span></td><td>Durable transactional outbox + dispatcher is built — but zero external HTTP delivery, no subscription model, no signing secrets. The hard half is done; the outward half is absent.</td></tr>
+          <tr><td><b>Public tracking API</b></td><td><span class="sev good">Live</span></td><td>Token-scoped, unauthenticated shipment/POD tracking endpoints exist and are correctly wired into the auth bypass.</td></tr>
+          <tr><td><b>SSO / SAML / OIDC</b></td><td><span class="sev info">Readiness only</span></td><td>Connection-config CRUD exists and is explicitly labeled "not a login flow." No assertion consumer, no callback handler. Login is email+password only.</td></tr>
+          <tr><td><b>AI / Copilot</b></td><td><span class="sev med">Real, self-hosted</span></td><td>Queries live tenant data and calls an Ollama endpoint — but targets a local model with no production config. Likely inert on Render until wired. No MCP / agent framework.</td></tr>
+          <tr><td><b>ERP / Accounting</b></td><td><span class="sev crit">Absent</span></td><td>Nothing in the deployed backend. A 31-entry "Connected" integration catalog exists only in an <strong>undeployed Node service with fabricated statuses</strong> — demo data, not real.</td></tr>
+          <tr><td><b>Email / SMS</b></td><td><span class="sev crit">In-app only</span></td><td>No Twilio/SendGrid/Postmark. Notifications write to a table; nothing sends outbound.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout finding">
+      <p class="callout-label">Cross-cutting blockers for <em>any</em> external consumer</p>
+      <p>Three things gate every integration category regardless of type: <strong>no API versioning</strong> (all routes are bare <code>/api/*</code> — one breaking change hits the SPA, mobile, and partners simultaneously), <strong>no partner API-key or OAuth client-credentials model</strong> (the only key mechanism is IoT-device-scoped), and <strong>IP-based rather than key-based rate limiting</strong> (a NAT'd device fleet gets throttled like an attacker). Fix these before onboarding any external system.</p>
+    </div>
+
+    <h3>If a customer asked tomorrow</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Request</th><th>Effort</th><th>Fastest path</th></tr></thead>
+        <tbody>
+          <tr><td><b>Webhook / Zapier automation</b></td><td><span class="sev good">Days</span></td><td>Fastest win — outbox exists. Add one <code>HttpWebhookDeliveryHandler</code>, a subscriptions table, per-tenant signing secrets, a management UI.</td></tr>
+          <tr><td><b>IoT / ELD hardware vendor</b></td><td><span class="sev med">Weeks</span></td><td>Auth is ready. Needs per-device-type payload schemas (HOS logs, dashcam) and a sandbox key-issuance flow.</td></tr>
+          <tr><td><b>QuickBooks / Xero / SAP</b></td><td><span class="sev crit">Greenfield</span></td><td>Effectively from scratch: adapter framework, OAuth per provider, GL/invoice mapping, credential vault, sync jobs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ CLOSE ============ -->
+  <section id="priorities">
+    <div class="sec-head">
+      <span class="sec-num">→</span>
+      <h2>Recommended sequence</h2>
+      <span class="tag">CTO priorities</span>
+    </div>
+    <p class="lead">Ordered by dependency and risk, not ambition. The P0 items are prerequisites for decisions already on the roadmap (RLS enforcement, commercial packaging); the rest compound value once the foundation holds.</p>
+    <ul class="recs">
+      <li class="p0"><span class="rlabel">P0 · Foundation</span><b>Resolve the schema source-of-truth before enforcing RLS.</b> Generate migrations for the 32 remaining schema-services (or make schema-init a deploy job). Without this, the RLS cutover breaks the database.</li>
+      <li class="p0"><span class="rlabel">P0 · Security</span><b>Ship enroll-on-create for RLS</b> so no future table can silently skip tenant isolation, then enable RLS in production.</li>
+      <li class="p1"><span class="rlabel">P1 · Product</span><b>Extend the entitlement gate to the ungated core modules</b> (Vehicles, Drivers, Jobs, Fuel, CRM leads, AI) so commercial packaging is actually enforceable — and wire the dormant usage meters to real counts.</li>
+      <li class="p1"><span class="rlabel">P1 · Access</span><b>Reconcile RBAC with reality:</b> build the missing endpoints for the 7 dangling permissions or trim the roles. Design the audited impersonation flow before support demands it.</li>
+      <li class="p2"><span class="rlabel">P2 · Growth</span><b>Lay integration groundwork:</b> API versioning (<code>/api/v1</code>), a partner API-key/OAuth model, and the outbound webhook delivery handler — the three unlocks that make every future integration cheaper.</li>
+      <li class="p2"><span class="rlabel">P2 · Scale</span><b>Retention &amp; pooling:</b> a telemetry archival job and explicit pool sizing with a load test, before volume forces the issue.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <div><b>Scope</b> — Read-only source audit across backend-dotnet, frontend, database/migrations, and docs/architecture. Four parallel deep passes; every finding cited to source and, where a bug was alleged, verified firsthand.</div>
+    <div><b>Fixed during review</b> — <code>reports</code> entitlement gate prefix corrected (<code>/api/reporting</code> → <code>/api/reports</code>), build-verified.</div>
+    <div><b>Verdict</b> — Solid, safe core. Not yet at scale-readiness. No pilot blockers.</div>
+  </footer>
+
+</div>

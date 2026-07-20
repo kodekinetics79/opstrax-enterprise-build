@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getReportDatasets } from "@/data/developmentFleetSeedData";
 import {
   fetchDatasets,
   fetchSavedReports,
@@ -30,13 +29,7 @@ import {
 export function useDatasets() {
   return useQuery({
     queryKey: ["reporting", "datasets"],
-    queryFn: async () => {
-      try {
-        return await fetchDatasets();
-      } catch {
-        return getReportDatasets() as Awaited<ReturnType<typeof fetchDatasets>>;
-      }
-    },
+    queryFn: fetchDatasets,
     staleTime: 5 * 60 * 1000,
   });
 }

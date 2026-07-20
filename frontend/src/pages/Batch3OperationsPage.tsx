@@ -217,7 +217,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const s = (summary.data || {}) as AnyRecord;
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow={config.eyebrow}
         title={config.title}

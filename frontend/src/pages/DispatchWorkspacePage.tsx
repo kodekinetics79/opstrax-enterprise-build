@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,35 +27,35 @@ const MODULES: Record<DispatchMode, {
 }> = {
   dispatch: {
     label: 'Dispatch Command Center',
-    title: 'Protect service promises before delays become customer conversations.',
-    subtitle: 'Bring intake pressure, route movement, recovery actions, and proof visibility into one command surface that helps operators and decision-makers act from the same truth.',
+    title: 'Logistics command',
+    subtitle: 'Order intake, route movement, recovery actions and proof state across the operation.',
     accent: 'from-blue-600 via-sky-500 to-cyan-400',
     path: '/dispatch',
-    summary: 'When dispatch, customer service, and operations leadership all read the same live board, SLA risk becomes manageable instead of reactive.',
+    summary: '',
   },
   orders: {
     label: 'Jobs & Orders',
-    title: 'Turn incoming demand into an order pipeline your team can actually execute.',
-    subtitle: 'See who ordered, what matters most, where the work should flow next, and which commitments are putting margin or service at risk.',
+    title: 'Orders pipeline',
+    subtitle: 'Who ordered, current priority, dispatch state and promised times for every open order.',
     accent: 'from-indigo-600 via-blue-500 to-cyan-400',
     path: '/dispatch/jobs-orders',
-    summary: 'This is the intake layer clients expect to trust: visible priorities, visible ownership, and live status that moves with the operation.',
+    summary: '',
   },
   routes: {
     label: 'Route Planning',
-    title: 'Plan routes that respect operational pressure, not just road geometry.',
-    subtitle: 'Balance stop density, load, driver readiness, and completion pressure in a planner built for real tradeoffs instead of theoretical optimisation.',
+    title: 'Delivery routes',
+    subtitle: 'Stop density, load, driver and completion state per active route.',
     accent: 'from-sky-600 via-cyan-500 to-teal-400',
     path: '/dispatch/route-planning',
-    summary: 'Good routing is a commercial capability. This screen helps planners shape the day with fewer blind spots and faster recovery.',
+    summary: '',
   },
   delivery: {
     label: 'Last Mile Delivery',
-    title: 'Make the last mile accountable all the way to the customer doorstep.',
-    subtitle: 'Track live delivery state, attempted drops, reschedules, recipient proof, and recovery notes in one surface built for operators who cannot afford ambiguity.',
+    title: 'Last mile stops',
+    subtitle: 'Live delivery state, attempts, reschedules and recipient proof per stop.',
     accent: 'from-cyan-600 via-sky-500 to-blue-400',
     path: '/dispatch/last-mile-delivery',
-    summary: 'The most visible part of the brand is the delivery moment. This workspace keeps that moment governed, traceable, and fast to recover.',
+    summary: '',
   },
 };
 
@@ -75,27 +76,27 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
     customerName: '',
-    city: 'Riyadh',
-    area: 'City Core',
+    city: '',
+    area: '',
     priority: 'Normal',
     routeCode: '',
-    itemCount: '3',
-    orderValue: '250',
+    itemCount: '',
+    orderValue: '',
   });
   const [routeForm, setRouteForm] = useState({
     routeCode: '',
-    hub: 'Central Hub',
-    territory: 'City Core',
+    hub: '',
+    territory: '',
     driverName: '',
     vehicleNumber: '',
-    plannedStops: '8',
-    distanceKm: '42',
+    plannedStops: '',
+    distanceKm: '',
   });
   const [lastMileForm, setLastMileForm] = useState({
     recipientName: '',
-    exceptionReason: 'Customer requested another delivery slot.',
+    exceptionReason: '',
     nextStop: '',
-    timeWindow: '16:00-19:00',
+    timeWindow: '',
   });
 
   const syncSelectedRoute = (routeList: LogisticsRoute[], stopList: LogisticsStop[]) => {
@@ -111,21 +112,39 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     });
   };
 
-  const refreshWorkspace = async (activeMode: DispatchMode = mode) => {
-    const [ov, orderRes, routeRes, stopRes] = await Promise.all([
+  const loadWorkspace = async (activeMode: DispatchMode = mode) => {
+    const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
       logisticsApi.overview(),
       activeMode === 'dispatch' || activeMode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
       activeMode === 'dispatch' || activeMode === 'routes' || activeMode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
       activeMode === 'dispatch' || activeMode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
     ]);
-    setOverview(ov);
-    const nextOrders = orderRes?.items ?? ov.orderCards;
-    const nextRoutes = routeRes?.items ?? ov.routeCards;
-    const nextStops = stopRes?.items ?? ov.liveStops;
-    setOrders(nextOrders);
-    setRoutes(nextRoutes);
-    setStops(nextStops);
-    syncSelectedRoute(nextRoutes, nextStops);
+
+    if (ovRes.status === 'fulfilled') {
+      const ov = ovRes.value;
+      setOverview(ov);
+      const nextOrders = orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : ov.orderCards;
+      const nextRoutes = routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : ov.routeCards;
+      const nextStops = stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : ov.liveStops;
+      setOrders(nextOrders);
+      setRoutes(nextRoutes);
+      setStops(nextStops);
+      syncSelectedRoute(nextRoutes, nextStops);
+      return;
+    }
+
+    setOverview(null);
+    setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
+    setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
+    setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
+    syncSelectedRoute(
+      routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
+      stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
+    );
+  };
+
+  const refreshWorkspace = async (activeMode: DispatchMode = mode) => {
+    await loadWorkspace(activeMode);
   };
 
   useEffect(() => {
@@ -133,21 +152,33 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     setLoading(true);
     (async () => {
       try {
-        const [ov, orderRes, routeRes, stopRes] = await Promise.all([
+        const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
           logisticsApi.overview(),
           mode === 'dispatch' || mode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
           mode === 'dispatch' || mode === 'routes' || mode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
           mode === 'dispatch' || mode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
         ]);
         if (cancelled) return;
-        setOverview(ov);
-        const nextOrders = orderRes?.items ?? ov.orderCards;
-        const nextRoutes = routeRes?.items ?? ov.routeCards;
-        const nextStops = stopRes?.items ?? ov.liveStops;
-        setOrders(nextOrders);
-        setRoutes(nextRoutes);
-        setStops(nextStops);
-        syncSelectedRoute(nextRoutes, nextStops);
+        if (ovRes.status === 'fulfilled') {
+          const ov = ovRes.value;
+          setOverview(ov);
+          const nextOrders = orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : ov.orderCards;
+          const nextRoutes = routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : ov.routeCards;
+          const nextStops = stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : ov.liveStops;
+          setOrders(nextOrders);
+          setRoutes(nextRoutes);
+          setStops(nextStops);
+          syncSelectedRoute(nextRoutes, nextStops);
+        } else {
+          setOverview(null);
+          setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
+          setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
+          setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
+          syncSelectedRoute(
+            routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
+            stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
+          );
+        }
       } catch (err) {
         if (!cancelled) notifyApiError(err, 'Unable to load logistics workspace.');
       } finally {
@@ -253,7 +284,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
             note: 'Last-mile exceptions likely to generate customer follow-up.',
           },
           {
-            label: 'Next doorstep moment',
+            label: 'Next stop due',
             value: topStop?.customerName ?? 'Awaiting route execution',
             note: topStop ? `${topStop.routeCode} · ${topStop.timeWindow}` : 'No live stop selected yet.',
           },
@@ -282,13 +313,13 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   const actionNarrative = useMemo(() => {
     switch (mode) {
       case 'orders':
-        return 'Order intake should read like a controlled funnel, not a pile-up. This page now frames demand by urgency, ownership readiness, and commercial visibility.';
+        return 'Open orders ranked by urgency and promised time — dispatch from here.';
       case 'routes':
-        return 'Route planning is where service promises become operational commitments. The page now spotlights route pressure, completion risk, and the next routing move.';
+        return 'Active routes with stop load and completion pressure — progress them as stops close.';
       case 'delivery':
-        return 'Last mile is the most emotionally visible part of the product experience. This surface is tuned to keep proof, attempts, and recovery actions impossible to miss.';
+        return 'Every stop with its proof, attempt and reschedule state — recover exceptions here.';
       default:
-        return 'The command center should reassure leadership and help operators act. This workspace now emphasizes urgency, route motion, and exception containment in one read.';
+        return 'Orders, routes and stops in one read — urgency, motion and exceptions.';
     }
   }, [mode]);
 
@@ -474,21 +505,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 
   return (
     <>
-      <div className="relative min-h-[100svh] overflow-hidden bg-[#eef3ff] text-slate-900 dark:bg-[#040814] dark:text-white">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(47,107,255,0.16),transparent_28%),radial-gradient(circle_at_80%_18%,rgba(94,235,255,0.10),transparent_22%),linear-gradient(180deg,rgba(255,255,255,0.5),transparent_34%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(47,107,255,0.20),transparent_28%),radial-gradient(circle_at_80%_18%,rgba(94,235,255,0.08),transparent_22%),linear-gradient(180deg,rgba(6,11,24,0.92),rgba(4,8,20,0.98))]" />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.16] mix-blend-soft-light [background-image:linear-gradient(rgba(47,107,255,0.07)_1px,transparent_1px),linear-gradient(90deg,rgba(47,107,255,0.07)_1px,transparent_1px)] [background-size:72px_72px] animate-grid-breathe" />
-        <div className="pointer-events-none absolute left-[8%] top-[14%] h-56 w-56 rounded-full bg-white/35 blur-3xl animate-ambient-drift" />
-        <div className="pointer-events-none absolute right-[8%] top-[18%] h-64 w-64 rounded-full bg-cyan-300/12 blur-3xl animate-ambient-drift" />
-        <div className="pointer-events-none absolute bottom-[-5rem] left-[20%] h-72 w-72 rounded-full bg-blue-400/12 blur-3xl animate-ambient-drift" />
-        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-[linear-gradient(90deg,transparent,rgba(47,107,255,0.20),rgba(94,235,255,0.24),transparent)] opacity-40 animate-lane-drift" />
-        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-50" viewBox="0 0 1440 1024" fill="none" aria-hidden="true">
-          <path className="ops-route-line animate-route-flow" d="M118 766C242 692 272 590 386 547C495 506 640 556 750 499C854 444 919 317 1046 298C1153 282 1231 335 1318 258" stroke="rgba(47,107,255,0.26)" strokeWidth="2.5" />
-          <path className="ops-route-line animate-route-flow" d="M160 872C302 812 395 858 531 792C668 724 707 611 821 565C953 513 1062 577 1216 494" stroke="rgba(94,235,255,0.24)" strokeWidth="2" style={{ animationDelay: '-3s' }} />
-          <circle cx="386" cy="547" r="8" fill="rgba(255,255,255,0.9)" />
-          <circle cx="386" cy="547" r="18" className="animate-signal-pulse" fill="rgba(47,107,255,0.22)" />
-          <circle cx="1046" cy="298" r="7" fill="rgba(94,235,255,0.88)" />
-          <circle cx="1046" cy="298" r="16" className="animate-signal-pulse" fill="rgba(94,235,255,0.18)" style={{ animationDelay: '-1.2s' }} />
-        </svg>
+      <div className="fleet-console relative min-h-[100svh] overflow-hidden text-slate-900">
 
         <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1600px] flex-col px-4 py-3 sm:px-6 lg:px-8 lg:py-4">
           <div className="mb-4 flex items-center justify-between gap-4">
@@ -528,8 +545,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
             <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.92),rgba(239,245,255,0.74))] p-5 shadow-[0_24px_80px_rgba(37,99,235,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(11,18,34,0.96),rgba(7,12,24,0.92))]">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-2 rounded-full border border-blue-300/30 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-blue-600 shadow-sm backdrop-blur`}>
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Live tenant data
+                  <span className="live-dot h-1.5 w-1.5" />
+                  Logistics
                 </span>
                 <span className={`inline-flex items-center gap-2 rounded-full bg-gradient-to-r ${config.accent} px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-white shadow-sm`}>
                   <Sparkles className="h-3.5 w-3.5" />
@@ -606,9 +623,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                         {mode === 'routes' ? 'Route load and completion' : mode === 'delivery' ? 'Last mile progress' : 'Orders, routes, and exceptions'}
                       </p>
                     </div>
-                    <span className="rounded-full border border-emerald-200/70 bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-600">
-                      Backend live
-                    </span>
+
                   </div>
 
                   <div className="space-y-3">
@@ -658,7 +673,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 
                   <div className="mt-4 rounded-2xl border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(245,249,255,0.78))] p-4 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))]">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Live DB records</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Recent records</p>
                       <ArrowRight className="h-4 w-4 text-blue-500/70" />
                     </div>
                     <div className="mt-3 space-y-2">
@@ -685,7 +700,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                               <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
                             </span>
                           ) : (
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">Synced</span>
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">—</span>
                           )}
                         </button>
                       ))}
@@ -700,17 +715,15 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                 <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
                   {config.label}
                 </div>
-                <div className="rounded-full border border-emerald-500/15 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-300">
-                  Connected backend
-                </div>
+
               </div>
 
               <div className="mt-5">
                 <h2 className="text-[28px] font-black leading-tight text-white xl:text-[34px]">
-                  Built to impress on first look and hold up under live operational pressure.
+                  Route intelligence and intake
                 </h2>
                 <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-slate-300/80">
-                  Every panel on this workspace is telling the same business story: faster response, tighter SLA control, fewer customer surprises, and actions that update the real tenant dataset instead of a demo layer.
+                  Route status, order intake and last-mile visibility for the current tenant.
                 </p>
               </div>
 
@@ -831,14 +844,15 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                 </div>
               </div>
 
-              <div className="mt-6 rounded-[26px] border border-white/10 bg-gradient-to-r from-blue-500/12 via-cyan-400/10 to-transparent p-4">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">Connected backend</p>
+              <div className="mt-6 rounded-[26px] border border-white/10 bg-white/[0.04] p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">Related modules</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link to="/dispatch" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Dispatch board</Link>
+                  <Link to="/route-plans" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Route plans</Link>
+                  <Link to="/last-mile-delivery" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Last mile</Link>
+                  <Link to="/jobs" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Jobs board</Link>
+                  <Link to="/operations/proof-center" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Proof center</Link>
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-slate-300/80">
-                  Actions on this page update real entities in the workflow: orders become dispatched, routes progress their completion state, and last-mile proof changes are persisted through the logistics API.
-                </p>
               </div>
             </div>
           </section>
@@ -950,7 +964,7 @@ function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving }: { 
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
         {stop.status === 'Attempted' || stop.status === 'Rescheduled'
-          ? 'This doorstep interaction needs a recovery decision, not just a status update.'
+          ? 'This stop has an open exception — record an attempt, deliver or reschedule.'
           : 'Use proof, attempt, or reschedule actions to keep customer visibility current.'}
       </p>
       <div className="mt-4 grid grid-cols-3 gap-2">

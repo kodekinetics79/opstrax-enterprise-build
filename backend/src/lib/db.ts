@@ -5,7 +5,14 @@ type ConnectionConfig = PoolConfig & {
   connectionString?: string;
 };
 
-function parseDotNetConnectionString(input: string): ConnectionConfig {
+function sslConfigRequested() {
+  const allowUnverified =
+    process.env.NODE_ENV === "development" &&
+    process.env.PGSSL_REJECT_UNAUTHORIZED?.toLowerCase() === "false";
+  return { rejectUnauthorized: !allowUnverified };
+}
+
+export function parseDotNetConnectionString(input: string): ConnectionConfig {
   const config: ConnectionConfig = {};
   for (const segment of input.split(";")) {
     const trimmed = segment.trim();
@@ -21,20 +28,20 @@ function parseDotNetConnectionString(input: string): ConnectionConfig {
     if (key === "username" || key === "user id" || key === "user") config.user = value;
     if (key === "password") config.password = value;
     if (key === "ssl mode" && value.toLowerCase() === "require") {
-      config.ssl = { rejectUnauthorized: false };
+      config.ssl = sslConfigRequested();
     }
   }
   return config;
 }
 
-function buildPoolConfig(): ConnectionConfig {
+export function buildPoolConfig(): ConnectionConfig {
   const env = getEnv();
   const raw = env.DATABASE_URL || env.PG_CONNECTION;
   if (raw) {
     if (/^postgres(ql)?:\/\//i.test(raw)) {
       return {
         connectionString: raw,
-        ssl: raw.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
+        ssl: /[?&]sslmode=require(?:&|$)/i.test(raw) ? sslConfigRequested() : undefined,
       };
     }
     return parseDotNetConnectionString(raw);
@@ -46,7 +53,7 @@ function buildPoolConfig(): ConnectionConfig {
     database: process.env.PGDATABASE,
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
-    ssl: process.env.PGSSLMODE?.toLowerCase() === "require" ? { rejectUnauthorized: false } : undefined,
+    ssl: process.env.PGSSLMODE?.toLowerCase() === "require" ? sslConfigRequested() : undefined,
   };
 }
 
@@ -110,4 +117,3 @@ export async function ensureBackendColumns() {
     WHERE refresh_token IS NOT NULL;
   `);
 }
-

@@ -67,8 +67,13 @@ platformClient.interceptors.response.use(
     const token = error?.response?.headers?.["x-csrf-token"];
     if (token) platformCsrfToken = token;
     if (error?.response?.status === 401) {
+      // accept-invite is pre-session: a wrong/expired token 401s and the page
+      // itself must show the error rather than bouncing to login.
+      const isPreSessionPage =
+        window.location.pathname.startsWith("/platform/login") ||
+        window.location.pathname.startsWith("/platform/accept-invite");
       storePlatformSession(null);
-      if (!window.location.pathname.startsWith("/platform/login")) {
+      if (!isPreSessionPage) {
         window.location.href = "/platform/login";
       }
     }
@@ -98,13 +103,20 @@ export function formatMoney(cents: number | undefined | null, currency = "USD"):
 
 export const platformApi = {
   // Auth
-  login: (email: string, password: string) =>
-    unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password })),
+  login: (email: string, password: string, mfaCode?: string) =>
+    unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password, mfaCode })),
   me: () => unwrap<PlatformSession>(platformClient.get("/api/platform/auth/me")),
   logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
 
+  // Self-service account management (any platform admin, own record only)
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/auth/change-password", { currentPassword, newPassword })),
+  updateOwnProfile: (body: { fullName?: string; email?: string }) =>
+    unwrap<AnyRecord>(platformClient.patch("/api/platform/auth/profile", body)),
+
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
+  commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),
 
   // Tenants
   tenants: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/tenants")),
@@ -114,25 +126,69 @@ export const platformApi = {
   tenantStatus: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/status`, body)),
   assignPackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/assign-package`, body)),
   resetInvite: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/reset-admin-invite`, body)),
+  revokeSessions: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/revoke-sessions`)),
+  deleteTenant: (id: number, confirm: string) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}`, { data: { confirm } })),
+  bulkTenants: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/tenants/bulk", body)),
+  // Tenant user directory + platform-initiated password reset (returns a one-time password)
+  tenantUsers: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/users`)),
+  resetTenantUserPassword: (id: number, userId: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/reset-password`)),
 
   // Entitlements
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
   setEntitlement: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/entitlements`, body)),
 
+  // Country profiles (market/localization defaults driving tenant-creation cascade)
+  countryProfiles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/country-profiles")),
+  countryProfile: (code: string) => unwrap<AnyRecord>(platformClient.get(`/api/platform/country-profiles/${code}`)),
+  upsertCountryProfile: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/country-profiles", body)),
+
   // Packages
   packages: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/packages")),
   createPackage: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/packages", body)),
   updatePackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/packages/${id}`, body)),
+  deletePackage: (id: number) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/packages/${id}`)),
 
   // Billing
   invoices: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/invoices")),
   createInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices", body)),
   markPaid: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/mark-paid`)),
+  bulkInvoices: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/bulk", body)),
 
   // Customer success + audit + roles
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
   audit: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/audit")),
   roles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/roles")),
+
+  // Platform operators (admin self-management — see PlatformAdminEndpoints.cs)
+  platformAdmins: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/admins")),
+  createPlatformAdmin: (body: { email: string; fullName: string; roleKey: string }) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/admins/invite", body)),
+  setPlatformAdminRole: (id: number, roleKey: string) =>
+    unwrap<AnyRecord>(platformClient.patch(`/api/platform/admins/${id}`, { roleKey })),
+  setPlatformAdminStatus: (id: number, status: "Active" | "Disabled") =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/${status === "Disabled" ? "disable" : "enable"}`)),
+  revokePlatformAdminSessions: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/revoke-sessions`)),
+  bulkAdmins: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/admins/bulk", body)),
+  resetPlatformAdminInvite: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/reset-invite`)),
+  acceptPlatformInvite: (body: { email: string; token: string; password: string }) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/auth/accept-invite", body)),
+
+  // MFA (TOTP)
+  mfaEnroll: () => unwrap<{ secret: string; otpauthUri: string }>(platformClient.post("/api/platform/auth/mfa/enroll")),
+  mfaVerify: (code: string) => unwrap<AnyRecord>(platformClient.post("/api/platform/auth/mfa/verify", { code })),
+  resetPlatformAdminMfa: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/admins/${id}/mfa/reset`)),
+
+  // Reliability Center — real system health, SLOs, error budget, incidents.
+  reliability: () => unwrap<AnyRecord>(platformClient.get("/api/platform/reliability")),
+  reliabilitySlo: () => unwrap<AnyRecord>(platformClient.get("/api/platform/reliability/slo")),
+  ackIncident: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/reliability/incidents/${id}/ack`)),
+  resolveIncident: (id: number, body: { rootCause?: string; actionsTaken?: string }) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/reliability/incidents/${id}/resolve`, body)),
 
   // Opstrax revenue foundation
   modulePackages: () => unwrap<AnyRecord>(platformClient.get("/api/platform/opstrax/module-packages")),

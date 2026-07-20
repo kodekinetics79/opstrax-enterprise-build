@@ -1,5 +1,5 @@
-import { cloneElement, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, useMemo, useId, useRef, useState } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
   Bot, CheckCircle2, ChevronDown, ChevronUp,
@@ -602,4 +602,80 @@ function renderCell(column: string, value: unknown) {
   if (/^\d{4}-\d{2}-\d{2}/.test(str))
     return <span className="text-slate-400 font-mono text-xs">{str.slice(0, 10)}</span>;
   return <span>{str}</span>;
+}
+
+/* ============================================================
+   BUTTON (v5.0 — typed variants + loading state)
+   ============================================================ */
+type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+
+const BUTTON_CLASS: Record<ButtonVariant, string> = {
+  primary: "btn-primary",
+  secondary: "btn-secondary",
+  danger: "btn-danger",
+  ghost: "btn-ghost",
+};
+
+export function Button({
+  variant = "primary", type = "button", className = "", loading = false, disabled, children, ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
+  return (
+    <button
+      type={type}
+      className={`${BUTTON_CLASS[variant]} ${className}`.trim()}
+      disabled={disabled || loading}
+      aria-busy={loading}
+      {...rest}
+    >
+      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+      {children}
+    </button>
+  );
+}
+
+/* ============================================================
+   CLAY CARD & GLASS PANEL
+   ============================================================ */
+export function ClayCard({ className = "", interactive = false, ...rest }: HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
+  return <div className={`clay-card ${interactive ? "card-hover" : ""} ${className}`.trim()} {...rest} />;
+}
+
+export function GlassPanel({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={`liquid-glass ${className}`.trim()} {...rest} />;
+}
+
+/* ============================================================
+   FORM FIELD (v5.0 primitive — label + control + hint/error wiring)
+   ============================================================ */
+export function FormField({
+  label, hint, error, required, className = "", children,
+}: {
+  label: string; hint?: string; error?: string; required?: boolean; className?: string; children: ReactNode;
+}) {
+  const id = useId();
+  const messageId = `${id}-msg`;
+
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        id: (children.props as Record<string, unknown>).id ?? id,
+        "aria-describedby": hint || error ? messageId : undefined,
+        "aria-invalid": error ? true : undefined,
+        "aria-required": required || undefined,
+      })
+    : children;
+
+  return (
+    <div className={`flex flex-col gap-1.5 ${className}`.trim()}>
+      <label htmlFor={id} className="text-[12px] font-bold text-slate-700">
+        {label}
+        {required && <span aria-hidden className="ml-0.5 text-red-600">*</span>}
+      </label>
+      {control}
+      {error ? (
+        <p id={messageId} role="alert" className="text-xs font-semibold text-red-600">{error}</p>
+      ) : hint ? (
+        <p id={messageId} className="text-xs text-slate-500">{hint}</p>
+      ) : null}
+    </div>
+  );
 }

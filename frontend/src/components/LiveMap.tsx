@@ -16,16 +16,20 @@ function isMovingState(status: string, speed: number): boolean {
   return speed > 3 || /active|on route|moving|driving|en route/i.test(status);
 }
 
-function markerColor(risk: string, status: string, speed: number, isStale: boolean): string {
+function markerColor(risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
+  const deviceOnline = !deviceStatus || /online|recording/i.test(deviceStatus);
+  const cameraOnline = !cameraStatus || /online|recording/i.test(cameraStatus);
   if (isStale) return "#94a3b8"; // offline / no recent ping
+  if (!deviceOnline && !cameraOnline) return "#ef4444";
+  if (!deviceOnline || !cameraOnline) return "#f59e0b";
   if (/high|critical/i.test(risk)) return "#ef4444";
   if (/medium|warning/i.test(risk)) return "#f59e0b";
   return isMovingState(status, speed) ? "#14b8a6" : "#6366f1";
 }
 
-function makeVehicleIcon(risk: string, status: string, speed: number, heading: number, isStale: boolean): L.DivIcon {
+function makeVehicleIcon(risk: string, status: string, speed: number, heading: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
   const moving = isMovingState(status, speed) && !isStale;
-  const color = markerColor(risk, status, speed, isStale);
+  const color = markerColor(risk, status, speed, isStale, deviceStatus, cameraStatus);
 
   // Moving units render as a heading-aware arrow; stationary as a dot; offline as a hollow ring.
   const inner = moving
@@ -56,16 +60,30 @@ function makeVehicleIcon(risk: string, status: string, speed: number, heading: n
   });
 }
 
+// Amber puck that rides along the breadcrumb-replay trail.
+function makeReplayIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "opstrax-replay-marker",
+    html: `<div style="
+      width:16px;height:16px;border-radius:50%;
+      background:#f59e0b;border:3px solid white;
+      box-shadow:0 1px 8px rgba(0,0,0,0.45);
+    "></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+}
+
 function entityKey(entity: AnyRecord, index: number): string {
   return String(entity.id ?? entity.vehicleId ?? entity.vehicle_id ?? entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? `idx-${index}`);
 }
 
 function makeGeofenceCircle(zone: AnyRecord, index: number): L.Circle | null {
-  const lat = Number(zone.lat ?? zone.latitude ?? zone.center_lat);
-  const lng = Number(zone.lng ?? zone.longitude ?? zone.center_lng);
+  const lat = Number(zone.lat ?? zone.latitude ?? zone.center_lat ?? zone.centerLat);
+  const lng = Number(zone.lng ?? zone.longitude ?? zone.center_lng ?? zone.centerLng);
   if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return null;
   return L.circle([lat, lng], {
-    radius: Number(zone.radius_meters ?? 8000),
+    radius: Number(zone.radius_meters ?? zone.radiusMeters ?? 8000),
     color: "#14b8a6",
     fillColor: "#14b8a6",
     fillOpacity: 0.06,
@@ -73,21 +91,80 @@ function makeGeofenceCircle(zone: AnyRecord, index: number): L.Circle | null {
   });
 }
 
+// Arbitrary-shape geofence: polygonJson is an array of [lat,lng] vertices (or {lat,lng}).
+// Returns a Leaflet polygon, or null if the shape has fewer than 3 valid vertices.
+function makeGeofencePolygon(zone: AnyRecord): L.Polygon | null {
+  const raw = zone.polygonJson ?? zone.polygon_json;
+  let verts: unknown[] = [];
+  if (Array.isArray(raw)) verts = raw;
+  else if (typeof raw === "string") { try { verts = JSON.parse(raw); } catch { return null; } }
+  const points = verts
+    .map((v) => {
+      if (Array.isArray(v) && v.length >= 2) return [Number(v[0]), Number(v[1])] as [number, number];
+      if (v && typeof v === "object" && "lat" in v && "lng" in v) return [Number((v as AnyRecord).lat), Number((v as AnyRecord).lng)] as [number, number];
+      return null;
+    })
+    .filter((p): p is [number, number] => p !== null && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (points.length < 3) return null;
+  return L.polygon(points, {
+    color: "#7c3aed",
+    fillColor: "#7c3aed",
+    fillOpacity: 0.07,
+    weight: 1.5,
+  });
+}
+
+function makeRoutePolyline(route: AnyRecord, index: number): L.Polyline | null {
+  const rawPoints = Array.isArray(route.points) ? route.points : Array.isArray(route.path) ? route.path : [];
+  const points = rawPoints
+    .map((point: AnyRecord | [number, number]) => {
+      if (Array.isArray(point) && point.length >= 2) {
+        return [Number(point[0]), Number(point[1])] as [number, number];
+      }
+      const lat = Number((point as AnyRecord).lat ?? (point as AnyRecord).latitude ?? (point as AnyRecord).center_lat);
+      const lng = Number((point as AnyRecord).lng ?? (point as AnyRecord).longitude ?? (point as AnyRecord).center_lng);
+      return [lat, lng] as [number, number];
+    })
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0);
+
+  if (points.length < 2) return null;
+
+  return L.polyline(points, {
+    color: String(route.color ?? "#0ea5e9"),
+    weight: 3,
+    opacity: 0.9,
+    dashArray: "8 8",
+    lineCap: "round",
+    lineJoin: "round",
+  }).bindTooltip(String(route.label ?? route.routeCode ?? route.name ?? `Route ${index + 1}`), { sticky: true });
+}
+
 interface LiveMapProps {
   entities: AnyRecord[];
   geofences: AnyRecord[];
+  routeTrails?: AnyRecord[];
   onSelect: (entity: AnyRecord) => void;
   /** When set, the map pans/zooms to this vehicle (matched by id/label). */
   focusId?: string | null;
+  /** Breadcrumb-replay trail: the full route the map fits to and draws as an amber polyline. */
+  replayTrail?: Array<[number, number]>;
+  /** Playback marker position along the replay trail; null hides it. */
+  replayMarker?: [number, number] | null;
 }
 
-export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps) {
+export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focusId, replayTrail = [], replayMarker = null }: LiveMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const coordsRef = useRef<Map<string, [number, number]>>(new Map());
   const hasFitRef = useRef(false);
-  const geofenceLayersRef = useRef<L.Circle[]>([]);
+  const geofenceLayersRef = useRef<(L.Circle | L.Polygon)[]>([]);
+  const routeLayersRef = useRef<L.Polyline[]>([]);
+  const replayLineRef = useRef<L.Polyline | null>(null);
+  const replayMarkerRef = useRef<L.Marker | null>(null);
+  // Fingerprint of the currently-drawn trail, so we only re-fit bounds when the trail
+  // actually changes (a new fetch) — not on every playback-marker move.
+  const replayTrailKeyRef = useRef<string>("");
   // Store onSelect in a ref so markers don't need to be recreated when it changes
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -132,6 +209,10 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
       mapRef.current = null;
       markersRef.current.clear();
       coordsRef.current.clear();
+      routeLayersRef.current = [];
+      replayLineRef.current = null;
+      replayMarkerRef.current = null;
+      replayTrailKeyRef.current = "";
       hasFitRef.current = false;
     };
   }, []);
@@ -164,22 +245,28 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
       const isStale = Boolean(entity.isStale);
       const deviceStatus = String(entity.deviceStatus ?? entity.device_status ?? "--");
       const camStatus = String(entity.cameraStatus ?? entity.camera_status ?? "--");
+      const connectivity = String(entity.connectivityStatus ?? entity.connectivity_status ?? "--");
+      const connectivityIssues = String(entity.connectivityIssues ?? entity.connectivity_issues ?? "None");
+      // Reverse-geocoded street address (cached server-side); shown instead of raw coords.
+      const address = String(entity.address ?? "").trim();
 
       const popupHtml =
         `<div style="font-family:system-ui;font-size:12px;min-width:190px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
           <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${isStale ? "Offline" : status}</p>
+          ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
           <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Device: ${deviceStatus} &bull; Cam: ${camStatus}</p>
+          <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Connectivity: ${connectivity} &bull; ${connectivityIssues}</p>
         </div>`;
 
       let marker = markers.get(key);
       if (marker) {
         marker.setLatLng([lat, lng]);
-        marker.setIcon(makeVehicleIcon(risk, status, speed, heading, isStale));
+        marker.setIcon(makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus));
         marker.setPopupContent(popupHtml);
       } else {
-        marker = L.marker([lat, lng], { icon: makeVehicleIcon(risk, status, speed, heading, isStale) })
+        marker = L.marker([lat, lng], { icon: makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus) })
           .addTo(map)
           .bindPopup(popupHtml, { closeButton: false });
         markers.set(key, marker);
@@ -234,13 +321,109 @@ export function LiveMap({ entities, geofences, onSelect, focusId }: LiveMapProps
     geofenceLayersRef.current = [];
 
     geofences.forEach((zone, index) => {
-      const circle = makeGeofenceCircle(zone, index);
-      if (circle) {
-        circle.addTo(map).bindTooltip(String(zone.name ?? "Zone"), { permanent: false, direction: "center" });
-        geofenceLayersRef.current.push(circle);
+      // Polygon geofences (polygonJson present) render as arbitrary shapes; everything
+      // else falls back to the circle (center + radius) rendering.
+      const hasPolygon = zone.polygonJson ?? zone.polygon_json;
+      const layer = hasPolygon ? makeGeofencePolygon(zone) : makeGeofenceCircle(zone, index);
+      if (layer) {
+        layer.addTo(map).bindTooltip(String(zone.name ?? "Zone"), { permanent: false, direction: "center" });
+        geofenceLayersRef.current.push(layer);
       }
     });
   }, [geofences]);
+
+  // Draw geospatial route trails once the route planner selects a real route.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    routeLayersRef.current.forEach((layer) => layer.remove());
+    routeLayersRef.current = [];
+
+    routeTrails.forEach((route, index) => {
+      const polyline = makeRoutePolyline(route, index);
+      if (polyline) {
+        polyline.addTo(map);
+        routeLayersRef.current.push(polyline);
+      }
+    });
+  }, [routeTrails]);
+
+  // Re-fit once if the first meaningful thing on the map is a route trail instead of
+  // a live vehicle position. This keeps new users from landing on an empty canvas.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || hasFitRef.current) return;
+    if (markersRef.current.size === 0 && routeLayersRef.current.length > 0) {
+      try {
+        const bounds = L.featureGroup(routeLayersRef.current).getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds.pad(0.15), { maxZoom: 10, animate: false });
+          hasFitRef.current = true;
+        }
+      } catch {
+        // ignore invalid route bounds
+      }
+    }
+  }, [routeTrails]);
+
+  // Breadcrumb-replay trail: draw the whole fetched route as an amber polyline and fit
+  // the view to it whenever the trail changes (a fresh fetch / new time window). Playback
+  // marker moves are handled separately so scrubbing doesn't yank the viewport.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const trailKey = replayTrail.length > 0
+      ? `${replayTrail.length}:${replayTrail[0][0]},${replayTrail[0][1]}:${replayTrail[replayTrail.length - 1][0]},${replayTrail[replayTrail.length - 1][1]}`
+      : "";
+
+    if (trailKey === replayTrailKeyRef.current) return;
+    replayTrailKeyRef.current = trailKey;
+
+    if (replayLineRef.current) {
+      replayLineRef.current.remove();
+      replayLineRef.current = null;
+    }
+
+    if (replayTrail.length < 2) return;
+
+    const line = L.polyline(replayTrail, {
+      color: "#f59e0b",
+      weight: 4,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(map);
+    replayLineRef.current = line;
+
+    try {
+      const bounds = line.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.2), { maxZoom: 15, animate: true });
+    } catch {
+      // identical coords → invalid bounds; leave the current view
+    }
+  }, [replayTrail]);
+
+  // Move (or hide) the playback marker along the replay trail.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!replayMarker) {
+      if (replayMarkerRef.current) {
+        replayMarkerRef.current.remove();
+        replayMarkerRef.current = null;
+      }
+      return;
+    }
+
+    if (replayMarkerRef.current) {
+      replayMarkerRef.current.setLatLng(replayMarker);
+    } else {
+      replayMarkerRef.current = L.marker(replayMarker, { icon: makeReplayIcon(), zIndexOffset: 1000 }).addTo(map);
+    }
+  }, [replayMarker]);
 
   return (
     <div

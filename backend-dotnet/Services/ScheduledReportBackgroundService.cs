@@ -40,7 +40,13 @@ public sealed class ScheduledReportBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
             try
             {
-                await RunScheduledCycleAsync(stoppingToken);
+                // Cross-tenant worker (all-tenant scheduled reports, filtered by tenant_id):
+                // run the whole tick under the platform-admin bypass scope.
+                using (var tickScope = scopeFactory.CreateScope())
+                {
+                    var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
+                    await tickDb.RunInSystemScopeAsync(() => RunScheduledCycleAsync(stoppingToken), stoppingToken);
+                }
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, stoppingToken);
             }
@@ -231,7 +237,7 @@ public sealed class ScheduledReportBackgroundService(
             else
             {
                 // External email/SMS not configured — record status
-                await audit.LogAsync("scheduled_report.delivery_not_configured",
+                await audit.LogSystemAsync("scheduled_report.delivery_not_configured",
                     "scheduled_report", scheduledId, ct: ct);
                 logger.LogWarning(
                     "Scheduled report {Id}: delivery_method='{Method}' has no configured provider",
@@ -285,7 +291,7 @@ public sealed class ScheduledReportBackgroundService(
                 c.Parameters.AddWithValue("@id",      scheduledId);
             }, ct);
 
-        await audit.LogAsync("scheduled_report.run",
+        await audit.LogSystemAsync("scheduled_report.run",
             "scheduled_report", scheduledId, ct: ct);
     }
 

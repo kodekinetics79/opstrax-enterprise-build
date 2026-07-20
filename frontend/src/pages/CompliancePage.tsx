@@ -122,7 +122,7 @@ export function CompliancePage() {
   if (hasError) return <EmptyState title="Compliance unavailable" subtitle="Unable to load compliance records right now. Refresh to try again." />;
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -429,9 +429,9 @@ export function CompliancePage() {
                   </div>
                   <p className="text-xs text-slate-600 leading-relaxed">{String(rec.description)}</p>
                   {!!rec.action_label && (
-                    <button className="mt-1 rounded border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 transition">
-                      {String(rec.action_label)}
-                    </button>
+                    <p className="mt-1 text-xs font-semibold text-violet-700">
+                      Recommended: {String(rec.action_label)}
+                    </p>
                   )}
                 </div>
               ))}

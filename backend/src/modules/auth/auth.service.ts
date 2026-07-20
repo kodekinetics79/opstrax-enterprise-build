@@ -12,7 +12,6 @@ type RawUserRow = {
   roleId: string | number | null;
   roleName: string;
   passwordHash: string | null;
-  demoPassword: string | null;
   userPermissionsJson: unknown;
   rolePermissionsJson: unknown;
 };
@@ -51,7 +50,6 @@ async function resolveRawUser(email: string) {
       u.role_id AS "roleId",
       u.role_name AS "roleName",
       u.password_hash AS "passwordHash",
-      u.demo_password AS "demoPassword",
       u.permissions_json AS "userPermissionsJson",
       r.permissions_json AS "rolePermissionsJson"
     FROM users u
@@ -68,9 +66,7 @@ export async function authenticateWithPassword(email: string, password: string):
   const row = await resolveRawUser(email);
   if (!row) return null;
 
-  const passwordOk =
-    verifyPassword(password, row.passwordHash) ||
-    (!row.passwordHash && Boolean(row.demoPassword) && row.demoPassword === password);
+  const passwordOk = verifyPassword(password, row.passwordHash);
 
   if (!passwordOk) return null;
 
@@ -85,10 +81,6 @@ export async function authenticateWithPassword(email: string, password: string):
     `,
     [row.id, row.companyId, token, generateToken(32), csrfToken]
   );
-
-  if (!row.passwordHash && row.demoPassword === password) {
-    await query("UPDATE users SET password_hash=$1 WHERE id=$2", [hashPassword(password), row.id]);
-  }
 
   return {
     token,
@@ -232,14 +224,12 @@ export async function changePassword(token: string, currentPassword: string, nex
   const existing = await getSessionByToken(token);
   if (!existing) return null;
 
-  const row = await queryOne<{ passwordHash: string | null; demoPassword: string | null }>(
-    "SELECT password_hash AS \"passwordHash\", demo_password AS \"demoPassword\" FROM users WHERE id=$1 LIMIT 1",
+  const row = await queryOne<{ passwordHash: string | null }>(
+    "SELECT password_hash AS \"passwordHash\" FROM users WHERE id=$1 LIMIT 1",
     [existing.user.id]
   );
 
-  const passwordOk =
-    verifyPassword(currentPassword, row?.passwordHash) ||
-    (!row?.passwordHash && row?.demoPassword === currentPassword);
+  const passwordOk = verifyPassword(currentPassword, row?.passwordHash);
 
   if (!passwordOk) return false;
 

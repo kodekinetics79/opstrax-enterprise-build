@@ -73,7 +73,7 @@ export function ControlTowerPage() {
   const tabs = ["Dispatch", "Active Trips", "Diagnostics", "Video Safety"];
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Control Tower"
         title="Fleet Command Center"

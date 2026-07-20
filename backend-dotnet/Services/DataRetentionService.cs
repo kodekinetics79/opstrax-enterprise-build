@@ -87,8 +87,8 @@ public sealed class DataRetentionService(Database db, AuditService audit)
                 soft_delete_only      = EXCLUDED.soft_delete_only,
                 legal_hold_active     = @hold,
                 legal_hold_reason     = COALESCE(@holdReason, data_retention_policies.legal_hold_reason),
-                legal_hold_set_at     = CASE WHEN @hold = 1 AND data_retention_policies.legal_hold_active = 0 THEN NOW() ELSE data_retention_policies.legal_hold_set_at END,
-                legal_hold_set_by     = CASE WHEN @hold = 1 AND data_retention_policies.legal_hold_active = 0 THEN @upd ELSE data_retention_policies.legal_hold_set_by END,
+                legal_hold_set_at     = CASE WHEN @hold AND NOT data_retention_policies.legal_hold_active THEN NOW() ELSE data_retention_policies.legal_hold_set_at END,
+                legal_hold_set_by     = CASE WHEN @hold AND NOT data_retention_policies.legal_hold_active THEN @upd ELSE data_retention_policies.legal_hold_set_by END,
                 updated_at            = NOW(),
                 updated_by            = EXCLUDED.updated_by",
             c =>
@@ -99,8 +99,8 @@ public sealed class DataRetentionService(Database db, AuditService audit)
                 c.Parameters.AddWithValue("@notif",      Math.Max(7,  policy.NotificationDays));
                 c.Parameters.AddWithValue("@report",     Math.Max(30, policy.ReportExecutionDays));
                 c.Parameters.AddWithValue("@sec",        Math.Max(90, policy.SecurityEventDays));
-                c.Parameters.AddWithValue("@soft",       policy.SoftDeleteOnly ? 1 : 0);
-                c.Parameters.AddWithValue("@hold",       legalHoldActive ? 1 : 0);
+                c.Parameters.AddWithValue("@soft",       policy.SoftDeleteOnly);
+                c.Parameters.AddWithValue("@hold",       legalHoldActive);
                 c.Parameters.AddWithValue("@holdReason", (object?)policy.LegalHoldReason ?? DBNull.Value);
                 c.Parameters.AddWithValue("@holdAt",     (object?)policy.LegalHoldSetAt  ?? DBNull.Value);
                 c.Parameters.AddWithValue("@holdBy",     (object?)policy.LegalHoldSetBy  ?? DBNull.Value);

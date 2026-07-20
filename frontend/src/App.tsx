@@ -1,11 +1,15 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
+import { FeatureFlagsProvider, useFlag } from "@/hooks/useFeatureFlags";
 import { RequirePermission } from "@/hooks/usePermission";
+import { GCC_COUNTRIES, RequireRegion } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { modules } from "@/modules/moduleConfig";
 import { LoginPage } from "@/pages/LoginPage";
+import { SsoCallbackPage } from "@/pages/SsoCallbackPage";
+import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
 import { LoadingState } from "@/components/ui";
 
 const operatingRoutes = [
@@ -28,6 +32,7 @@ const operatingRoutes = [
   "quotations",
   "load-bookings",
   "shipments",
+  "trips",
   "dispatch-board",
   "route-plans",
   "proof-of-delivery",
@@ -39,8 +44,10 @@ const AlertsCenterPage = lazy(() => import("@/pages/AlertsCenterPage").then((mod
 const DispatchPage = lazy(() => import("@/pages/DispatchPage").then((module) => ({ default: module.DispatchPage })));
 const DispatchCommandPage = lazy(() => import("@/pages/DispatchCommandPage").then((module) => ({ default: module.DispatchCommandPage })));
 const ProofOfDeliveryPage = lazy(() => import("@/pages/ProofOfDeliveryPage").then((module) => ({ default: module.ProofOfDeliveryPage })));
+const CustomerPortalPage = lazy(() => import("@/pages/CustomerPortalPage").then((module) => ({ default: module.CustomerPortalPage })));
 const DriverScorecardsPage = lazy(() => import("@/pages/DriverScorecardsPage").then((module) => ({ default: module.DriverScorecardsPage })));
 const LastMileDeliveryPage = lazy(() => import("@/pages/LastMileDeliveryPage").then((module) => ({ default: module.LastMileDeliveryPage })));
+const OperationsProofCenterPage = lazy(() => import("@/pages/OperationsProofCenterPage").then((module) => ({ default: module.OperationsProofCenterPage })));
 const GeofenceManagementPage = lazy(() => import("@/pages/GeofenceManagementPage").then((module) => ({ default: module.GeofenceManagementPage })));
 const FleetUtilizationPage = lazy(() => import("@/pages/FleetUtilizationPage").then((module) => ({ default: module.FleetUtilizationPage })));
 const CustomersPage = lazy(() => import("@/pages/CustomersPage").then((module) => ({ default: module.CustomersPage })));
@@ -58,7 +65,6 @@ const CustomerVisibilityPage = lazy(() => import("@/pages/CustomerVisibilityPage
 const FinancialAnalyticsPage = lazy(() => import("@/pages/FinancialAnalyticsPage").then((module) => ({ default: module.FinancialAnalyticsPage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
-const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((module) => ({ default: module.FeatureFlagsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
 const DigitalFormsPage = lazy(() => import("@/pages/DigitalFormsPage").then((module) => ({ default: module.DigitalFormsPage })));
 const Batch3OperationsPage = lazy(() => import("@/pages/Batch3OperationsPage").then((module) => ({ default: module.Batch3OperationsPage })));
@@ -84,6 +90,7 @@ const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module)
 const VehiclesModulePage = lazy(() => import("@/pages/VehiclesModulePage").then((module) => ({ default: module.VehiclesModulePage })));
 const DriversModulePage = lazy(() => import("@/pages/DriversModulePage").then((module) => ({ default: module.DriversModulePage })));
 const JobsPage = lazy(() => import("@/pages/JobsPage").then((module) => ({ default: module.JobsPage })));
+const TripsPage = lazy(() => import("@/pages/TripsPage").then((module) => ({ default: module.TripsPage })));
 const IotDevicesPage = lazy(() => import("@/pages/IotDevicesPage").then((module) => ({ default: module.IotDevicesPage })));
 const TelematicsCommandPage = lazy(() => import("@/pages/TelematicsCommandPage").then((module) => ({ default: module.TelematicsCommandPage })));
 const ModulePage = lazy(() => import("@/pages/ModulePage").then((module) => ({ default: module.ModulePage })));
@@ -112,13 +119,40 @@ const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").th
 const DriverNotificationsPage = lazy(() => import("@/pages/driver/DriverNotificationsPage").then(m => ({ default: m.DriverNotificationsPage })));
 const PlatformOpsPage = lazy(() => import("@/pages/PlatformOpsPage"));
 const FleetHealthPage = lazy(() => import("@/pages/FleetHealthPage").then(m => ({ default: m.FleetHealthPage })));
+const FleetIntelligencePage = lazy(() => import("@/pages/FleetIntelligencePage").then(m => ({ default: m.FleetIntelligencePage })));
 const FleetOverviewPage = lazy(() => import("@/pages/FleetOverviewPage").then(m => ({ default: m.FleetOverviewPage })));
 // Platform Admin — global SaaS business control plane (own auth + routing)
 const PlatformApp = lazy(() => import("@/pages/platform/PlatformApp"));
 
+const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((module) => ({ default: module.FeatureFlagsPage })));
+
 function ProtectedShell() {
   const { session } = useAuth();
-  return session ? <AppShell /> : <Navigate to="/login" replace />;
+  // Flags are only resolvable for an authenticated user (they're evaluated per-user
+  // server-side), so the provider lives inside the authenticated shell.
+  return session
+    ? <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>
+    : <Navigate to="/login" replace />;
+}
+
+/**
+ * Route guard for a feature flag. The server gate (Program.cs) is the real
+ * enforcement — this just keeps the user out of a page whose API would 403.
+ * `fallback` = what to assume before flags load: `true` for a kill switch over
+ * existing behaviour, so the page doesn't flicker away on every load.
+ */
+function RequireFlag({ flag, fallback = true, children }: { flag: string; fallback?: boolean; children: ReactNode }) {
+  const on = useFlag(flag, fallback);
+  if (on) return <>{children}</>;
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 p-16 text-center">
+      <p className="text-lg font-bold text-slate-900">This feature is turned off</p>
+      <p className="max-w-md text-sm text-slate-500">
+        An administrator has switched it off for your organisation. It can be re-enabled
+        under Settings → Feature flags.
+      </p>
+    </div>
+  );
 }
 
 export default function App() {
@@ -131,12 +165,18 @@ export default function App() {
         <Route path="/platform/*" element={<PlatformApp />} />
 
         <Route path="/login" element={session ? <Navigate to={getLandingRouteForSession(session)} replace /> : <LoginPage />} />
+        <Route path="/sso/callback" element={<SsoCallbackPage />} />
+        <Route path="/forgot-password" element={<ResetPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
+        {/* The driver portal is a SEPARATE shell from ProtectedShell, so it needs its own
+            FeatureFlagsProvider — without it useFlag() would silently return the fallback
+            forever and the POD capture flag would gate nothing in the driver UI. */}
         {session ? (
-          <Route element={<RequirePermission permission="driver:self"><DriverLayout /></RequirePermission>}>
+          <Route element={<RequirePermission permission="driver:self"><FeatureFlagsProvider><DriverLayout /></FeatureFlagsProvider></RequirePermission>}>
             <Route path="/driver"               element={<DriverDashboardPage />} />
             <Route path="/driver/assignments"   element={<DriverAssignmentPage />} />
             <Route path="/driver/dvir"           element={<DriverDvirPage />} />
@@ -153,7 +193,7 @@ export default function App() {
         <Route path="/live-dashboard" element={<RequirePermission permission="dashboard:view"><FleetOverviewPage /></RequirePermission>} />
         <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
-        <Route path="/map-view" element={<RequirePermission permission="map:view"><LiveMapPage /></RequirePermission>} />
+        <Route path="/map-view" element={<RequirePermission permission="telemetry.live_state.read"><LiveMapPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
         <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
         <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
@@ -161,7 +201,10 @@ export default function App() {
         {/* ── Intelligence ── */}
         <Route path="/command-center" element={<RequirePermission permission="dashboard:view"><CommandCenterPage /></RequirePermission>} />
         <Route path="/control-tower" element={<RequirePermission permission="dashboard:view"><ControlTowerPage /></RequirePermission>} />
-        <Route path="/ai-copilot"           element={<RequirePermission permission="reports:view"><AiCopilotPage /></RequirePermission>} />
+        {/* Real flag consumer: the `ai_copilot` kill switch. Turning it off 403s /api/ai/*
+            server-side and takes this page out of reach. fallback=true so the page doesn't
+            vanish while flags are still loading. */}
+        <Route path="/ai-copilot"           element={<RequirePermission permission="reports:view"><RequireFlag flag="ai_copilot"><AiCopilotPage /></RequireFlag></RequirePermission>} />
         <Route path="/predictive-analytics" element={<RequirePermission permission="reports:view"><PredictiveAnalyticsPage /></RequirePermission>} />
         <Route path="/reports-analytics" element={<RequirePermission permission="reports:view"><ReportsPage /></RequirePermission>} />
         <Route path="/reports" element={<RequirePermission permission="reports:view"><ReportsPage /></RequirePermission>} />
@@ -174,7 +217,7 @@ export default function App() {
         <Route path="/drivers" element={<Navigate to="/drivers/overview" replace />} />
         <Route path="/drivers/*" element={<RequirePermission permission="drivers:view"><DriversModulePage /></RequirePermission>} />
         <Route path="/assets" element={<RequirePermission permission="vehicles:view"><EntityListPage kind="assets" /></RequirePermission>} />
-        <Route path="/iot-devices" element={<RequirePermission permission="telematics:devices:view"><IotDevicesPage /></RequirePermission>} />
+        <Route path="/iot-devices" element={<RequirePermission permission="telemetry.devices.read"><IotDevicesPage /></RequirePermission>} />
         <Route path="/gps-tracking" element={<RequirePermission permission="telematics:gps:view"><TelematicsCommandPage kind="gps-tracking" /></RequirePermission>} />
         <Route path="/obd-j1939" element={<RequirePermission permission="telematics:diagnostics:view"><TelematicsCommandPage kind="obd-j1939" /></RequirePermission>} />
         <Route path="/sensor-health" element={<RequirePermission permission="telematics:sensors:view"><TelematicsCommandPage kind="sensor-health" /></RequirePermission>} />
@@ -185,25 +228,28 @@ export default function App() {
         <Route path="/dispatch" element={<RequirePermission permission="dispatch:view"><DispatchCommandPage /></RequirePermission>} />
         <Route path="/dispatch-legacy" element={<RequirePermission permission="dispatch:view"><DispatchPage /></RequirePermission>} />
         <Route path="/jobs" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
+        <Route path="/trips" element={<RequirePermission permission="dispatch:view"><TripsPage /></RequirePermission>} />
         <Route path="/routes" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
         <Route path="/route-planning" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
         <Route path="/shipments" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
         <Route path="/load-bookings" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
         <Route path="/route-plans" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
+        <Route path="/operations/proof-center" element={<RequirePermission permission="operations.execution_summary.read"><OperationsProofCenterPage /></RequirePermission>} />
         <Route path="/proof-of-delivery" element={<RequirePermission permission="shipments:view"><ProofOfDeliveryPage /></RequirePermission>} />
         <Route path="/last-mile-delivery" element={<RequirePermission permission="dispatch:view"><LastMileDeliveryPage /></RequirePermission>} />
 
         {/* ── Customer Portal ── */}
         <Route path="/customer-eta" element={<RequirePermission permission="customer_portal:view"><CustomerEtaPage /></RequirePermission>} />
-        <Route path="/customer-portal" element={<RequirePermission permission="customer_portal:view"><CustomerEtaPage /></RequirePermission>} />
+        <Route path="/customer-portal" element={<RequirePermission permission="customer_portal:view"><CustomerPortalPage /></RequirePermission>} />
         <Route path="/customer-visibility" element={<RequirePermission permission="customer_portal:view"><CustomerVisibilityPage /></RequirePermission>} />
 
         {/* ── Fleet Health + Safety Command Center ── */}
         <Route path="/fleet-health" element={<RequirePermission permission="dashboard:view"><FleetHealthPage /></RequirePermission>} />
+        <Route path="/fleet-intelligence" element={<RequirePermission permission="dashboard:view"><FleetIntelligencePage /></RequirePermission>} />
         <Route path="/fleet-workspace" element={<RequirePermission permission="fleet:view"><FleetWorkspacePage mode="command" /></RequirePermission>} />
         <Route path="/fleet-cold-chain" element={<RequirePermission permission="fleet:view"><FleetColdChainPage /></RequirePermission>} />
         <Route path="/fleet-assets" element={<RequirePermission permission="fleet:view"><FleetAssetManagementPage /></RequirePermission>} />
-        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><FleetSaudiReadinessPage /></RequirePermission>} />
+        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><RequireRegion countries={GCC_COUNTRIES} moduleTitle="Saudi Readiness"><FleetSaudiReadinessPage /></RequireRegion></RequirePermission>} />
         <Route path="/fleet-compliance" element={<RequirePermission permission="compliance:view"><FleetCompliancePage /></RequirePermission>} />
         <Route path="/logistics-workspace" element={<RequirePermission permission="dispatch:view"><DispatchWorkspacePage mode="dispatch" /></RequirePermission>} />
 
@@ -244,6 +290,7 @@ export default function App() {
 
         {/* ── Financials (standalone) ── */}
         <Route path="/invoices"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
+        <Route path="/ar-aging"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/payments"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/profitability" element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
 
@@ -283,8 +330,8 @@ export default function App() {
 
         {/* ── Settings / Platform (accessible to all authenticated users) ── */}
         <Route path="/settings" element={<RequirePermission permission="settings:view"><SettingsPage /></RequirePermission>} />
-        <Route path="/admin" element={<RequirePermission permission="users:view"><AdminPage /></RequirePermission>} />
-        <Route path="/user-management" element={<RequirePermission permission="users:view"><AdminPage /></RequirePermission>} />
+        <Route path="/admin" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
+        <Route path="/user-management" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
         <Route path="/ops" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
         <Route path="/platform/operations" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
           <Route path="/about" element={<RequirePermission permission="settings:view"><AboutPage /></RequirePermission>} />

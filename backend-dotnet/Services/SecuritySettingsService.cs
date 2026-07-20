@@ -84,10 +84,10 @@ public sealed class SecuritySettingsService(Database db, AuditService audit)
                  export_approval_required, audit_retention_days, data_retention_days,
                  created_at, updated_at, updated_by)
               VALUES
-                (@cid, @mfa, @mfaRoles, @minLen,
+                (@cid, @mfa, @mfaRoles::jsonb, @minLen,
                  @upper, @num, @sym,
                  @expiry, @idle, @absolute,
-                 @maxFail, @lockout, @sso,
+                 @maxFail, @lockout, @sso::jsonb,
                  @exportApproval, @auditDays, @dataDays,
                  NOW(), NOW(), @updatedBy)
               ON CONFLICT (company_id) DO UPDATE SET
@@ -111,19 +111,19 @@ public sealed class SecuritySettingsService(Database db, AuditService audit)
             c =>
             {
                 c.Parameters.AddWithValue("@cid",            companyId);
-                c.Parameters.AddWithValue("@mfa",            settings.MfaRequired ? 1 : 0);
+                c.Parameters.AddWithValue("@mfa",            settings.MfaRequired);
                 c.Parameters.AddWithValue("@mfaRoles",       JsonSerializer.Serialize(settings.MfaRequiredRoles));
                 c.Parameters.AddWithValue("@minLen",         Math.Max(6, settings.PasswordMinLength));
-                c.Parameters.AddWithValue("@upper",          settings.PasswordRequiresUppercase ? 1 : 0);
-                c.Parameters.AddWithValue("@num",            settings.PasswordRequiresNumber ? 1 : 0);
-                c.Parameters.AddWithValue("@sym",            settings.PasswordRequiresSymbol ? 1 : 0);
+                c.Parameters.AddWithValue("@upper",          settings.PasswordRequiresUppercase);
+                c.Parameters.AddWithValue("@num",            settings.PasswordRequiresNumber);
+                c.Parameters.AddWithValue("@sym",            settings.PasswordRequiresSymbol);
                 c.Parameters.AddWithValue("@expiry",         settings.PasswordExpiryDays);
                 c.Parameters.AddWithValue("@idle",           Math.Max(5, settings.SessionIdleTimeoutMinutes));
                 c.Parameters.AddWithValue("@absolute",       Math.Max(30, settings.SessionAbsoluteTimeoutMinutes));
                 c.Parameters.AddWithValue("@maxFail",        Math.Max(1, settings.MaxFailedLoginAttempts));
                 c.Parameters.AddWithValue("@lockout",        Math.Max(1, settings.LockoutDurationMinutes));
                 c.Parameters.AddWithValue("@sso",            JsonSerializer.Serialize(settings.AllowedSsoProviders));
-                c.Parameters.AddWithValue("@exportApproval", settings.ExportApprovalRequired ? 1 : 0);
+                c.Parameters.AddWithValue("@exportApproval", settings.ExportApprovalRequired);
                 c.Parameters.AddWithValue("@auditDays",      Math.Max(30, settings.AuditRetentionDays));
                 c.Parameters.AddWithValue("@dataDays",       Math.Max(30, settings.DataRetentionDays));
                 c.Parameters.AddWithValue("@updatedBy",      updatedBy);
@@ -151,6 +151,32 @@ public sealed class SecuritySettingsService(Database db, AuditService audit)
             failures.Add("Password must contain at least one special character");
 
         return (failures.Count == 0, [.. failures]);
+    }
+
+    public static bool IsMfaRequiredForRole(SecuritySettings settings, string? role)
+    {
+        if (!settings.MfaRequired) return false;
+
+        var configuredRoles = settings.MfaRequiredRoles
+            .Select(NormalizeRole)
+            .Where(value => value.Length > 0)
+            .ToArray();
+
+        // An enabled policy with no role restriction applies tenant-wide.
+        if (configuredRoles.Length == 0) return true;
+
+        var normalizedRole = NormalizeRole(role);
+        return configuredRoles.Contains("*", StringComparer.Ordinal)
+            || configuredRoles.Contains(normalizedRole, StringComparer.Ordinal);
+    }
+
+    private static string NormalizeRole(string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return string.Empty;
+        if (role.Trim() == "*") return "*";
+        return new string(role.Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
     }
 
     private static string[] ParseJsonArray(object? value)

@@ -1,8 +1,11 @@
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 
 namespace Opstrax.Api.Services;
 
@@ -39,9 +42,19 @@ public sealed class SafetyBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
             try
             {
-                await ProcessTelemetryAlertsAsync(stoppingToken);
-                await DetectRepeatedSpeedingAsync(stoppingToken);
-                await RecomputeDriverScoresAsync(stoppingToken);
+                // Cross-tenant worker (all-company telemetry/safety, filtered by company_id):
+                // run the whole tick under the platform-admin bypass scope.
+                using (var tickScope = scopeFactory.CreateScope())
+                {
+                    var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
+                    await tickDb.RunInSystemScopeAsync(async () =>
+                    {
+                        await ProcessTelemetryAlertsAsync(stoppingToken);
+                        await DetectRepeatedSpeedingAsync(stoppingToken);
+                        await RecomputeDriverScoresAsync(stoppingToken);
+                        await RefreshFleetHealthSnapshotsAsync(stoppingToken);
+                    }, stoppingToken);
+                }
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, stoppingToken);
             }
@@ -106,9 +119,9 @@ public sealed class SafetyBackgroundService(
             // Build meta_json
             var meta = $"{{\"source\":\"telemetry_alert\",\"alertId\":{alertId},\"alertType\":\"{alertType}\",\"severity\":\"{severity}\"}}";
 
-            try
-            {
-                await db.ExecuteAsync(
+                try
+                {
+                    await db.ExecuteAsync(
                     @"INSERT INTO safety_events
                         (company_id, driver_id, vehicle_id, device_id,
                          source_telemetry_alert_id, source_location_event_id,
@@ -136,6 +149,7 @@ public sealed class SafetyBackgroundService(
                     }, ct);
 
                 logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);
+                await CreateSafetyRecommendationAsync(companyId, alertId, alertType, severity, driverId, vehicleId, scoreImpact, ct);
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
             {
@@ -199,6 +213,7 @@ public sealed class SafetyBackgroundService(
                 }, ct);
 
             logger.LogInformation("Repeated speeding event created: company={CompanyId} driver={DriverId} count={Count}", companyId, driverId, count);
+            await CreateRepeatedSpeedingRecommendationAsync(companyId, driverId, count, weight, ct);
         }
     }
 
@@ -250,6 +265,79 @@ public sealed class SafetyBackgroundService(
                     c.Parameters.Add(new NpgsqlParameter("@bd", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = breakdown30d });
                 }, ct);
         }
+    }
+
+    private async Task RefreshFleetHealthSnapshotsAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var foundation = scope.ServiceProvider.GetRequiredService<SafetyMaintenanceFoundationService>();
+        await foundation.RefreshAllFleetHealthSnapshotsAsync(ct);
+    }
+
+    private async Task CreateSafetyRecommendationAsync(long companyId, long alertId, string alertType, string severity, long? driverId, long? vehicleId, decimal scoreImpact, CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+        var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
+        var sourceEventId = $"telemetry-alert:{alertId}";
+        var existing = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@tenantId AND recommendation_type='safety.telemetry.review' AND source_event_id=@sourceEventId",
+            c =>
+            {
+                c.Parameters.AddWithValue("@tenantId", companyId);
+                c.Parameters.AddWithValue("@sourceEventId", sourceEventId);
+            }, ct);
+        if (existing > 0) return;
+
+        _ = ai.CreateRecommendation(
+            companyId.ToString(CultureInfo.InvariantCulture),
+            "safety.telemetry.review",
+            $"Review {alertType.Replace('_', ' ')} event",
+            $"Telemetry alert {alertId} produced a {severity} safety event. Review the evidence and assign coaching if needed.",
+            Math.Min(0.95m, Math.Max(0.60m, 1m - (scoreImpact / 100m))),
+            Math.Min(0.95m, Math.Max(0.60m, scoreImpact / 100m)),
+            JsonSerializer.Serialize(new { alertId, alertType, severity, driverId, vehicleId, scoreImpact }),
+            JsonSerializer.Serialize(new { source = "telemetry_alert", alertId, alertType, severity }),
+            JsonSerializer.Serialize(new { action = "review_safety_event", alertId, alertType, severity }),
+            severity.ToLowerInvariant(),
+            sourceEventId,
+            ActorTypes.System,
+            "SafetyBackgroundService",
+            status: "active");
+    }
+
+    private async Task CreateRepeatedSpeedingRecommendationAsync(long companyId, long? driverId, long count, decimal weight, CancellationToken ct)
+    {
+        if (!driverId.HasValue) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Database>();
+        var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
+        var sourceEventId = $"repeated-speeding:{companyId}:{driverId}:{count}";
+        var existing = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@tenantId AND recommendation_type='safety.repeated_speeding.review' AND source_event_id=@sourceEventId",
+            c =>
+            {
+                c.Parameters.AddWithValue("@tenantId", companyId);
+                c.Parameters.AddWithValue("@sourceEventId", sourceEventId);
+            }, ct);
+        if (existing > 0) return;
+
+        _ = ai.CreateRecommendation(
+            companyId.ToString(CultureInfo.InvariantCulture),
+            "safety.repeated_speeding.review",
+            "Repeated speeding review required",
+            $"Driver {driverId} triggered {count} speeding events in the last 24 hours. This is a behavior pattern that needs coaching and supervisor review.",
+            Math.Min(0.96m, Math.Max(0.70m, 1m - (weight / 100m))),
+            Math.Min(0.96m, Math.Max(0.70m, weight / 100m)),
+            JsonSerializer.Serialize(new { driverId, count, weight }),
+            JsonSerializer.Serialize(new { source = "repeated_speeding", driverId, count, weight }),
+            JsonSerializer.Serialize(new { action = "review_driver_coaching", driverId, count }),
+            "critical",
+            sourceEventId,
+            ActorTypes.System,
+            "SafetyBackgroundService",
+            status: "active");
     }
 
     // Returns (score, event_count, breakdown_json) for a driver in a given day window.

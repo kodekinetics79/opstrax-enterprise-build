@@ -26,7 +26,7 @@ Future: GPS/OBD/Dashcam/Mobile App integrations
 
 ### Frontend
 
-- Enterprise command center UI
+- Enterprise dashboard UI
 - Module navigation
 - Dashboard KPIs
 - Live map placeholder

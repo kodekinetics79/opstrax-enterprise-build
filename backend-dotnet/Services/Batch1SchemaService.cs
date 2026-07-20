@@ -2,7 +2,7 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch1SchemaService(Database db)
+public sealed class Batch1SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
@@ -16,9 +16,14 @@ public sealed class Batch1SchemaService(Database db)
             await db.ExecuteAsync(sql, ct: ct);
         }
 
-        foreach (var sql in SeedStatements)
+        // Demo/synthetic data only on explicit opt-in — these statements mutate
+        // existing tenant rows cross-tenant (see DemoSeedGate).
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
         {
-            await db.ExecuteAsync(sql, ct: ct);
+            foreach (var sql in SeedStatements)
+            {
+                await db.ExecuteAsync(sql, ct: ct);
+            }
         }
     }
 
@@ -52,6 +57,9 @@ public sealed class Batch1SchemaService(Database db)
         new("drivers", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 10"),
         new("drivers", "compliance_score", "DECIMAL(6,2) NOT NULL DEFAULT 95"),
         new("drivers", "deleted_at", "TIMESTAMPTZ NULL"),
+        // Blind index (HMAC) for license_number — lets the uniqueness check match on
+        // encrypted values without decrypting. See PiiProtectionService.BlindIndex.
+        new("drivers", "license_number_bidx", "VARCHAR(64) NULL"),
         new("customers", "phone", "VARCHAR(50) NULL"),
         new("customers", "billing_address", "VARCHAR(300) NULL"),
         new("customers", "shipping_address", "VARCHAR(300) NULL"),
@@ -201,51 +209,55 @@ public sealed class Batch1SchemaService(Database db)
         @"INSERT INTO customers (company_id, customer_code, name, contact_name, email, phone, billing_address, shipping_address, status, sla_tier, sla_health_score, delivery_experience_score, risk_score)
           SELECT 1,'CUS-010','Potomac Government Services','Victor James','victor@potomacgov.example','+1 202 555 4110','1200 Pennsylvania Ave NW, Washington DC','650 N Glebe Rd, Arlington, VA','At Risk','Platinum',82,79,42
           WHERE NOT EXISTS (SELECT 1 FROM customers WHERE customer_code='CUS-010')",
+        // Child-evidence rows derive company_id from their PARENT (never a hardcoded 1),
+        // so a tenant's documents/contacts/addresses/timeline are stamped with that
+        // tenant's company_id — not company 1. (Fixes the cross-tenant company_id
+        // mismatch corruption found in seeded child rows.)
         @"INSERT INTO vehicle_documents (company_id, vehicle_id, document_type, document_name, status, expiry_date)
-          SELECT 1, v.id, 'Registration', v.vehicle_code || ' registration',
+          SELECT v.company_id, v.id, 'Registration', v.vehicle_code || ' registration',
                  CASE WHEN v.id % 6 = 0 THEN 'Expiring Soon' ELSE 'Active' END,
                  CURRENT_DATE + v.id*9 * INTERVAL '1 day'
           FROM vehicles v WHERE NOT EXISTS (SELECT 1 FROM vehicle_documents d WHERE d.vehicle_id=v.id)",
         @"INSERT INTO driver_documents (company_id, driver_id, document_type, document_name, status, expiry_date)
-          SELECT 1, d.id, 'License', d.driver_code || ' license file',
+          SELECT d.company_id, d.id, 'License', d.driver_code || ' license file',
                  CASE WHEN d.id % 6 = 0 THEN 'Expiring Soon' ELSE 'Active' END,
                  CURRENT_DATE + d.id*11 * INTERVAL '1 day'
           FROM drivers d WHERE NOT EXISTS (SELECT 1 FROM driver_documents x WHERE x.driver_id=d.id)",
         @"INSERT INTO driver_certifications (company_id, driver_id, certification_type, certification_number, status, expiry_date)
-          SELECT 1, d.id, 'CDL', 'CERT-' || LPAD(d.id::TEXT,5,'0'),
+          SELECT d.company_id, d.id, 'CDL', 'CERT-' || LPAD(d.id::TEXT,5,'0'),
                  CASE WHEN d.id % 7 = 0 THEN 'Review' ELSE 'Valid' END,
                  CURRENT_DATE + d.id*14 * INTERVAL '1 day'
           FROM drivers d WHERE NOT EXISTS (SELECT 1 FROM driver_certifications x WHERE x.driver_id=d.id)",
         @"INSERT INTO customer_contacts (company_id, customer_id, full_name, title, email, phone, is_primary)
-          SELECT 1, c.id, COALESCE(c.contact_name, c.name || ' Contact'), 'Operations Lead',
+          SELECT c.company_id, c.id, COALESCE(c.contact_name, c.name || ' Contact'), 'Operations Lead',
                  COALESCE(c.email, 'customer' || c.id || '@opstrax.example'),
                  COALESCE(c.phone, '+1 703 555 6100'), TRUE
           FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_contacts x WHERE x.customer_id=c.id)",
         @"INSERT INTO customer_addresses (company_id, customer_id, address_type, address_line, city, state, postal_code)
-          SELECT 1, c.id, 'Billing', COALESCE(c.billing_address, 'Northern Virginia Service Address'), 'Fairfax', 'VA', '22030'
+          SELECT c.company_id, c.id, 'Billing', COALESCE(c.billing_address, 'Northern Virginia Service Address'), 'Fairfax', 'VA', '22030'
           FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_addresses x WHERE x.customer_id=c.id)",
         @"INSERT INTO asset_documents (company_id, asset_id, document_type, document_name, status, expiry_date)
-          SELECT 1, a.id, 'Inspection', a.asset_code || ' inspection file',
+          SELECT a.company_id, a.id, 'Inspection', a.asset_code || ' inspection file',
                  CASE WHEN a.id % 5 = 0 THEN 'Review' ELSE 'Active' END,
                  CURRENT_DATE + a.id*13 * INTERVAL '1 day'
           FROM assets a WHERE NOT EXISTS (SELECT 1 FROM asset_documents x WHERE x.asset_id=a.id)",
         @"INSERT INTO vehicle_assignments (company_id, vehicle_id, driver_id, assignment_type, status)
-          SELECT 1, v.id, v.assigned_driver_id, 'Primary Driver', 'Active'
+          SELECT v.company_id, v.id, v.assigned_driver_id, 'Primary Driver', 'Active'
           FROM vehicles v WHERE v.assigned_driver_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM vehicle_assignments x WHERE x.vehicle_id=v.id)",
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
-          SELECT 1, 'Vehicle', v.id, 'batch1.ready', v.vehicle_code || ' Batch 1 profile ready', 'Vehicles detail evidence backfilled by OpsTrax.', 'Info'
+          SELECT v.company_id, 'Vehicle', v.id, 'batch1.ready', v.vehicle_code || ' Batch 1 profile ready', 'Vehicles detail evidence backfilled by OpsTrax.', 'Info'
           FROM vehicles v WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Vehicle' AND x.entity_id=v.id)",
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
-          SELECT 1, 'Driver', d.id, 'batch1.ready', d.driver_code || ' Batch 1 profile ready', 'Drivers detail evidence backfilled by OpsTrax.', 'Info'
+          SELECT d.company_id, 'Driver', d.id, 'batch1.ready', d.driver_code || ' Batch 1 profile ready', 'Drivers detail evidence backfilled by OpsTrax.', 'Info'
           FROM drivers d WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Driver' AND x.entity_id=d.id)",
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
-          SELECT 1, 'Customer', c.id, 'batch1.ready', c.customer_code || ' Batch 1 profile ready', 'Customer detail evidence backfilled by OpsTrax.', 'Info'
+          SELECT c.company_id, 'Customer', c.id, 'batch1.ready', c.customer_code || ' Batch 1 profile ready', 'Customer detail evidence backfilled by OpsTrax.', 'Info'
           FROM customers c WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Customer' AND x.entity_id=c.id)",
         @"INSERT INTO entity_timeline_events (company_id, entity_type, entity_id, event_type, title, body, severity)
-          SELECT 1, 'Asset', a.id, 'batch1.ready', a.asset_code || ' Batch 1 profile ready', 'Asset detail evidence backfilled by OpsTrax.', 'Info'
+          SELECT a.company_id, 'Asset', a.id, 'batch1.ready', a.asset_code || ' Batch 1 profile ready', 'Asset detail evidence backfilled by OpsTrax.', 'Info'
           FROM assets a WHERE NOT EXISTS (SELECT 1 FROM entity_timeline_events x WHERE x.entity_type='Asset' AND x.entity_id=a.id)",
-        @"INSERT INTO ai_recommendations (company_id, module_key, title, body, score, status)
-          SELECT 1, m.module_key, 'Batch 1 ' || m.title || ' recommended action', m.body, 94, 'Recommended'
+        @"INSERT INTO ai_recommendations (company_id, tenant_id, recommendation_type, module_key, title, summary, body, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, score)
+          SELECT 1, 1, 'batch1_action', m.module_key, 'Batch 1 ' || m.title || ' recommended action', m.body, m.body, 94, 82, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'Medium', 'Recommended', 94
           FROM (
             SELECT 'vehicles' module_key, 'vehicle' title, 'Review risk heat, data completeness, device status and driver assignment before dispatch.' body
             UNION ALL SELECT 'drivers','driver','Review readiness, HOS, certification and coaching signals before assignment.'
@@ -253,6 +265,26 @@ public sealed class Batch1SchemaService(Database db)
             UNION ALL SELECT 'assets','asset','Review geofence status, utilization and assignment before route release.'
           ) m
           WHERE NOT EXISTS (SELECT 1 FROM ai_recommendations r WHERE r.module_key=m.module_key AND r.title LIKE 'Batch 1%')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Brake inspection overdue', 'BOX-106 requires inspection before dispatch release.', 'Critical', 'Open', 'Maintenance', 'maintenance.overdue', 'Vehicle',
+                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 AND v.vehicle_code = 'BOX-106' LIMIT 1),
+                 'Ground the vehicle until the maintenance work order closes', NOW() - INTERVAL '35 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Brake inspection overdue')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Driver coaching review', 'Recent HOS and safety activity require follow-up before the next shift.', 'High', 'Open', 'Safety', 'driver.coaching', 'Driver',
+                 (SELECT d.id FROM drivers d WHERE d.company_id = 1 ORDER BY d.id LIMIT 1),
+                 'Create a coaching task and review evidence before the next assignment', NOW() - INTERVAL '2 hours'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Driver coaching review')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Customer SLA at risk', 'A delivery exception is threatening a customer-visible ETA.', 'High', 'Open', 'Customer', 'customer.sla.risk', 'Customer',
+                 (SELECT c.id FROM customers c WHERE c.company_id = 1 ORDER BY c.id LIMIT 1),
+                 'Send a proactive ETA update and keep the account owner informed', NOW() - INTERVAL '75 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Customer SLA at risk')",
+        @"INSERT INTO ai_insights (company_id, title, body, severity, status, category, alert_type, entity_type, entity_id, recommended_action, created_at)
+          SELECT 1, 'Device heartbeat stale', 'The live telemetry stream has not reported in the last few minutes.', 'Warning', 'Open', 'Telematics', 'device.heartbeat.stale', 'Vehicle',
+                 (SELECT v.id FROM vehicles v WHERE v.company_id = 1 ORDER BY v.id DESC LIMIT 1),
+                 'Recheck the device and confirm connectivity with the driver', NOW() - INTERVAL '10 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM ai_insights ai WHERE ai.company_id = 1 AND ai.title = 'Device heartbeat stale')",
 
         @"INSERT INTO location_events (company_id, vehicle_id, vehicle_code, driver_id, lat, lng, speed_mph, heading, event_type, engine_status, fuel_level, odometer_miles, event_time)
           SELECT v.company_id, v.id, v.vehicle_code, v.assigned_driver_id,

@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
-import { drivers as seedDrivers, vehicles as seedVehicles } from "@/data/mockOperatingData";
 import type { AnyRecord } from "@/types";
 
-// ── Seed ─────────────────────────────────────────────────────────────────────
+// ── Live data ─────────────────────────────────────────────────────────────────
 
 const FORM_TEMPLATES: AnyRecord[] = [
   { id: 1, formKey: "pre-trip",     title: "Pre-Trip Inspection",         category: "Inspection",  fields: 22, requiredRole: "Driver",    frequency: "Daily",    compliance: "FMCSA / UAE MOI", active: true  },
@@ -21,34 +19,11 @@ const FORM_TEMPLATES: AnyRecord[] = [
   { id: 10,formKey: "customer-onboarding", title: "Customer Onboarding Form", category: "CRM",    fields: 24, requiredRole: "Sales",     frequency: "Once",     compliance: "Internal",        active: false },
 ];
 
-function buildSubmissionSeed(): AnyRecord[] {
-  const drivers = seedDrivers as AnyRecord[];
-  const vehicles = seedVehicles as AnyRecord[];
-  const templates = FORM_TEMPLATES.filter((t) => t.active);
-  return templates.flatMap((tmpl, ti) =>
-    drivers.slice(0, 2).map((d, di) => ({
-      id: ti * 2 + di + 1,
-      formTitle: String(tmpl.title),
-      formKey: String(tmpl.formKey),
-      submittedBy: String(d.name ?? ""),
-      vehicleCode: String(vehicles[di % vehicles.length]?.vehicleId ?? ""),
-      submittedAt: `2026-06-${String(15 + ti).padStart(2, "0")} ${["08:12", "17:45", "09:30", "12:00"][di % 4]}`,
-      status: (["Passed", "Passed", "Defect Found", "Passed", "Passed", "Passed"] as const)[ti % 6],
-      defects: ti % 4 === 2 ? 1 : 0,
-      attachments: ti % 3 > 0 ? 1 : 0,
-    }))
-  ).slice(0, 12);
-}
-
 const formsApi = {
-  templates: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/templates")).then((rows) =>
+  templates: () => unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/templates")).then((rows) =>
       rows.map((r) => ({ ...r, formKey: r.formKey ?? r.form_key ?? "", fields: Number(r.fields ?? r.field_count ?? 0) }))
     ),
-    () => FORM_TEMPLATES
-  ),
-  submissions: () => withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/submissions")).then((rows) =>
+  submissions: () => unwrap<AnyRecord[]>(apiClient.get("/api/digital-forms/submissions")).then((rows) =>
       rows.map((r) => ({
         ...r,
         formTitle: r.formTitle ?? r.form_title ?? r.title ?? "",
@@ -58,8 +33,6 @@ const formsApi = {
         defects: Number(r.defects ?? 0),
       }))
     ),
-    () => buildSubmissionSeed()
-  ),
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,6 +63,82 @@ function SubmissionStatusBadge({ status }: { status: string }) {
 
 // ── Fill Form Modal ───────────────────────────────────────────────────────────
 
+// Per-form field schemas keyed by formKey — this is form configuration (the real
+// questions each form asks), so "Proof of Delivery" no longer shows brake/tyre
+// inspection questions. "check" renders Pass/Fail/N/A; text/number render inputs.
+type FormFieldType = "check" | "text" | "number";
+interface FormFieldDef { label: string; type: FormFieldType }
+
+const INSPECTION_FIELDS: FormFieldDef[] = [
+  { label: "Brakes functional?", type: "check" },
+  { label: "Lights — headlights, indicators, hazards?", type: "check" },
+  { label: "Tyres — pressure and condition?", type: "check" },
+  { label: "Engine fluids — oil, coolant, washer?", type: "check" },
+  { label: "Mirrors & windshield clear?", type: "check" },
+  { label: "Horn & wipers working?", type: "check" },
+  { label: "Odometer reading", type: "number" },
+];
+
+const FORM_FIELDS: Record<string, FormFieldDef[]> = {
+  "pre-trip": INSPECTION_FIELDS,
+  "post-trip": [
+    { label: "New damage during trip?", type: "check" },
+    { label: "Brakes & tyres condition OK?", type: "check" },
+    { label: "Any fluid leaks observed?", type: "check" },
+    { label: "Cargo area secure & clean?", type: "check" },
+    { label: "Odometer reading", type: "number" },
+  ],
+  "dvir": INSPECTION_FIELDS,
+  "incident": [
+    { label: "Date & time of incident", type: "text" },
+    { label: "Location", type: "text" },
+    { label: "Injuries reported?", type: "check" },
+    { label: "Third party involved?", type: "check" },
+    { label: "Police notified?", type: "check" },
+    { label: "Description of what happened", type: "text" },
+  ],
+  "delivery-pod": [
+    { label: "Recipient name", type: "text" },
+    { label: "Delivered in full?", type: "check" },
+    { label: "Packages delivered (count)", type: "number" },
+    { label: "Any damage on delivery?", type: "check" },
+    { label: "Signature / photo captured?", type: "check" },
+  ],
+  "fuel-slip": [
+    { label: "Fuel station / vendor", type: "text" },
+    { label: "Gallons / litres", type: "number" },
+    { label: "Total amount", type: "number" },
+    { label: "Odometer at fill", type: "number" },
+    { label: "Receipt attached?", type: "check" },
+  ],
+  "reefer-check": [
+    { label: "Set point temperature (°C)", type: "number" },
+    { label: "Actual return-air temperature (°C)", type: "number" },
+    { label: "Unit running continuously?", type: "check" },
+    { label: "Any alarm active?", type: "check" },
+  ],
+  "safety-obs": [
+    { label: "Observation type (safe / at-risk)", type: "text" },
+    { label: "Location / area", type: "text" },
+    { label: "Immediate hazard present?", type: "check" },
+    { label: "Description", type: "text" },
+  ],
+  "load-check": [
+    { label: "Load within weight limit?", type: "check" },
+    { label: "Straps / chains secured?", type: "check" },
+    { label: "Weight distribution balanced?", type: "check" },
+    { label: "Placards / labels correct?", type: "check" },
+    { label: "Seal number", type: "text" },
+  ],
+  "customer-onboarding": [
+    { label: "Company legal name", type: "text" },
+    { label: "Primary contact", type: "text" },
+    { label: "Billing email", type: "text" },
+    { label: "Service address", type: "text" },
+    { label: "Credit terms agreed?", type: "check" },
+  ],
+};
+
 function FillFormModal({ template, onClose }: { template: AnyRecord; onClose: () => void }) {
   const qc = useQueryClient();
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -103,11 +152,7 @@ function FillFormModal({ template, onClose }: { template: AnyRecord; onClose: ()
     },
   });
 
-  const SAMPLE_FIELDS = [
-    "Brakes functional?", "Horn working?", "Lights — headlights, indicators, hazards?",
-    "Tyres — pressure and condition?", "Engine fluids — oil, coolant, washer?",
-    "Seatbelt secured?", "No visible vehicle damage?",
-  ].slice(0, Math.min(7, Number(template.fields ?? 7)));
+  const fields = FORM_FIELDS[String(template.formKey)] ?? INSPECTION_FIELDS;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
@@ -115,25 +160,34 @@ function FillFormModal({ template, onClose }: { template: AnyRecord; onClose: ()
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
             <p className="font-semibold text-slate-900">{String(template.title)}</p>
-            <p className="text-xs text-slate-400">{String(template.fields)} fields · {String(template.compliance ?? "")}</p>
+            <p className="text-xs text-slate-400">{fields.length} fields · {String(template.compliance ?? "")}</p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
         </div>
         <div className="px-6 py-4 flex flex-col gap-3 max-h-80 overflow-y-auto">
-          {SAMPLE_FIELDS.map((field) => (
-            <div key={field} className="flex items-center justify-between gap-4">
-              <label className="text-sm text-slate-700 flex-1">{field}</label>
-              <div className="flex gap-2">
-                {["Pass", "Fail", "N/A"].map((opt) => (
-                  <button key={opt} type="button"
-                    onClick={() => setAnswers((prev) => ({ ...prev, [field]: opt }))}
-                    className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors ${
-                      answers[field] === opt
-                        ? opt === "Pass" ? "bg-teal-500 border-teal-500 text-white" : opt === "Fail" ? "bg-red-500 border-red-500 text-white" : "bg-slate-500 border-slate-500 text-white"
-                        : "border-slate-200 text-slate-500 hover:bg-slate-50"
-                    }`}>{opt}</button>
-                ))}
-              </div>
+          {fields.map((field) => (
+            <div key={field.label} className="flex items-center justify-between gap-4">
+              <label className="text-sm text-slate-700 flex-1">{field.label}</label>
+              {field.type === "check" ? (
+                <div className="flex gap-2">
+                  {["Pass", "Fail", "N/A"].map((opt) => (
+                    <button key={opt} type="button"
+                      onClick={() => setAnswers((prev) => ({ ...prev, [field.label]: opt }))}
+                      className={`px-2.5 py-1 text-xs rounded-lg border font-medium transition-colors ${
+                        answers[field.label] === opt
+                          ? opt === "Pass" ? "bg-teal-500 border-teal-500 text-white" : opt === "Fail" ? "bg-red-500 border-red-500 text-white" : "bg-slate-500 border-slate-500 text-white"
+                          : "border-slate-200 text-slate-500 hover:bg-slate-50"
+                      }`}>{opt}</button>
+                  ))}
+                </div>
+              ) : (
+                <input
+                  type={field.type === "number" ? "number" : "text"}
+                  value={answers[field.label] ?? ""}
+                  onChange={(e) => setAnswers((prev) => ({ ...prev, [field.label]: e.target.value }))}
+                  className="w-44 border border-slate-200 rounded-lg px-2.5 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              )}
             </div>
           ))}
           <div>
@@ -180,7 +234,7 @@ export function DigitalFormsPage() {
   if (templatesQ.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Digital Forms</h1>

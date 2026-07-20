@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, CheckCircle, Clock, ExternalLink, Eye, EyeOff,
-  MapPin, Package, Share2, ShieldCheck, Truck, XCircle,
+  MapPin, MessageSquare, Package, Send, Share2, ShieldCheck, Star, Truck, XCircle,
 } from "lucide-react";
 import {
   AiInsightCard, EmptyState, ErrorState, exportCsv, KpiCard,
@@ -10,9 +10,10 @@ import {
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { customerVisibilityApi } from "@/services/customerVisibilityApi";
+import { customerEtaApi } from "@/services/customerEtaApi";
 import type { AnyRecord } from "@/types";
 
-const TABS = ["Dashboard", "Shipment Detail", "Token Management"] as const;
+const TABS = ["Dashboard", "Shipment Detail", "Token Management", "Feedback"] as const;
 type Tab = (typeof TABS)[number];
 
 // ── Risk badge ───────────────────────────────────────────────────────────────
@@ -137,6 +138,10 @@ export function CustomerVisibilityPage() {
   const [shareModal, setShareModal] = useState<number | null>(null);
   const [shareResult, setShareResult] = useState<{ token: string; expiresAt: string } | null>(null);
   const [expiryDays, setExpiryDays] = useState(30);
+  const [feedbackRating, setFeedbackRating] = useState(5);
+  const [feedbackComments, setFeedbackComments] = useState("");
+  const [feedbackSentiment, setFeedbackSentiment] = useState<"Positive" | "Neutral" | "Negative">("Positive");
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   const hasPermission = useHasPermission();
   const canView    = hasPermission("customer_portal:view");
@@ -174,6 +179,24 @@ export function CustomerVisibilityPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customer-visibility"] }),
   });
 
+  const feedbackMutation = useMutation({
+    mutationFn: (payload: { shipmentId: number; rating: number; sentiment: string; comments: string }) =>
+      customerEtaApi.feedback(payload.shipmentId, {
+        trackingCode: String((detail.data?.shipment as AnyRecord | undefined)?.["trackingCode"] ?? (detail.data?.shipment as AnyRecord | undefined)?.["tracking_code"] ?? ""),
+        rating: payload.rating,
+        sentiment: payload.sentiment,
+        comments: payload.comments,
+      }),
+    onSuccess: () => {
+      setFeedbackMessage("Feedback submitted to the customer service queue.");
+      setFeedbackComments("");
+      setFeedbackRating(5);
+      setFeedbackSentiment("Positive");
+      void qc.invalidateQueries({ queryKey: ["customer-visibility"] });
+      window.setTimeout(() => setFeedbackMessage(null), 3500);
+    },
+  });
+
   if (!canView) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 p-12 text-slate-500">
@@ -188,7 +211,7 @@ export function CustomerVisibilityPage() {
   const insightStats: AnyRecord = (insights.data?.["stats"] as AnyRecord) ?? {};
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Customer Visibility"
         title="Shipment Tracking & ETA Risk Engine"
@@ -322,6 +345,8 @@ export function CustomerVisibilityPage() {
             const eta = d["eta"] as AnyRecord ?? {};
             const sla = d["slaRisk"] as AnyRecord ?? {};
             const timeline = (d["timeline"] as AnyRecord[]) ?? [];
+            const shipmentId = Number(shipment["shipmentId"] ?? selectedId ?? 0);
+            const trackingCode = String(shipment["trackingCode"] ?? shipment["tracking_code"] ?? "");
 
             return (
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
@@ -380,6 +405,79 @@ export function CustomerVisibilityPage() {
                         </div>
                       ))
                     )}
+                  </div>
+
+                  <div className="panel p-4">
+                    <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Customer Feedback & Complaint Intake</p>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Rating</span>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={feedbackRating}
+                            onChange={(e) => {
+                              const next = Number(e.target.value);
+                              setFeedbackRating(next);
+                              setFeedbackSentiment(next >= 4 ? "Positive" : next >= 3 ? "Neutral" : "Negative");
+                            }}
+                          >
+                            {[5, 4, 3, 2, 1].map((value) => (
+                              <option key={value} value={value}>{value} Stars</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Sentiment</span>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            value={feedbackSentiment}
+                            onChange={(e) => setFeedbackSentiment(e.target.value as typeof feedbackSentiment)}
+                          >
+                            {["Positive", "Neutral", "Negative"].map((value) => (
+                              <option key={value} value={value}>{value}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <label className="space-y-1 block">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Comments</span>
+                        <textarea
+                          className="min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="Tell us what worked well or what needs attention..."
+                          value={feedbackComments}
+                          onChange={(e) => setFeedbackComments(e.target.value)}
+                        />
+                      </label>
+                      {feedbackMessage ? (
+                        <p className="text-xs font-medium text-teal-700">{feedbackMessage}</p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={shipmentId <= 0 || feedbackMutation.isPending}
+                          onClick={() => feedbackMutation.mutate({
+                            shipmentId,
+                            rating: feedbackRating,
+                            sentiment: feedbackSentiment,
+                            comments: feedbackComments,
+                          })}
+                        >
+                          {feedbackMutation.isPending ? (
+                            "Sending…"
+                          ) : (
+                            <>
+                              <Send className="h-3.5 w-3.5" />
+                              Submit Feedback
+                            </>
+                          )}
+                        </button>
+                        <span className="text-xs text-slate-500">
+                          Uses customer-safe shipment data only{trackingCode ? ` for ${trackingCode}` : ""}.
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -463,6 +561,103 @@ export function CustomerVisibilityPage() {
               </table>
             )}
           </section>
+        </div>
+      )}
+
+      {tab === "Feedback" && (
+        <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+          <section className="panel p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Feedback queue</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-900">Complaint and experience intake</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Submit customer feedback from a selected shipment without exposing internal cost, risk, or operational notes.
+                </p>
+              </div>
+              <MessageSquare className="h-5 w-5 text-teal-500" />
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected shipment</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{selectedId != null ? `Shipment ${selectedId}` : "No shipment selected"}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Rating</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{feedbackRating} / 5</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Sentiment</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{feedbackSentiment}</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr]">
+              <label className="space-y-1">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Shipment</span>
+                <select
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={selectedId ?? ""}
+                  onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Select a shipment</option>
+                  {rows.map((row) => (
+                    <option key={String(row["shipmentId"])} value={String(row["shipmentId"])}>
+                      {String(row["shipmentNumber"] ?? row["shipmentId"])} - {String(row["customerName"] ?? "")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Priority</span>
+                <select
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={feedbackSentiment}
+                  onChange={(e) => setFeedbackSentiment(e.target.value as typeof feedbackSentiment)}
+                >
+                  <option value="Positive">Positive</option>
+                  <option value="Neutral">Neutral</option>
+                  <option value="Negative">Negative</option>
+                </select>
+              </label>
+            </div>
+            <label className="mt-4 block space-y-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Comment</span>
+              <textarea
+                className="min-h-32 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Describe the customer experience, complaint, or improvement request."
+                value={feedbackComments}
+                onChange={(e) => setFeedbackComments(e.target.value)}
+              />
+            </label>
+            {feedbackMessage ? <p className="mt-3 text-sm font-medium text-teal-700">{feedbackMessage}</p> : null}
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={selectedId == null || feedbackMutation.isPending}
+                onClick={() => feedbackMutation.mutate({
+                  shipmentId: Number(selectedId),
+                  rating: feedbackRating,
+                  sentiment: feedbackSentiment,
+                  comments: feedbackComments,
+                })}
+              >
+                {feedbackMutation.isPending ? "Sending…" : "Submit to Service Queue"}
+              </button>
+              <span className="text-xs text-slate-500">
+                Feedback will follow the same customer-safe intake path used by ETA tracking.
+              </span>
+            </div>
+          </section>
+
+          <aside className="panel p-5">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">What this protects</p>
+            <ul className="mt-3 space-y-2 text-sm text-slate-600">
+              <li className="flex items-start gap-2"><Star className="mt-0.5 h-4 w-4 text-teal-500" />No internal margin, cost, or driver scoring is exposed.</li>
+              <li className="flex items-start gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 text-teal-500" />Cross-customer data stays hidden by the session boundary.</li>
+              <li className="flex items-start gap-2"><CheckCircle className="mt-0.5 h-4 w-4 text-teal-500" />Complaints use the same durable feedback path as live ETA updates.</li>
+            </ul>
+          </aside>
         </div>
       )}
 

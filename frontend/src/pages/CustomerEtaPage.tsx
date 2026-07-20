@@ -5,34 +5,8 @@ import { MessageSquare, Send, Star, Truck } from "lucide-react";
 import { AiInsightCard, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { useCustomerEtaRecommendations, useCustomerEtaSummary, useCustomerTracking } from "@/hooks/useBatch2";
 import { customerEtaApi } from "@/services/customerEtaApi";
-import { withFallback } from "@/services/fleetDomainApi";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import type { AnyRecord } from "@/types";
-
-// ── Seed fallback for communications ─────────────────────────────────────────
-
-function buildSeedComms(): AnyRecord[] {
-  const shipments = developmentFleetSeedData.shipments as AnyRecord[];
-  return shipments.slice(0, 10).map((s, i) => ({
-    id: i + 1,
-    customerName: s.customerName ?? `Customer ${i + 1}`,
-    jobNumber: s.shipmentId ?? `JOB-${s.id}`,
-    trackingCode: `TRK-${String(i + 1).padStart(4, "0")}`,
-    channel: ["SMS", "Email", "WhatsApp"][i % 3],
-    messageType: ["ETA Update", "Delay Notification", "Delivery Confirmation"][i % 3],
-    message: `Your shipment ${s.shipmentId ?? "JOB"} is ${["on the way", "slightly delayed", "arriving soon"][i % 3]}. ETA: ${8 + i}:30 AM.`,
-    status: i % 4 === 3 ? "Pending" : "Sent",
-    sentAt: new Date(Date.now() - i * 3600000).toISOString(),
-  }));
-}
-
-function commsApi() {
-  return withFallback(
-    unwrap<AnyRecord[]>(apiClient.get("/api/customer-eta/communications")),
-    () => buildSeedComms()
-  );
-}
 
 // ── Job row ───────────────────────────────────────────────────────────────────
 
@@ -127,7 +101,7 @@ export function CustomerEtaPage() {
 
   const summary = useCustomerEtaSummary();
   const recommendations = useCustomerEtaRecommendations();
-  const commsQ = useQuery({ queryKey: ["customer-eta", "communications"], queryFn: commsApi });
+  const commsQ = useQuery({ queryKey: ["customer-eta", "communications"], queryFn: () => unwrap<AnyRecord[]>(apiClient.get("/api/customer-eta/communications")) });
 
   const send = useMutation({
     mutationFn: (jobId: string | number) => customerEtaApi.sendUpdate(jobId),

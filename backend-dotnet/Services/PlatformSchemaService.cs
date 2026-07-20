@@ -64,6 +64,15 @@ public sealed class PlatformSchemaService(Database db)
             )
             """);
 
+        // Operator-management columns (additive): invite/password-setup flow state.
+        // Only the SHA-256 hash of an invite token is ever stored.
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS invite_token_hash VARCHAR(128) NULL");
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS invite_expires_at TIMESTAMPTZ NULL");
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+        // TOTP second factor: base32 secret set at enrollment; mfa_enabled flips
+        // true only after the operator proves possession with a valid code.
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(160) NULL");
+
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS platform_sessions (
                 id            BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -90,6 +99,8 @@ public sealed class PlatformSchemaService(Database db)
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_platform_audit_created ON platform_audit_log (created_at DESC)");
+        // Serves the durable (DB-backed) login / accept-invite lockout counters.
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_platform_audit_email_action ON platform_audit_log (actor_email, action, created_at DESC)");
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS packages (
@@ -178,8 +189,33 @@ public sealed class PlatformSchemaService(Database db)
             )
             """);
 
+        await EnsureTenantProfileColumnsAsync();
+
         await SeedRolesAsync();
         await SeedSuperAdminAsync();
+    }
+
+    // Extended tenant provisioning attributes captured on the (Samsara-benchmark)
+    // New Tenant form. Additive + idempotent — companies pre-exists and already
+    // carries country/currency/timezone/status, so these follow the same
+    // ADD COLUMN IF NOT EXISTS pattern rather than a destructive rebuild.
+    private async Task EnsureTenantProfileColumnsAsync()
+    {
+        string[] companyCols =
+        {
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS legal_name VARCHAR(220) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS website VARCHAR(200) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS fleet_size INT NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS tax_id VARCHAR(80) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_name VARCHAR(160) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_email VARCHAR(200) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_phone VARCHAR(40) NULL",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(200) NULL",
+        };
+        foreach (var sql in companyCols) await db.ExecuteAsync(sql);
+
+        // Commercial term on the subscription: monthly | annual billing cadence.
+        await db.ExecuteAsync("ALTER TABLE tenant_subscriptions ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly'");
     }
 
     // Platform RBAC roles + their permission grants. permission_key uses the
@@ -189,7 +225,7 @@ public sealed class PlatformSchemaService(Database db)
         ["platform_super_admin"] = ("Platform Super Admin", "Full control of the SaaS business across all tenants.",
             ["platform:*"]),
         ["sales_admin"] = ("Sales Admin", "Manage CRM pipeline, proposals and tenant provisioning.",
-            ["platform:dashboard:view", "platform:tenants:view", "platform:tenants:manage", "platform:packages:view", "platform:crm:view", "platform:crm:manage", "platform:proposals:view", "platform:proposals:manage"]),
+            ["platform:dashboard:view", "platform:tenants:view", "platform:tenants:manage", "platform:packages:view", "platform:countries:view", "platform:crm:view", "platform:crm:manage", "platform:proposals:view", "platform:proposals:manage"]),
         ["marketing_admin"] = ("Marketing Admin", "Manage campaigns and customer segments.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:marketing:view", "platform:marketing:manage", "platform:crm:view"]),
         ["finance_admin"] = ("Finance Admin", "Manage billing, invoices and revenue. Read-only on entitlements.",
@@ -199,9 +235,9 @@ public sealed class PlatformSchemaService(Database db)
         ["support_admin"] = ("Support Admin", "Inspect tenant status and run safe impersonation. No billing/package control.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:support:view", "platform:impersonation:start"]),
         ["product_admin"] = ("Product Admin", "Manage feature entitlements, packages and platform health.",
-            ["platform:dashboard:view", "platform:tenants:view", "platform:entitlements:view", "platform:entitlements:manage", "platform:packages:view", "platform:packages:manage", "platform:ops:view"]),
+            ["platform:dashboard:view", "platform:tenants:view", "platform:entitlements:view", "platform:entitlements:manage", "platform:packages:view", "platform:packages:manage", "platform:countries:view", "platform:countries:manage", "platform:ops:view"]),
         ["compliance_admin"] = ("Compliance Admin", "Audit, security and access review oversight.",
-            ["platform:dashboard:view", "platform:tenants:view", "platform:audit:view", "platform:ops:view"]),
+            ["platform:dashboard:view", "platform:tenants:view", "platform:audit:view", "platform:ops:view", "platform:admins:view"]),
         ["readonly_executive"] = ("Read-only Executive", "Executive read-only visibility of the whole business.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:packages:view", "platform:billing:view", "platform:health:view", "platform:crm:view", "platform:audit:view"]),
     };
@@ -244,14 +280,16 @@ public sealed class PlatformSchemaService(Database db)
     // Bootstrap super admin. Credentials come from env (PLATFORM_SUPERADMIN_EMAIL /
     // PLATFORM_SUPERADMIN_PASSWORD) so they are never hard-coded; falls back to a
     // well-known demo identity for local/dev only.
+    // FIRST-SETUP ONLY: once ANY platform admin exists, the seed never runs again —
+    // operator lifecycle is owned by /api/platform/admins from that point on, so a
+    // changed env var cannot silently mint a new bootstrap identity later.
     private async Task SeedSuperAdminAsync()
     {
+        var anyAdmin = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_admins");
+        if (anyAdmin > 0) return;
+
         var email = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_EMAIL") ?? "platform@opstrax.io";
         var password = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD") ?? "Platform@12345";
-
-        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_admins WHERE email=@e",
-            c => c.Parameters.AddWithValue("@e", email));
-        if (exists > 0) return;
 
         var roleId = await db.ScalarLongAsync("SELECT id FROM platform_roles WHERE role_key='platform_super_admin'");
         var hash = HashPassword(password);

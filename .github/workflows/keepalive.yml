@@ -1,0 +1,39 @@
+name: Keep-alive (prevent Render cold starts)
+
+# Pings the backend health endpoint on a schedule so the Render Free-tier
+# service never idles into a spin-down (which causes a 30-60s cold-start on the
+# next request). Remove this workflow once the service is on a paid always-on
+# tier, where it is unnecessary.
+#
+# Note: GitHub-scheduled workflows can be delayed several minutes under load and
+# are paused after 60 days of repo inactivity — this is a best-effort workaround,
+# not a hard guarantee. A paid Render tier is the real fix.
+
+on:
+  schedule:
+    # Every 10 minutes. Render Free spins down after ~15 min idle, so a 10-min
+    # cadence keeps a safety margin even if a run is delayed.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # allow manual trigger from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping backend /health (waking it if asleep)
+        run: |
+          # --max-time 90 tolerates a full cold-start wake. Retry a couple times
+          # so a single slow wake doesn't fail the run.
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 \
+              https://osptrax-fleet-management.onrender.com/health || echo 000)
+            echo "attempt $attempt -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Backend is awake."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Backend did not return 200 after 3 attempts."
+          exit 1

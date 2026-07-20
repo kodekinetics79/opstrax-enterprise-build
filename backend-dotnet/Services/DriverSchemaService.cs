@@ -59,6 +59,24 @@ CREATE TABLE IF NOT EXISTS driver_offline_queue (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (idempotency_key)
 )");
+
+        // Hours-of-Service records. ELD-integration-ready: several read paths (dispatch
+        // available-drivers, driver eligibility, HOS detail) query the latest hos_records
+        // row per driver. Without the table those endpoints 500 (42P01) on a fresh DB.
+        // Empty is fine — the read paths treat "no row" as "no HOS data".
+        await TryCreate("hos_records", @"
+CREATE TABLE IF NOT EXISTS hos_records (
+    id                    BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id            BIGINT NULL,
+    driver_id             BIGINT NOT NULL,
+    shift_date            DATE NOT NULL DEFAULT CURRENT_DATE,
+    remaining_drive_hours NUMERIC(5,2) NULL,
+    remaining_shift_hours NUMERIC(5,2) NULL,
+    remaining_cycle_hours NUMERIC(5,2) NULL,
+    hos_status            VARCHAR(40) NULL,
+    eld_device_id         BIGINT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)");
     }
 
     private async Task CreateIndexes()
@@ -68,6 +86,7 @@ CREATE TABLE IF NOT EXISTS driver_offline_queue (
             ("drivers",             "idx_drivers_user_id",     "user_id"),
             ("driver_offline_queue","idx_dq_driver_status",    "driver_id, status"),
             ("driver_offline_queue","idx_dq_company",          "company_id"),
+            ("hos_records",         "idx_hos_driver_shift",    "driver_id, shift_date DESC"),
         };
 
         foreach (var (table, name, cols) in indexes)

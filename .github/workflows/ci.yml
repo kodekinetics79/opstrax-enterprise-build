@@ -40,7 +40,7 @@ jobs:
       - run: npm install
         working-directory: node-services/events
 
-  dotnet-build:
+  dotnet-build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,3 +49,9 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet restore backend-dotnet/Opstrax.Api.csproj
       - run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore
+      - run: dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj
+      - run: dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore
+      # DB-backed suites run in the dedicated SIT environment (isolated Neon branch),
+      # not in unit CI — they require a live connection and write tenant data.
+      - name: Run unit/source/regression tests
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName!~Postgres&Category!=Integration"

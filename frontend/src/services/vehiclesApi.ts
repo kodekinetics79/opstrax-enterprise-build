@@ -1,9 +1,10 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getVehicleById, getVehicles } from "@/services/fleetDomainApi";
+import { getVehicleById, getVehicles, apiPaged } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const vehiclesApi = {
   list: () => getVehicles(),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/vehicles", opts),
   summary: () => getVehicles().then((rows) => ({
     fleetReadinessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.fleetReadinessScore ?? 0), 0) / Math.max(rows.length, 1)),
     dataCompletenessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.dataCompletenessScore ?? 0), 0) / Math.max(rows.length, 1)),
@@ -15,8 +16,10 @@ export const vehiclesApi = {
   // customer, route and document data. No client-side fabrication.
   planningInsights: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/planning-insights")),
   detail: (id: string | number) => getVehicleById(id),
-  timeline: async (id: string | number) => [{ eventType: "status.update", title: "Vehicle record retrieved", severity: "Low", eventTime: new Date().toISOString(), id }],
-  recommendations: async (id: string | number) => [{ id: `rec-${id}`, title: "Review vehicle readiness", body: "Maintain service cadence and dispatch device health before assigning the next load.", score: 86 }],
+  recommendations: (id: string | number) => getVehicleById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
+  // Real CSV import pipeline — server-validated preview, then committed upsert.
+  importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import-preview", { rows })),
+  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import", { rows })),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)),

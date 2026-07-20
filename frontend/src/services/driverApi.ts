@@ -51,6 +51,14 @@ export const driverApi = {
       apiClient.post(`/api/driver/assignments/${id}/proof`, payload)
     ),
 
+  // Upload a POD photo or signature to durable storage; returns { reference, url, kind }.
+  uploadProofArtifact: (id: number | string, file: Blob, kind: string, filename: string) => {
+    const fd = new FormData();
+    fd.append("file", file, filename);
+    fd.append("kind", kind);
+    return unwrap<AnyRecord>(apiClient.post(`/api/driver/assignments/${id}/proof/upload`, fd));
+  },
+
   // ── DVIR ─────────────────────────────────────────────────────────────────
   dvirTemplates: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/driver/dvir/templates")),

@@ -80,7 +80,7 @@ public sealed class BackupVerificationService(Database db, AuditService audit)
                 c.Parameters.AddWithValue("@cid",     (object?)companyId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type",    backupType);
                 c.Parameters.AddWithValue("@status",  status);
-                c.Parameters.AddWithValue("@restore", restoreTested ? 1 : 0);
+                c.Parameters.AddWithValue("@restore", restoreTested);
                 c.Parameters.AddWithValue("@dur",     (object?)durationMs ?? DBNull.Value);
                 c.Parameters.AddWithValue("@loc",     (object?)storageLocationLabel ?? DBNull.Value);
                 c.Parameters.AddWithValue("@err",     (object?)safeError  ?? DBNull.Value);

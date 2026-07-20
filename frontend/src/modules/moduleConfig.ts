@@ -49,11 +49,14 @@ import {
 } from "lucide-react";
 import type { ModuleConfig } from "@/types";
 
+/** Saudi Arabia plus the GCC states served by the Saudi/GCC compliance pack. */
+export const GCC_COUNTRIES = ["SA", "AE", "QA", "KW", "BH", "OM"];
+
 export const modules: ModuleConfig[] = [
-  { key: "command-center",    title: "Command Center",       route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one cockpit.", accent: "teal",   requiredPermission: "dashboard.view" },
+  { key: "command-center",    title: "Dashboard",            route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one dashboard.", accent: "teal",   requiredPermission: "dashboard.view" },
   { key: "fleet-health",     title: "Fleet Health",         route: "/fleet-health",      group: "Operations", description: "Priority-ranked vehicles and drivers by risk — OOS status, critical defects, safety score and action queue.", accent: "red",    requiredPermission: "dashboard:view" },
   { key: "live-dashboard",   title: "Fleet Overview",       route: "/live-dashboard",    group: "Operations", description: "Live vehicle positions, operational status, HOS posture and fleet health at a glance.", accent: "blue",   requiredPermission: "dashboard.view" },
-  { key: "map-view",         title: "Live Map",             route: "/map-view",          group: "Operations", description: "Real-time fleet positions, shipment routes, geofences and driver locations.", accent: "blue",   requiredPermission: "map.view" },
+  { key: "map-view",         title: "Live Map",             route: "/map-view",          group: "Operations", description: "Real-time fleet positions, shipment routes, geofences and driver locations.", accent: "blue",   requiredPermission: "telemetry.live_state.read" },
   { key: "alerts",           title: "Alerts",               route: "/alerts",            group: "Operations", description: "Critical operating alerts across telematics, maintenance, customer SLA and safety.", accent: "red",    requiredPermission: "fleet.view" },
   { key: "active-shipments", title: "Active Shipments",     route: "/active-shipments",  group: "Operations", description: "Live shipment board with SLA, ETA, POD and invoice readiness.", accent: "teal",   requiredPermission: "dispatch.view" },
   { key: "geofences",         title: "Geofence Management",     route: "/geofences",         group: "Operations",        description: "Create, edit and monitor geofence zones — entry/exit events, vehicle alerts and boundary enforcement.", accent: "purple", requiredPermission: "map:view" },
@@ -78,16 +81,18 @@ export const modules: ModuleConfig[] = [
   { key: "shipments",          title: "Shipments",          route: "/shipments",          group: "Transport Operations", description: "Execution register for active freight, status, ETA, POD and invoice.", accent: "teal",   requiredPermission: "shipments.view" },
   { key: "dispatch-board",     title: "Dispatch Board",     route: "/dispatch",           group: "Transport Operations", description: "Driver and vehicle assignment cockpit with match scores and exception radar.", accent: "green",  requiredPermission: "dispatch.view" },
   { key: "jobs",               title: "Jobs",               route: "/jobs",               group: "Transport Operations", description: "Job register — delivery, collection, transfer, and job status with driver and vehicle linkage.", accent: "teal",   requiredPermission: "dispatch.view" },
+  { key: "trips",              title: "Trips",              route: "/trips",              group: "Transport Operations", description: "Trip register with route compliance, breadcrumbs, driver/vehicle linkage and dispatch actions.", accent: "blue",   requiredPermission: "dispatch.view" },
   { key: "route-plans",        title: "Route Plans",        route: "/route-plans",        group: "Transport Operations", description: "Route library, lane risk, distance, duration, toll and vehicle fit.", accent: "purple", requiredPermission: "dispatch.view" },
   { key: "proof-of-delivery",  title: "Proof of Delivery",  route: "/proof-of-delivery",  group: "Transport Operations", description: "POD capture, GPS verification, photos, signature and invoice readiness.", accent: "green",  requiredPermission: "shipments:view" },
   { key: "last-mile-delivery", title: "Last Mile Delivery", route: "/last-mile-delivery", group: "Transport Operations", description: "Final-mile runs with ETA, proof, stop status and customer experience.", accent: "blue",   requiredPermission: "dispatch.view" },
+  { key: "operations-proof-center", title: "Operational Proof Center", route: "/operations/proof-center", group: "Transport Operations", description: "Execution summary, proof workflow, access controls, handover, billing confidence and mobile-readiness preview.", accent: "teal", requiredPermission: "operations.execution_summary.read" },
   { key: "logistics-workspace", title: "Logistics Workspace", route: "/logistics-workspace", group: "Transport Operations", description: "Last-mile command: dispatch orders, delivery routes and live stop progression with deliver/attempt/reschedule actions.", accent: "blue", requiredPermission: "dispatch:view" },
 
   { key: "fleet-utilization", title: "Fleet Utilization", route: "/fleet-utilization", group: "Fleet", description: "Vehicle utilization %, idle time, fuel efficiency, active hours and per-vehicle productivity analytics.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "fleet-workspace", title: "Fleet TMS Workspace", route: "/fleet-workspace", group: "Fleet", description: "Shipment lifecycle, POD verification, public tracking links, vehicles, tracking, maintenance and fuel in one operations cockpit.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "fleet-cold-chain", title: "Cold Chain Monitor", route: "/fleet-cold-chain", group: "Fleet", description: "Temperature zones, sensor devices, live readings, breach alerts and per-shipment cold-chain compliance reports.", accent: "blue", requiredPermission: "fleet:view" },
   { key: "fleet-assets", title: "Returnable Assets", route: "/fleet-assets", group: "Fleet", description: "Pallets, roll cages and crates with check-in/out, assignments, barcode/RFID scans and asset event history.", accent: "green", requiredPermission: "fleet:view" },
-  { key: "fleet-saudi-readiness", title: "Saudi Readiness", route: "/fleet-saudi-readiness", group: "Fleet", description: "Saudi/GCC region reference, ZATCA VAT invoice-readiness and compliance document expiry tracking.", accent: "amber", requiredPermission: "fleet:view" },
+  { key: "fleet-saudi-readiness", title: "Saudi Readiness", route: "/fleet-saudi-readiness", group: "Fleet", description: "Saudi/GCC region reference, ZATCA VAT invoice-readiness and compliance document expiry tracking. Visible only to tenants whose operating region is Saudi/GCC.", accent: "amber", requiredPermission: "fleet:view", requiredCountries: GCC_COUNTRIES },
   { key: "fleet-compliance", title: "Fleet Compliance", route: "/fleet-compliance", group: "Fleet", description: "Market-pack readiness — Canada/NA driver qualification, DVIR, IFTA & HOS/ELD foundation; Saudi/GCC transport documents, VAT & Hijri expiry.", accent: "blue", requiredPermission: "compliance:view" },
   { key: "vehicles",    title: "Vehicles",    route: "/vehicles",    group: "Fleet", description: "Fleet registry, age, readiness, documents, device visibility and lifecycle planning.", accent: "blue",   requiredPermission: "vehicles:view" },
   { key: "drivers",     title: "Drivers",     route: "/drivers",     group: "Fleet", description: "Driver availability, HOS, safety, documents, assignment and coaching state.", accent: "green",  requiredPermission: "drivers.view" },
@@ -95,7 +100,7 @@ export const modules: ModuleConfig[] = [
   { key: "assignments", title: "Assignments", route: "/assignments", group: "Fleet", description: "Driver, vehicle, device and asset assignment history.", accent: "purple", requiredPermission: "fleet.view" },
   { key: "documents",   title: "Documents",   route: "/documents",   group: "Fleet", description: "Vehicle, driver, contract, POD, invoice and compliance document vault.", accent: "blue",   requiredPermission: "fleet.view" },
 
-  { key: "iot-devices",    title: "Device Health", route: "/iot-devices", group: "Telematics & IoT", description: "Fleet device control for GPS, ELD, OBD, dashcam, sensor, firmware, diagnostics, and install posture.", accent: "blue", requiredPermission: "telematics:devices:view" },
+  { key: "iot-devices",    title: "Device Health", route: "/iot-devices", group: "Telematics & IoT", description: "Fleet device control for GPS, ELD, OBD, dashcam, sensor, firmware, diagnostics, and install posture.", accent: "blue", requiredPermission: "telemetry.devices.read" },
   { key: "gps-tracking",   title: "GPS Tracking",   route: "/gps-tracking",   group: "Telematics & IoT", description: "GPS position, history, geofence and location quality signals.", accent: "teal",   requiredPermission: "telematics:gps:view" },
   { key: "obd-j1939",      title: "OBD / J1939",    route: "/obd-j1939",      group: "Telematics & IoT", description: "Engine diagnostics, fault codes, odometer, fuel and vehicle health telemetry.", accent: "amber",  requiredPermission: "telematics:diagnostics:view" },
   { key: "cold-chain",     title: "Cold Chain",     route: "/cold-chain",     group: "Telematics & IoT", description: "Temperature, set point, humidity, door status and breach compliance.", accent: "blue",   requiredPermission: "telematics:sensors:view" },
@@ -118,12 +123,12 @@ export const modules: ModuleConfig[] = [
   { key: "fuel-idling",    title: "Fuel Transactions", route: "/fuel-idling",    group: "Financials", description: "Fuel purchases, cards, stations, odometer and anomaly flags.", accent: "green",  requiredPermission: "fuel.view" },
   { key: "expenses",       title: "Expenses",          route: "/expenses",       group: "Financials", description: "Operating expenses, approvals, tax, receipts and budget variance.", accent: "amber",  requiredPermission: "finance.view" },
   { key: "invoices",       title: "Invoices",          route: "/invoices",       group: "Financials", description: "Invoice lifecycle, aging, payment state and shipment linkage.", accent: "blue",   requiredPermission: "finance.view" },
+  { key: "ar-aging",       title: "AR Aging",          route: "/ar-aging",       group: "Financials", description: "Outstanding receivables bucketed by days past due, per customer.", accent: "amber",  requiredPermission: "finance.view" },
   { key: "payments",       title: "Payments",          route: "/payments",       group: "Financials", description: "Collections, payment methods, unapplied cash and customer payment health.", accent: "green",  requiredPermission: "finance.view" },
   { key: "profitability",  title: "Profitability",     route: "/profitability",  group: "Financials", description: "Revenue by customer, route and shipment; cost by vehicle; margin leakage.", accent: "purple", requiredPermission: "finance.view" },
 
   { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users.manage" },
   { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "reports.manage" },
-  { key: "feature-flags",   title: "Feature Flags",  route: "/feature-flags",   group: "Governance", description: "Tenant feature rollout, beta controls and operational toggles.", accent: "purple", requiredPermission: "users.manage" },
   { key: "integrations",    title: "Integrations",   route: "/integrations",    group: "Governance", description: "Live connector hub for ERP, accounting, telematics, fuel cards, maps, messaging, WMS and compliance integrations.", accent: "teal",   requiredPermission: "telematics:providers:manage" },
 
   { key: "carbon-tracking",   title: "Carbon Tracking",     route: "/carbon-tracking",   group: "Intelligence",        description: "Fleet CO₂ emissions, sustainability KPIs, reduction targets and carbon intensity per shipment.", accent: "green",  requiredPermission: "reports.view" },
@@ -132,6 +137,7 @@ export const modules: ModuleConfig[] = [
   { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "dispatch.view" },
   { key: "workforce", title: "Workforce Management", route: "/workforce", group: "Transport Operations", description: "Driver shift scheduling calendar, availability tracking, HOS compliance indicators and automated roster optimisation.", accent: "teal", requiredPermission: "dispatch.view" },
 
+  { key: "feature-flags",        title: "Feature Flags",       route: "/feature-flags",        group: "Governance",   description: "Kill switches and gradual rollouts. Turning a flag off blocks its API (403) and hides it in the UI — no deploy.", accent: "purple", requiredPermission: "users.manage" },
   { key: "ai-copilot",           title: "Operations Copilot",  route: "/ai-copilot",           group: "Intelligence", description: "Operational query workspace for cost, dispatch, maintenance, safety and executive analysis.", accent: "purple", requiredPermission: "reports.view" },
   { key: "predictive-analytics", title: "Fleet Intelligence",  route: "/predictive-analytics",  group: "Intelligence", description: "Maintenance failure predictions, driver safety risk scores, and SLA breach probability.", accent: "purple", requiredPermission: "reports.view" },
   { key: "control-tower",     title: "Control Tower",       route: "/control-tower",     group: "Intelligence", description: "Connected live map and control tower.", accent: "blue",   requiredPermission: "dashboard.view" },
@@ -164,8 +170,10 @@ export const moduleIcons: Record<string, typeof Activity> = {
   shipments: PackageCheck,
   "dispatch-board": RadioTower,
   "route-plans": Route,
+  trips: Route,
   "proof-of-delivery": FileCheck2,
   "last-mile-delivery": MapPinned,
+  "operations-proof-center": ClipboardCheck,
   "logistics-workspace": Map,
   vehicles: Truck,
   drivers: Users,
@@ -198,6 +206,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "fuel-idling": Fuel,
   expenses: WalletCards,
   invoices: DollarSign,
+  "ar-aging": DollarSign,
   payments: CreditCard,
   profitability: BarChart3,
   "user-management": UserCog,

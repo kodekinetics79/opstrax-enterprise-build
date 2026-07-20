@@ -11,10 +11,11 @@
   color-scheme: light;
 
   /* Page & surface */
-  --bg:              #f0f4f9;
+  --bg:              #eef3f9;
+  --bg-deep:         #e6edf6;
   --surface:         #ffffff;
-  --surface-raised:  #f8fafc;
-  --surface-sunken:  #f1f5f9;
+  --surface-raised:  #fbfdff;
+  --surface-sunken:  #eff4f9;
 
   /* Borders */
   --border:          #e2e8f0;
@@ -34,21 +35,23 @@
   --text-muted:      #94a3b8;
 
   /* Radii */
-  --r-card:  14px;
-  --r-btn:   10px;
-  --r-field: 10px;
+  --r-card:  18px;
+  --r-btn:   12px;
+  --r-field: 12px;
 
   /* Shadows – clean, not glow */
-  --shadow-card:     0 1px 2px rgba(0,0,0,.04),
-                     0 4px 12px rgba(0,0,0,.06),
-                     0 0 0 1px rgba(0,0,0,.04);
-  --shadow-card-hover: 0 4px 16px rgba(0,0,0,.08),
-                       0 16px 48px rgba(0,0,0,.07),
-                       0 0 0 1px rgba(0,0,0,.06);
-  --shadow-btn:      0 2px 8px rgba(13,148,136,.28),
-                     0 1px 2px rgba(0,0,0,.1);
+  --shadow-card:     0 1px 2px rgba(15,23,42,.04),
+                     0 10px 32px rgba(15,23,42,.07),
+                     0 0 0 1px rgba(148,163,184,.1);
+  --shadow-card-hover: 0 10px 24px rgba(15,23,42,.08),
+                       0 22px 54px rgba(15,23,42,.10),
+                       0 0 0 1px rgba(148,163,184,.13);
+  --shadow-btn:      0 3px 10px rgba(13,148,136,.22),
+                     0 1px 2px rgba(0,0,0,.08);
   --shadow-modal:    0 8px 32px rgba(0,0,0,.18),
                      0 0 0 1px rgba(0,0,0,.08);
+  --shadow-header:   0 1px 0 rgba(148,163,184,.12),
+                     0 8px 28px rgba(15,23,42,.06);
 
   /* Sidebar */
   --sidebar-bg:      #ffffff;
@@ -56,6 +59,70 @@
   --sidebar-text:    #475569;
   --sidebar-active:  #eff6ff;
   --sidebar-hover:   #f8fafc;
+
+  /* ==========================================================
+     v5.0 FOUNDATION — controlled clay · liquid glass · glass nav
+     ========================================================== */
+
+  /* Blur scale — the ONLY sanctioned blur values. xs/sm for chrome,
+     md for fixed nav surfaces, lg reserved for small overlay panels.
+     Never apply lg blur to large scrolling regions. */
+  --blur-xs: 4px;
+  --blur-sm: 8px;
+  --blur-md: 14px;
+  --blur-lg: 22px;
+
+  /* Clay — soft-molded surface (inset light top, inset shade bottom) */
+  --r-clay:            20px;
+  --clay-bg:           linear-gradient(145deg, #ffffff 0%, #f3f7fc 100%);
+  --clay-border:       rgba(255,255,255,.72);
+  --clay-shadow:       inset 0 1.5px 0 rgba(255,255,255,.95),
+                       inset 0 -2px 6px rgba(148,163,184,.15),
+                       0 2px 4px rgba(15,23,42,.04),
+                       0 12px 28px rgba(15,23,42,.08),
+                       0 0 0 1px rgba(148,163,184,.14);
+  --clay-shadow-hover: inset 0 1.5px 0 rgba(255,255,255,.95),
+                       inset 0 -2px 6px rgba(148,163,184,.12),
+                       0 14px 30px rgba(15,23,42,.10),
+                       0 26px 56px rgba(15,23,42,.10),
+                       0 0 0 1px rgba(148,163,184,.16);
+
+  /* Liquid glass — translucent panel with specular edge highlight */
+  --lg-bg:             linear-gradient(160deg, rgba(255,255,255,.78), rgba(244,249,255,.6));
+  --lg-border:         rgba(255,255,255,.6);
+  --lg-highlight:      inset 0 1px 0 rgba(255,255,255,.9);
+  --lg-shadow:         0 1px 2px rgba(15,23,42,.05),
+                       0 16px 40px rgba(15,23,42,.09);
+
+  /* Glass navigation (fixed chrome: sidebar / header) */
+  --glass-nav-bg:        rgba(255,255,255,.84);
+  --glass-nav-border:    rgba(226,232,240,.9);
+  --glass-nav-dark-bg:   linear-gradient(180deg, rgba(15,23,42,.92) 0%, rgba(3,7,18,.94) 100%);
+  --glass-nav-dark-border: rgba(51,65,85,.6);
+
+  /* Status colors — single source for badges, accents, semantic text */
+  --status-danger:         #dc2626;
+  --status-danger-bg:      #fef2f2;
+  --status-danger-border:  #fecaca;
+  --status-warning:        #d97706;
+  --status-warning-bg:     #fffbeb;
+  --status-warning-border: #fde68a;
+  --status-success:        #059669;
+  --status-success-bg:     #ecfdf5;
+  --status-success-border: #a7f3d0;
+  --status-info:           #2563eb;
+  --status-info-bg:        #eff6ff;
+  --status-info-border:    #bfdbfe;
+  --status-ai:             #7c3aed;
+  --status-ai-bg:          #f5f3ff;
+  --status-ai-border:      #ddd6fe;
+  --status-muted:          #64748b;
+  --status-muted-bg:       #f8fafc;
+  --status-muted-border:   #e2e8f0;
+
+  /* Focus ring (keyboard) */
+  --focus-ring-color: var(--teal);
+  --focus-ring-soft:  0 0 0 3px rgba(13,148,136,.14);
 }
 
 /* ---------- BASE ---------- */
@@ -65,7 +132,12 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--bg);
+  overflow-x: clip;
+  background:
+    radial-gradient(ellipse at top, rgba(45,212,191,.10), transparent 44%),
+    radial-gradient(ellipse at 82% 8%, rgba(59,130,246,.09), transparent 36%),
+    radial-gradient(ellipse at 15% 86%, rgba(124,58,237,.05), transparent 32%),
+    linear-gradient(180deg, #f8fbff 0%, var(--bg) 34%, var(--bg-deep) 100%);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -80,11 +152,20 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* ---------- PANEL (white card) ---------- */
+/* Perf: no backdrop-filter here — panels tile large scrolling regions and
+   their background is ~99% opaque, so blur was invisible GPU cost. */
 .panel {
   border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  background: var(--surface);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,.99), rgba(248,250,252,.96));
   box-shadow: var(--shadow-card);
+}
+
+/* Full-bleed panel variant (drawers/sheets flush to a viewport edge).
+   Declared after .panel so it wins at equal specificity; lives unlayered
+   because Tailwind's rounded-* utilities cannot override .panel's radius. */
+.panel-flush {
+  border-radius: 0;
 }
 
 .panel-glow {
@@ -92,13 +173,89 @@ body {
   box-shadow: var(--shadow-card), 0 0 40px rgba(13,148,136,.06);
 }
 
+.surface {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(249,251,253,.96));
+  box-shadow: var(--shadow-card);
+}
+
 /* ---------- GLASS (for overlays, dropdowns) ---------- */
 .glass {
-  background: rgba(255,255,255,.9);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(255,255,255,.86);
+  -webkit-backdrop-filter: blur(var(--blur-lg));
+  backdrop-filter: blur(var(--blur-lg));
   border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+/* ---------- CLAY CARD (v5.0) ----------
+   Controlled claymorphism: a soft-molded raised surface. Background is fully
+   opaque (no blur) so text always sits on a solid surface — WCAG-safe and
+   cheap to composite. Use for KPI cards and featured stat surfaces. */
+.clay-card {
+  position: relative;
+  border: 1px solid var(--clay-border);
+  border-radius: var(--r-clay);
+  background: var(--clay-bg);
+  box-shadow: var(--clay-shadow);
+}
+.clay-card.card-hover:hover {
+  border-color: var(--clay-border);
+  box-shadow: var(--clay-shadow-hover);
+}
+/* Clay inherits the panel's light-mode text corrections */
+.clay-card .text-white { color: #0f172a; }
+
+/* ---------- LIQUID GLASS PANEL (v5.0) ----------
+   Translucent panel with a specular top edge. Reserve for hero/header
+   surfaces and small overlays — NOT for large scrolling lists. Text-bearing
+   content stays readable because the app background behind it is always
+   light; a solid fallback is defined below for non-supporting browsers. */
+.liquid-glass {
+  position: relative;
+  border: 1px solid var(--lg-border);
   border-radius: var(--r-card);
+  background: var(--lg-bg);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.4);
+  box-shadow: var(--lg-shadow), var(--lg-highlight);
+}
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg,
+    rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 36%,
+    rgba(255,255,255,0) 64%, rgba(255,255,255,.24) 100%);
+  opacity: .6;
+}
+.liquid-glass > * { position: relative; z-index: 1; }
+
+/* ---------- GLASS NAVIGATION (v5.0) ----------
+   For fixed chrome only (sidebar, app header). Fixed elements repaint far
+   less than scrolling content, so md blur is affordable here. */
+.glass-nav {
+  background: var(--glass-nav-bg);
+  border-color: var(--glass-nav-border);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.35);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.35);
+}
+.glass-nav-dark {
+  background: var(--glass-nav-dark-bg);
+  border-color: var(--glass-nav-dark-border);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(1.2);
+  backdrop-filter: blur(var(--blur-md)) saturate(1.2);
+}
+
+/* Solid fallbacks — never leave text on an unpredictable backdrop */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .liquid-glass { background: linear-gradient(160deg, #ffffff, #f4f9ff); }
+  .glass-nav    { background: #ffffff; }
+  .glass-nav-dark { background: #060d1c; }
+  .glass        { background: #ffffff; }
 }
 
 /* ---------- BUTTONS ---------- */
@@ -107,9 +264,9 @@ body {
   align-items: center;
   gap: .42rem;
   border-radius: var(--r-btn);
-  border: 1px solid rgba(13,148,136,.25);
-  background: linear-gradient(135deg, #0d9488 0%, #2563eb 100%);
-  padding: .6rem 1.1rem;
+  border: 1px solid rgba(13,148,136,.20);
+  background: linear-gradient(135deg, #0d9488 0%, #14b8a6 36%, #2563eb 100%);
+  padding: .72rem 1.15rem;
   color: #ffffff;
   font-size: .855rem;
   font-weight: 700;
@@ -120,9 +277,9 @@ body {
   transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
 }
 .btn-primary:hover {
-  filter: brightness(1.06);
+  filter: brightness(1.04);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(13,148,136,.35), 0 1px 3px rgba(0,0,0,.1);
+  box-shadow: 0 12px 28px rgba(13,148,136,.22), 0 1px 3px rgba(0,0,0,.10);
 }
 .btn-primary:active  { transform: translateY(0); filter: brightness(.97); }
 .btn-primary:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
@@ -133,8 +290,8 @@ body {
   gap: .42rem;
   border-radius: var(--r-btn);
   border: 1px solid var(--border);
-  background: var(--surface);
-  padding: .6rem .9rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: .68rem .96rem;
   color: var(--text-secondary);
   font-size: .83rem;
   font-weight: 600;
@@ -150,7 +307,58 @@ body {
   box-shadow: 0 2px 6px rgba(0,0,0,.07);
   transform: translateY(-1px);
 }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  border-radius: var(--r-btn);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: .68rem 1rem;
+  color: var(--text-secondary);
+  font-size: .845rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.btn-secondary:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+  transform: translateY(-1px);
+}
+.btn-secondary:active { transform: translateY(0); }
+.btn-secondary:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
 .btn-ghost:active { transform: translateY(0); }
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: .42rem;
+  border-radius: var(--r-btn);
+  border: 1px solid rgba(220,38,38,.25);
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  padding: .72rem 1.15rem;
+  color: #ffffff;
+  font-size: .855rem;
+  font-weight: 700;
+  letter-spacing: .01em;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(220,38,38,.22), 0 1px 2px rgba(0,0,0,.08);
+  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+}
+.btn-danger:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(220,38,38,.24), 0 1px 3px rgba(0,0,0,.10);
+}
+.btn-danger:active  { transform: translateY(0); filter: brightness(.96); }
+.btn-danger:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
 
 .icon-btn {
   display: inline-flex;
@@ -158,7 +366,7 @@ body {
   justify-content: center;
   border-radius: var(--r-btn);
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   padding: .62rem;
   color: var(--text-muted);
   cursor: pointer;
@@ -178,12 +386,13 @@ body {
   gap: .38rem;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface-raised);
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
   padding: .32rem .75rem;
   color: var(--text-secondary);
   font-size: .78rem;
   font-weight: 600;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
 }
 
 /* ---------- FIELD ---------- */
@@ -206,14 +415,57 @@ body {
   box-shadow: 0 0 0 3px rgba(13,148,136,.12), 0 1px 2px rgba(0,0,0,.04);
 }
 .field::placeholder { color: var(--text-muted); }
+.field[aria-invalid="true"] {
+  border-color: var(--status-danger);
+  box-shadow: 0 0 0 3px rgba(220,38,38,.10), 0 1px 2px rgba(0,0,0,.04);
+}
+
+/* ---------- GLOBAL KEYBOARD FOCUS RING ----------
+   Visible focus indicator for keyboard navigation (WCAG 2.4.7), using the
+   primary brand accent (--teal). `:focus-visible` only triggers for keyboard
+   (not mouse) focus, so it does not collide with the `.field:focus` box-shadow
+   ring — the two compose: fields keep their soft inset ring AND gain the outline
+   when reached via keyboard. */
+*:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* ---------- FILTER CHIP (v5.0 — shared tab/filter row) ---------- */
+.filter-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  padding: .5rem .9rem;
+  color: var(--text-secondary);
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+}
+.filter-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+.filter-chip-active,
+.filter-chip-active:hover {
+  border-color: rgba(13,148,136,.45);
+  background: linear-gradient(135deg, #ccfbf1, #e0f2fe);
+  color: #0f766e;
+  box-shadow: 0 6px 18px rgba(13,148,136,.14);
+}
 
 /* ---------- SECTION TITLE ---------- */
 .section-title {
-  font-size: .72rem;
+  font-size: .7rem;
   font-weight: 700;
-  letter-spacing: .18em;
+  letter-spacing: .22em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: #64748b;
 }
 
 /* ---------- MAP SURFACE ---------- */
@@ -228,7 +480,7 @@ body {
     radial-gradient(ellipse at 28% 20%, rgba(13,148,136,.12), transparent 40%),
     radial-gradient(ellipse at 78% 70%, rgba(37,99,235,.1), transparent 38%),
     radial-gradient(ellipse at 55% 48%, rgba(124,58,237,.05), transparent 44%),
-    #e8f0fe;
+    linear-gradient(180deg, #eef6ff 0%, #e6eef8 100%);
   background-size: 42px 42px, 42px 42px, 100% 100%, 100% 100%, 100% 100%, auto;
 }
 
@@ -304,10 +556,24 @@ body {
 /* ---------- SKELETON ---------- */
 .skeleton {
   background: linear-gradient(90deg,
-    #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+    #eef3f8 25%, #dfe7f2 50%, #eef3f8 75%);
   background-size: 600px 100%;
   animation: shimmer 1.5s infinite linear;
   border-radius: 8px;
+}
+
+/* ---------- REDUCED MOTION (WCAG 2.3.3) ----------
+   Collapse all decorative animation/transition for users who ask for it.
+   Skeletons fall back to a static tint so loading is still signalled. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton { animation: none; background: #e4ebf4; }
+  .stagger > * { animation: none; opacity: 1; }
 }
 
 /* ---------- LIVE DOT ---------- */
@@ -330,6 +596,34 @@ body {
   transform: translateY(-2px);
   border-color: rgba(13,148,136,.22) !important;
   box-shadow: var(--shadow-card-hover);
+}
+
+/* ---------- UNIFIED SURFACE DETAILING ---------- */
+.panel,
+.glass {
+  position: relative;
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.32), transparent 28%);
+  opacity: .55;
+}
+
+.panel > *,
+.glass > * {
+  position: relative;
+  z-index: 1;
+}
+
+.panel .btn-primary,
+.panel .btn-secondary,
+.panel .btn-ghost {
+  box-shadow: none;
 }
 
 /* ---------- KPI TOP ACCENT BORDERS ---------- */
@@ -375,7 +669,7 @@ body {
 .anim-count       { animation: countUp .32s ease-out both; }
 
 /* ---------- TABLE SORT ---------- */
-th.sortable { cursor: pointer; user-select: none; }
+th.sortable { cursor: pointer; -webkit-user-select: none; user-select: none; }
 th.sortable:hover { color: var(--text-primary); }
 th.sortable .sort-icon { opacity: .3; transition: opacity .12s; }
 th.sortable:hover .sort-icon { opacity: 1; }
@@ -429,9 +723,11 @@ th.sort-active { color: var(--text-primary); }
   background: #ffffff;
 }
 
-/* Login brand panel — dark surface, exempt from light-mode overrides */
+/* Login brand panel — dark surface, exempt from light-mode overrides.
+   Layered radial vignette gives the panel physical depth. */
 .login-brand-panel {
-  background: #0c1526 !important;
+  background:
+    radial-gradient(110% 85% at 72% 8%, #16263f 0%, #0c1526 52%, #070e1b 100%) !important;
 }
 .login-brand-panel .text-white     { color: #ffffff !important; }
 .login-brand-panel .text-slate-400 { color: #94a3b8 !important; }
@@ -541,9 +837,8 @@ th.sort-active { color: var(--text-primary); }
 .login-panel-enter {
   animation: loginPanelEnter 0.8s ease-out both;
 }
-.login-metric-1 { animation: metricCount 0.5s ease-out 1.2s both; }
-.login-metric-2 { animation: metricCount 0.5s ease-out 1.4s both; }
-.login-metric-3 { animation: metricCount 0.5s ease-out 1.6s both; }
+/* Product pillar chips — staggered via inline animation-delay */
+.login-pillar { animation: metricCount 0.5s ease-out both; }
 
 /* Scanning sweep line */
 @keyframes scanLine {
@@ -556,14 +851,24 @@ th.sort-active { color: var(--text-primary); }
   will-change: transform, opacity;
 }
 
-/* Floating vehicle status cards — stagger via inline animationDelay */
+/* Floating vehicle status cards — 3D rail. The wrapper carries the entry
+   animation plus per-card depth (--z, set inline); the inner card carries the
+   infinite bob, so the two transforms never fight over the same property. */
 @keyframes floatCardIn {
-  from { opacity: 0; transform: translateX(14px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateZ(var(--z, 0px)) translateX(26px); }
+  to   { opacity: 1; transform: translateZ(var(--z, 0px)) translateX(0); }
+}
+@keyframes floatCardBob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-5px); }
+}
+.login-float-wrap {
+  opacity: 0;
+  transform: translateZ(var(--z, 0px));
+  animation: floatCardIn 0.7s cubic-bezier(0.22,1,0.36,1) forwards;
 }
 .login-float-card {
-  opacity: 0;
-  animation: floatCardIn 0.65s cubic-bezier(0.22,1,0.36,1) forwards;
+  animation: floatCardBob 5.5s ease-in-out infinite;
 }
 
 /* Live ticker horizontal scroll */
@@ -596,6 +901,392 @@ th.sort-active { color: var(--text-primary); }
 .login-card-enter {
   opacity: 0;
   animation: loginCardEnter 0.8s cubic-bezier(0.22,1,0.36,1) 0.2s forwards;
+}
+
+/* ── Login 3D command-center scene ─────────────────────────────────
+   The brand panel is a perspective viewport; .login-scene is rotated a few
+   degrees toward the pointer (JS, transform-only) and its layers sit on
+   separate translateZ planes so they parallax against each other.
+   Back layers are scaled up to compensate for perspective shrink so no
+   edges are exposed while the scene tilts. */
+.login-persp { perspective: 1400px; }
+
+.login-scene {
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.login-layer-grid   { transform: translateZ(-120px) scale(1.18); }
+.login-layer-glow   { transform: translateZ(-90px)  scale(1.12); }
+.login-layer-canvas { transform: translateZ(-60px)  scale(1.08); }
+.login-layer-map    {
+  transform: rotateX(9deg) translateZ(-24px) scale(1.22);
+  transform-origin: 50% 62%;
+}
+.login-card-rail {
+  transform: translateY(-50%) translateZ(56px) rotateY(-7deg);
+  transform-style: preserve-3d;
+}
+
+/* Slow diagonal light sweep across the brand panel */
+@keyframes loginSweep {
+  0%   { transform: translateX(-90%) skewX(-14deg); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(260%) skewX(-14deg); opacity: 0; }
+}
+.login-light-sweep {
+  position: absolute;
+  top: -12%;
+  bottom: -12%;
+  left: 0;
+  width: 42%;
+  background: linear-gradient(100deg,
+    transparent 0%,
+    rgba(125,211,252,.05) 42%,
+    rgba(45,212,191,.10) 50%,
+    rgba(125,211,252,.05) 58%,
+    transparent 100%);
+  animation: loginSweep 9s ease-in-out infinite;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.login-hero-title {
+  text-shadow: 0 1px 2px rgba(2,8,20,.55), 0 6px 32px rgba(45,212,191,.16);
+}
+
+/* ── Sign-in card — 3D stage with ghost plates behind the glass ──── */
+.login-card-stage {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+.login-card-plate {
+  position: absolute;
+  inset: 0;
+  border-radius: 26px;
+  pointer-events: none;
+}
+.login-card-plate-1 {
+  transform: translateZ(-34px) translateY(16px) scale(.965);
+  background: linear-gradient(180deg, rgba(13,148,136,.14), rgba(37,99,235,.08));
+  filter: blur(1.5px);
+  opacity: .8;
+}
+.login-card-plate-2 {
+  transform: translateZ(-68px) translateY(32px) scale(.925);
+  background: linear-gradient(180deg, rgba(100,116,139,.16), rgba(100,116,139,.05));
+  filter: blur(3px);
+  opacity: .7;
+}
+.login-card3d {
+  transform: translateZ(0);
+  box-shadow:
+    0 1px 2px rgba(15,23,42,.05),
+    0 10px 28px -6px rgba(15,23,42,.10),
+    0 30px 70px -28px rgba(13,148,136,.28),
+    inset 0 1px 0 rgba(255,255,255,.85);
+  transition: transform .4s cubic-bezier(.22,1,.36,1), box-shadow .4s cubic-bezier(.22,1,.36,1);
+}
+/* Hairline sheen along the top edge of the glass */
+.login-card3d::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), transparent);
+  pointer-events: none;
+}
+@media (hover: hover) {
+  /* Gentle lift + tilt on hover; settles flat while a field has focus */
+  .login-card-stage:hover .login-card3d:not(:focus-within) {
+    transform: translateZ(16px) rotateX(.8deg);
+    box-shadow:
+      0 2px 4px rgba(15,23,42,.05),
+      0 16px 40px -8px rgba(15,23,42,.13),
+      0 44px 90px -30px rgba(13,148,136,.34),
+      inset 0 1px 0 rgba(255,255,255,.9);
+  }
+}
+
+/* Perspective floor grid under the form side */
+.login-floor {
+  position: absolute;
+  left: -18%;
+  right: -18%;
+  bottom: -4%;
+  height: 44%;
+  background-image:
+    linear-gradient(rgba(13,148,136,.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13,148,136,.09) 1px, transparent 1px);
+  background-size: 46px 46px;
+  transform: perspective(720px) rotateX(62deg);
+  transform-origin: 50% 100%;
+  -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,.85), transparent 76%);
+  mask-image: linear-gradient(to top, rgba(0,0,0,.85), transparent 76%);
+  pointer-events: none;
+}
+
+/* Reduced motion — static depth is fine, moving depth is not.
+   (The global reduced-motion block already collapses keyframe animations;
+   these make the login-specific motion inert explicitly.) */
+@media (prefers-reduced-motion: reduce) {
+  .login-light-sweep { display: none; }
+  .login-scene { transform: none !important; }
+  .login-float-card { animation: none; }
+  .login-card-stage:hover .login-card3d { transform: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Login v6 — identifier-first surface · Clay · Neumorphic · Skeuomorphic
+   All rules namespaced under `.login2*` so they never leak into the app's
+   .panel / .btn primitives. Values reuse the repo tokens (--teal, --fc-hi/lo,
+   --surface-sunken, --focus-ring-*) so a future brand retune propagates.
+   ══════════════════════════════════════════════════════════════════════════ */
+.login2 {
+  /* Clay radius scale — puffier than app default; never nest larger in smaller */
+  --l-r-card:  28px;
+  --l-r-field: 16px;
+  --l-r-btn:   16px;
+
+  /* Warm-neutral clay surface (skeuomorphic warmth over the cool teal brand) */
+  --l-clay-bg: linear-gradient(150deg, #ffffff 0%, #f4f8fc 52%, #eaf1f8 100%);
+
+  /* DOUBLE-shadow clay: inset light rim + inset floor shade + neutral lift +
+     wide colored teal ground bleed. Two stacked drop shadows = the double shadow. */
+  --l-clay:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    inset 0 -10px 18px rgba(148,163,184,.14),
+    0 2px 4px rgba(15,23,42,.05),
+    0 18px 34px -12px rgba(15,23,42,.16),
+    0 34px 74px -30px rgba(13,148,136,.30);
+  --l-clay-hover:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    inset 0 -10px 18px rgba(148,163,184,.12),
+    0 3px 6px rgba(15,23,42,.06),
+    0 24px 44px -14px rgba(15,23,42,.20),
+    0 48px 96px -34px rgba(13,148,136,.36);
+
+  /* Neumorphic OUTSET (resting secondary buttons / toggle knob) — extruded */
+  --l-neu-out:
+    -7px -7px 16px var(--fc-hi),
+     9px 12px 24px var(--fc-lo),
+     inset 0 1px 0 rgba(255,255,255,.9);
+  /* Neumorphic INSET (fields at rest, pressed buttons, trust chips) — pressed in */
+  --l-neu-in:
+    inset 3px 3px 7px rgba(141,157,184,.34),
+    inset -4px -4px 9px rgba(255,255,255,.92);
+  /* Inset + teal focus glow */
+  --l-neu-in-focus:
+    inset 3px 3px 7px rgba(141,157,184,.28),
+    inset -4px -4px 9px rgba(255,255,255,.95),
+    0 0 0 3px rgba(13,148,136,.18);
+}
+
+/* ── Auth card — clay hero object ─────────────────────────────────────────── */
+.login2-card {
+  position: relative;
+  border-radius: var(--l-r-card);
+  padding: 30px 28px;
+  background: var(--l-clay-bg);
+  border: 1.5px solid rgba(255,255,255,.85);
+  box-shadow: var(--l-clay);
+  transition: box-shadow .4s cubic-bezier(.22,1,.36,1),
+              transform  .4s cubic-bezier(.22,1,.36,1);
+}
+@media (hover: hover) {
+  .login2-card:not(:focus-within):hover {
+    transform: translateY(-2px);
+    box-shadow: var(--l-clay-hover);
+  }
+}
+/* Skeuomorphic top-edge sheen */
+.login2-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
+  pointer-events: none;
+}
+
+/* ── Fields — neumorphic INSET ────────────────────────────────────────────── */
+.login2-field {
+  width: 100%;
+  border-radius: var(--l-r-field);
+  border: 1px solid rgba(203,213,225,.6);
+  background: var(--surface-sunken);
+  padding: 13px 15px;
+  font-size: 14px;
+  color: var(--text-primary);
+  box-shadow: var(--l-neu-in);
+  outline: none;
+  transition: box-shadow .2s ease, background .2s ease, border-color .2s ease;
+}
+.login2-field::placeholder { color: #94a3b8; }
+.login2-field:hover { border-color: rgba(148,163,184,.8); }
+.login2-field:focus {
+  background: #f3f8fc;
+  border-color: var(--teal);
+  box-shadow: var(--l-neu-in-focus);
+}
+.login2-field[aria-invalid="true"] {
+  border-color: #ef4444;
+  box-shadow: inset 3px 3px 7px rgba(141,157,184,.28), inset -4px -4px 9px rgba(255,255,255,.95), 0 0 0 3px rgba(239,68,68,.16);
+}
+
+/* Read-only identity chip (step 2) — engraved neumorphic pill */
+.login2-idchip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: var(--l-r-field);
+  padding: 10px 14px;
+  background: var(--surface-sunken);
+  box-shadow: var(--l-neu-in);
+  animation: idSettle .35s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes idSettle {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Show/Hide pill inside the password field — neumorphic outset */
+.login2-eye {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  background: var(--l-clay-bg);
+  box-shadow: var(--l-neu-out);
+  transition: box-shadow .15s ease, transform .1s ease;
+}
+.login2-eye:active { box-shadow: var(--l-neu-in); transform: translateY(.5px); }
+.login2-eye:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* ── Primary CTA — clay + skeuomorphic teal ──────────────────────────────── */
+.login2-cta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--l-r-btn);
+  padding: 14px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, #2dd4bf 0%, #14b8a6 46%, #0d9488 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.45),
+    inset 0 -2px 6px rgba(2,44,40,.35),
+    0 10px 22px -8px rgba(13,148,136,.60),
+    0 20px 44px -18px rgba(13,148,136,.45);
+  transition: transform .12s ease, box-shadow .2s ease, filter .2s ease;
+}
+.login2-cta:hover:not(:disabled) { filter: brightness(1.04); }
+.login2-cta:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 6px rgba(2,44,40,.4),
+    0 6px 14px -6px rgba(13,148,136,.5);
+}
+.login2-cta:disabled { opacity: .5; cursor: not-allowed; filter: grayscale(.15); }
+.login2-cta:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.45),
+    0 10px 22px -8px rgba(13,148,136,.60),
+    0 0 0 3px rgba(13,148,136,.30);
+}
+
+/* ── SSO button — neumorphic secondary (only rendered for a real connection) ─ */
+.login2-sso {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: var(--l-r-btn);
+  padding: 13px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--teal);
+  background: var(--l-clay-bg);
+  border: 1px solid rgba(13,148,136,.22);
+  box-shadow: var(--l-neu-out);
+  transition: box-shadow .15s ease, transform .1s ease;
+}
+.login2-sso:active { box-shadow: var(--l-neu-in); transform: translateY(.5px); }
+.login2-sso:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* Engraved skeuomorphic divider */
+.login2-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+  box-shadow: 0 1px 0 rgba(255,255,255,.8);
+}
+
+/* ── Trust chips — honest capability statements, neumorphic inset ─────────── */
+.login2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: var(--surface-sunken);
+  box-shadow: var(--l-neu-in);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+/* Dark-panel variant — double-shadow clay, matches the brand-side material */
+.login2-chip-dark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: rgba(12,21,38,.72);
+  border: 1px solid rgba(45,212,191,.20);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.06),
+    0 10px 26px -12px rgba(45,212,191,.30),
+    0 2px 6px rgba(2,8,20,.5);
+}
+
+/* Role guidance tiles — neumorphic outset */
+.login2-role {
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: var(--l-clay-bg);
+  box-shadow: var(--l-neu-out);
+}
+
+/* ── Identifier-first reveal (grid-rows technique, no max-height guessing) ── */
+.login2-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .38s cubic-bezier(.22,1,.36,1), opacity .3s ease .06s;
+}
+.login2-reveal[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.login2-reveal > div { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .login2-card { transition: none; }
+  .login2-reveal { transition: none; }
+  .login2-reveal[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+  .login2-idchip { animation: none; }
 }
 
 .from-slate-900 {
@@ -758,13 +1449,15 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   display: flex; align-items: center; justify-content: center;
 }
 
-/* ---------- STATUS / RISK BADGES (light-mode tones) ---------- */
-.badge-danger  { border-color: #fecaca; background: #fef2f2; color: #dc2626; }
-.badge-warning { border-color: #fde68a; background: #fffbeb; color: #d97706; }
-.badge-success { border-color: #a7f3d0; background: #ecfdf5; color: #059669; }
-.badge-info    { border-color: #bfdbfe; background: #eff6ff; color: #2563eb; }
-.badge-ai      { border-color: #ddd6fe; background: #f5f3ff; color: #7c3aed; }
-.badge-muted   { border-color: #e2e8f0; background: #f8fafc; color: #64748b; }
+/* ---------- STATUS / RISK BADGES (light-mode tones) ----------
+   All tone values route through the v5.0 --status-* tokens (WCAG AA:
+   600/700-level text on 50-level tinted backgrounds). */
+.badge-danger  { border-color: var(--status-danger-border);  background: var(--status-danger-bg);  color: var(--status-danger); }
+.badge-warning { border-color: var(--status-warning-border); background: var(--status-warning-bg); color: var(--status-warning); }
+.badge-success { border-color: var(--status-success-border); background: var(--status-success-bg); color: var(--status-success); }
+.badge-info    { border-color: var(--status-info-border);    background: var(--status-info-bg);    color: var(--status-info); }
+.badge-ai      { border-color: var(--status-ai-border);      background: var(--status-ai-bg);      color: var(--status-ai); }
+.badge-muted   { border-color: var(--status-muted-border);   background: var(--status-muted-bg);   color: var(--status-muted); }
 
 /* ---------- COLORED TEXT LEGIBILITY IN LIGHT PANELS ---------- */
 .panel .text-red-300,     .panel .text-red-400     { color: #b91c1c; }
@@ -787,6 +1480,24 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
     radial-gradient(ellipse at 82% 16%, rgba(13,148,136,.10), transparent 34%),
     linear-gradient(145deg, #f8fafc 0%, #eef4fb 55%, #f6f8fc 100%);
   background-size: 46px 46px, 46px 46px, 100% 100%, 100% 100%, 100% 100%, auto;
+}
+
+.control-shell {
+  background:
+    radial-gradient(ellipse at 14% 0%, rgba(45,212,191,.08), transparent 36%),
+    radial-gradient(ellipse at 86% 12%, rgba(37,99,235,.07), transparent 34%),
+    linear-gradient(180deg, #f8fbff 0%, #eef3f9 100%);
+}
+
+.platform-shell {
+  background:
+    radial-gradient(ellipse at top, rgba(45,212,191,.12), transparent 34%),
+    radial-gradient(ellipse at 82% 12%, rgba(59,130,246,.10), transparent 30%),
+    linear-gradient(180deg, #020617 0%, #07101f 42%, #0f172a 100%);
+}
+
+.shell-header {
+  box-shadow: var(--shadow-header);
 }
 
 .control-tower h1,
@@ -4408,3 +5119,873 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   width: 16px;
   height: 16px;
 }
+/* Live map: warm, compact, tactile operations workbench. */
+.live-map-workbench {
+  --map-cream: #f5efe4;
+  --map-paper: #fffdf8;
+  --map-edge: #d8cdbd;
+  --map-ink: #26322f;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(231, 170, 98, .13), transparent 27%),
+    radial-gradient(circle at 88% 18%, rgba(68, 133, 119, .12), transparent 30%),
+    repeating-linear-gradient(0deg, rgba(92, 71, 46, .022) 0, rgba(92, 71, 46, .022) 1px, transparent 1px, transparent 5px),
+    var(--map-cream);
+  border: 1px solid rgba(151, 126, 96, .22);
+  border-radius: 24px;
+  padding: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.9),
+    inset 0 -10px 28px rgba(109, 82, 50, .045);
+}
+
+.live-map-workbench .panel.live-map-stage,
+.live-map-workbench .panel.live-map-tactile-card {
+  border-color: var(--map-edge);
+  background: linear-gradient(145deg, #fffefa, #f7f0e6);
+  box-shadow:
+    0 9px 18px rgba(75, 55, 35, .11),
+    0 2px 4px rgba(75, 55, 35, .10),
+    inset 0 1px 0 #fff;
+}
+
+.live-map-workbench .section-title {
+  color: #695b49;
+  letter-spacing: .13em;
+}
+
+.live-map-canvas {
+  border: 8px solid #e7ddcf;
+  border-radius: 20px;
+  box-shadow:
+    inset 0 3px 12px rgba(49, 39, 27, .24),
+    0 2px 0 #fff,
+    0 8px 16px rgba(70, 50, 30, .12);
+}
+
+.live-map-inset {
+  border: 1px solid #d7cbbb;
+  background: #eee5d8;
+  box-shadow:
+    inset 0 2px 7px rgba(83, 63, 42, .12),
+    0 1px 0 rgba(255,255,255,.9);
+}
+
+.live-map-raised,
+.live-map-mini-stat,
+.live-map-status-card {
+  border-color: rgba(176, 153, 124, .42);
+  box-shadow:
+    0 3px 6px rgba(76, 56, 35, .10),
+    inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+.live-map-raised {
+  background: linear-gradient(145deg, #fffefa, #f8f2e9);
+}
+
+.live-map-status-card:active,
+.live-map-workbench .btn-primary:active,
+.live-map-workbench .btn-ghost:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 5px rgba(74, 54, 34, .14);
+}
+
+.live-map-workbench .btn-primary,
+.live-map-workbench .btn-ghost {
+  border-color: #cdbda8;
+  box-shadow: 0 2px 4px rgba(71, 52, 32, .10), inset 0 1px 0 rgba(255,255,255,.9);
+}
+
+/* ---------- ALERTS ROOM (warm tactile command surface) ---------- */
+.alerts-command-room {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(37, 99, 235, .08), transparent 22%),
+    radial-gradient(circle at 92% 14%, rgba(13, 148, 136, .08), transparent 24%),
+    radial-gradient(circle at 50% 76%, rgba(124, 58, 237, .04), transparent 26%);
+}
+
+.alerts-command-room .panel {
+  border-color: #dbe4ee;
+  background: linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(247,251,255,.96) 100%);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, .04),
+    0 16px 40px rgba(15, 23, 42, .07),
+    inset 0 1px 0 rgba(255,255,255,.94);
+}
+
+.alerts-command-room .panel::before {
+  opacity: .72;
+  background: linear-gradient(180deg, rgba(255,255,255,.42), transparent 34%);
+}
+
+.alerts-command-room .section-title {
+  color: #725842;
+}
+
+.alerts-command-room .btn-ghost {
+  border-color: #dbe4ee;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+.alerts-command-room .btn-ghost:hover {
+  border-color: #bcd0e5;
+  background: linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
+  color: #0f172a;
+  box-shadow: 0 5px 12px rgba(15, 23, 42, .08);
+}
+
+.alerts-command-room .btn-primary {
+  border-color: rgba(37, 99, 235, .26);
+  background: linear-gradient(135deg, #2563eb 0%, #0d9488 100%);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, .18);
+}
+
+.alerts-command-room .btn-primary:hover {
+  box-shadow: 0 14px 26px rgba(37, 99, 235, .20);
+}
+
+.alerts-command-room .badge,
+.alerts-command-room .rounded-full.border {
+  border-color: #dbe4ee;
+}
+
+.alerts-center-workbench {
+  padding-top: 0;
+}
+
+.alerts-center-workbench .panel {
+  border-radius: 24px;
+}
+
+.alerts-center-workbench article {
+  border-radius: 22px;
+}
+
+.alerts-center-workbench button {
+  letter-spacing: .01em;
+}
+
+@media (max-width: 639px) {
+  .alerts-command-room {
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .live-map-workbench {
+    border-radius: 18px;
+    padding: 8px;
+  }
+
+  .live-map-canvas {
+    border-width: 5px;
+  }
+}
+
+/* ============================================================
+   OPS DECK v5.1 — main dashboard (/live-dashboard)
+   Clay (puffy tiles) · Neumorphism (extruded chassis, inset
+   wells) · Skeuomorphism (bezel screen, LEDs, screws, LCD,
+   analog gauge). Cool porcelain palette so the flagship deck
+   reads distinct from the warm live-map / alerts rooms.
+   No backdrop-filter anywhere here — pure gradients/shadows.
+   ============================================================ */
+.ops-deck {
+  --deck-bg: #e9eff8;
+  --deck-hi: rgba(255, 255, 255, .92);
+  --deck-lo: rgba(141, 157, 184, .38);
+  margin: -6px;
+  padding: 14px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 10% 4%, rgba(45, 212, 191, .09), transparent 30%),
+    radial-gradient(circle at 90% 10%, rgba(59, 130, 246, .08), transparent 32%),
+    repeating-linear-gradient(0deg, rgba(100, 116, 139, .022) 0 1px, transparent 1px 6px),
+    linear-gradient(170deg, #f0f5fc 0%, var(--deck-bg) 52%, #e2eaf5 100%);
+  border: 1px solid rgba(203, 213, 225, .7);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .9),
+    inset 0 -12px 30px rgba(141, 157, 184, .10);
+}
+
+.ops-deck .section-title { color: #5b6b83; }
+
+/* ── Console rail (header) — brushed panel with corner screws ── */
+.deck-rail {
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 20px;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, .38) 0 1px, rgba(203, 213, 225, .18) 1px 2px),
+    linear-gradient(180deg, #f6f9fd 0%, #e3ebf6 100%);
+  box-shadow:
+    -6px -6px 14px var(--deck-hi),
+    8px 10px 22px var(--deck-lo),
+    inset 0 1px 0 rgba(255, 255, 255, .95);
+}
+
+.deck-screw {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 32% 28%, #ffffff, #c4cfdd 42%, #8a99ad 100%);
+  box-shadow:
+    inset 0 -1px 2px rgba(30, 41, 59, .42),
+    0 1px 1px rgba(255, 255, 255, .9);
+}
+.deck-screw::after {
+  content: "";
+  position: absolute;
+  left: 1.5px;
+  right: 1.5px;
+  top: 50%;
+  height: 1.4px;
+  border-radius: 2px;
+  background: rgba(51, 65, 85, .55);
+  transform: translateY(-50%) rotate(var(--slot, -30deg));
+}
+
+/* ── LCD clock ── */
+.deck-lcd {
+  border: 1px solid #0b1f1b;
+  border-radius: 12px;
+  color: #5eead4;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .03) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #0f2420 0%, #123128 100%);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, .55),
+    inset 0 -1px 0 rgba(94, 234, 212, .12),
+    0 1px 0 rgba(255, 255, 255, .55);
+  text-shadow: 0 0 6px rgba(94, 234, 212, .45);
+}
+
+/* ── Clay tiles — puffy double-shadow pressables ── */
+.deck-clay {
+  position: relative;
+  border: 1.5px solid rgba(255, 255, 255, .85);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.deck-clay:hover { transform: translateY(-2px); }
+.deck-clay:active { transform: translateY(1px); }
+
+.deck-clay-emerald {
+  background: linear-gradient(150deg, #eafcf4 0%, #d6f5e7 100%);
+  box-shadow: 0 10px 22px rgba(16, 185, 129, .16), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.deck-clay-emerald:hover {
+  box-shadow: 0 14px 28px rgba(16, 185, 129, .22), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.deck-clay-amber {
+  background: linear-gradient(150deg, #fff7e8 0%, #fdecd0 100%);
+  box-shadow: 0 10px 22px rgba(245, 158, 11, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.deck-clay-amber:hover {
+  box-shadow: 0 14px 28px rgba(245, 158, 11, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.deck-clay-sky {
+  background: linear-gradient(150deg, #ecf5ff 0%, #dcebfc 100%);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.deck-clay-sky:hover {
+  box-shadow: 0 14px 28px rgba(59, 130, 246, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.deck-clay-red {
+  background: linear-gradient(150deg, #fef0f0 0%, #fcdede 100%);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.deck-clay-red:hover {
+  box-shadow: 0 14px 28px rgba(239, 68, 68, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.deck-clay-slate {
+  background: linear-gradient(150deg, #f3f6fb 0%, #e5ecf5 100%);
+  box-shadow: 0 10px 22px rgba(100, 116, 139, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(100, 116, 139, .12);
+}
+.deck-clay-slate:hover {
+  box-shadow: 0 14px 28px rgba(100, 116, 139, .21), 0 26px 52px rgba(15, 23, 42, .09),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(100, 116, 139, .12);
+}
+
+/* Pressed (selected filter) — clay squishes in */
+.deck-clay-pressed,
+.deck-clay-pressed:hover {
+  transform: translateY(1px);
+  border-color: rgba(13, 148, 136, .38);
+  box-shadow:
+    inset 0 4px 10px rgba(71, 85, 105, .22),
+    inset 0 -2px 6px rgba(255, 255, 255, .65),
+    0 2px 6px rgba(15, 23, 42, .05);
+}
+
+.deck-blob {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffffff 0%, #edf3fb 100%);
+  box-shadow:
+    0 4px 8px rgba(15, 23, 42, .10),
+    inset 0 1px 0 #ffffff,
+    inset 0 -3px 6px rgba(148, 163, 184, .28);
+}
+
+/* ── Neumorphic chassis + inset wells ── */
+.deck-neumo {
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #f2f6fc 0%, #e6edf7 100%);
+  box-shadow:
+    -7px -7px 16px var(--deck-hi, rgba(255, 255, 255, .92)),
+    9px 12px 24px var(--deck-lo, rgba(141, 157, 184, .38)),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+.deck-inset {
+  border: 1px solid rgba(203, 213, 225, .55);
+  background: linear-gradient(180deg, #e3eaf4 0%, #e9f0f9 100%);
+  box-shadow:
+    inset 5px 6px 12px rgba(141, 157, 184, .28),
+    inset -5px -6px 12px rgba(255, 255, 255, .85);
+}
+
+/* ── Bezel + screen (roster table) ── */
+.deck-bezel {
+  padding: 7px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #d8e1ee 0%, #eef3fa 100%);
+  box-shadow:
+    inset 0 2px 5px rgba(71, 85, 105, .22),
+    inset 0 -1px 0 rgba(255, 255, 255, .85),
+    0 1px 0 rgba(255, 255, 255, .8);
+}
+
+.deck-screen {
+  border: 1px solid #cbd7e6;
+  border-radius: 13px;
+  background: #fcfdff;
+  box-shadow: inset 0 2px 10px rgba(30, 41, 59, .08);
+}
+
+/* ── Neumorphic segmented control ── */
+.deck-seg {
+  border: 1px solid rgba(203, 213, 225, .5);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e2e9f4 0%, #e9f0f9 100%);
+  box-shadow:
+    inset 4px 4px 9px rgba(141, 157, 184, .26),
+    inset -4px -4px 9px rgba(255, 255, 255, .85);
+}
+
+.deck-seg-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: .42rem .8rem;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.deck-seg-btn:hover { color: #0f172a; }
+
+.deck-seg-btn-active,
+.deck-seg-btn-active:hover {
+  border-color: rgba(255, 255, 255, .9);
+  background: linear-gradient(180deg, #ffffff 0%, #f2f7fd 100%);
+  color: #0f766e;
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .14),
+    inset 0 1px 0 #ffffff;
+}
+
+/* ── Meter tracks + fills ── */
+.deck-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #dbe4f0;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1.5px 3px rgba(71, 85, 105, .28),
+    inset 0 -1px 0 rgba(255, 255, 255, .7);
+}
+
+.deck-fill {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 0;
+  transition: width .6s cubic-bezier(.34, 1.56, .64, 1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55);
+}
+.deck-fill-emerald { background: linear-gradient(180deg, #4ade80, #10b981); }
+.deck-fill-amber   { background: linear-gradient(180deg, #fcd34d, #f59e0b); }
+.deck-fill-red     { background: linear-gradient(180deg, #f87171, #dc2626); }
+.deck-fill-sky     { background: linear-gradient(180deg, #60a5fa, #2563eb); }
+.deck-fill-teal    { background: linear-gradient(180deg, #2dd4bf, #0d9488); }
+.deck-fill-slate   { background: linear-gradient(180deg, #94a3b8, #64748b); }
+
+/* ── LEDs — domed indicator lamps ── */
+.deck-led {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+.deck-led-emerald {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #34d399 42%, #047857 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, .65), inset 0 -1px 2px rgba(6, 78, 59, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-amber {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #fbbf24 42%, #b45309 100%);
+  box-shadow: 0 0 8px rgba(245, 158, 11, .6), inset 0 -1px 2px rgba(120, 53, 15, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-red {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #f87171 42%, #b91c1c 100%);
+  box-shadow: 0 0 8px rgba(239, 68, 68, .6), inset 0 -1px 2px rgba(127, 29, 29, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-sky {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #60a5fa 42%, #1d4ed8 100%);
+  box-shadow: 0 0 8px rgba(59, 130, 246, .6), inset 0 -1px 2px rgba(30, 58, 138, .5), 0 1px 1px rgba(255, 255, 255, .8);
+}
+.deck-led-slate {
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 14%, #cbd5e1 42%, #64748b 100%);
+  box-shadow: inset 0 -1px 2px rgba(51, 65, 85, .4), 0 1px 1px rgba(255, 255, 255, .8);
+}
+
+/* ── Alert chips — raised cards sitting in the inset tray ── */
+.deck-alert {
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .09),
+    inset 0 1px 0 #ffffff;
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.deck-alert:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, .13), inset 0 1px 0 #ffffff;
+}
+.deck-alert:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 6px rgba(71, 85, 105, .2);
+}
+
+/* ── Gauge needle ── */
+.deck-needle {
+  transform: rotate(var(--needle, 0deg));
+  transform-origin: 100px 100px;
+  transition: transform .7s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@media (max-width: 639px) {
+  .ops-deck {
+    margin: -4px;
+    padding: 9px;
+    border-radius: 20px;
+  }
+}
+
+/* ============================================================
+   FLEET CONSOLE v5.1 — Vehicles module (/vehicles/roster)
+   Samsara-grade fleet operations console. Reuses the Ops Deck
+   primitives (.deck-screw/.deck-led/.deck-track/.deck-fill/
+   .deck-inset/.deck-alert) and adds the console chassis (fc-*).
+   Clay KPI tiles · neumorphic roster chassis · skeuomorphic
+   bezel screen, telemetry instruments, corner screws.
+   ============================================================ */
+.fleet-console {
+  --fc-bg: #e9eff8;
+  --fc-hi: rgba(255, 255, 255, .92);
+  --fc-lo: rgba(141, 157, 184, .38);
+  margin: -6px;
+  padding: 14px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 8% 4%, rgba(45, 212, 191, .09), transparent 30%),
+    radial-gradient(circle at 92% 8%, rgba(59, 130, 246, .08), transparent 32%),
+    repeating-linear-gradient(0deg, rgba(100, 116, 139, .022) 0 1px, transparent 1px 6px),
+    linear-gradient(170deg, #f0f5fc 0%, var(--fc-bg) 52%, #e2eaf5 100%);
+  border: 1px solid rgba(203, 213, 225, .7);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, .9),
+    inset 0 -12px 30px rgba(141, 157, 184, .10);
+}
+.fleet-console .section-title { color: #5b6b83; }
+
+/* Console rail (header) — brushed panel */
+.fc-rail {
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 20px;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, .38) 0 1px, rgba(203, 213, 225, .18) 1px 2px),
+    linear-gradient(180deg, #f6f9fd 0%, #e3ebf6 100%);
+  box-shadow:
+    -6px -6px 14px var(--fc-hi),
+    8px 10px 22px var(--fc-lo),
+    inset 0 1px 0 rgba(255, 255, 255, .95);
+}
+
+/* Clay KPI tiles */
+.fc-clay {
+  position: relative;
+  border: 1.5px solid rgba(255, 255, 255, .85);
+  border-radius: 22px;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.fc-clay:hover { transform: translateY(-2px); }
+.fc-clay-teal {
+  background: linear-gradient(150deg, #e9fbf6 0%, #d3f3ea 100%);
+  box-shadow: 0 10px 22px rgba(13, 148, 136, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(13, 148, 136, .12);
+}
+.fc-clay-teal:hover { box-shadow: 0 14px 28px rgba(13, 148, 136, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(13, 148, 136, .12); }
+.fc-clay-emerald {
+  background: linear-gradient(150deg, #eafcf4 0%, #d6f5e7 100%);
+  box-shadow: 0 10px 22px rgba(16, 185, 129, .16), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12);
+}
+.fc-clay-emerald:hover { box-shadow: 0 14px 28px rgba(16, 185, 129, .22), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(16, 185, 129, .12); }
+.fc-clay-red {
+  background: linear-gradient(150deg, #fef0f0 0%, #fcdede 100%);
+  box-shadow: 0 10px 22px rgba(239, 68, 68, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11);
+}
+.fc-clay-red:hover { box-shadow: 0 14px 28px rgba(239, 68, 68, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(239, 68, 68, .11); }
+.fc-clay-amber {
+  background: linear-gradient(150deg, #fff7e8 0%, #fdecd0 100%);
+  box-shadow: 0 10px 22px rgba(245, 158, 11, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12);
+}
+.fc-clay-amber:hover { box-shadow: 0 14px 28px rgba(245, 158, 11, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(245, 158, 11, .12); }
+.fc-clay-sky {
+  background: linear-gradient(150deg, #ecf5ff 0%, #dcebfc 100%);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, .15), 0 22px 44px rgba(15, 23, 42, .07),
+    inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11);
+}
+.fc-clay-sky:hover { box-shadow: 0 14px 28px rgba(59, 130, 246, .21), 0 26px 52px rgba(15, 23, 42, .09), inset 0 2px 0 rgba(255, 255, 255, .95), inset 0 -8px 14px rgba(59, 130, 246, .11); }
+
+.fc-blob {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffffff 0%, #edf3fb 100%);
+  box-shadow: 0 4px 8px rgba(15, 23, 42, .10), inset 0 1px 0 #ffffff, inset 0 -3px 6px rgba(148, 163, 184, .28);
+}
+
+/* Neumorphic chassis */
+.fc-neumo {
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #f2f6fc 0%, #e6edf7 100%);
+  box-shadow:
+    -7px -7px 16px var(--fc-hi, rgba(255, 255, 255, .92)),
+    9px 12px 24px var(--fc-lo, rgba(141, 157, 184, .38)),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+/* Bezel + screen for the roster table */
+.fc-bezel {
+  padding: 7px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #d8e1ee 0%, #eef3fa 100%);
+  box-shadow: inset 0 2px 5px rgba(71, 85, 105, .22), inset 0 -1px 0 rgba(255, 255, 255, .85), 0 1px 0 rgba(255, 255, 255, .8);
+}
+.fc-screen {
+  border: 1px solid #cbd7e6;
+  border-radius: 13px;
+  background: #fcfdff;
+  box-shadow: inset 0 2px 10px rgba(30, 41, 59, .08);
+}
+
+/* Recessed search field */
+.fc-search {
+  border: 1px solid #cbd7e6;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #e6edf7 0%, #eef3fa 100%);
+  box-shadow: inset 3px 4px 8px rgba(141, 157, 184, .26), inset -3px -4px 8px rgba(255, 255, 255, .85);
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+.fc-search:focus {
+  border-color: rgba(13, 148, 136, .55);
+  box-shadow: inset 2px 3px 6px rgba(141, 157, 184, .22), 0 0 0 3px rgba(13, 148, 136, .12);
+}
+
+/* Neumorphic segmented filter */
+.fc-seg {
+  border: 1px solid rgba(203, 213, 225, .5);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e2e9f4 0%, #e9f0f9 100%);
+  box-shadow: inset 4px 4px 9px rgba(141, 157, 184, .26), inset -4px -4px 9px rgba(255, 255, 255, .85);
+}
+.fc-seg-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: .4rem .78rem;
+  color: #64748b;
+  font-size: .76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.fc-seg-btn:hover { color: #0f172a; }
+.fc-seg-btn-active,
+.fc-seg-btn-active:hover {
+  border-color: rgba(255, 255, 255, .9);
+  background: linear-gradient(180deg, #ffffff 0%, #f2f7fd 100%);
+  color: #0f766e;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, .14), inset 0 1px 0 #ffffff;
+}
+
+/* Pager buttons — raised keys */
+.fc-pager-btn {
+  border: 1px solid rgba(255, 255, 255, .85);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fa 100%);
+  padding: .35rem .7rem;
+  font-weight: 600;
+  color: #475569;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .1), inset 0 1px 0 #ffffff;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.fc-pager-btn:disabled { opacity: .4; }
+.fc-pager-btn:not(:disabled):hover { transform: translateY(-1px); }
+.fc-pager-btn:not(:disabled):active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(71, 85, 105, .2); }
+
+/* Drawer header — frosted rail */
+.fc-drawer-head {
+  border-bottom: 1px solid rgba(203, 213, 225, .8);
+  background: linear-gradient(180deg, #f6f9fd 0%, #eef3fa 100%);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .05);
+}
+
+/* Recommendation card — clay teal */
+.fc-reco {
+  border: 1px solid rgba(13, 148, 136, .28);
+  border-radius: 18px;
+  background: linear-gradient(150deg, #e9fbf6 0%, #d6f3ec 100%);
+  box-shadow: 0 6px 16px rgba(13, 148, 136, .14), inset 0 2px 0 rgba(255, 255, 255, .9), inset 0 -6px 12px rgba(13, 148, 136, .1);
+}
+
+/* The console reuses the primary button but flattens the heavy default shadow
+   inside its own chrome so buttons read as console keys, not floating CTAs. */
+.fleet-console .btn-ghost {
+  border-color: #cdd8e6;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fa 100%);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, .08), inset 0 1px 0 #ffffff;
+}
+.fleet-console .btn-ghost:active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(71, 85, 105, .18); }
+
+@media (max-width: 639px) {
+  .fleet-console {
+    margin: -4px;
+    padding: 9px;
+    border-radius: 20px;
+  }
+}
+
+/* Raised board card for the Fleet TMS operational board — same relief as
+   .deck-alert but static (no pointer/hover lift); inner buttons act instead. */
+.fc-card {
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, .09),
+    inset 0 1px 0 #ffffff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   IAM SURFACE v6 — Settings · Users & Roles · account chrome
+   Promotes the login2 clay/neumorphic recipes into app-scope utilities so
+   the account surfaces share one tactile language. Namespaced `iam-` to
+   avoid colliding with .panel/.btn primitives. Light-theme only (app is
+   color-scheme: light). All text sits on opaque surfaces — WCAG-safe.
+   ══════════════════════════════════════════════════════════════════════════ */
+.iam {
+  --iam-hi: rgba(255,255,255,.92);
+  --iam-lo: rgba(141,157,184,.36);
+  --iam-neu-out:
+    -6px -6px 14px var(--iam-hi),
+     8px 10px 22px var(--iam-lo),
+     inset 0 1px 0 rgba(255,255,255,.9);
+  --iam-neu-in:
+    inset 3px 3px 7px rgba(141,157,184,.30),
+    inset -4px -4px 9px rgba(255,255,255,.92);
+}
+
+/* Left rail (Settings IA) — engraved list, extruded active item */
+.iam-rail {
+  border: 1px solid rgba(255,255,255,.75);
+  border-radius: 20px;
+  background: linear-gradient(150deg, #ffffff 0%, #f2f7fc 100%);
+  box-shadow: var(--clay-shadow);
+  padding: 10px;
+}
+.iam-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: start;
+  transition: box-shadow .18s ease, color .15s ease, background .15s ease;
+}
+.iam-rail-item:hover { color: var(--text-primary); background: rgba(241,246,251,.9); }
+.iam-rail-item[data-active="true"] {
+  color: #0f766e;
+  background: linear-gradient(180deg, #ffffff 0%, #f0f7f6 100%);
+  border-color: rgba(13,148,136,.22);
+  box-shadow:
+    -4px -4px 10px rgba(255,255,255,.9),
+     5px 7px 14px rgba(141,157,184,.30),
+     inset 0 1px 0 rgba(255,255,255,.95);
+}
+.iam-rail-item:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.iam-rail-item:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Inset stat tile — engraved numeric KPI (neumorphic IN) */
+.iam-stat {
+  border: 1px solid rgba(203,213,225,.55);
+  border-radius: 16px;
+  background: var(--surface-sunken);
+  box-shadow: var(--iam-neu-in, inset 3px 3px 7px rgba(141,157,184,.30), inset -4px -4px 9px rgba(255,255,255,.92));
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+/* Clay section card — puffy raised group (claymorphic double shadow) */
+.iam-card {
+  position: relative;
+  border: 1.5px solid rgba(255,255,255,.85);
+  border-radius: 22px;
+  background: linear-gradient(150deg, #ffffff 0%, #f4f8fc 55%, #edf3fa 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    inset 0 -8px 16px rgba(148,163,184,.12),
+    0 2px 4px rgba(15,23,42,.05),
+    0 14px 30px -12px rgba(15,23,42,.14),
+    0 26px 60px -30px rgba(13,148,136,.22);
+}
+.iam-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
+  pointer-events: none;
+}
+
+/* Neumorphic toggle — inset track, extruded knob */
+.iam-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 26px;
+  width: 46px;
+  border: 1px solid rgba(203,213,225,.6);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  box-shadow: inset 2px 2px 5px rgba(141,157,184,.34), inset -2px -2px 5px rgba(255,255,255,.9);
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.iam-toggle[aria-checked="true"] {
+  background: linear-gradient(180deg, #0d9488, #0f766e);
+  border-color: rgba(13,148,136,.5);
+  box-shadow: inset 2px 2px 5px rgba(4,47,46,.45), inset -1px -1px 3px rgba(94,234,212,.35);
+}
+.iam-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.iam-toggle:disabled { opacity: .45; cursor: not-allowed; }
+.iam-toggle-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  height: 18px;
+  width: 18px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff, #eef3f9);
+  box-shadow: 0 2px 5px rgba(15,23,42,.28), inset 0 1px 0 #ffffff;
+  transform: translateY(-50%) translateX(0);
+  transition: transform .2s cubic-bezier(.22,1,.36,1);
+  pointer-events: none;
+}
+.iam-toggle[aria-checked="true"] .iam-toggle-knob { transform: translateY(-50%) translateX(20px); }
+
+/* Light clay drawer (user detail) — replaces the legacy dark sheet */
+.iam-drawer {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  border-inline-start: 1.5px solid rgba(255,255,255,.9);
+  background: linear-gradient(165deg, #ffffff 0%, #f3f8fc 60%, #ecf3fa 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,.95),
+    -18px 0 44px rgba(15,23,42,.16);
+}
+
+/* Engraved key/value row inside drawers and detail groups */
+.iam-kv {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(203,213,225,.5);
+  border-radius: 13px;
+  background: var(--surface-sunken);
+  box-shadow: inset 2px 2px 5px rgba(141,157,184,.22), inset -3px -3px 7px rgba(255,255,255,.9);
+  padding: 10px 14px;
+}
+
+/* Permission chip — soft extruded pill that can never overflow its row */
+.iam-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(203,213,225,.6);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff, #f0f5fb);
+  box-shadow: -2px -2px 5px rgba(255,255,255,.9), 3px 4px 8px rgba(141,157,184,.22);
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+}
+.iam-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -50,18 +50,13 @@
 
 ---
 
-## Demo Credentials
+## Pilot Credentials
 
-| Role | Email | Password |
-|---|---|---|
-| Super Admin | superadmin@opstrax.com | demo123 |
-| Company Admin | admin@opstrax.com | demo123 |
-| Dispatcher | dispatcher@opstrax.com | demo123 |
-| Driver | driver@opstrax.com | demo123 |
-| Mechanic | mechanic@opstrax.com | demo123 |
-| Customer | customer@opstrax.com | demo123 |
-
-All demo accounts are pre-seeded with realistic operational data. No configuration required.
+Credentials are environment-managed and are never published in the repository. Platform
+bootstrap credentials use `PLATFORM_SUPERADMIN_EMAIL` and
+`PLATFORM_SUPERADMIN_PASSWORD`. Optional demo seeding requires
+`DemoSeed__Enabled=true` and `DemoSeed__Password`; keep demo seeding disabled in
+production. Tenant and portal users must be provisioned through the admin workflows.
 
 ---
 

@@ -26,6 +26,64 @@ public sealed class SecuritySchemaService(Database db)
     public async Task EnsureAsync()
     {
         await db.ExecuteAsync("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed_at TIMESTAMPTZ NULL,
+                request_ip_hash VARCHAR(16) NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """);
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_password_reset_expiry ON password_reset_tokens (expires_at) WHERE consumed_at IS NULL");
+        await db.ExecuteAsync("ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("ALTER TABLE password_reset_tokens FORCE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("DROP POLICY IF EXISTS tenant_isolation_password_reset_tokens ON password_reset_tokens");
+        await db.ExecuteAsync(@"CREATE POLICY tenant_isolation_password_reset_tokens ON password_reset_tokens
+            USING (current_setting('app.platform_admin_bypass', true) = 'true'
+                OR company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            WITH CHECK (current_setting('app.platform_admin_bypass', true) = 'true'
+                OR company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)");
+        // Built-in roles remain immutable system templates. Tenant-created roles are
+        // owned by one company so an administrator can never mutate another tenant's
+        // authorization policy.
+        await db.ExecuteAsync("ALTER TABLE roles ADD COLUMN IF NOT EXISTS company_id BIGINT NULL");
+        await db.ExecuteAsync("ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT TRUE");
+        await db.ExecuteAsync("ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_name_key");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_roles_system_name ON roles (LOWER(name)) WHERE company_id IS NULL");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_roles_tenant_name ON roles (company_id, LOWER(name)) WHERE company_id IS NOT NULL");
+        await db.ExecuteAsync("ALTER TABLE roles ENABLE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("ALTER TABLE roles FORCE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("DROP POLICY IF EXISTS roles_tenant_read ON roles");
+        await db.ExecuteAsync("""
+            CREATE POLICY roles_tenant_read ON roles FOR SELECT
+            USING (company_id IS NULL OR company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            """);
+        await db.ExecuteAsync("DROP POLICY IF EXISTS roles_tenant_insert ON roles");
+        await db.ExecuteAsync("""
+            CREATE POLICY roles_tenant_insert ON roles FOR INSERT
+            WITH CHECK (company_id IS NOT NULL AND company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            """);
+        await db.ExecuteAsync("DROP POLICY IF EXISTS roles_tenant_update ON roles");
+        await db.ExecuteAsync("""
+            CREATE POLICY roles_tenant_update ON roles FOR UPDATE
+            USING (company_id IS NOT NULL AND company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            WITH CHECK (company_id IS NOT NULL AND company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            """);
+        await db.ExecuteAsync("DROP POLICY IF EXISTS roles_tenant_delete ON roles");
+        await db.ExecuteAsync("""
+            CREATE POLICY roles_tenant_delete ON roles FOR DELETE
+            USING (company_id IS NOT NULL AND company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            """);
+        await db.ExecuteAsync("DROP POLICY IF EXISTS roles_platform_admin_bypass ON roles");
+        await db.ExecuteAsync("""
+            CREATE POLICY roles_platform_admin_bypass ON roles FOR ALL
+            USING (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
+            WITH CHECK (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
+            """);
+
+        await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS company_security_settings (
                 id                              BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 company_id                      BIGINT       NOT NULL UNIQUE,

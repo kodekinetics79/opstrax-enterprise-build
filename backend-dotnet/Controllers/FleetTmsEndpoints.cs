@@ -1,6 +1,8 @@
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using System.Net;
+using System.Net.Sockets;
 
 namespace Opstrax.Api.Controllers;
 
@@ -157,7 +159,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
 
     // ── List endpoints ──────────────────────────────────────────────────────────
 
-    private static async Task<IResult> Shipments(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Shipments(HttpContext http, Database db, string? status, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -192,7 +194,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { items });
     }
 
-    private static async Task<IResult> Tracking(HttpContext http, Database db, string? shipmentNumber, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Tracking(HttpContext http, Database db, string? shipmentNumber, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -209,7 +211,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { total, page, pageSize, items });
     }
 
-    private static async Task<IResult> Maintenance(HttpContext http, Database db, string? status, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Maintenance(HttpContext http, Database db, string? status, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         var companyId = CompanyId(http);
         page = page < 1 ? 1 : page;
@@ -226,7 +228,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId GROUP BY route_code ORDER B
         return Ok(new { total, page, pageSize, items });
     }
 
-    private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page, int pageSize, CancellationToken ct)
+    private static async Task<IResult> Fuel(HttpContext http, Database db, bool? anomaliesOnly, int page = 1, int pageSize = 20, CancellationToken ct = default)
     {
         // Fuel Intelligence entitlement — fuel analytics requires the Fuel package.
         if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.Fuel, ct) is { } denied)
@@ -795,7 +797,7 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
     // off proof images. Assets on non-allowlisted hosts are reported unavailable
     // (404) until private/secure storage is configured.
     private static async Task<IResult> PublicTrackPodAsset(
-        string token, long podId, string kind, Database db, IConfiguration config, IHttpClientFactory httpFactory, CancellationToken ct)
+        string token, long podId, string kind, Database db, IConfiguration config, CancellationToken ct)
     {
         var column = kind switch
         {
@@ -816,7 +818,9 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
         if (string.IsNullOrWhiteSpace(rawUrl)) return NotFound();
 
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            uri.Port != 443 ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
             !IsAllowlistedHost(config, uri.Host))
         {
             // Asset exists but lives on a host we will not proxy (open/untrusted
@@ -824,20 +828,107 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId",
             return Results.Json(ApiResponse<object>.Fail("Asset unavailable", "POD asset storage is not yet secured for public delivery."), statusCode: StatusCodes.Status404NotFound);
         }
 
-        var client = httpFactory.CreateClient("pod-assets");
-        client.Timeout = TimeSpan.FromSeconds(15);
         try
         {
-            var upstream = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+            var addresses = await Dns.GetHostAddressesAsync(uri.DnsSafeHost, ct);
+            if (addresses.Length == 0 || addresses.Any(IsBlockedPodAssetAddress)) return NotFound();
+
+            using var handler = CreatePodAssetHandler(addresses);
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+            using var upstream = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!upstream.IsSuccessStatusCode) return NotFound();
-            var contentType = upstream.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-            var bytes = await upstream.Content.ReadAsByteArrayAsync(ct);
+            if ((int)upstream.StatusCode is >= 300 and < 400) return NotFound();
+            var contentType = upstream.Content.Headers.ContentType?.MediaType;
+            if (!IsAllowedPodAssetContentType(kind, contentType) ||
+                upstream.Content.Headers.ContentLength is > MaxPodAssetBytes)
+                return NotFound();
+
+            await using var source = await upstream.Content.ReadAsStreamAsync(ct);
+            using var destination = new MemoryStream();
+            var chunk = new byte[64 * 1024];
+            while (true)
+            {
+                var read = await source.ReadAsync(chunk.AsMemory(), ct);
+                if (read == 0) break;
+                if (destination.Length + read > MaxPodAssetBytes) return NotFound();
+                await destination.WriteAsync(chunk.AsMemory(0, read), ct);
+            }
+            var bytes = destination.ToArray();
             return Results.File(bytes, contentType);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or SocketException or TaskCanceledException)
         {
             return NotFound();
         }
+    }
+
+    private const long MaxPodAssetBytes = 10 * 1024 * 1024;
+
+    internal static bool IsAllowedPodAssetContentType(string kind, string? contentType) =>
+        kind switch
+        {
+            "signature" or "photo" => contentType is "image/jpeg" or "image/png" or "image/webp",
+            "document" => contentType is "application/pdf" or "image/jpeg" or "image/png",
+            _ => false,
+        };
+
+    internal static bool IsBlockedPodAssetAddress(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) ||
+            address.Equals(IPAddress.IPv6Any) || address.Equals(IPAddress.IPv6None))
+            return true;
+
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        var bytes = address.GetAddressBytes();
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            return bytes[0] is 0 or 10 or 127 ||
+                   bytes[0] == 100 && bytes[1] is >= 64 and <= 127 ||
+                   bytes[0] == 169 && bytes[1] == 254 ||
+                   bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||
+                   bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 0 ||
+                   bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 2 ||
+                   bytes[0] == 192 && bytes[1] == 168 ||
+                   bytes[0] == 198 && bytes[1] is 18 or 19 ||
+                   bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100 ||
+                   bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113 ||
+                   bytes[0] >= 224;
+        }
+
+        return address.IsIPv6LinkLocal || address.IsIPv6Multicast || address.IsIPv6SiteLocal ||
+               (bytes[0] & 0xfe) == 0xfc ||
+               address.GetAddressBytes().AsSpan(0, 4).SequenceEqual(new byte[] { 0x20, 0x01, 0x0d, 0xb8 });
+    }
+
+    private static SocketsHttpHandler CreatePodAssetHandler(IPAddress[] vettedAddresses)
+    {
+        var next = 0;
+        return new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            ConnectCallback = async (context, ct) =>
+            {
+                Exception? last = null;
+                for (var i = 0; i < vettedAddresses.Length; i++)
+                {
+                    var address = vettedAddresses[(Interlocked.Increment(ref next) + i) % vettedAddresses.Length];
+                    var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    try
+                    {
+                        await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), ct);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        last = ex;
+                        socket.Dispose();
+                    }
+                }
+                throw new HttpRequestException("Unable to connect to the approved asset host.", last);
+            },
+        };
     }
 
     private static bool IsAllowlistedHost(IConfiguration config, string host)

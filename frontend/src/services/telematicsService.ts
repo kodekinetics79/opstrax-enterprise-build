@@ -1,18 +1,133 @@
-import axios from "axios";
-import { NODE_EVENTS_URL, apiClient, unwrap } from "@/services/apiClient";
-import { telematicsSeedData, type TelematicsDeviceSeedRecord, type TelematicsDiagnosticSeedRecord, type TelematicsFirmwareSeedRecord, type TelematicsHealthSeedRecord, type TelematicsInstallationSeedRecord, type TelematicsProviderSeedRecord, type TelematicsSensorSeedRecord, type TelematicsTelemetrySeedRecord } from "@/data/telematicsSeedData";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
+import { apiClient, unwrap } from "@/services/apiClient";
 import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, resolveDriverIdentity } from "@/auth/accessScope";
 import type { AnyRecord, UserSession } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
 
-type MutableDeviceRecord = Omit<TelematicsDeviceSeedRecord, "id" | "archivedAt"> & {
-  id: string | number;
-  archivedAt: string | null;
+// ── Exported record shapes (names/fields preserved — pages depend on them) ──────────
+// These used to be inferred from seed fixtures. They are now defined explicitly so the
+// telematics layer imports nothing from @/data/*. The field names match exactly what
+// IotDevicesPage / TelematicsCommandPage read.
+
+export type TelematicsTelemetrySeedRecord = {
+  id: string;
+  deviceId: string | number;
+  vehicleId: string;
+  driverId: string;
+  latitude: string;
+  longitude: string;
+  speedMph: string | number;
+  heading: string;
+  engineStatus: string;
+  odometer: string;
+  fuelLevel: string;
+  geofenceStatus: string;
+  eventAt: string;
 };
 
-export type DeviceCommandRecord = MutableDeviceRecord & {
+export type TelematicsHealthSeedRecord = {
+  id: string;
+  deviceId: string | number;
+  tenantId: number;
+  score: number | string;
+  status: string;
+  signalStrength: string;
+  eventAt: string;
+  summary: string;
+};
+
+export type TelematicsFirmwareSeedRecord = {
+  id: string;
+  deviceId: string | number;
+  deviceIdentifier: string;
+  tenantId: number;
+  currentVersion: string;
+  targetVersion: string;
+  scheduledFor: string | null;
+  status: string;
+  releaseNotes: string;
+  createdBy: string;
+};
+
+export type TelematicsDiagnosticSeedRecord = {
+  id: string;
+  deviceId: string | number;
+  tenantId: number;
+  result: string;
+  batteryVoltage: string;
+  modemStatus: string;
+  gnssStatus: string;
+  faultCode: string;
+  runAt: string;
+  runBy: string;
+};
+
+export type TelematicsInstallationSeedRecord = {
+  id: string;
+  deviceId: string | number;
+  tenantId: number;
+  installStatus: string;
+  installerName: string;
+  installedAt: string | null;
+  checklist: Array<{ item: string; status: string }>;
+};
+
+export type TelematicsSensorSeedRecord = {
+  id: string;
+  deviceId: string | number;
+  tenantId: number;
+  temperature: string;
+  humidity: string;
+  doorStatus: string;
+  tirePressure: string;
+  fuelLevel: string;
+  recordedAt: string;
+};
+
+export type TelematicsProviderSeedRecord = {
+  id: string;
+  name: string;
+  category: string;
+  integrationStatus: string;
+  tenantId: number;
+  deviceCount: number;
+  lastSyncAt: string;
+  supportTier: string;
+};
+
+export type DeviceCommandRecord = {
+  id: string | number;
+  deviceId: string;
+  deviceName: string;
+  deviceType: string;
+  provider: string;
+  providerCode: string;
+  serialNumber: string;
+  identifier: string;
+  imei: string;
+  simNumber: string;
+  assignedVehicleId: string;
+  vehicleId: string;
+  assignedVehicleCode: string;
+  assignedDriverId: string;
+  driverId: string;
+  assignedDriverName: string;
+  shipmentId: string;
+  tenantId: number;
+  tenantName: string;
+  firmwareVersion: string;
+  targetFirmwareVersion: string;
+  lastCheckIn: string;
+  connectionStatus: string;
+  powerStatus: string;
+  signalStrength: string;
+  dataHealthScore: number;
+  installStatus: string;
+  complianceStatus: string;
+  warrantyStatus: string;
+  supportStatus: string;
+  lifecycleStatus: string;
+  archivedAt: string | null;
   linkedVehicleStatus: string;
   linkedVehicleLocation: string;
   linkedShipmentId: string;
@@ -33,6 +148,22 @@ export type DeviceDetailRecord = {
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
   assignmentHistory: AnyRecord[];
+};
+
+// The one-time secrets a provisioned device uses to authenticate its live telemetry
+// stream — the equivalent of a Render/Vercel deploy token. Shown once, never again.
+export type DeviceConnectionCredentials = {
+  deviceId: string;
+  deviceSerial: string;
+  apiKey: string;
+  hmacSecret: string;
+  note: string;
+};
+
+export type DeviceProvisionResult = {
+  device: DeviceCommandRecord;
+  credentials: DeviceConnectionCredentials;
+  ingestUrl: string;
 };
 
 export type TelematicsClusterRecord = {
@@ -79,35 +210,7 @@ export type TelematicsClusterRecord = {
   recommendedAction: string;
 };
 
-type MutableTelematicsState = {
-  devices: MutableDeviceRecord[];
-  providers: TelematicsProviderSeedRecord[];
-  deviceAssignments: AnyRecord[];
-  telemetryEvents: TelematicsTelemetrySeedRecord[];
-  deviceHealthEvents: TelematicsHealthSeedRecord[];
-  firmwareUpdates: TelematicsFirmwareSeedRecord[];
-  diagnostics: TelematicsDiagnosticSeedRecord[];
-  installationRecords: TelematicsInstallationSeedRecord[];
-  sensorReadings: TelematicsSensorSeedRecord[];
-  auditLogs: AnyRecord[];
-};
-
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-const state: MutableTelematicsState = {
-  devices: clone(telematicsSeedData.devices),
-  providers: clone(telematicsSeedData.providers),
-  deviceAssignments: clone(telematicsSeedData.deviceAssignments),
-  telemetryEvents: clone(telematicsSeedData.telemetryEvents),
-  deviceHealthEvents: clone(telematicsSeedData.deviceHealthEvents),
-  firmwareUpdates: clone(telematicsSeedData.firmwareUpdates),
-  diagnostics: clone(telematicsSeedData.diagnostics),
-  installationRecords: clone(telematicsSeedData.installationRecords),
-  sensorReadings: clone(telematicsSeedData.sensorReadings),
-  auditLogs: clone(telematicsSeedData.auditLogs),
-};
+// ── Session / scoping helpers ───────────────────────────────────────────────────────
 
 function getSession(): UserSession | null {
   if (typeof window === "undefined") return null;
@@ -137,134 +240,187 @@ function ensureManagementAccess(session: UserSession | null) {
   }
 }
 
-function scopeDevicesForSession(rows: MutableDeviceRecord[], session: UserSession | null) {
+// The backend already scopes /api/telemetry/devices by tenant via the auth token.
+// Here we apply the remaining PORTAL narrowing (driver / customer) using real row
+// fields only — never seed lookups. A driver portal sees only devices whose real
+// driver_name matches their identity; a customer portal has no device-level linkage
+// field in the contract, so it honestly sees nothing.
+function scopeDevicesForSession(rows: DeviceCommandRecord[], session: UserSession | null) {
   if (!session) return rows;
   if (isSuperAdmin(session)) return rows;
 
   const role = String(session.role ?? "").toLowerCase();
-  const tenantId = getTenantId(session);
-  const tenantRows = rows.filter((row) => Number(row.tenantId) === tenantId);
 
   if (isDriverPortalRole(role)) {
     const driverIdentity = resolveDriverIdentity(session);
     if (!driverIdentity) return [];
-    return tenantRows.filter((row) => String(row.assignedDriverName ?? "").toLowerCase().includes(String(driverIdentity).toLowerCase()));
+    return rows.filter((row) =>
+      String(row.assignedDriverName ?? "").toLowerCase().includes(String(driverIdentity).toLowerCase()),
+    );
   }
 
   if (isCustomerPortalRole(role)) {
+    // No device→customer linkage exists in the verified device contract; surfacing
+    // any device to a customer portal would be a fabricated association.
     const customerIdentity = resolveCustomerIdentity(session);
     if (!customerIdentity) return [];
-    const customerShipments = developmentFleetSeedData.shipments
-      .filter((shipment) => String(shipment.customer ?? "").toLowerCase().includes(String(customerIdentity).toLowerCase()))
-      .map((shipment) => String(shipment.shipmentId));
-    return tenantRows.filter((row) => customerShipments.includes(String(row.shipmentId)));
+    return [];
   }
 
-  return tenantRows;
+  return rows;
 }
 
-function scopeDeviceById(deviceId: string | number, session: UserSession | null) {
-  const device = scopeDevicesForSession(state.devices, session).find(
-    (row) => String(row.id) === String(deviceId) || String(row.deviceId) === String(deviceId),
-  );
-  if (!device) throw new Error("Device not found");
-  return device;
-}
-
-function relatedVehicle(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.vehicles.find(
-    (vehicle) => String(vehicle.id ?? vehicle.vehicleId ?? vehicle.vehicleCode) === String(device.assignedVehicleId ?? device.assignedVehicleCode),
-  );
-}
-
-function relatedDriver(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.drivers.find(
-    (driver) => String(driver.id ?? driver.driverId ?? driver.driverCode) === String(device.assignedDriverId),
-  );
-}
-
-function relatedShipment(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.shipments.find((shipment) => String(shipment.id ?? shipment.shipmentId) === String(device.shipmentId));
-}
-
-function relatedMaintenance(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.maintenanceRecords.find(
-    (record) => String(record.vehicleCode ?? record.vehicle ?? "") === String(device.assignedVehicleCode),
-  );
-}
-
-function relatedAlerts(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.alerts.filter((alert) => {
-    const entity = String(alert.entity ?? "").toLowerCase();
-    return entity.includes(String(device.assignedVehicleCode ?? "").toLowerCase()) ||
-      entity.includes(String(device.assignedDriverName ?? "").toLowerCase()) ||
-      entity.includes(String(device.shipmentId ?? "").toLowerCase());
-  });
-}
-
-function relatedCompliance(device: MutableDeviceRecord) {
-  return developmentFleetSeedData.complianceRecords.find((record) => {
-    return String(record.entityId ?? "").toLowerCase() === String(device.assignedVehicleId).toLowerCase() ||
-      String(record.entityId ?? "").toLowerCase() === String(device.assignedDriverId).toLowerCase();
-  });
-}
-
-function enrichDevice(device: MutableDeviceRecord): DeviceCommandRecord {
-  const vehicle = relatedVehicle(device);
-  const driver = relatedDriver(device);
-  const shipment = relatedShipment(device);
-  const maintenance = relatedMaintenance(device);
-  const compliance = relatedCompliance(device);
-  const alerts = relatedAlerts(device);
-
-  return {
-    ...device,
-    assignedDriverName: device.assignedDriverName || String(driver?.fullName ?? driver?.name ?? ""),
-    linkedVehicleStatus: String(vehicle?.status ?? "Ready"),
-    linkedVehicleLocation: String(shipment?.origin ?? vehicle?.status ?? "Yard"),
-    linkedShipmentId: String(shipment?.shipmentId ?? device.shipmentId ?? ""),
-    linkedShipmentStatus: String(shipment?.currentStatus ?? "No active shipment"),
-    openAlertCount: alerts.length,
-    maintenanceStatus: String(maintenance?.status ?? vehicle?.maintenanceStatus ?? "Nominal"),
-    complianceSummary: String(compliance?.status ?? device.complianceStatus ?? "Approved"),
-  };
-}
-
-function buildTelemetrySummary(deviceId: string | number) {
-  return state.telemetryEvents.filter((event) => String(event.deviceId) === String(deviceId)).slice(0, 8);
-}
-
-function buildHealthHistory(deviceId: string | number) {
-  return state.deviceHealthEvents.filter((event) => String(event.deviceId) === String(deviceId)).slice(0, 8);
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function relativeAge(timestamp: string) {
-  const deltaMinutes = Math.max(1, Math.round((Date.now() - new Date(timestamp).getTime()) / 60000));
+function relativeAge(timestamp: string | null | undefined) {
+  if (!timestamp) return "—";
+  const parsed = new Date(timestamp).getTime();
+  if (!Number.isFinite(parsed)) return "—";
+  const deltaMinutes = Math.max(1, Math.round((Date.now() - parsed) / 60000));
   if (deltaMinutes < 60) return `${deltaMinutes} min ago`;
   const hours = Math.floor(deltaMinutes / 60);
   const mins = deltaMinutes % 60;
   return `${hours}h ${mins}m ago`;
 }
 
-function telemetryForDevice(deviceId: string | number) {
-  return state.telemetryEvents.filter((event) => String(event.deviceId) === String(deviceId));
+// ── Honest device-health derivation (no dedicated table) ─────────────────────────────
+// Derived from the real signals only: eld_devices.status + seconds_since_ping (>900 =
+// stale) + open telemetry_alerts + active fault_codes. Start at 100 and subtract for
+// each real degradation signal; never invent a number where no signal exists.
+type HealthSignals = {
+  status: string;
+  secondsSincePing: number | null;
+  revoked: boolean;
+  openAlerts: number;
+  activeFaults: number;
+};
+
+function isStale(secondsSincePing: number | null) {
+  return secondsSincePing != null && secondsSincePing > 900;
 }
 
-function diagnosticsForDevice(deviceId: string | number) {
-  return state.diagnostics.filter((event) => String(event.deviceId) === String(deviceId));
+function deriveConnectionStatus(signals: HealthSignals): string {
+  const status = String(signals.status ?? "").toLowerCase();
+  if (signals.revoked || /revoked|suspend/i.test(status)) return "Offline";
+  if (isStale(signals.secondsSincePing)) return "Offline";
+  if (/malfunction|diagnostic/i.test(status) || signals.openAlerts > 0 || signals.activeFaults > 0) {
+    return "Needs attention";
+  }
+  if (/active|online/i.test(status) || status === "") return "Online";
+  // Fall back to the raw backend token (e.g. "Provisioning") rather than guessing.
+  return String(signals.status ?? "Unknown");
 }
 
-function sensorForDevice(deviceId: string | number) {
-  return state.sensorReadings.find((event) => String(event.deviceId) === String(deviceId));
+function deriveHealthScore(signals: HealthSignals): number {
+  let score = 100;
+  if (isStale(signals.secondsSincePing)) score -= 40;
+  if (signals.revoked || /revoked|suspend/i.test(String(signals.status ?? ""))) score -= 60;
+  if (/malfunction|diagnostic/i.test(String(signals.status ?? ""))) score -= 25;
+  score -= Math.min(30, signals.openAlerts * 10);
+  score -= Math.min(30, signals.activeFaults * 8);
+  return Math.max(0, Math.min(100, score));
 }
 
-function healthForDevice(deviceId: string | number) {
-  return state.deviceHealthEvents.find((event) => String(event.deviceId) === String(deviceId));
+// ── Backend row → DeviceCommandRecord mapping ────────────────────────────────────────
+// Every field is sourced from the real /api/telemetry/devices row (snake_case) or an
+// honest "—"/"Unknown" marker. No seed consultation, no fabricated telemetry defaults.
+function mapDeviceRow(
+  row: AnyRecord,
+  faultCountBySerial: Map<string, number>,
+  alertCountBySerial: Map<string, number>,
+  session: UserSession | null,
+): DeviceCommandRecord {
+  const serial = String(row.device_serial ?? "");
+  const secondsSincePing = row.seconds_since_ping == null ? null : Number(row.seconds_since_ping);
+  const revoked = Boolean(row.revoked_at);
+  const openAlerts = alertCountBySerial.get(serial) ?? 0;
+  const activeFaults = faultCountBySerial.get(serial) ?? 0;
+
+  const signals: HealthSignals = {
+    status: String(row.status ?? ""),
+    secondsSincePing,
+    revoked,
+    openAlerts,
+    activeFaults,
+  };
+  const connectionStatus = deriveConnectionStatus(signals);
+  const healthScore = deriveHealthScore(signals);
+
+  const firmware = row.firmware_version == null ? "Unknown" : String(row.firmware_version);
+
+  return {
+    id: (typeof row.id === "string" || typeof row.id === "number") ? row.id : serial,
+    deviceId: serial,
+    deviceName: String(row.device_model ?? serial ?? "Telematics device"),
+    deviceType: String(row.device_model ?? "ELD device"),
+    provider: String(row.provider ?? "Unknown"),
+    // No provider registry endpoint — derive a stable code from the real provider name.
+    providerCode: String(row.provider ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    serialNumber: serial,
+    // No IMEI in the device contract — show honest empty rather than a fake identifier.
+    identifier: serial,
+    imei: "",
+    simNumber: "",
+    assignedVehicleId: row.vehicle_id == null ? "" : String(row.vehicle_id),
+    vehicleId: row.vehicle_id == null ? "" : String(row.vehicle_id),
+    assignedVehicleCode: String(row.vehicle_code ?? ""),
+    assignedDriverId: row.driver_id == null ? "" : String(row.driver_id),
+    driverId: row.driver_id == null ? "" : String(row.driver_id),
+    assignedDriverName: String(row.driver_name ?? ""),
+    // No shipment linkage in the device contract.
+    shipmentId: "",
+    tenantId: getTenantId(session),
+    tenantName: String(session?.company?.name ?? ""),
+    firmwareVersion: firmware,
+    // No OTA/target-firmware endpoint — equal to current so the "firmware pending" tab
+    // never flags a fabricated pending update.
+    targetFirmwareVersion: firmware,
+    lastCheckIn: row.last_seen_at ? String(row.last_seen_at) : "—",
+    connectionStatus,
+    // No power/signal telemetry in the device contract — honest "—".
+    powerStatus: "—",
+    signalStrength: isStale(secondsSincePing) ? "No coverage" : "—",
+    dataHealthScore: healthScore,
+    // No installation table — the raw device status is the closest honest signal.
+    installStatus: String(row.status ?? "Unknown"),
+    complianceStatus: "Not assessed",
+    warrantyStatus: "—",
+    supportStatus: "—",
+    lifecycleStatus: revoked ? "Archived" : String(row.status ?? "Unknown"),
+    archivedAt: row.revoked_at ? String(row.revoked_at) : null,
+    // Cross-links: only real fault/alert counts are honest here.
+    linkedVehicleStatus: String(row.vehicle_status ?? "—"),
+    linkedVehicleLocation: "—",
+    linkedShipmentId: "",
+    linkedShipmentStatus: "No active shipment",
+    openAlertCount: openAlerts,
+    maintenanceStatus: activeFaults > 0 ? `${activeFaults} active fault${activeFaults === 1 ? "" : "s"}` : "—",
+    complianceSummary: "Not assessed",
+  };
 }
+
+// Group active fault codes by device SERIAL (fault_codes.device_id is the serial string).
+function countFaultsBySerial(faultRows: AnyRecord[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const fault of faultRows) {
+    const serial = String(fault.device_id ?? "");
+    if (!serial) continue;
+    map.set(serial, (map.get(serial) ?? 0) + 1);
+  }
+  return map;
+}
+
+// Group open alerts by device serial (telemetry_alerts expose device_serial).
+function countAlertsBySerial(alertRows: AnyRecord[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const alert of alertRows) {
+    if (String(alert.status ?? "").toLowerCase() !== "open") continue;
+    const serial = String(alert.device_serial ?? "");
+    if (!serial) continue;
+    map.set(serial, (map.get(serial) ?? 0) + 1);
+  }
+  return map;
+}
+
+// ── Protocol / sensor classification (from real device_model text) ───────────────────
 
 function deriveProtocolType(device: DeviceCommandRecord): TelematicsClusterRecord["protocolType"] {
   if (/j1939/i.test(device.deviceType)) return "J1939";
@@ -285,22 +441,31 @@ function deriveSensorType(device: DeviceCommandRecord) {
   return "cargo movement";
 }
 
-function toClusterRecord(device: DeviceCommandRecord): TelematicsClusterRecord {
-  const telemetry = telemetryForDevice(device.id)[0];
-  const diagnostic = diagnosticsForDevice(device.id)[0];
-  const sensor = sensorForDevice(device.id);
-  const health = healthForDevice(device.id);
-  const vehicle = relatedVehicle(device);
-  const shipment = relatedShipment(device);
-  const troubleCode = diagnostic?.faultCode ?? (device.connectionStatus === "Offline" ? "SPN 639 FMI 2" : "None");
-  const locationLabel = String(shipment?.origin ?? vehicle?.status ?? device.linkedVehicleLocation ?? "Fleet corridor");
-  const lastPingAt = telemetry?.eventAt ?? device.lastCheckIn;
-  const staleGps = relativeAge(lastPingAt);
-  const offlineWarning = /offline/i.test(device.connectionStatus);
+// Match a live position snapshot to a device by real ids (device_id numeric, or the
+// shared vehicle_id). Returns undefined when no live position exists for the device.
+function positionForDevice(device: DeviceCommandRecord, positions: AnyRecord[]): AnyRecord | undefined {
+  return positions.find((pos) => {
+    if (device.id != null && pos.device_id != null && String(pos.device_id) === String(device.id)) return true;
+    if (device.assignedVehicleId && pos.vehicle_id != null && String(pos.vehicle_id) === device.assignedVehicleId) return true;
+    return false;
+  });
+}
+
+// Build a cluster row from a real device + its real live position + real fault codes.
+// Every value is either a live field or an honest "—"/empty marker — no fake defaults.
+function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], faultRows: AnyRecord[]): TelematicsClusterRecord {
+  const position = positionForDevice(device, positions);
+  const deviceFaults = faultRows.filter((fault) => String(fault.device_id ?? "") === device.serialNumber);
+  const troubleCodes = deviceFaults.map((fault) => String(fault.code ?? "")).filter(Boolean);
   const protocolType = deriveProtocolType(device);
   const sensorType = deriveSensorType(device);
-  const dataFreshnessStatus = offlineWarning ? "Stale" : /attention|warning/i.test(device.connectionStatus) ? "Watch" : "Fresh";
-  const sensorStatus = offlineWarning ? "Alerting" : /attention/i.test(device.connectionStatus) ? "Watch" : "Nominal";
+
+  const isStalePosition = position ? String(position.is_stale) === "1" : false;
+  const offlineWarning = /offline/i.test(device.connectionStatus) || isStalePosition;
+  const lastPingAt = position?.event_time ? String(position.event_time) : device.lastCheckIn;
+  const engineStatus = position?.engine_status ? String(position.engine_status) : "—";
+  const dataFreshnessStatus = offlineWarning ? "Stale" : /attention|warning/i.test(device.connectionStatus) ? "Watch" : position ? "Fresh" : "No data";
+  const sensorStatus = offlineWarning ? "Alerting" : /attention/i.test(device.connectionStatus) ? "Watch" : position ? "Nominal" : "No data";
 
   return {
     id: `${protocolType.toLowerCase()}-${device.id}`,
@@ -314,495 +479,413 @@ function toClusterRecord(device: DeviceCommandRecord): TelematicsClusterRecord {
     driverName: device.assignedDriverName || "Unassigned",
     shipmentId: device.linkedShipmentId || "No active shipment",
     shipmentStatus: device.linkedShipmentStatus,
-    routeAssociation: shipment?.bookingId ? `Route ${String(shipment.bookingId).replace("BK", "RTE")}` : "No active route",
-    locationLabel,
-    latitude: String(telemetry?.latitude ?? "24.71360"),
-    longitude: String(telemetry?.longitude ?? "46.67530"),
-    speedMph: String(telemetry?.speedMph ?? 0),
-    heading: String(telemetry?.heading ?? "Stationary"),
-    geofenceStatus: String(telemetry?.geofenceStatus ?? "Last known"),
+    routeAssociation: "No active route",
+    locationLabel: device.assignedVehicleCode || "—",
+    latitude: position?.lat != null ? String(position.lat) : "—",
+    longitude: position?.lng != null ? String(position.lng) : "—",
+    speedMph: position?.speed_mph != null ? String(position.speed_mph) : "—",
+    heading: position?.heading != null ? String(position.heading) : "—",
+    geofenceStatus: position ? (isStalePosition ? "Last known" : "Live") : "No fix",
     lastPingAt,
-    staleGps,
+    staleGps: relativeAge(lastPingAt),
     offlineWarning,
-    deviceHealth: Number(health?.score ?? device.dataHealthScore),
+    deviceHealth: device.dataHealthScore,
     protocolType,
-    engineHours: shipment ? `${1200 + Number(String(device.id).replace(/\D/g, "") || 0)} hrs` : "No active engine hours",
-    odometer: String(telemetry?.odometer ?? "164,920 km"),
-    fuelLevel: String(telemetry?.fuelLevel ?? sensor?.fuelLevel ?? "Vehicle bus"),
-    batteryVoltage: String(diagnostic?.batteryVoltage ?? "13.6V"),
-    troubleCodes: troubleCode === "None" ? [] : [String(troubleCode)],
-    engineStatus: String(telemetry?.engineStatus ?? "Idle"),
-    emissionsStatus: offlineWarning ? "Inspection required" : "Ready",
-    lastEngineDataAt: diagnostic?.runAt ?? lastPingAt,
+    engineHours: "—",
+    odometer: position?.odometer_miles != null ? String(position.odometer_miles) : "—",
+    fuelLevel: position?.fuel_level != null ? String(position.fuel_level) : "—",
+    batteryVoltage: position?.battery_voltage != null ? String(position.battery_voltage) : "—",
+    troubleCodes,
+    engineStatus,
+    emissionsStatus: troubleCodes.length > 0 ? "Inspection required" : "—",
+    lastEngineDataAt: lastPingAt,
     dataFreshnessStatus,
     sensorType,
-    latestReading: String(sensor?.temperature ?? sensor?.tirePressure ?? sensor?.fuelLevel ?? telemetry?.fuelLevel ?? "No recent sensor reading"),
-    expectedRange: sensorType === "temperature" ? "2.0 C to 8.0 C" : sensorType === "tire pressure" ? "95 psi to 110 psi" : sensorType === "fuel" ? "20% to 100%" : "Operational range",
+    // No standalone sensor-reading feed in the verified backend contract, so we
+    // NEVER fabricate a reading or an expected-range setpoint. Both stay honest "—".
+    latestReading: "—",
+    expectedRange: "—",
     sensorStatus,
     powerStatus: device.powerStatus,
     signalStrength: device.signalStrength,
-    calibrationStatus: sensorType === "temperature" || sensorType === "reefer/cold-chain" ? "Calibrated" : "Verified",
-    alertStatus: device.openAlertCount > 0 || offlineWarning ? "Open" : "Clear",
+    calibrationStatus: "—",
+    alertStatus: device.openAlertCount > 0 || offlineWarning || troubleCodes.length > 0 ? "Open" : "Clear",
     recommendedAction: offlineWarning
-      ? "Use last known location and investigate provider link before the next trip."
-      : /attention/i.test(device.connectionStatus)
-        ? "Refresh the stream and validate data quality before assignment."
-        : "Telemetry is healthy and ready for operational routing decisions.",
+      ? "Use last known location and investigate the device link before the next trip."
+      : troubleCodes.length > 0
+        ? "Active fault codes present — review diagnostics before assignment."
+        : /attention/i.test(device.connectionStatus)
+          ? "Refresh the stream and validate data quality before assignment."
+          : "Telemetry is healthy and ready for operational routing decisions.",
   };
 }
 
-function addAuditEntry(device: MutableDeviceRecord, action: string, notes: string) {
-  state.auditLogs.unshift({
-    id: `audit-${device.deviceId}-${Date.now()}`,
-    deviceId: device.id,
-    tenantId: device.tenantId,
-    action,
-    actor: "Device Health",
-    eventAt: nowIso(),
-    notes,
-  });
+// ── Shared reads ─────────────────────────────────────────────────────────────────────
+
+async function fetchDeviceRows(): Promise<AnyRecord[]> {
+  return unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/devices"));
 }
 
-async function withFallback<T>(request: Promise<T>, fallback: () => T | Promise<T>) {
-  try {
-    return await request;
-  } catch {
-    return fallback();
-  }
+async function fetchActiveFaults(): Promise<AnyRecord[]> {
+  return unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/fault-codes", { params: { status: "active" } }));
 }
 
-function mergeBackendDevices(apiRows: AnyRecord[]): MutableDeviceRecord[] {
-  const scopedSeed = state.devices;
-  const merged = apiRows.map((row, index) => {
-    const seed = scopedSeed.find((device) =>
-      String(device.id) === String(row.id) ||
-      String(device.deviceId) === String(row.device_serial ?? row.deviceId ?? "") ||
-      String(device.assignedVehicleCode) === String(row.vehicle_code ?? row.vehicleCode ?? ""),
-    );
-
-    const fallbackSeed = seed ?? scopedSeed[index % Math.max(scopedSeed.length, 1)];
-    const normalizedId =
-      typeof row.id === "string" || typeof row.id === "number"
-        ? row.id
-        : seed?.id ?? `device-${index + 1}`;
-    return {
-      ...fallbackSeed,
-      id: normalizedId,
-      deviceId: String(row.device_serial ?? seed?.deviceId ?? `DEV-${index + 1}`),
-      deviceName: String(row.device_name ?? seed?.deviceName ?? seed?.provider ?? "Fleet telematics device"),
-      deviceType: String(row.device_type ?? seed?.deviceType ?? "ELD device"),
-      provider: String(row.provider ?? seed?.provider ?? "Connected provider"),
-      providerCode: String(seed?.providerCode ?? "connected-provider"),
-      serialNumber: String(row.device_serial ?? seed?.serialNumber ?? ""),
-      identifier: String(row.imei ?? seed?.identifier ?? ""),
-      imei: String(row.imei ?? seed?.imei ?? ""),
-      simNumber: String(seed?.simNumber ?? ""),
-      assignedVehicleCode: String(row.vehicle_code ?? row.vehicleCode ?? seed?.assignedVehicleCode ?? ""),
-      assignedVehicleId: String(row.vehicle_id ?? seed?.assignedVehicleId ?? ""),
-      vehicleId: String(row.vehicle_id ?? seed?.vehicleId ?? seed?.assignedVehicleId ?? ""),
-      assignedDriverId: String(seed?.assignedDriverId ?? ""),
-      driverId: String(seed?.driverId ?? seed?.assignedDriverId ?? ""),
-      assignedDriverName: String(row.driver_name ?? seed?.assignedDriverName ?? ""),
-      shipmentId: String(seed?.shipmentId ?? ""),
-      tenantId: Number(seed?.tenantId ?? 1),
-      tenantName: String(seed?.tenantName ?? "Northshore Fleet Logistics"),
-      firmwareVersion: String(row.firmware_version ?? seed?.firmwareVersion ?? "Pending firmware scan"),
-      targetFirmwareVersion: String(seed?.targetFirmwareVersion ?? row.firmware_version ?? "Pending firmware scan"),
-      lastCheckIn: String(row.last_sync_at ?? seed?.lastCheckIn ?? nowIso()),
-      connectionStatus: String(row.status ?? seed?.connectionStatus ?? "Online"),
-      powerStatus: String(seed?.powerStatus ?? "Vehicle power"),
-      signalStrength: String(seed?.signalStrength ?? "Strong"),
-      dataHealthScore: Number(seed?.dataHealthScore ?? 92),
-      installStatus: String(seed?.installStatus ?? "Installed"),
-      complianceStatus: String(seed?.complianceStatus ?? "Approved"),
-      warrantyStatus: String(seed?.warrantyStatus ?? "Active"),
-      supportStatus: String(seed?.supportStatus ?? "Enterprise"),
-      lifecycleStatus: String(seed?.lifecycleStatus ?? "Active"),
-      archivedAt: seed?.archivedAt ?? null,
-    };
-  });
-  return merged;
+async function fetchOpenAlerts(): Promise<AnyRecord[]> {
+  return unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "Open" } }));
 }
 
-function findVehicleByCode(vehicleCode: string) {
-  return developmentFleetSeedData.vehicles.find(
-    (vehicle) =>
-      String(vehicle.vehicleCode ?? vehicle.vehicleId).toLowerCase() === vehicleCode.toLowerCase() ||
-      String(vehicle.id ?? "").toLowerCase() === vehicleCode.toLowerCase(),
-  );
+async function fetchPositions(): Promise<AnyRecord[]> {
+  return unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/positions"));
 }
 
-function findDriverForVehicle(vehicleCode: string) {
-  return developmentFleetSeedData.drivers.find(
-    (driver) => String(driver.assignedVehicle ?? "").toLowerCase() === vehicleCode.toLowerCase(),
-  );
+// Assemble scoped DeviceCommandRecord[] from the live device + fault + alert feeds.
+async function loadScopedDevices(session: UserSession | null): Promise<DeviceCommandRecord[]> {
+  const [rows, faults, alerts] = await Promise.all([fetchDeviceRows(), fetchActiveFaults(), fetchOpenAlerts()]);
+  const faultCounts = countFaultsBySerial(faults);
+  const alertCounts = countAlertsBySerial(alerts);
+  const mapped = rows.map((row) => mapDeviceRow(row, faultCounts, alertCounts, session));
+  return scopeDevicesForSession(mapped, session);
 }
 
 export const telematicsService = {
   async getDevices(): Promise<DeviceCommandRecord[]> {
     const session = getSession();
-    const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/eld/devices"));
-    const merged = mergeBackendDevices(rows);
-    return scopeDevicesForSession(merged, session).map(enrichDevice);
+    return loadScopedDevices(session);
   },
 
   async getDeviceById(id: string | number): Promise<DeviceDetailRecord> {
     const session = getSession();
-    const device = scopeDeviceById(id, session);
-    const enriched = enrichDevice(device);
+    // Real single-device read + the cross-feeds needed to populate the detail drawer.
+    const [row, faults, alerts, positions] = await Promise.all([
+      unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${id}`)),
+      fetchActiveFaults(),
+      unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "All" } })),
+      fetchPositions(),
+    ]);
 
-    return {
-      device: enriched,
-      telemetry: buildTelemetrySummary(device.id),
-      healthEvents: buildHealthHistory(device.id),
-      firmwareUpdates: state.firmwareUpdates.filter((item) => String(item.deviceId) === String(device.id)),
-      diagnostics: state.diagnostics.filter((item) => String(item.deviceId) === String(device.id)),
-      installations: state.installationRecords.filter((item) => String(item.deviceId) === String(device.id)),
-      sensorReadings: state.sensorReadings.filter((item) => String(item.deviceId) === String(device.id)),
-      providers: state.providers.filter((item) => Number(item.tenantId) === Number(device.tenantId) || String(item.id) === String(device.providerCode)),
-      auditLog: state.auditLogs.filter((item) => String(item.deviceId) === String(device.id)),
-      assignmentHistory: state.deviceAssignments.filter((item) => String(item.deviceId) === String(device.id)),
-    };
-  },
+    const faultCounts = countFaultsBySerial(faults);
+    const openAlertCounts = countAlertsBySerial(alerts);
+    const device = mapDeviceRow(row, faultCounts, openAlertCounts, session);
 
-  async createDevice(payload: DeviceMutationPayload): Promise<DeviceCommandRecord> {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const tenantId = getTenantId(session);
-    const vehicleCode = String(payload.assignedVehicleCode ?? payload.vehicleCode ?? "");
-    const vehicle = findVehicleByCode(vehicleCode);
-    const driver = vehicleCode ? findDriverForVehicle(vehicleCode) : null;
-    const providerName = String(payload.provider ?? payload.manufacturer ?? "Connected provider");
-    const providerCode = String(payload.providerCode ?? providerName.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-    const registered = await unwrap<AnyRecord>(apiClient.post("/api/devices/provision", {
-      tenantId,
-      vehicleCode,
-      deviceType: payload.deviceType ?? "ELD device",
-      manufacturer: payload.provider ?? payload.manufacturer ?? "Connected provider",
-      model: payload.deviceName ?? payload.model ?? "Device",
-      imei: payload.imei ?? payload.identifier ?? "",
-      simNumber: payload.simNumber ?? "",
-      approvalCountry: session?.company?.country ?? "US",
-      assignedVehicleCode: vehicleCode,
-      ...payload,
+    // Enforce portal scoping on the single-device read too.
+    const [scoped] = scopeDevicesForSession([device], session);
+    if (!scoped) throw new Error("Device not found");
+
+    const serial = scoped.serialNumber;
+    const deviceFaults = faults.filter((fault) => String(fault.device_id ?? "") === serial);
+    const deviceAlerts = alerts.filter((alert) => String(alert.device_serial ?? "") === serial);
+    const position = positionForDevice(scoped, positions);
+
+    // Telemetry: derived from the single live position snapshot (one point, or none).
+    const telemetry: TelematicsTelemetrySeedRecord[] = position
+      ? [{
+          id: `position-${scoped.id}`,
+          deviceId: scoped.id,
+          vehicleId: scoped.assignedVehicleId,
+          driverId: scoped.assignedDriverId,
+          latitude: position.lat != null ? String(position.lat) : "—",
+          longitude: position.lng != null ? String(position.lng) : "—",
+          speedMph: position.speed_mph != null ? String(position.speed_mph) : "—",
+          heading: position.heading != null ? String(position.heading) : "—",
+          engineStatus: position.engine_status ? String(position.engine_status) : "—",
+          odometer: position.odometer_miles != null ? String(position.odometer_miles) : "—",
+          fuelLevel: position.fuel_level != null ? String(position.fuel_level) : "—",
+          geofenceStatus: String(position.is_stale) === "1" ? "Last known" : "Live",
+          eventAt: position.event_time ? String(position.event_time) : scoped.lastCheckIn,
+        }]
+      : [];
+
+    // Diagnostics: real active fault codes for this device (by serial).
+    const diagnostics: TelematicsDiagnosticSeedRecord[] = deviceFaults.map((fault) => ({
+      id: String(fault.id),
+      deviceId: scoped.id,
+      tenantId: scoped.tenantId,
+      result: String(fault.severity ?? "Info"),
+      // These voltage/modem/gnss channels have no source in the fault-code contract.
+      batteryVoltage: "—",
+      modemStatus: "—",
+      gnssStatus: "—",
+      faultCode: `${String(fault.code_type ?? "")} ${String(fault.code ?? "")}`.trim(),
+      runAt: String(fault.last_seen_at ?? fault.first_seen_at ?? ""),
+      runBy: String(fault.description ?? ""),
     }));
 
-    const device: MutableDeviceRecord = {
-      id: `device-${Date.now()}`,
-      deviceId: String(registered.id ?? payload.serialNumber ?? payload.identifier ?? payload.imei ?? `DEV-${Date.now()}`),
-      deviceName: String(payload.deviceName ?? `${providerName} ${String(payload.deviceType ?? "Device")}`),
-      deviceType: String(payload.deviceType ?? "ELD device"),
-      provider: providerName,
-      providerCode,
-      serialNumber: String(payload.serialNumber ?? registered.id ?? ""),
-      identifier: String(payload.identifier ?? payload.imei ?? ""),
-      imei: String(payload.imei ?? payload.identifier ?? ""),
-      simNumber: String(payload.simNumber ?? ""),
-      assignedVehicleId: String(vehicle?.id ?? vehicle?.vehicleId ?? ""),
-      vehicleId: String(vehicle?.id ?? vehicle?.vehicleId ?? ""),
-      assignedVehicleCode: String(vehicle?.vehicleCode ?? vehicleCode),
-      assignedDriverId: String(driver?.id ?? driver?.driverId ?? ""),
-      driverId: String(driver?.id ?? driver?.driverId ?? ""),
-      assignedDriverName: String(driver?.fullName ?? driver?.name ?? ""),
-      shipmentId: String(payload.shipmentId ?? ""),
-      tenantId,
-      tenantName: String(session?.company?.name ?? "Tenant"),
-      firmwareVersion: String(payload.firmwareVersion ?? "1.0.0"),
-      targetFirmwareVersion: String(payload.targetFirmwareVersion ?? payload.firmwareVersion ?? "1.0.0"),
-      lastCheckIn: nowIso(),
-      connectionStatus: "Provisioning",
-      powerStatus: String(payload.powerStatus ?? "Vehicle power"),
-      signalStrength: String(payload.signalStrength ?? "Pending"),
-      dataHealthScore: Number(payload.dataHealthScore ?? 72),
-      installStatus: "Awaiting installation",
-      complianceStatus: "Pending review",
-      warrantyStatus: String(payload.warrantyStatus ?? "Active"),
-      supportStatus: String(payload.supportStatus ?? "Enterprise"),
-      lifecycleStatus: "Active",
-      archivedAt: null,
-    };
+    // Health timeline: real telemetry alerts for this device.
+    const healthEvents: TelematicsHealthSeedRecord[] = deviceAlerts.map((alert) => ({
+      id: String(alert.id),
+      deviceId: scoped.id,
+      tenantId: scoped.tenantId,
+      score: scoped.dataHealthScore,
+      status: String(alert.status ?? "Open"),
+      signalStrength: scoped.signalStrength,
+      eventAt: String(alert.created_at ?? ""),
+      summary: `${String(alert.severity ?? "")} · ${String(alert.message ?? alert.alert_type ?? "")}`.trim(),
+    }));
 
-    state.devices.unshift(device);
-    state.installationRecords.unshift({
-      id: `install-${device.deviceId}`,
-      deviceId: device.id,
-      tenantId,
-      installStatus: device.installStatus,
-      installerName: "Field Ops Queue",
-      installedAt: null,
-      checklist: [
-        { item: "Power connected", status: "Pending" },
-        { item: "Vehicle assigned", status: vehicleCode ? "Complete" : "Pending" },
-        { item: "Road test verified", status: "Pending" },
-        { item: "Provider sync confirmed", status: "Pending" },
-      ],
-    });
-    addAuditEntry(device, "device.created", "Device registered into tenant inventory.");
-    return enrichDevice(device);
+    return {
+      device: scoped,
+      telemetry,
+      healthEvents,
+      diagnostics,
+      // No live source for these sub-lists in the verified contract — return [] rather
+      // than fabricate. The UI already renders honest empty states for each.
+      firmwareUpdates: [], // no OTA/firmware-schedule endpoint
+      installations: [], // no installation-records endpoint
+      sensorReadings: [], // no standalone sensor-reading endpoint
+      providers: [], // no provider-registry endpoint
+      auditLog: [], // no device audit-log endpoint
+      assignmentHistory: [], // no assignment-history endpoint
+    };
   },
 
-  async updateDevice(id: string | number, payload: DeviceMutationPayload): Promise<DeviceCommandRecord> {
+  async getGpsTrackingRecords(): Promise<TelematicsClusterRecord[]> {
+    const session = getSession();
+    const [devices, positions, faults] = await Promise.all([
+      loadScopedDevices(session),
+      fetchPositions(),
+      fetchActiveFaults(),
+    ]);
+    return devices.map((device) => toClusterRecord(device, positions, faults));
+  },
+
+  async getDiagnosticsRecords(): Promise<TelematicsClusterRecord[]> {
+    const session = getSession();
+    const [devices, positions, faults] = await Promise.all([
+      loadScopedDevices(session),
+      fetchPositions(),
+      fetchActiveFaults(),
+    ]);
+    return devices
+      .filter((device) => /eld|obd|j1939|can|gateway/i.test(device.deviceType))
+      .map((device) => toClusterRecord(device, positions, faults));
+  },
+
+  async getSensorHealthRecords(): Promise<TelematicsClusterRecord[]> {
+    const session = getSession();
+    const [devices, positions, faults] = await Promise.all([
+      loadScopedDevices(session),
+      fetchPositions(),
+      fetchActiveFaults(),
+    ]);
+    return devices
+      .filter((device) => /sensor|temperature|door|fuel|tire|reefer|cold/i.test(device.deviceType))
+      .map((device) => toClusterRecord(device, positions, faults));
+  },
+
+  // ── Mutations backed by real endpoints ────────────────────────────────────────────
+
+  // Provision a device = INITIATE A REAL CONNECTION (the Render/Vercel model), not a
+  // data save. The backend generates a real apiKey + HMAC secret that authenticate the
+  // physical device's telemetry POSTs to /api/telemetry/ingest. Those credentials are
+  // returned to the caller ONCE and never retrievable again — exactly like a platform
+  // deploy token — so the connect dialog can display them and the device can start
+  // streaming. Returns the credentials + the live device record + the ingest endpoint.
+  async provisionDevice(payload: DeviceMutationPayload): Promise<DeviceProvisionResult> {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(id, session);
-    const vehicleCode = String(payload.assignedVehicleCode ?? device.assignedVehicleCode ?? "");
-    const vehicle = findVehicleByCode(vehicleCode);
-    const driver = vehicleCode ? findDriverForVehicle(vehicleCode) : null;
-    Object.assign(device, {
-      deviceName: payload.deviceName ?? device.deviceName,
-      deviceType: payload.deviceType ?? device.deviceType,
-      provider: payload.provider ?? device.provider,
-      serialNumber: payload.serialNumber ?? device.serialNumber,
-      identifier: payload.identifier ?? device.identifier,
-      imei: payload.imei ?? device.imei,
-      simNumber: payload.simNumber ?? device.simNumber,
-      assignedVehicleId: String(vehicle?.id ?? vehicle?.vehicleId ?? device.assignedVehicleId ?? ""),
-      vehicleId: String(vehicle?.id ?? vehicle?.vehicleId ?? device.assignedVehicleId ?? ""),
-      assignedVehicleCode: String(vehicle?.vehicleCode ?? vehicleCode),
-      assignedDriverId: String(driver?.id ?? driver?.driverId ?? device.assignedDriverId ?? ""),
-      driverId: String(driver?.id ?? driver?.driverId ?? device.assignedDriverId ?? ""),
-      assignedDriverName: String(driver?.fullName ?? driver?.name ?? device.assignedDriverName ?? ""),
-      firmwareVersion: payload.firmwareVersion ?? device.firmwareVersion,
-      targetFirmwareVersion: payload.targetFirmwareVersion ?? device.targetFirmwareVersion,
-      connectionStatus: payload.connectionStatus ?? device.connectionStatus,
-      powerStatus: payload.powerStatus ?? device.powerStatus,
-      signalStrength: payload.signalStrength ?? device.signalStrength,
-      dataHealthScore: Number(payload.dataHealthScore ?? device.dataHealthScore),
-      installStatus: payload.installStatus ?? device.installStatus,
-      complianceStatus: payload.complianceStatus ?? device.complianceStatus,
-      warrantyStatus: payload.warrantyStatus ?? device.warrantyStatus,
-      supportStatus: payload.supportStatus ?? device.supportStatus,
-    });
-    addAuditEntry(device, "device.updated", "Device profile updated.");
-    return enrichDevice(device);
+    const serial = String(payload.serialNumber ?? payload.identifier ?? payload.imei ?? "").trim();
+    if (!serial) throw new Error("A device serial is required to establish a connection.");
+    // POST /api/telemetry/devices/provision -> {id, deviceSerial, apiKey, hmacSecret, note}
+    const provisioned = await unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/provision", {
+      deviceSerial: serial,
+      deviceModel: payload.deviceName ?? payload.deviceType ?? "Device",
+      provider: payload.provider ?? "",
+      vehicleId: payload.assignedVehicleId ?? payload.vehicleId ?? null,
+      driverId: payload.assignedDriverId ?? payload.driverId ?? null,
+      firmwareVersion: payload.firmwareVersion ?? "",
+      notes: payload.notes ?? "",
+    }));
+
+    // Re-read the freshly provisioned device so the returned record is fully live.
+    const created = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${provisioned.id}`));
+    const device = mapDeviceRow(created, new Map(), new Map(), session);
+    return {
+      device,
+      credentials: {
+        deviceId: String(provisioned.id ?? device.id),
+        deviceSerial: String(provisioned.deviceSerial ?? serial),
+        apiKey: String(provisioned.apiKey ?? ""),
+        hmacSecret: String(provisioned.hmacSecret ?? ""),
+        note: String(provisioned.note ?? "Store these credentials securely — they will not be shown again."),
+      },
+      // The endpoint the device authenticates to and streams telemetry into. Built from
+      // the same base the app talks to so it is correct in every environment (localhost
+      // in dev, the Render URL in prod). Trailing slash on the base is normalized away.
+      ingestUrl: `${String(apiClient.defaults.baseURL ?? "").replace(/\/+$/, "")}/api/telemetry/ingest`,
+    };
+  },
+
+  // Backward-compatible wrapper: some callers only need the device record.
+  async createDevice(payload: DeviceMutationPayload): Promise<DeviceCommandRecord> {
+    return (await this.provisionDevice(payload)).device;
+  },
+
+  // Poll whether a freshly provisioned device has streamed its first heartbeat yet
+  // (last_seen_at set / a live position exists). Drives the "Waiting for first
+  // heartbeat…" → "Connected" pairing state in the connect dialog.
+  async getDeviceConnectionState(deviceId: string | number): Promise<{ connected: boolean; lastSeenAt: string | null; status: string }> {
+    const row = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const lastSeenAt = row.last_seen_at ? String(row.last_seen_at) : null;
+    const status = String(row.status ?? "Unknown");
+    // Connected once the device has checked in at least once and is not revoked/suspended.
+    const connected = Boolean(lastSeenAt) && !/revoked|suspended/i.test(status);
+    return { connected, lastSeenAt, status };
+  },
+
+  async assignDeviceToVehicle(deviceId: string | number, vehicleId: string | number): Promise<DeviceCommandRecord> {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // POST /api/telemetry/devices/{id}/assign {vehicleId, driverId}
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
+      vehicleId,
+      driverId: null,
+    }));
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
+  },
+
+  async markDeviceAttention(deviceId: string | number, _notes: string): Promise<DeviceCommandRecord> {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // POST /api/eld/devices/{id}/mark-malfunction (notes have no backend field here).
+    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/mark-malfunction`, {}));
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
+  },
+
+  async resolveDeviceAttention(deviceId: string | number): Promise<DeviceCommandRecord> {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // POST /api/eld/devices/{id}/resolve-malfunction
+    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/resolve-malfunction`, {}));
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
   async archiveDevice(id: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(id, session);
-    device.lifecycleStatus = "Archived";
-    device.archivedAt = nowIso();
-    device.connectionStatus = "Archived";
-    addAuditEntry(device, "device.archived", "Device archived from active inventory.");
+    // POST /api/telemetry/devices/{id}/revoke (revocation is the real "archive").
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/revoke`, {}));
     return { success: true };
   },
 
-  async assignDeviceToVehicle(deviceId: string | number, vehicleId: string | number) {
+  async updateDevice(id: string | number, payload: DeviceMutationPayload): Promise<DeviceCommandRecord> {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    const vehicle = developmentFleetSeedData.vehicles.find(
-      (row) => String(row.id ?? row.vehicleId ?? row.vehicleCode) === String(vehicleId) || String(row.vehicleCode ?? row.vehicleId) === String(vehicleId),
-    );
-    if (!vehicle) throw new Error("Vehicle not found");
-    const driver = findDriverForVehicle(String(vehicle.vehicleCode ?? vehicle.vehicleId));
-    device.assignedVehicleId = String(vehicle.id ?? vehicle.vehicleId ?? "");
-    device.vehicleId = device.assignedVehicleId;
-    device.assignedVehicleCode = String(vehicle.vehicleCode ?? vehicle.vehicleId ?? "");
-    device.assignedDriverId = String(driver?.id ?? driver?.driverId ?? "");
-    device.driverId = device.assignedDriverId;
-    device.assignedDriverName = String(driver?.fullName ?? driver?.name ?? "");
-    device.installStatus = device.installStatus === "Awaiting installation" ? "Installed with warning" : device.installStatus;
-    state.deviceAssignments.unshift({
-      id: `assign-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      vehicleId: device.assignedVehicleId,
-      vehicleCode: device.assignedVehicleCode,
-      driverId: device.assignedDriverId,
-      driverName: device.assignedDriverName,
-      assignedAt: nowIso(),
-      status: "Assigned",
-      assignedBy: "Device Health",
-    });
-    addAuditEntry(device, "device.assigned", `Assigned to ${device.assignedVehicleCode}.`);
-    return enrichDevice(device);
+    // No general device-update endpoint exists; the closest real mutation is re-assign
+    // (vehicle/driver). Apply it when the payload changes assignment, then re-read.
+    if (payload.assignedVehicleId != null || payload.vehicleId != null || payload.assignedDriverId != null) {
+      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/assign`, {
+        vehicleId: payload.assignedVehicleId ?? payload.vehicleId ?? null,
+        driverId: payload.assignedDriverId ?? payload.driverId ?? null,
+      }));
+    }
+    // TODO: no endpoint persists deviceName/type/provider/firmware edits; those fields
+    // are ignored rather than mutated into fake local state.
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${id}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
   },
+
+  // ── Mutations with NO backend endpoint — honest no-ops (no seed mutation) ───────────
 
   async unassignDevice(deviceId: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    device.assignedVehicleId = "";
-    device.vehicleId = "";
-    device.assignedVehicleCode = "";
-    device.assignedDriverId = "";
-    device.driverId = "";
-    device.assignedDriverName = "";
-    device.shipmentId = "";
-    state.deviceAssignments.unshift({
-      id: `assign-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      vehicleId: null,
-      vehicleCode: null,
-      driverId: null,
-      driverName: null,
-      assignedAt: nowIso(),
-      status: "Unassigned",
-      assignedBy: "Device Health",
-    });
-    addAuditEntry(device, "device.unassigned", "Removed from vehicle assignment.");
-    return enrichDevice(device);
+    // The assign endpoint requires a vehicleId; there is no verified "unassign" contract.
+    // TODO: expose a real unassign endpoint (POST assign with null vehicle) once defined.
+    void deviceId;
+    return { success: false, reason: "not supported" as const };
   },
 
   async markInstalled(deviceId: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    device.installStatus = "Installed";
-    device.connectionStatus = device.connectionStatus === "Provisioning" ? "Online" : device.connectionStatus;
-    const install = state.installationRecords.find((item) => String(item.deviceId) === String(device.id));
-    if (install) {
-      install.installStatus = "Installed";
-      install.installedAt = nowIso();
-      install.checklist = install.checklist.map((entry: { item: string; status: string }) => ({
-        ...entry,
-        status: entry.item === "Power connected" || entry.item === "Road test verified" ? "Complete" : entry.status,
-      }));
-    }
-    addAuditEntry(device, "device.installed", "Installation checklist completed.");
-    return enrichDevice(device);
+    // No installation-tracking endpoint exists.
+    // TODO: wire to a real installation-status endpoint when available.
+    void deviceId;
+    return { success: false, reason: "not supported" as const };
   },
 
   async runDeviceDiagnostics(deviceId: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    const diagnostic: TelematicsDiagnosticSeedRecord = {
-      id: `diag-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      result: /offline/i.test(String(device.connectionStatus)) ? "Warning" : "Passed",
-      batteryVoltage: /battery/i.test(String(device.powerStatus)) ? "11.8V" : "13.6V",
-      modemStatus: /offline/i.test(String(device.connectionStatus)) ? "Carrier retry" : "Connected",
-      gnssStatus: /offline/i.test(String(device.connectionStatus)) ? "Searching" : "Locked",
-      faultCode: /offline/i.test(String(device.connectionStatus)) ? "Connectivity recovery in progress" : "None",
-      runAt: nowIso(),
-      runBy: "Device Health",
-    };
-    state.diagnostics.unshift(diagnostic);
-    state.deviceHealthEvents.unshift({
-      id: `health-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      score: Math.max(55, Number(device.dataHealthScore)),
-      status: diagnostic.result === "Passed" ? "Online" : "Needs attention",
-      signalStrength: device.signalStrength,
-      eventAt: diagnostic.runAt,
-      summary: diagnostic.result === "Passed" ? "Diagnostics completed successfully" : "Diagnostics completed with follow-up required",
-    });
-    addAuditEntry(device, "device.diagnostics.ran", "Diagnostics run completed.");
-    return diagnostic;
-  },
-
-  async markDeviceAttention(deviceId: string | number, notes: string) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    device.connectionStatus = "Needs attention";
-    device.signalStrength = device.signalStrength === "Strong" ? "Weak" : device.signalStrength;
-    state.deviceHealthEvents.unshift({
-      id: `health-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      score: Math.max(42, Number(device.dataHealthScore) - 18),
-      status: "Needs attention",
-      signalStrength: device.signalStrength,
-      eventAt: nowIso(),
-      summary: notes || "Device flagged for recovery review.",
-    });
-    addAuditEntry(device, "device.recovery.flagged", notes || "Device flagged for recovery review.");
-    return enrichDevice(device);
-  },
-
-  async resolveDeviceAttention(deviceId: string | number) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    device.connectionStatus = "Online";
-    device.signalStrength = "Strong";
-    device.lastCheckIn = nowIso();
-    state.deviceHealthEvents.unshift({
-      id: `health-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      score: Math.max(88, Number(device.dataHealthScore)),
-      status: "Online",
-      signalStrength: "Strong",
-      eventAt: device.lastCheckIn,
-      summary: "Recovery action completed and heartbeat restored.",
-    });
-    addAuditEntry(device, "device.recovery.resolved", "Recovery action completed.");
-    return enrichDevice(device);
+    // No on-demand diagnostics-run endpoint; fault codes are read via /maintenance/fault-codes.
+    // TODO: wire to a real diagnostics-trigger endpoint when available.
+    void deviceId;
+    return { success: false, reason: "not supported" as const };
   },
 
   async refreshDeviceStatus(deviceId: string | number) {
     const session = getSession();
-    const device = scopeDeviceById(deviceId, session);
-    device.lastCheckIn = nowIso();
-    if (device.connectionStatus === "Offline") {
-      device.connectionStatus = "Needs attention";
-      device.signalStrength = "Weak";
-    } else if (device.connectionStatus === "Provisioning") {
-      device.connectionStatus = "Online";
-      device.signalStrength = "Strong";
-    }
-    state.deviceHealthEvents.unshift({
-      id: `health-${device.deviceId}-${Date.now()}`,
-      deviceId: device.id,
-      tenantId: device.tenantId,
-      score: Number(device.dataHealthScore),
-      status: device.connectionStatus,
-      signalStrength: device.signalStrength,
-      eventAt: device.lastCheckIn,
-      summary: "Status refresh completed.",
-    });
-    addAuditEntry(device, "device.status.refresh", "Device heartbeat refreshed.");
-    return enrichDevice(device);
+    // No status-refresh endpoint; callers should re-query getDevices/getDeviceById.
+    // TODO: wire to a real refresh/ping endpoint when available.
+    void deviceId;
+    void session;
+    return { success: false, reason: "not supported" as const };
   },
 
-  async scheduleFirmwareUpdate(deviceId: string | number, payload: DeviceMutationPayload) {
+  async scheduleFirmwareUpdate(deviceId: string | number, _payload: DeviceMutationPayload) {
     const session = getSession();
     ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    const scheduledFor = String(payload.scheduledFor ?? "");
-    const targetVersion = String(payload.targetVersion ?? device.targetFirmwareVersion ?? device.firmwareVersion);
-    device.targetFirmwareVersion = targetVersion;
-    const existing = state.firmwareUpdates.find((item) => String(item.deviceId) === String(device.id));
-    if (existing) {
-      existing.targetVersion = targetVersion;
-      existing.scheduledFor = scheduledFor;
-      existing.status = "Scheduled";
-    } else {
-      state.firmwareUpdates.unshift({
-        id: `fw-${device.deviceId}-${Date.now()}`,
-        deviceId: device.id,
-        deviceIdentifier: device.deviceId,
-        tenantId: device.tenantId,
-        currentVersion: device.firmwareVersion,
-        targetVersion,
-        scheduledFor,
-        status: "Scheduled",
-        releaseNotes: "Scheduled through Device Command Center.",
-        createdBy: "Device Health",
-      });
-    }
-    addAuditEntry(device, "device.firmware.scheduled", `Firmware update scheduled to ${targetVersion}.`);
-    return { success: true };
+    // No OTA/firmware-schedule endpoint exists.
+    // TODO: wire to a real firmware-schedule endpoint when available.
+    void deviceId;
+    return { success: false, reason: "not supported" as const };
+  },
+
+  async acknowledgeTelematicsIssue(deviceId: string | number, _note: string) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // Alerts are acknowledged per-alert (POST /api/telemetry/alerts/{id}/acknowledge),
+    // not per-device. There is no device-level acknowledge, so this is a no-op.
+    // TODO: acknowledge the specific alert id via the alerts endpoint from the caller.
+    void deviceId;
+    return { success: false, reason: "not supported" as const };
+  },
+
+  async createMaintenanceTask(deviceId: string | number, note: string) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // The telematics layer has no maintenance-task endpoint of its own; the CALLER
+    // persists the task via maintenanceApi.create. Here we resolve the real device so
+    // the returned title/note reference the actual unit (no fabricated data). The task
+    // itself is created against the real maintenance API downstream.
+    const device = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const label = String(device.vehicle_code ?? device.device_serial ?? deviceId);
+    return {
+      success: true as const,
+      vehicleCode: String(device.vehicle_code ?? ""),
+      title: `Telematics follow-up for ${label}`,
+      note,
+    };
+  },
+
+  async syncProvider(providerId: string | number) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    // No provider-registry or provider-sync endpoint exists.
+    // TODO: wire to a real provider-sync endpoint when available.
+    void providerId;
+    return { success: false, reason: "not supported" as const };
+  },
+
+  async getProviders(): Promise<TelematicsProviderSeedRecord[]> {
+    // No provider-registry endpoint in the verified contract — honest empty list.
+    // TODO: wire to a real providers endpoint when available.
+    return [];
   },
 
   async getDeviceTelemetry(deviceId: string | number) {
-    const session = getSession();
-    const device = scopeDeviceById(deviceId, session);
-    return buildTelemetrySummary(device.id);
+    // Derives the single live position point from the device detail read.
+    const detail = await this.getDeviceById(deviceId);
+    return detail.telemetry;
   },
 
   async getDeviceHealth(deviceId: string | number) {
-    const session = getSession();
-    const device = scopeDeviceById(deviceId, session);
-    return buildHealthHistory(device.id);
+    // Derives the health timeline (real alerts) from the device detail read.
+    const detail = await this.getDeviceById(deviceId);
+    return detail.healthEvents;
   },
 
   async exportDevicesCsv() {
@@ -828,81 +911,6 @@ export const telematicsService = {
       "supportStatus",
     ];
     return [columns.join(","), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column as keyof DeviceCommandRecord] ?? "")).join(","))].join("\n");
-  },
-
-  async getProviders() {
-    const session = getSession();
-    const tenantId = getTenantId(session);
-    return (isSuperAdmin(session) ? state.providers : state.providers.filter((item) => Number(item.tenantId) === tenantId))
-      .map((provider) => ({
-        ...provider,
-        pendingDevices: state.devices.filter((device) => String(device.providerCode) === String(provider.id) && device.connectionStatus !== "Online").length,
-      }));
-  },
-
-  async syncProvider(providerId: string | number) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const tenantId = getTenantId(session);
-    const provider = state.providers.find((item) =>
-      String(item.id) === String(providerId) &&
-      (isSuperAdmin(session) || Number(item.tenantId) === tenantId)
-    );
-    if (!provider) throw new Error("Provider not found");
-
-    provider.lastSyncAt = nowIso();
-    provider.integrationStatus = "Connected";
-
-    state.devices
-      .filter((device) => String(device.providerCode) === String(provider.id) && Number(device.tenantId) === Number(provider.tenantId))
-      .forEach((device) => {
-        device.lastCheckIn = nowIso();
-        if (device.connectionStatus === "Provisioning") {
-          device.connectionStatus = "Online";
-          device.signalStrength = "Strong";
-          device.dataHealthScore = Math.max(88, Number(device.dataHealthScore));
-        }
-        addAuditEntry(device, "provider.sync.completed", `${provider.name} sync completed.`);
-      });
-
-    return { success: true, provider };
-  },
-
-  async getGpsTrackingRecords() {
-    return (await this.getDevices()).map(toClusterRecord);
-  },
-
-  async getDiagnosticsRecords() {
-    return (await this.getDevices())
-      .filter((device) => /eld|obd|j1939|can|gateway/i.test(device.deviceType))
-      .map(toClusterRecord);
-  },
-
-  async getSensorHealthRecords() {
-    return (await this.getDevices())
-      .filter((device) => /sensor|temperature|door|fuel|tire|reefer|cold/i.test(device.deviceType))
-      .map(toClusterRecord);
-  },
-
-  async acknowledgeTelematicsIssue(deviceId: string | number, note: string) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    addAuditEntry(device, "telematics.issue.acknowledged", note || "Telematics issue acknowledged.");
-    return { success: true };
-  },
-
-  async createMaintenanceTask(deviceId: string | number, note: string) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    const device = scopeDeviceById(deviceId, session);
-    addAuditEntry(device, "telematics.maintenance.requested", note || "Maintenance follow-up created from telematics.");
-    return {
-      success: true,
-      vehicleCode: device.assignedVehicleCode,
-      title: `Telematics follow-up for ${device.assignedVehicleCode || device.deviceName}`,
-      note,
-    };
   },
 
   exportClusterCsv(rows: TelematicsClusterRecord[], columns: string[]) {

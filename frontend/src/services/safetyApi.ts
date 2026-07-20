@@ -1,16 +1,11 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
-import { getSafetyEvents, getSafetySummary } from "@/data/developmentFleetSeedData";
-
-async function withFallback<T>(req: Promise<T>, fb: () => T | Promise<T>): Promise<T> {
-  try { return await req; } catch { return fb(); }
-}
 
 export const safetyApi = {
-  dashboard: () => withFallback(unwrap<AnyRecord>(apiClient.get("/api/safety/dashboard")), () => getSafetySummary() as AnyRecord),
+  dashboard: () => unwrap<AnyRecord>(apiClient.get("/api/safety/dashboard")),
   summary: () => safetyApi.dashboard(),
   events: (params?: { status?: string; eventType?: string; driverId?: number; vehicleId?: number }) =>
-    withFallback(unwrap<AnyRecord[]>(apiClient.get("/api/safety/events", { params })), () => getSafetyEvents() as AnyRecord[]),
+    unwrap<AnyRecord[]>(apiClient.get("/api/safety/events", { params })),
 
   // Single event detail with coaching tasks, audit trail, and source alert evidence
   detail: (id: string | number) =>
@@ -58,9 +53,7 @@ export const safetyApi = {
 
   // Legacy CRUD kept for compatibility with create/update modal actions
   create: (payload: AnyRecord) =>
-    unwrap<AnyRecord>(apiClient.post("/api/safety/events", payload)).catch(() =>
-      ({ ...payload, id: `safety-${Date.now()}`, success: true })
-    ),
+    unwrap<AnyRecord>(apiClient.post("/api/safety/events", payload)),
   update: (id: string | number, payload: AnyRecord) =>
     unwrap<AnyRecord>(apiClient.put(`/api/safety/events/${id}`, payload)),
   remove: (id: string | number) =>

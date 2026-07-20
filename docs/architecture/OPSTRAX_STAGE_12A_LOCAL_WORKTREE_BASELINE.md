@@ -1,0 +1,17 @@
+# Opstrax Stage 12A Local Worktree Baseline
+
+| Area | Finding | Evidence | Risk | Action Taken | Next Action |
+|---|---|---|---|---|---|
+| Branch | Working branch is `opstrax-product-main`. | `git branch --show-current` | Low | Confirmed current local delivery branch. | Keep Stage 12A local-only. |
+| Workspace | Worktree is already dirty from prior stage work. | `git status --short` | Medium | Preserved existing local changes; no reset/revert. | Keep the Stage 12A diff additive and narrow. |
+| Diff size | There are many existing backend/frontend/docs edits and untracked stage artifacts. | `git diff --stat`, `git status --short` | Medium | Identified pre-existing Stage 5-11 files so Stage 12A can avoid mixing unrelated cleanup. | Do not collapse unrelated work into this stage. |
+| Format safety | No whitespace/check issues were reported in the baseline diff. | `git diff --check` | Low | Confirmed no baseline patch formatting errors. | Re-run after code edits. |
+| App settings | No `appsettings.Production*` changes were present in the baseline. | `git status --short` | Medium | No production config touch detected. | Keep production settings untouched. |
+| Backend changes | Backend already contains telemetry, foundation, dispatcher, stage 9, and stage 10/11 work from prior stages. | `backend-dotnet/Controllers/EndpointMappings.cs`, `backend-dotnet/Services/TelemetrySchemaService.cs`, `backend-dotnet/Foundation/*` | Medium | Confirmed Stage 12A must extend the real telemetry stack, not invent a parallel one. | Reuse and extend the existing telemetry path. |
+| Frontend changes | Live Map, IoT devices, Operations Proof Center, and platform cockpit surfaces already exist. | `frontend/src/pages/LiveMapPage.tsx`, `frontend/src/pages/IotDevicesPage.tsx`, `frontend/src/pages/CommandCenterPage.tsx`, `frontend/src/pages/platform/*` | Medium | Confirmed the UI already has operational shells to plug into. | Add telemetry-aware panels rather than new shells. |
+| Docs changes | Stage 10/11 architecture docs are already present locally. | `docs/architecture/OPSTRAX_STAGE_10_*`, `docs/architecture/OPSTRAX_STAGE_11_*` | Low | No conflicts in the baseline doc set. | Add Stage 12A docs alongside them. |
+| Migrations | Existing additive migrations already cover foundation, dispatcher, business spine, revenue, finance, and platform changes. | `database/migrations/2026_06_27_stage5_p0b1a_foundation.sql`, `2026_06_28_stage5d_p0b1a3_dispatcher.sql`, `2026_06_28_stage6_p0b1b_business_spine.sql`, `2026_06_28_stage7a_revenue_readiness_schema_contract.sql`, `2026_06_28_stage8_finance_activation.sql` | Medium | Verified Stage 12A should be additive if it needs DDL. | Add one local-only telemetry migration if required. |
+| /tmp safety | No `/tmp` or obvious temp-file artifacts were part of the baseline output. | `git status --short`, `git diff --stat` | Low | No temp cleanup required at baseline. | Keep generated files inside the repo. |
+| Secrets / prod data | No obvious secrets or production config values were surfaced in the baseline checks. | `git status --short`, `git diff --check` | Medium | No obvious red flags at baseline. | Re-scan any new telemetry config before finishing. |
+| Prior stage integrity | Stage 5 through Stage 11 files remain local-only and unpushed. | Workspace state and prior stage docs | Medium | Confirmed this stage starts from a local-only delivery chain. | Preserve the local-only rule. |
+

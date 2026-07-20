@@ -1,7 +1,11 @@
-import { telematicsService, type DeviceCommandRecord } from "@/services/telematicsService";
+import { telematicsService, type DeviceCommandRecord, type TelematicsClusterRecord } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
+
+// Placeholder token used across the telematics layer whenever a device has no live
+// value for a field. We render this verbatim rather than inventing a plausible number.
+const NO_DATA = "—";
 
 export type IotDeviceRecord = DeviceCommandRecord & {
   model: string;
@@ -53,7 +57,9 @@ export type TelematicsSignalRecord = AnyRecord & {
 };
 
 function relativeHeartbeat(timestamp: string) {
-  const deltaMinutes = Math.max(1, Math.round((Date.now() - new Date(timestamp).getTime()) / 60000));
+  const parsed = new Date(timestamp).getTime();
+  if (!timestamp || Number.isNaN(parsed)) return NO_DATA;
+  const deltaMinutes = Math.max(1, Math.round((Date.now() - parsed) / 60000));
   if (deltaMinutes < 60) return `${deltaMinutes} min ago`;
   const hours = Math.floor(deltaMinutes / 60);
   const mins = deltaMinutes % 60;
@@ -66,6 +72,16 @@ function signalSeverity(signal: string) {
   return "Offline";
 }
 
+// Any live field the backend could not supply arrives as an empty string or one of
+// the honest "unknown/pending" markers the service uses. Collapse those to a single
+// NO_DATA token so the UI never shows a stale placeholder as if it were a reading.
+function orNoData(value: unknown): string {
+  const text = value == null ? "" : String(value).trim();
+  if (!text) return NO_DATA;
+  if (/^(—|-|n\/?a|unknown|pending|not assessed|no data)$/i.test(text)) return NO_DATA;
+  return text;
+}
+
 function recommendedAction(row: DeviceCommandRecord) {
   if (/offline/i.test(row.connectionStatus)) return "Dispatch a backup visibility path and inspect power, GNSS, and carrier continuity.";
   if (/attention/i.test(row.connectionStatus)) return "Run diagnostics, validate antenna placement, and confirm the next heartbeat before dispatch.";
@@ -74,6 +90,8 @@ function recommendedAction(row: DeviceCommandRecord) {
 }
 
 function toRecord(row: DeviceCommandRecord): IotDeviceRecord {
+  // Every field here is projected from the (now live) DeviceCommandRecord. Where the
+  // source is empty we surface the device's own honest marker, never a fabricated one.
   return {
     ...row,
     model: row.deviceName,
@@ -82,14 +100,57 @@ function toRecord(row: DeviceCommandRecord): IotDeviceRecord {
     activeShipmentId: row.linkedShipmentId || "No active shipment",
     status: row.connectionStatus,
     signal: signalSeverity(row.signalStrength),
-    battery: row.powerStatus,
+    battery: orNoData(row.powerStatus),
     lastHeartbeat: row.lastCheckIn,
     heartbeatAge: relativeHeartbeat(row.lastCheckIn),
-    dataQuality: `${row.dataHealthScore}%`,
+    dataQuality: Number.isFinite(row.dataHealthScore) && row.dataHealthScore > 0 ? `${row.dataHealthScore}%` : NO_DATA,
     healthScore: row.dataHealthScore,
     approvalStatus: row.complianceStatus,
     alertCount: row.openAlertCount,
     recommendedAction: recommendedAction(row),
+  };
+}
+
+// Map a device's live state to the signal severity the module cards color by.
+function clusterSeverity(cluster: TelematicsClusterRecord) {
+  if (cluster.offlineWarning) return "Critical";
+  if (/watch|stale/i.test(cluster.dataFreshnessStatus) || cluster.alertStatus === "Open") return "High";
+  return "Low";
+}
+
+// Build the shared, live-sourced payload for one device's signal record. Every value
+// comes off the cluster record — which the telematics service derives from the real
+// /telemetry/positions + /maintenance/fault-codes feeds — or is an honest NO_DATA.
+function signalFromCluster(cluster: TelematicsClusterRecord) {
+  const faultCode = cluster.troubleCodes.length > 0 ? cluster.troubleCodes.join(", ") : "None";
+  return {
+    deviceId: String(cluster.deviceId),
+    vehicleCode: cluster.vehicleCode || "Unassigned",
+    driverName: cluster.driverName || "Unassigned",
+    shipmentId: cluster.shipmentId || "No active shipment",
+    status: cluster.dataFreshnessStatus === "Stale" ? "Offline" : cluster.dataFreshnessStatus === "Watch" ? "Needs attention" : "Online",
+    severity: clusterSeverity(cluster),
+    signal: signalSeverity(cluster.signalStrength),
+    lastHeartbeat: cluster.lastPingAt,
+    heartbeatAge: relativeHeartbeat(cluster.lastPingAt),
+    latitude: orNoData(cluster.latitude),
+    longitude: orNoData(cluster.longitude),
+    speedMph: orNoData(cluster.speedMph),
+    heading: orNoData(cluster.heading),
+    geofenceStatus: orNoData(cluster.geofenceStatus),
+    engineStatus: orNoData(cluster.engineStatus),
+    odometer: orNoData(cluster.odometer),
+    fuelLevel: orNoData(cluster.fuelLevel),
+    batteryVoltage: orNoData(cluster.batteryVoltage),
+    coolantTemp: NO_DATA,
+    faultCode,
+    temperature: orNoData(cluster.latestReading),
+    humidity: NO_DATA,
+    setPoint: orNoData(cluster.expectedRange),
+    doorStatus: NO_DATA,
+    dataQuality: Number.isFinite(cluster.deviceHealth) && cluster.deviceHealth > 0 ? `${cluster.deviceHealth}%` : NO_DATA,
+    healthScore: Number(cluster.deviceHealth) || 0,
+    recommendedAction: cluster.recommendedAction,
   };
 }
 
@@ -110,52 +171,56 @@ export const iotDevicesApi = {
     return { id, status: updated.connectionStatus, success: true };
   },
 
+  // One signal record per device per module, each derived from the live cluster feed
+  // for that module. No index math, no fabricated coordinates, no hardcoded fault /
+  // temperature / fuel / voltage. A device that a module's live query does not cover
+  // simply produces no row for that module.
   telematicsSignals: async (): Promise<TelematicsSignalRecord[]> => {
-    const devices = await telematicsService.getDevices();
-    return devices.flatMap((device, index) => {
-      const baseLat = 24.7136 + index * 0.085;
-      const baseLng = 46.6753 + index * 0.11;
-      const geofenceStatus = /offline/i.test(device.connectionStatus) ? "Last known" : /attention/i.test(device.connectionStatus) ? "Borderline" : "In corridor";
-      const severity = /offline/i.test(device.connectionStatus) ? "Critical" : /attention|provision/i.test(device.connectionStatus) ? "High" : "Low";
-      const engineStatus = device.linkedShipmentId ? "Running" : "Idle";
-      const isColdChain = /temperature/i.test(device.deviceType);
+    const [gps, diagnostics, sensors] = await Promise.all([
+      telematicsService.getGpsTrackingRecords(),
+      telematicsService.getDiagnosticsRecords(),
+      telematicsService.getSensorHealthRecords(),
+    ]);
 
-      const common = {
-        deviceId: device.deviceId,
-        vehicleCode: device.assignedVehicleCode || "Unassigned",
-        driverName: device.assignedDriverName || "Unassigned",
-        shipmentId: device.linkedShipmentId || "No active shipment",
-        status: device.connectionStatus,
-        severity,
-        signal: signalSeverity(device.signalStrength),
-        lastHeartbeat: device.lastCheckIn,
-        heartbeatAge: relativeHeartbeat(device.lastCheckIn),
-        latitude: baseLat.toFixed(5),
-        longitude: baseLng.toFixed(5),
-        speedMph: device.linkedShipmentId ? (/attention/i.test(device.connectionStatus) ? "41" : "57") : "0",
-        heading: device.linkedShipmentId ? "NE" : "Stationary",
-        geofenceStatus,
-        engineStatus,
-        odometer: /box/i.test(device.assignedVehicleCode) ? "268,400 mi" : "164,920 km",
-        fuelLevel: /fuel/i.test(device.deviceType) ? "68%" : "Vehicle bus",
-        batteryVoltage: /offline/i.test(device.connectionStatus) ? "10.8V" : "13.6V",
-        coolantTemp: /obd|j1939|eld/i.test(device.deviceType) ? "192 F" : "N/A",
-        faultCode: /offline/i.test(device.connectionStatus) ? "SPN 639 FMI 2" : /attention/i.test(device.connectionStatus) ? "Signal degradation watch" : "None",
-        temperature: isColdChain ? "4.3 C" : "Ambient",
-        humidity: isColdChain ? "63%" : "N/A",
-        setPoint: isColdChain ? "4.0 C" : "N/A",
-        doorStatus: /door/i.test(device.deviceType) ? "Closed" : "N/A",
-        dataQuality: `${device.dataHealthScore}%`,
-        healthScore: device.dataHealthScore,
-        recommendedAction: recommendedAction(device),
-      };
+    const signals: TelematicsSignalRecord[] = [];
 
-      return [
-        { id: `gps-${device.id}`, moduleKey: "gps-tracking" as const, ...common },
-        { id: `obd-${device.id}`, moduleKey: "obd-j1939" as const, ...common },
-        { id: `sensor-${device.id}`, moduleKey: "sensor-health" as const, ...common },
-        { id: `cold-${device.id}`, moduleKey: "cold-chain" as const, ...common },
-      ];
-    });
+    // GPS tracking — real lat/lng/speed/heading from latest_vehicle_positions.
+    for (const cluster of gps) {
+      signals.push({
+        id: `gps-${cluster.deviceId}`,
+        moduleKey: "gps-tracking",
+        ...signalFromCluster(cluster),
+      });
+    }
+
+    // OBD / J1939 diagnostics — real fault codes, engine + fuel + battery telemetry.
+    for (const cluster of diagnostics) {
+      signals.push({
+        id: `obd-${cluster.deviceId}`,
+        moduleKey: "obd-j1939",
+        ...signalFromCluster(cluster),
+      });
+    }
+
+    // Sensor health + cold-chain — real sensor readings / expected ranges. Cold-chain
+    // records are the subset of sensor devices reporting a temperature/reefer sensor.
+    for (const cluster of sensors) {
+      const base = signalFromCluster(cluster);
+      const isColdChain = /temperature|reefer|cold/i.test(cluster.sensorType);
+      signals.push({
+        id: `sensor-${cluster.deviceId}`,
+        moduleKey: "sensor-health",
+        ...base,
+      });
+      if (isColdChain) {
+        signals.push({
+          id: `cold-${cluster.deviceId}`,
+          moduleKey: "cold-chain",
+          ...base,
+        });
+      }
+    }
+
+    return signals;
   },
 };

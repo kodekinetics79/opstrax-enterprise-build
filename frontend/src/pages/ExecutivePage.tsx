@@ -5,58 +5,36 @@ import {
   useExecutiveSummary, useExecutiveSnapshots, useExecutiveAiRecs,
 } from "@/hooks/useBatch7";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { exportCsv } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Seed fallback (shown when backend is unreachable) ─────────────────────────
-
-const SEED_SNAP = {
-  overall_score: 84, fleet_health_score: 88, safety_score: 79,
-  compliance_score: 91, financial_score: 82,
-  ai_brief: "Fleet operations are performing at 84% composite health. Maintenance urgency is elevated — 4 vehicles are overdue for PM service. Safety coaching backlog across 6 drivers requires immediate attention. Revenue on track; fuel cost trending 3% above budget. Compliance posture is strong at 91%.",
-  snapshot_date: new Date().toISOString(),
+const emptySummary = {
+  overall_score: 0,
+  fleet_health_score: 0,
+  safety_score: 0,
+  compliance_score: 0,
+  financial_score: 0,
+  ai_brief: "No executive summary available yet.",
+  snapshot_date: "",
 };
 
-const SEED_TREND = [
-  { date: "Jun 5",  Overall: 79, Fleet: 83, Safety: 72, Compliance: 88, Financial: 80 },
-  { date: "Jun 7",  Overall: 80, Fleet: 85, Safety: 74, Compliance: 89, Financial: 79 },
-  { date: "Jun 9",  Overall: 81, Fleet: 86, Safety: 75, Compliance: 90, Financial: 80 },
-  { date: "Jun 11", Overall: 82, Fleet: 87, Safety: 76, Compliance: 90, Financial: 81 },
-  { date: "Jun 13", Overall: 82, Fleet: 87, Safety: 77, Compliance: 91, Financial: 81 },
-  { date: "Jun 15", Overall: 83, Fleet: 88, Safety: 78, Compliance: 91, Financial: 82 },
-  { date: "Jun 17", Overall: 84, Fleet: 88, Safety: 79, Compliance: 91, Financial: 82 },
-];
-
-const SEED_REVENUE_COST = [
-  { month: "Jan", revenue: 1840, cost: 1420, margin: 22.8 },
-  { month: "Feb", revenue: 1920, cost: 1480, margin: 22.9 },
-  { month: "Mar", revenue: 2050, cost: 1560, margin: 23.9 },
-  { month: "Apr", revenue: 1980, cost: 1510, margin: 23.7 },
-  { month: "May", revenue: 2110, cost: 1600, margin: 24.2 },
-  { month: "Jun", revenue: 2240, cost: 1680, margin: 25.0 },
-];
-
-const SEED_AI_RECS: AnyRecord[] = [
-  { title: "4 vehicles overdue for preventive maintenance", body: "BOX-104, REF-209, TRK-316, VAN-512 have exceeded PM intervals. Schedule service within 72 hours to avoid roadside breakdowns.", priority: "Critical", score: 98, action_label: "Schedule Maintenance" },
-  { title: "Driver coaching backlog: 6 high-risk events unreviewed", body: "HEJ-drivers flagged for harsh braking (×12) and mobile-use events (×4) over the past 7 days. Coaching assignments pending.", priority: "High", score: 91, action_label: "Open Coaching Queue" },
-  { title: "Fuel spend 3% above monthly budget", body: "Excess spend concentrated in reefer fleet — idling events are the primary driver. Route-based idle reduction can recover ~AED 4,200.", priority: "High", score: 87, action_label: "View Fuel Report" },
-  { title: "3 customer SLA breaches this week", body: "Late deliveries for Al-Futtaim Logistics (×2) and Emirates Transport (×1). Proactive communications have not been sent.", priority: "High", score: 84, action_label: "Open SLA Dashboard" },
-  { title: "HOS/ELD compliance expiry: 2 drivers", body: "Two driver ELD certification renewals are due within 7 days. Failure to renew risks regulatory non-compliance.", priority: "Medium", score: 76, action_label: "Open Compliance" },
-];
-
-const SEED_KPIS = [
-  { label: "Active Vehicles", value: "47 / 52", sub: "5 offline", accent: "text-sky-700",   icon: "truck",    route: "/vehicles" },
-  { label: "Jobs Today",      value: "134",      sub: "12 at-risk", accent: "text-teal-700", icon: "activity", route: "/jobs" },
-  { label: "Revenue (MTD)",   value: "AED 2.24M", sub: "+6.2% vs prior", accent: "text-emerald-700", icon: "dollar", route: "/profitability" },
-  { label: "Open Alerts",     value: "18",       sub: "3 critical", accent: "text-red-700",  icon: "alert",    route: "/alerts" },
-  { label: "Fleet Utilization","value": "84%",   sub: "Target: 88%", accent: "text-amber-700", icon: "clock",  route: "/fleet-utilization" },
-  { label: "Driver Score",    value: "79 / 100", sub: "6 need coaching", accent: "text-violet-700", icon: "users", route: "/driver-scorecards" },
-  { label: "SLA Compliance",  value: "93.1%",    sub: "3 breaches",  accent: "text-teal-700", icon: "shield",  route: "/sla-kpi" },
-  { label: "Cost / km",       value: "AED 4.23", sub: "+3% budget",  accent: "text-amber-700", icon: "dollar", route: "/fuel-idling" },
+// Navigation shortcuts to the live, backend-driven detail pages. These are UI
+// structure only (label/icon/route) — they intentionally carry no metric value,
+// because the executive summary endpoint does not expose these per-domain KPIs.
+// Each card links to the page that owns the real, tenant-scoped data.
+const KPI_NAV_TILES = [
+  { label: "Active Vehicles", accent: "text-sky-700", icon: "truck", route: "/vehicles" },
+  { label: "Jobs Today", accent: "text-teal-700", icon: "activity", route: "/jobs" },
+  { label: "Revenue (MTD)", accent: "text-emerald-700", icon: "dollar", route: "/profitability" },
+  { label: "Open Alerts", accent: "text-red-700", icon: "alert", route: "/alerts" },
+  { label: "Fleet Utilization", accent: "text-amber-700", icon: "clock", route: "/fleet-utilization" },
+  { label: "Driver Score", accent: "text-violet-700", icon: "users", route: "/driver-scorecards" },
+  { label: "SLA Compliance", accent: "text-teal-700", icon: "shield", route: "/sla-kpi" },
+  { label: "Cost / km", accent: "text-amber-700", icon: "dollar", route: "/fuel-idling" },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -120,10 +98,10 @@ export function ExecutivePage() {
   const snap   = (latest?.[0] ?? (snapshots[0] ?? null)) as AnyRecord | null;
   const trend  = summary?.trend as AnyRecord[] | undefined;
 
-  const displaySnap = snap ?? SEED_SNAP;
-  const displayRecs = aiRecs.length > 0 ? aiRecs : SEED_AI_RECS;
+  const displaySnap = snap ?? emptySummary;
+  const displayRecs = aiRecs;
 
-  const chartData = ((trend && trend.length > 0) ? trend : (snapshots.length > 0 ? snapshots.slice().reverse() : SEED_TREND))
+  const chartData = ((trend && trend.length > 0) ? trend : (snapshots.length > 0 ? snapshots.slice().reverse() : []))
     .map((s) => {
       const row = s as AnyRecord;
       return {
@@ -136,17 +114,17 @@ export function ExecutivePage() {
       };
     });
 
-  const kpiCritical  = Number(summary?.kpiCritical ?? 3);
-  const slaBreaches  = Number(summary?.openSlaBreaches ?? 3);
-  const auditActions = Number(summary?.auditActionsToday ?? 7);
+  const kpiCritical  = Number(summary?.kpiCritical ?? 0);
+  const slaBreaches  = Number(summary?.openSlaBreaches ?? 0);
+  const auditActions = Number(summary?.auditActionsToday ?? 0);
 
   function handleExport() {
     exportCsv("executive-dashboard", [
-      { metric: "Overall Score",     value: Number(displaySnap.overall_score ?? 84) },
-      { metric: "Fleet Health",      value: Number(displaySnap.fleet_health_score ?? 88) },
-      { metric: "Safety Score",      value: Number(displaySnap.safety_score ?? 79) },
-      { metric: "Compliance Score",  value: Number(displaySnap.compliance_score ?? 91) },
-      { metric: "Financial Score",   value: Number(displaySnap.financial_score ?? 82) },
+      { metric: "Overall Score",     value: Number(displaySnap.overall_score ?? 0) },
+      { metric: "Fleet Health",      value: Number(displaySnap.fleet_health_score ?? 0) },
+      { metric: "Safety Score",      value: Number(displaySnap.safety_score ?? 0) },
+      { metric: "Compliance Score",  value: Number(displaySnap.compliance_score ?? 0) },
+      { metric: "Financial Score",   value: Number(displaySnap.financial_score ?? 0) },
       { metric: "Critical KPIs",     value: kpiCritical },
       { metric: "Open SLA Breaches", value: slaBreaches },
       { metric: "Audit Actions Today", value: auditActions },
@@ -154,7 +132,7 @@ export function ExecutivePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto">
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -185,17 +163,16 @@ export function ExecutivePage() {
         <p className="text-sm text-slate-700 leading-relaxed">{String(displaySnap.ai_brief ?? "")}</p>
       </div>
 
-      {/* KPI Grid */}
+      {/* KPI navigation grid — links to the live detail pages (no fabricated values) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-        {SEED_KPIS.map((kpi) => (
+        {KPI_NAV_TILES.map((kpi) => (
           <button key={kpi.label} type="button" onClick={() => navigate(kpi.route)}
             className="panel flex flex-col gap-1 p-3 text-left transition hover:border-slate-300 hover:shadow-sm">
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50 ${kpi.accent}`}>
               {ICON_MAP[kpi.icon]}
             </div>
-            <span className={`mt-1 text-lg font-bold ${kpi.accent}`}>{kpi.value}</span>
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-tight">{kpi.label}</span>
-            <span className="text-[10px] text-slate-400">{kpi.sub}</span>
+            <span className="mt-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-tight">{kpi.label}</span>
+            <span className="text-[10px] font-medium text-teal-600">View details →</span>
           </button>
         ))}
       </div>
@@ -259,23 +236,23 @@ export function ExecutivePage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Revenue vs Cost */}
-        <div className="panel p-5">
-          <p className="section-title mb-0.5">Revenue vs Cost (AED '000)</p>
-          <p className="text-xs text-slate-400 mb-4">6-month P&L trend with gross margin %</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={SEED_REVENUE_COST} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#94a3b8" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} />
-              <Tooltip contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }}
-                formatter={(v: unknown, name: unknown) => [`AED ${Number(v ?? 0)}K`, String(name)]} />
-              <Legend wrapperStyle={{ color: "#64748b", fontSize: 12 }} />
-              <Bar dataKey="revenue" name="Revenue" fill="#0d9488" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="cost"    name="Cost"    fill="#e2e8f0" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Profitability — no monthly P&L trend endpoint exists yet, so this
+            links to the real, tenant-scoped profitability data instead of
+            rendering an empty chart under a "6-month trend" label. */}
+        <button
+          type="button"
+          className="panel flex flex-col items-start gap-3 p-5 text-left transition hover:border-slate-300"
+          onClick={() => navigate("/profitability")}
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+            <DollarSign className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="section-title mb-0.5">Profitability</p>
+            <p className="text-xs text-slate-400">Revenue, cost, and gross margin by customer and vehicle</p>
+          </div>
+          <span className="mt-auto text-xs font-semibold text-teal-600">Open Profitability →</span>
+        </button>
       </div>
 
       {/* AI Recommendations */}
@@ -298,9 +275,9 @@ export function ExecutivePage() {
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">{String(rec.body ?? rec.description ?? "")}</p>
                 {rec.action_label ? (
-                  <button type="button" className="mt-2 text-xs font-semibold text-teal-600 hover:text-teal-700 transition">
-                    {String(rec.action_label)} →
-                  </button>
+                  <p className="mt-2 text-xs font-semibold text-teal-700">
+                    Recommended: {String(rec.action_label)}
+                  </p>
                 ) : null}
               </div>
             </div>

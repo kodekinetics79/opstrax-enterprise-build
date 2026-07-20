@@ -12,11 +12,41 @@ export async function withFallback<T>(request: Promise<T>, _fallback?: () => T):
 const apiList = (endpoint: string) => unwrap<AnyRecord[]>(apiClient.get(endpoint));
 const apiRecord = (endpoint: string) => unwrap<AnyRecord>(apiClient.get(endpoint));
 
+export interface PagedResult { rows: AnyRecord[]; total: number; limit: number; offset: number; }
+
+// Paginated list read for high-volume endpoints. Sends limit/offset/search and reads
+// the backend X-Total-Count header so the UI can page through 1000+ rows without ever
+// fetching the whole table.
+export async function apiPaged(endpoint: string, opts: { limit?: number; offset?: number; search?: string } = {}): Promise<PagedResult> {
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  const params: Record<string, string | number> = { limit, offset };
+  if (opts.search && opts.search.trim()) params.search = opts.search.trim();
+  const response = await apiClient.get(endpoint, { params });
+  const env = response.data as { success: boolean; data: AnyRecord[]; message?: string };
+  if (!env.success) throw new Error(env.message || "Request failed");
+  const total = Number(response.headers?.["x-total-count"] ?? env.data.length);
+  return { rows: env.data ?? [], total: Number.isFinite(total) ? total : (env.data?.length ?? 0), limit, offset };
+}
+
 // Detail endpoints return an envelope of { record, ...relatedCollections }. Normalise the
 // shape and default any collection the backend legitimately omits to an empty array so the
 // drawer renders "no linked records yet" rather than crashing — never to fake data.
 function asRows(value: unknown): AnyRecord[] {
   return Array.isArray(value) ? (value as AnyRecord[]) : [];
+}
+
+// Server-side full-dataset export: downloads the CSV blob (tenant + branch scoped,
+// permission-gated on the server) so an export covers the whole fleet, not just the
+// current page. Falls back to throwing so the caller can toast on failure.
+export async function downloadServerExport(endpoint: string, filename: string): Promise<void> {
+  const response = await apiClient.get(endpoint, { responseType: "blob" });
+  const url = URL.createObjectURL(response.data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function getDashboardSummary() {
@@ -28,17 +58,22 @@ export function getVehicles() {
 }
 
 export function getVehicleById(id: string | number) {
+  // Collections here mirror exactly what the /api/vehicles/{id} endpoint returns
+  // (ControlTowerVehicleDetail): live active jobs, safety + dashcam video events,
+  // upcoming maintenance, and the recent GPS replay trail. Anything the backend
+  // legitimately omits defaults to [] so the UI shows an honest empty state.
   return apiRecord(`/api/vehicles/${id}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,
-    maintenance: asRows(detail.maintenance),
+    activeJobs: asRows(detail.activeJobs),
     compliance: asRows(detail.compliance),
     documents: asRows(detail.documents),
-    safetyEvents: asRows(detail.safetyEvents),
-    trips: asRows(detail.trips),
-    timeline: asRows(detail.timeline),
-    recommendations: asRows(detail.recommendations),
     auditTrail: asRows(detail.auditTrail),
+    safetyEvents: asRows(detail.safetyEvents),
+    videoEvents: asRows(detail.videoEvents),
+    maintenance: asRows(detail.maintenance),
+    replayTrail: asRows(detail.replayTrail),
+    recommendations: asRows(detail.recommendations),
   }));
 }
 
@@ -88,6 +123,7 @@ export function getCustomerById(id: string | number) {
     record: (detail.record as AnyRecord) ?? detail,
     contacts: asRows(detail.contacts),
     addresses: asRows(detail.addresses),
+    sites: asRows(detail.sites),
     activeJobs: asRows(detail.activeJobs),
     communications: asRows(detail.communications),
     contracts: asRows(detail.contracts),
