@@ -186,6 +186,7 @@ public class CustomerPortalPostgresTests
         await db.ExecuteAsync("ALTER TABLE customer_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('drivers', 'id'), (SELECT COALESCE(MAX(id), 1) FROM drivers))");
     }
 
     private static async Task<long> SeedCompanyAsync(Database db) => await db.InsertAsync(

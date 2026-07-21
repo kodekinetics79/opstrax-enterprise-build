@@ -466,6 +466,7 @@ public class PlatformControlPlaneTests
     public async Task Seat_Limit_Blocks_User_Creation_At_Capacity()
     {
         var db = CreateDatabase();
+        await new CoreSchemaService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreSchemaService>.Instance).EnsureAsync();
         await new PlatformSchemaService(db).EnsureAsync();
         await new SecuritySchemaService(db).EnsureAsync();
         var code = $"CPT-{Unique()}";

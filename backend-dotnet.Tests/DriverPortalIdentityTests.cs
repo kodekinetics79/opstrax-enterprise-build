@@ -38,6 +38,7 @@ public class RolePermissionReconcilerPostgresTests
     public async Task Reconcile_GrantsDriverRole_ThePermissionsTheDriverEndpointsRequire()
     {
         var db = CreateDatabase();
+        await EnsureCoreBootstrapAsync(db);
         await new RolePermissionReconciler(db, NullLogger<RolePermissionReconciler>.Instance).ReconcileAsync();
 
         var effective = await EffectiveRoleGrantsAsync(db, "Driver");
@@ -60,6 +61,7 @@ public class RolePermissionReconcilerPostgresTests
     public async Task Reconcile_LeavesNoBuiltInRole_MissingItsDeclaredPermissions()
     {
         var db = CreateDatabase();
+        await EnsureCoreBootstrapAsync(db);
         await new RolePermissionReconciler(db, NullLogger<RolePermissionReconciler>.Instance).ReconcileAsync();
 
         var systemRoles = await db.QueryAsync("SELECT name FROM roles WHERE is_system = TRUE");
@@ -92,6 +94,7 @@ public class RolePermissionReconcilerPostgresTests
     public async Task Reconcile_RemovesRetiredPermissionKeys_ThatEnforceNothing()
     {
         var db = CreateDatabase();
+        await EnsureCoreBootstrapAsync(db);
         await new RolePermissionReconciler(db, NullLogger<RolePermissionReconciler>.Instance).ReconcileAsync();
 
         var effective = await EffectiveRoleGrantsAsync(db, "Driver");
@@ -105,6 +108,7 @@ public class RolePermissionReconcilerPostgresTests
     public async Task Reconcile_IsIdempotent()
     {
         var db = CreateDatabase();
+        await EnsureCoreBootstrapAsync(db);
         var reconciler = new RolePermissionReconciler(db, NullLogger<RolePermissionReconciler>.Instance);
 
         await reconciler.ReconcileAsync();
@@ -134,6 +138,7 @@ public class RolePermissionReconcilerPostgresTests
     public async Task Reconcile_IsAdditive_AndDoesNotStripLiveGrantsAbsentFromCodeDefaults()
     {
         var db = CreateDatabase();
+        await EnsureCoreBootstrapAsync(db);
         await new RolePermissionReconciler(db, NullLogger<RolePermissionReconciler>.Instance).ReconcileAsync();
 
         var dispatcher = await EffectiveRoleGrantsAsync(db, "Dispatcher");
@@ -176,6 +181,9 @@ public class RolePermissionReconcilerPostgresTests
             .Build();
         return new Database(configuration);
     }
+
+    private static async Task EnsureCoreBootstrapAsync(Database db)
+        => await new CoreSchemaService(db, NullLogger<CoreSchemaService>.Instance).EnsureAsync();
 }
 
 /// <summary>

@@ -876,9 +876,15 @@ CREATE TABLE IF NOT EXISTS vehicles (
 )");
 
         await db.ExecuteAsync(@"
-INSERT INTO companies (company_code, name, industry, timezone, status)
-VALUES ('OPX-DEMO', 'OpsTrax Demo Logistics', 'Transport & Field Operations', 'America/New_York', 'Active')
-ON CONFLICT (company_code) DO UPDATE SET name=EXCLUDED.name RETURNING id");
+INSERT INTO companies (id, company_code, name, industry, timezone, status)
+OVERRIDING SYSTEM VALUE
+VALUES (1, 'OPX-BASE-ID-1', 'OpsTrax Demo Logistics', 'Transport & Field Operations', 'America/New_York', 'Active')
+ON CONFLICT (id) DO UPDATE SET
+  name=EXCLUDED.name,
+  industry=EXCLUDED.industry,
+  timezone=EXCLUDED.timezone,
+  status=EXCLUDED.status");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('companies', 'id'), (SELECT COALESCE(MAX(id), 1) FROM companies))");
 
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
@@ -896,6 +902,7 @@ SELECT n, 1, 'DRV-' || LPAD(n::TEXT, 3, '0'), 'Stage 7 Driver ' || n, '+1 571 43
        'Available', 90 + (n % 8), 88 + (n % 10), 10 + (n % 7), 90 + (n % 6), NULL
 FROM generate_series(1, 20) AS n
 ON CONFLICT DO NOTHING");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('drivers', 'id'), (SELECT COALESCE(MAX(id), 1) FROM drivers))");
 
         await db.ExecuteAsync(@"
 INSERT INTO vehicles (id, company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score, risk_score, device_status, camera_status, assigned_driver_id)
@@ -918,6 +925,7 @@ SELECT n, 1,
        n
 FROM generate_series(1, 20) AS n
 ON CONFLICT DO NOTHING");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('vehicles', 'id'), (SELECT COALESCE(MAX(id), 1) FROM vehicles))");
 
         await db.ExecuteAsync("UPDATE drivers SET assigned_vehicle_id=v.id FROM vehicles v WHERE v.assigned_driver_id=drivers.id");
     }

@@ -186,6 +186,7 @@ builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>
 // Server-side Google Maps (geocoding/routing) using the tenant's stored Maps key.
 // Map tiles stay on free Leaflet; Google is used only where it adds capability.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GoogleMapsService>();
+builder.Services.AddSingleton<CoreSchemaService>();
 builder.Services.AddSingleton<Batch1SchemaService>();
 builder.Services.AddSingleton<Batch2SchemaService>();
 builder.Services.AddSingleton<Batch3SchemaService>();
@@ -379,6 +380,7 @@ using (var scope = app.Services.CreateScope())
     var runSchemaInit = await ShouldRunSchemaInitAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
     if (runSchemaInit)
     {
+    await RunSchemaStep(app, "Core", () => scope.ServiceProvider.GetRequiredService<CoreSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
     // Secure customer-ETA tracking token (breach-class P0 fix): the public /api/customer-eta/track
