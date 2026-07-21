@@ -166,7 +166,19 @@ public sealed class SafetyBackgroundService(
                     }, ct);
 
                 logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);
-                await CreateSafetyRecommendationAsync(companyId, alertId, alertType, severity, driverId, vehicleId, scoreImpact, ct);
+
+                // Best-effort AI enrichment. The safety_event is already committed above; a recommendation
+                // failure (AI service unavailable, ai_recommendations write error) must NOT abort conversion
+                // of the remaining alerts in this batch — otherwise one bad alert stalls safety scoring for
+                // every tenant until the next tick.
+                try
+                {
+                    await CreateSafetyRecommendationAsync(companyId, alertId, alertType, severity, driverId, vehicleId, scoreImpact, ct);
+                }
+                catch (Exception recEx)
+                {
+                    logger.LogWarning(recEx, "Safety recommendation enrichment failed for telemetry_alert {AlertId}; safety_event was still recorded", alertId);
+                }
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
             {

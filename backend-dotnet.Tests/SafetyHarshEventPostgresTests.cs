@@ -17,6 +17,7 @@ public class SafetyHarshEventPostgresTests
     public async Task HarshBraking_Alert_Converts_To_Dashboard_SafetyEvent()
     {
         var db = CreateDatabase();
+        await ResetSequencesAsync(db);
         var cid = await SeedCompanyAsync(db);
         try
         {
@@ -42,6 +43,7 @@ public class SafetyHarshEventPostgresTests
     public async Task Crash_Alert_Converts_With_Crash_Vocabulary()
     {
         var db = CreateDatabase();
+        await ResetSequencesAsync(db);
         var cid = await SeedCompanyAsync(db);
         try
         {
@@ -72,17 +74,10 @@ public class SafetyHarshEventPostgresTests
             NullLogger<SafetyBackgroundService>.Instance,
             provider.GetRequiredService<ServiceRunTracker>());
         var m = typeof(SafetyBackgroundService).GetMethod("ProcessTelemetryAlertsAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        try
-        {
-            await (Task)m.Invoke(svc, new object[] { CancellationToken.None })!;
-        }
-        catch (Exception ex) when (ex.InnerException is InvalidOperationException or NullReferenceException
-                                   || ex is InvalidOperationException or NullReferenceException)
-        {
-            // The safety_event is inserted BEFORE the downstream AI-recommendation side effect, which the
-            // minimal test DI does not wire (PostgresAiFoundationService et al.). The conversion under test
-            // has already committed the safety_event; the recommendation path is covered elsewhere.
-        }
+        // The conversion runs to completion even though the AI-recommendation service is unwired in this
+        // minimal DI: SafetyBackgroundService now isolates that best-effort enrichment per-alert, so it never
+        // aborts the batch. That resilience is exactly what keeps this assertion deterministic in the full suite.
+        await (Task)m.Invoke(svc, new object[] { CancellationToken.None })!;
     }
 
     private static async Task<long> SeedCompanyAsync(Database db) =>
@@ -98,4 +93,10 @@ public class SafetyHarshEventPostgresTests
 
     private static Database CreateDatabase() =>
         new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = TestDb.ConnectionString }).Build());
+
+    private static async Task ResetSequencesAsync(Database db)
+    {
+        foreach (var table in new[] { "companies", "location_events", "telemetry_alerts", "safety_events" })
+            await db.ExecuteAsync($"SELECT setval(pg_get_serial_sequence('{table}', 'id'), (SELECT COALESCE(MAX(id), 1) FROM {table}))");
+    }
 }
