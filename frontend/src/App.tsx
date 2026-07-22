@@ -67,6 +67,8 @@ const TaxAdminPage = lazy(() => import("@/pages/TaxAdminPage").then((module) => 
 const BillingConsolidationPage = lazy(() => import("@/pages/BillingConsolidationPage").then((m) => ({ default: m.BillingConsolidationPage })));
 const SettlementPage = lazy(() => import("@/pages/SettlementPage").then((m) => ({ default: m.SettlementPage })));
 const RevenueRecognitionPage = lazy(() => import("@/pages/RevenueRecognitionPage").then((m) => ({ default: m.RevenueRecognitionPage })));
+const DetentionPage = lazy(() => import("@/pages/DetentionPage").then((m) => ({ default: m.DetentionPage })));
+const DetentionEvidencePage = lazy(() => import("@/pages/DetentionEvidencePage").then((m) => ({ default: m.DetentionEvidencePage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
@@ -176,6 +178,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
+        <Route path="/evidence/:token" element={<DetentionEvidencePage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
         {/* The driver portal is a SEPARATE shell from ProtectedShell, so it needs its own
@@ -305,6 +308,7 @@ export default function App() {
         <Route path="/finance/billing" element={<RequirePermission permission="billing.read"><BillingConsolidationPage /></RequirePermission>} />
         <Route path="/finance/settlements" element={<RequirePermission permission="settlement.read"><SettlementPage /></RequirePermission>} />
         <Route path="/finance/revenue-recognition" element={<RequirePermission permission="revrec.read"><RevenueRecognitionPage /></RequirePermission>} />
+        <Route path="/detention" element={<RequirePermission permission="finance:view"><DetentionPage /></RequirePermission>} />
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
