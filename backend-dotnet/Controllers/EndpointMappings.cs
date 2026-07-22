@@ -5120,7 +5120,10 @@ public static partial class EndpointMappings
 
         await audit.LogAsync(http, "eta.sent", "Job", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Job", id, "eta.sent", "ETA update sent", ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, trackingToken = secureToken, trackingUrl = $"/track/{secureToken}", expiresAt = linkExpiresAt }, "ETA update sent"));
+        // The token lives in customer_eta_links and is resolved ONLY by /api/customer-eta/track/{token},
+        // whose public page is /eta/:trackingCode. Handing out /track/{token} pointed at the fleet_tms
+        // tracking page (different table) and always 404'd — every ETA link a customer received was dead.
+        return Results.Ok(ApiResponse<object>.Ok(new { id, trackingToken = secureToken, trackingUrl = $"/eta/{secureToken}", expiresAt = linkExpiresAt }, "ETA update sent"));
     }
 
     private static async Task<IResult> CreateProofPlaceholder(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)

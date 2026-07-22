@@ -32,7 +32,7 @@ function JobRow({
           <button
             type="button"
             onClick={() => {
-              const url = `${window.location.origin}/track/${String(job.trackingToken)}`;
+              const url = `${window.location.origin}/eta/${String(job.trackingToken)}`;
               void navigator.clipboard?.writeText(url);
             }}
             className="text-xs text-teal-600 hover:underline mt-0.5"
@@ -124,7 +124,7 @@ export function CustomerEtaPage() {
       setSendingId(null);
       const token = (data as AnyRecord | undefined)?.trackingToken;
       if (token) {
-        const url = `${window.location.origin}/track/${String(token)}`;
+        const url = `${window.location.origin}/eta/${String(token)}`;
         void navigator.clipboard?.writeText(url);
         showToast(`ETA sent for job ${String(jobId)} — secure tracking link copied`);
       } else {
