@@ -239,6 +239,7 @@ builder.Services.AddSingleton<GeneralLedgerPeriodSchemaService>();
 builder.Services.AddSingleton<GeneralLedgerPeriodService>();
 builder.Services.AddSingleton<GeneralLedgerExportService>();
 builder.Services.AddSingleton<DetentionSchemaService>();
+builder.Services.AddSingleton<DetentionReviewService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
@@ -605,7 +606,10 @@ app.UseWhen(
                  path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||
                 // Fleet TMS public shipment tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                 path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)))
+                 path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Detention evidence page — the no-login artifact an AP clerk verifies; token-scoped, expiring, revocable
+                (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/public/detention/evidence/", StringComparison.OrdinalIgnoreCase)))
             {
                 await InvokeUnderBypassAsync();
                 return;

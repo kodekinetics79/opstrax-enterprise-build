@@ -88,6 +88,16 @@ public static partial class EndpointMappings
         app.MapPost("/api/finance/credit-notes/{draftId:guid}/approve", CreditNoteApprove);
         app.MapGet("/api/finance/credit-notes", CreditNoteList);
 
+        // Detention Recovery — rule cards, review queue, approval (the only path to billing), evidence, funnel.
+        app.MapGet("/api/detention/rule-cards", DetentionRuleCardsList);
+        app.MapPost("/api/detention/rule-cards", DetentionRuleCardUpsert);
+        app.MapGet("/api/detention/dwells", DetentionDwellsList);
+        app.MapPost("/api/detention/dwells/{id:long}/approve", DetentionApprove);
+        app.MapPost("/api/detention/dwells/{id:long}/dismiss", DetentionDismiss);
+        app.MapPost("/api/detention/dwells/{id:long}/evidence/share", DetentionShareEvidence);
+        app.MapGet("/api/public/detention/evidence/{token}", DetentionPublicEvidence);
+        app.MapGet("/api/detention/funnel", DetentionFunnel);
+
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
         app.MapGet("/api/alerts/{id:long}", AlertDetail);
@@ -2752,6 +2762,130 @@ public static partial class EndpointMappings
             posted++;
         }
         return Results.Ok(ApiResponse<object>.Ok(new { posted }, $"Posted {posted} invoice(s) to the general ledger"));
+    }
+
+    // ── Detention Recovery endpoints ─────────────────────────────────────────
+    private static async Task<IResult> DetentionRuleCardsList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        return Results.Ok(ApiResponse<object>.Ok(await db.QueryAsync(
+            "SELECT * FROM detention_rule_cards WHERE company_id=@c AND active ORDER BY scope_type, scope_id",
+            c => c.Parameters.AddWithValue("@c", GetCompanyId(http)), ct)));
+    }
+
+    // Upsert = new version row (never in-place edit — a priced dwell's snapshot must stay true).
+    private static async Task<IResult> DetentionRuleCardUpsert(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var scopeId = Get(body, "customerId") is DBNull or null ? (object)DBNull.Value : Convert.ToInt64(Get(body, "customerId")!.ToString());
+        await db.ExecuteAsync(
+            @"UPDATE detention_rule_cards SET active=FALSE
+              WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL)) AND active",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@st", scopeId is DBNull ? "tenant" : "customer"); c.Parameters.AddWithValue("@sid", scopeId); }, ct);
+        var id = await db.InsertAsync(
+            @"INSERT INTO detention_rule_cards
+                (company_id, scope_type, scope_id, free_minutes, rate_per_hour, currency, billing_increment_minutes,
+                 max_charge_amount, claim_window_days, notice_percent,
+                 version)
+              VALUES (@c, @st, @sid, @free, @rate, COALESCE(@cur,'USD'), COALESCE(@inc,15), @cap, COALESCE(@cw,30), COALESCE(@np,75),
+                      COALESCE((SELECT MAX(version)+1 FROM detention_rule_cards WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL))), 1))
+              RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", companyId);
+                c.Parameters.AddWithValue("@st", scopeId is DBNull ? "tenant" : "customer");
+                c.Parameters.AddWithValue("@sid", scopeId);
+                c.Parameters.AddWithValue("@free", Convert.ToInt32(Get(body, "freeMinutes")?.ToString() ?? "120"));
+                c.Parameters.AddWithValue("@rate", Convert.ToDecimal(Get(body, "ratePerHour")?.ToString() ?? "0"));
+                c.Parameters.AddWithValue("@cur", Get(body, "currency") ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@inc", Get(body, "billingIncrementMinutes") is { } inc and not DBNull ? Convert.ToInt32(inc.ToString()) : (object)DBNull.Value);
+                c.Parameters.AddWithValue("@cap", Get(body, "maxChargeAmount") is { } cap and not DBNull ? Convert.ToDecimal(cap.ToString()) : (object)DBNull.Value);
+                c.Parameters.AddWithValue("@cw", Get(body, "claimWindowDays") is { } cw and not DBNull ? Convert.ToInt32(cw.ToString()) : (object)DBNull.Value);
+                c.Parameters.AddWithValue("@np", Get(body, "noticePercent") is { } np and not DBNull ? Convert.ToInt32(np.ToString()) : (object)DBNull.Value);
+            }, ct);
+        await audit.LogAsync(http, "detention.rule_card.saved", "DetentionRuleCard", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Rule card saved (new version)"));
+    }
+
+    private static async Task<IResult> DetentionDwellsList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var status = http.Request.Query["status"].FirstOrDefault();
+        return Results.Ok(ApiResponse<object>.Ok(await db.QueryAsync(
+            @"SELECT d.*, g.name AS site_name, c.name AS customer_name, j.job_code,
+                     GREATEST(0, EXTRACT(EPOCH FROM (d.claim_deadline_at - NOW()))/86400)::int AS claim_days_left
+              FROM detention_dwells d
+              JOIN geofences g ON g.id=d.geofence_id AND g.company_id=d.company_id
+              LEFT JOIN customers c ON c.id=d.customer_id AND c.company_id=d.company_id
+              LEFT JOIN jobs j ON j.id=d.job_id AND j.company_id=d.company_id
+              WHERE d.company_id=@c AND (@st IS NULL OR d.status=@st)
+              ORDER BY d.entered_at DESC LIMIT 200",
+            c => { c.Parameters.AddWithValue("@c", GetCompanyId(http)); c.Parameters.AddWithValue("@st", (object?)status ?? DBNull.Value); }, ct)));
+    }
+
+    private static async Task<IResult> DetentionApprove(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var note = body.TryGetValue("overrideNote", out var n) ? n?.ToString() : null;
+        var outcome = await svc.ApproveAsync(GetCompanyId(http), id, userId, note, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot approve", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "detention.approve", "DetentionDwell", id, $"charge:{outcome.JobChargeId}", ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            jobChargeId = outcome.JobChargeId,
+            supplementalDraftId = outcome.SupplementalDraftId,
+        }, outcome.SupplementalDraftId is not null
+            ? "Detention charge created and routed to a supplemental invoice draft (job already invoiced)."
+            : "Detention charge created — it will bill with the job's next consolidation."));
+    }
+
+    private static async Task<IResult> DetentionDismiss(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var reason = body.TryGetValue("reason", out var r) ? r?.ToString() ?? "" : "";
+        var outcome = await svc.DismissAsync(GetCompanyId(http), id, userId, reason, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot dismiss", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "detention.dismiss", "DetentionDwell", id, reason, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Dwell dismissed"));
+    }
+
+    private static async Task<IResult> DetentionShareEvidence(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var token = await svc.MintShareTokenAsync(GetCompanyId(http), id, daysValid: 90, ct);
+        if (token is null) return Results.NotFound(ApiResponse<object>.Fail("No evidence bundle for this dwell yet"));
+        await audit.LogAsync(http, "detention.evidence.shared", "DetentionDwell", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { shareUrl = $"/evidence/{token}", token }, "No-login evidence link minted (valid 90 days)"));
+    }
+
+    // Public, token-scoped: the artifact an AP clerk verifies in under 2 minutes.
+    private static async Task<IResult> DetentionPublicEvidence(HttpContext http, string token, Database db, CancellationToken ct)
+    {
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var row = await svc.GetEvidenceByTokenAsync(token, ct);
+        if (row is null)
+            return Results.NotFound(ApiResponse<object>.Fail("This evidence link is unavailable, expired, or revoked."));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            evidence = row["evidenceJson"],
+            evidenceRef = row["evidenceSha256"]?.ToString()?[..12],   // customer-facing short ref, no crypto language
+            generatedAt = row["createdAt"],
+        }));
+    }
+
+    private static async Task<IResult> DetentionFunnel(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var from = DateTime.TryParse(http.Request.Query["from"].FirstOrDefault(), out var f) ? f : DateTime.UtcNow.AddDays(-90);
+        var to = DateTime.TryParse(http.Request.Query["to"].FirstOrDefault(), out var t) ? t : DateTime.UtcNow;
+        return Results.Ok(ApiResponse<object>.Ok(await svc.FunnelAsync(GetCompanyId(http), from, to, ct)));
     }
 
     // POST /api/finance/invoices/{id}/credit-note {amount?, reason} — maker creates a credit-note draft

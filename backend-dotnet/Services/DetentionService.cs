@@ -235,6 +235,9 @@ public static class DetentionService
                     c.Parameters.AddWithValue("@amt", amount); c.Parameters.AddWithValue("@cur", card["currency"]?.ToString() ?? "USD");
                     c.Parameters.AddWithValue("@cw", claimDays);
                 }, ct);
+
+            // Freeze the evidence bundle for the priced dwell (immutable by DB trigger from here on).
+            await new DetentionReviewService(db).BuildEvidenceAsync(cid, dwellId, ct);
         }
     }
 
