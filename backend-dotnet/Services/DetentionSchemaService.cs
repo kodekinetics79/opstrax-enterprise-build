@@ -170,5 +170,6 @@ public sealed class DetentionSchemaService(Database db)
         // 9) External evidence anchor: one detention.dwell.priced outbox event per dwell (partial-unique)
         // carrying the full evidence sha — a DB-write tamperer must also rewrite the outbox/audit history.
         await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_priced ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.priced'");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_warning ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.warning'");
     }
 }

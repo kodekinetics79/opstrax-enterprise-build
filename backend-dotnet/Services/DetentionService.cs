@@ -154,6 +154,17 @@ public static class DetentionService
                     log.Parameters.AddWithValue("@body", body);
                     await log.ExecuteNonQueryAsync(ct);
                 }
+                // Durable delivery seam: the outbox handler attempts real email delivery and flips the
+                // notice to 'sent'/'failed'. At-least-once redelivery is safe (delivery-status guarded).
+                await using (var ob = new Npgsql.NpgsqlCommand(
+                    @"INSERT INTO outbox_messages (tenant_id, event_type, aggregate_type, aggregate_id, payload_json, status, retry_count)
+                      VALUES (@t, 'detention.dwell.warning', 'detention_dwell', @a, jsonb_build_object('dwellId', @a), 'pending', 0)
+                      ON CONFLICT (tenant_id, aggregate_id) WHERE event_type='detention.dwell.warning' DO NOTHING", conn, tx))
+                {
+                    ob.Parameters.AddWithValue("@t", cid);
+                    ob.Parameters.AddWithValue("@a", dwellId.ToString());
+                    await ob.ExecuteNonQueryAsync(ct);
+                }
                 return null;
             }, ct);
         }

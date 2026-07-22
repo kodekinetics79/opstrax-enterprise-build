@@ -102,6 +102,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/detention/dwells/{id:long}/attest-no-appointment", DetentionAttestNoAppointment);
         app.MapPost("/api/detention/dwells/{id:long}/attach-job", DetentionAttachJob);
         app.MapGet("/api/detention/stranded", DetentionStranded);
+        app.MapGet("/api/detention/lookback", DetentionLookback);
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2921,6 +2922,59 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
         return Results.Ok(ApiResponse<object>.Ok(await svc.StrandedAsync(GetCompanyId(http), ct)));
+    }
+
+    // GET /api/detention/lookback?days=90 — the 'found money audit' sales motion: a READ-ONLY estimate
+    // of unbilled dwell over historical geofence events, priced by the current rule cards. Zero writes.
+    // Labeled an estimate: arrival-anchored (historical appointments unknown), so real appointment-aware
+    // detection may compute LESS — the number is a ceiling, disclosed as such.
+    private static async Task<IResult> DetentionLookback(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var days = int.TryParse(http.Request.Query["days"].FirstOrDefault(), out var d0) ? Math.Clamp(d0, 1, 365) : 90;
+
+        var rows = await db.QueryAsync(
+            @"WITH paired AS (
+                  SELECT ge.company_id, ge.geofence_id, ge.vehicle_id, g.customer_id, c.name AS customer_name,
+                         g.name AS site_name, ge.event_time AS entered_at,
+                         LEAD(ge.event_time) OVER (PARTITION BY ge.company_id, ge.geofence_id, ge.vehicle_id ORDER BY ge.event_time) AS next_time,
+                         LEAD(ge.event_type) OVER (PARTITION BY ge.company_id, ge.geofence_id, ge.vehicle_id ORDER BY ge.event_time) AS next_type,
+                         ge.event_type
+                  FROM geofence_events ge
+                  JOIN geofences g ON g.id = ge.geofence_id AND g.company_id = ge.company_id
+                  JOIN customers c ON c.id = g.customer_id AND c.company_id = g.company_id
+                  WHERE ge.company_id = @c AND g.site_role = 'customer_site' AND g.customer_id IS NOT NULL
+                    AND ge.event_time > NOW() - make_interval(days => @days)
+              ),
+              dwells AS (
+                  SELECT p.*, EXTRACT(EPOCH FROM (p.next_time - p.entered_at))/60 AS dwell_minutes
+                  FROM paired p
+                  WHERE p.event_type = 'Entry' AND p.next_type = 'Exit'
+              )
+              SELECT d.customer_id, d.customer_name, d.site_name, COUNT(*) AS dwell_count,
+                     SUM(GREATEST(0, FLOOR((d.dwell_minutes - rc.free_minutes) / rc.billing_increment_minutes)
+                                     * rc.billing_increment_minutes) / 60.0 * rc.rate_per_hour) AS estimated_amount
+              FROM dwells d
+              JOIN LATERAL (
+                  SELECT free_minutes, rate_per_hour, billing_increment_minutes FROM detention_rule_cards rc
+                  WHERE rc.company_id = d.company_id AND rc.active
+                    AND ((rc.scope_type='customer' AND rc.scope_id = d.customer_id) OR rc.scope_type='tenant')
+                  ORDER BY CASE WHEN rc.scope_type='customer' THEN 0 ELSE 1 END, rc.effective_date DESC, rc.version DESC
+                  LIMIT 1) rc ON TRUE
+              WHERE d.dwell_minutes > rc.free_minutes
+              GROUP BY d.customer_id, d.customer_name, d.site_name
+              ORDER BY estimated_amount DESC",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@days", days); }, ct);
+
+        var total = rows.Sum(r => r["estimatedAmount"] is null or DBNull ? 0m : Convert.ToDecimal(r["estimatedAmount"]));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            days,
+            estimatedUnbilledDetention = Math.Round(total, 2),
+            note = "Estimate over historical GPS, priced by your current rule cards, arrival-anchored (appointments unknown historically). Real detection is appointment-aware and may compute less.",
+            byCustomerSite = rows,
+        }));
     }
 
     private static async Task<IResult> DetentionDismiss(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)

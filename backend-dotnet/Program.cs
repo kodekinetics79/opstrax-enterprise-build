@@ -256,6 +256,8 @@ builder.Services.AddSingleton<IOutboxMessageHandler, SettlementPaymentGlPostingH
 // AR credit notes: maker-checker corrections against issued invoices; GL reversal on issue.
 builder.Services.AddSingleton<CreditNoteService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedgerHandler>();
+// Detention: real email delivery for the pre-expiry 'meter running' notice.
+builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
@@ -327,6 +329,8 @@ builder.Services.AddScoped<PasswordPolicyService>();
 builder.Services.AddHostedService<TelemetryBackgroundService>();
 builder.Services.AddHostedService<TelemetrySimulatorBackgroundService>();
 builder.Services.AddHostedService<SafetyBackgroundService>();
+// Automatic third-party position sync (Samsara overlay -> continuous positions -> detention).
+builder.Services.AddHostedService<ConnectorSyncBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();

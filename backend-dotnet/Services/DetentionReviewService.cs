@@ -41,6 +41,20 @@ public sealed class DetentionReviewService(Database db)
             "SELECT notice_type, recipient_name, recipient_address, channel, body_snapshot, delivery_status, created_at FROM detention_notices WHERE company_id=@c AND dwell_id=@id ORDER BY created_at",
             cmd => { cmd.Parameters.AddWithValue("@c", companyId); cmd.Parameters.AddWithValue("@id", dwellId); }, ct);
 
+        // Disclosed GPS density: breadcrumb count over the billed window (honesty about ping cadence
+        // is credibility — the packet never claims more positional witness than exists).
+        var breadcrumbCount = 0L;
+        if (d["billedFromAt"] is DateTime bf && d["billedToAt"] is DateTime bt)
+            breadcrumbCount = await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM location_events
+                  WHERE company_id=@c AND vehicle_id=@v AND event_time BETWEEN @f AND @t",
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@c", companyId);
+                    cmd.Parameters.AddWithValue("@v", Convert.ToInt64(d["vehicleId"]));
+                    cmd.Parameters.AddWithValue("@f", bf); cmd.Parameters.AddWithValue("@t", bt);
+                }, ct);
+
         // Deterministic canonical form: fixed key order, UTC ISO-8601, invariant numbers.
         string Iso(object? v) => v is DateTime t ? t.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) : "";
         var canonicalObj = new
@@ -77,6 +91,7 @@ public sealed class DetentionReviewService(Database db)
                 currency = d["rcCurrency"]?.ToString(),
             },
             intervals = new { billedFrom = Iso(d["billedFromAt"]), billedTo = Iso(d["billedToAt"]), note = "billed from the shortest provable interval" },
+            pingCadence = new { breadcrumbCount },
             noticeLog = notices.Select(n => new { type = n["noticeType"]?.ToString(), recipient = n["recipientName"]?.ToString(), address = n["recipientAddress"]?.ToString(), channel = n["channel"]?.ToString(), body = n["bodySnapshot"]?.ToString(), status = n["deliveryStatus"]?.ToString(), loggedAt = Iso(n["createdAt"]) }).ToArray(),
             computation = new
             {
@@ -90,14 +105,15 @@ public sealed class DetentionReviewService(Database db)
         var sha = Opstrax.Api.TelemetryHmacHelper.Sha256Hex(canonical);
 
         await db.ExecuteAsync(
-            @"INSERT INTO detention_evidence (company_id, dwell_id, evidence_canonical, evidence_json, evidence_sha256)
-              VALUES (@c, @d, @canon, @json::jsonb, @sha)
+            @"INSERT INTO detention_evidence (company_id, dwell_id, evidence_canonical, evidence_json, evidence_sha256, breadcrumb_count)
+              VALUES (@c, @d, @canon, @json::jsonb, @sha, @bc)
               ON CONFLICT (company_id, dwell_id) DO NOTHING",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@c", companyId); cmd.Parameters.AddWithValue("@d", dwellId);
                 cmd.Parameters.AddWithValue("@canon", canonical); cmd.Parameters.AddWithValue("@json", canonical);
                 cmd.Parameters.AddWithValue("@sha", sha);
+                cmd.Parameters.AddWithValue("@bc", (int)breadcrumbCount);
             }, ct);
         return sha;
     }
