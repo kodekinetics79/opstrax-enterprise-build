@@ -120,7 +120,12 @@ export function SsoConnectionsPanel() {
       {/* List */}
       <div className="mt-4 space-y-2">
         {listQ.isLoading && <p className="text-xs text-slate-400">Loading connections…</p>}
-        {!listQ.isLoading && rows.length === 0 && !draft && (
+        {listQ.isError && (
+          <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+            Could not load SSO connections. Refresh to retry — existing connections are unaffected.
+          </p>
+        )}
+        {!listQ.isLoading && !listQ.isError && rows.length === 0 && !draft && (
           <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-400">
             No SSO connections yet. Add one to enable identity-provider sign-in for your organization.
           </p>

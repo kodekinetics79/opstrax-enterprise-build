@@ -20,6 +20,10 @@ export const settingsApi = {
   securitySettingsGet: () => unwrap<AnyRecord>(apiClient.get("/api/security/settings")),
   securitySettingsPut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/security/settings", body)),
 
+  // The signed-in user's own active sessions (self-service; revoke signs that device out).
+  mySessions: () => unwrap<AnyRecord[]>(apiClient.get("/api/security/my-sessions")),
+  mySessionRevoke: (id: number) => unwrap<AnyRecord>(apiClient.delete(`/api/security/my-sessions/${id}`)),
+
   // SSO/SAML/OIDC connections (enterprise sign-on). Tenant-scoped, security:manage.
   ssoConnectionsList: () => unwrap<AnyRecord[]>(apiClient.get("/api/security/sso-connections")),
   ssoConnectionCreate: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.post("/api/security/sso-connections", body)),

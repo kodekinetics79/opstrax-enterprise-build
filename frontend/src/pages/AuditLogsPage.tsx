@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Activity, Bot, CheckCircle2, Download, FileDown, Filter, Layers,
   Search, Shield, Users, X,
 } from "lucide-react";
 import { PERMISSIONS } from "@/auth/rbacConfig";
+import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
 import { ClayCard, KpiCard } from "@/components/ui";
 import {
@@ -21,6 +23,17 @@ const MODULE_OPTIONS = [
 ];
 
 const SEVERITY_OPTIONS = ["Info", "Warning", "High", "Critical"];
+
+/**
+ * Deep-link query params other modules may set when linking to /audit-logs:
+ *   actor    → substring match on actor_name  (client-side narrowing)
+ *   entity   → substring match on entity_name (client-side narrowing)
+ *   entityId → exact match on entity_id       (client-side narrowing)
+ *   action   → passed to the API's existing `action` param (LIKE on action_name)
+ *   q        → seeds the free-text search box (API `search` param)
+ */
+const DEEP_LINK_PARAMS = ["actor", "entity", "entityId", "action", "q"] as const;
+type DeepLinkParam = typeof DEEP_LINK_PARAMS[number];
 
 const SEVERITY_COLOR: Record<string, string> = {
   "Info":     "border-sky-400/30 bg-sky-50 text-sky-700",
@@ -46,25 +59,81 @@ function ExportStatusBadge({ status }: { status: string }) {
 }
 
 export function AuditLogsPage() {
+  const { session } = useAuth();
   const hasPermission = useHasPermission();
   const canExportReports = hasPermission(PERMISSIONS.REPORTS_EXPORT);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dlActor    = searchParams.get("actor")    ?? "";
+  const dlEntity   = searchParams.get("entity")   ?? "";
+  const dlEntityId = searchParams.get("entityId") ?? "";
+  const dlAction   = searchParams.get("action")   ?? "";
+  const dlQ        = searchParams.get("q")        ?? "";
+
   const [tab, setTab]                   = useState<Tab>("Audit Trail");
-  const [search, setSearch]             = useState("");
+  const [search, setSearch]             = useState(dlQ);
   const [filterModule, setFilterModule] = useState("");
   const [filterSev, setFilterSev]       = useState("");
   const [exportOpen, setExportOpen]     = useState(false);
   const [drawerLog, setDrawerLog]       = useState<AnyRecord | null>(null);
 
+  // Keep the search box in sync if the URL changes underneath us (back/forward nav).
+  useEffect(() => { setSearch(dlQ); }, [dlQ]);
+
+  // User edited the search box → mirror it into the `q` param (replace, no history spam).
+  const onSearchChange = (value: string) => {
+    setSearch(value);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set("q", value); else next.delete("q");
+      return next;
+    }, { replace: true });
+  };
+
+  const clearParam = (key: DeepLinkParam) => {
+    if (key === "q") setSearch("");
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete(key);
+      return next;
+    }, { replace: true });
+  };
+
+  const clearAllParams = () => {
+    setSearch("");
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const key of DEEP_LINK_PARAMS) next.delete(key);
+      return next;
+    }, { replace: true });
+  };
+
+  const activeChips = DEEP_LINK_PARAMS
+    .map((key) => [key, searchParams.get(key) ?? ""] as [DeepLinkParam, string])
+    .filter(([, value]) => value !== "");
+
   const params: Record<string, string> = {};
   if (filterModule) params.module   = filterModule;
   if (filterSev)    params.severity = filterSev;
-  if (search)       params.search   = search;
+  if (dlAction)     params.action   = dlAction;
+  // The API's `search` param LIKE-matches actor_name/entity_name/action_name, so when the
+  // search box is empty we reuse it to pre-narrow actor/entity deep links server-side
+  // (results are a superset; exact narrowing happens client-side below).
+  const apiSearch = search || dlActor || dlEntity;
+  if (apiSearch)    params.search   = apiSearch;
 
   const { data: logsRaw = [] }         = useAuditLogs(Object.keys(params).length ? params : undefined);
   const { data: exportsRaw = [] }      = useAuditExportRequests();
   const { data: aiRecsRaw = [] }       = useAuditAiRecs();
 
-  const logs    = logsRaw    as AnyRecord[];
+  // Client-side narrowing for deep-link params the API has no dedicated filter for.
+  const logs = useMemo(() => {
+    let rows = logsRaw as AnyRecord[];
+    if (dlActor)    rows = rows.filter((r) => String(r.actor_name  ?? "").toLowerCase().includes(dlActor.toLowerCase()));
+    if (dlEntity)   rows = rows.filter((r) => String(r.entity_name ?? "").toLowerCase().includes(dlEntity.toLowerCase()));
+    if (dlEntityId) rows = rows.filter((r) => String(r.entity_id   ?? "") === dlEntityId);
+    return rows;
+  }, [logsRaw, dlActor, dlEntity, dlEntityId]);
+
   const exports_= exportsRaw as AnyRecord[];
   const aiRecs  = aiRecsRaw  as AnyRecord[];
 
@@ -202,7 +271,7 @@ export function AuditLogsPage() {
                 className="field w-full pl-9 text-sm"
                 placeholder="Search actor, entity, action…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => onSearchChange(e.target.value)}
               />
             </div>
             <div className="flex items-center gap-1.5">
@@ -217,11 +286,41 @@ export function AuditLogsPage() {
               {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             {(search || filterModule || filterSev) && (
-              <button className="icon-btn" onClick={() => { setSearch(""); setFilterModule(""); setFilterSev(""); }}>
+              <button className="icon-btn" onClick={() => { onSearchChange(""); setFilterModule(""); setFilterSev(""); }}>
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
+
+          {/* Deep-link filter chips (from URL query params) */}
+          {activeChips.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Filtered:</span>
+              {activeChips.map(([key, value]) => (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-teal-300 bg-teal-50 py-1 pl-2.5 pr-1.5 text-xs font-semibold text-teal-700"
+                >
+                  {key}={value}
+                  <button
+                    type="button"
+                    aria-label={`Clear ${key} filter`}
+                    className="rounded-full p-0.5 transition hover:bg-teal-100"
+                    onClick={() => clearParam(key)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                className="text-xs font-semibold text-slate-500 underline transition hover:text-slate-700"
+                onClick={clearAllParams}
+              >
+                Clear all
+              </button>
+            </div>
+          )}
 
           {/* Two-column shell: log table (main) + analytics rail (side) */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -514,7 +613,7 @@ export function AuditLogsPage() {
                 e.preventDefault();
                 const fd = new FormData(e.currentTarget);
                 createExport.mutate({
-                  requestedByName: "Admin",
+                  requestedByName: String(session?.user?.fullName ?? session?.user?.email ?? ""),
                   dateRangeStart: String(fd.get("start") ?? ""),
                   dateRangeEnd: String(fd.get("end") ?? ""),
                   exportFormat: String(fd.get("format") ?? "CSV"),

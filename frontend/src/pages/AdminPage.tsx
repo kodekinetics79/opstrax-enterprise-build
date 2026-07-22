@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Check, ClipboardCheck, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, ChevronDown, ChevronUp, ClipboardCheck, Copy, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
 import {
@@ -20,6 +21,7 @@ import {
 } from "@/hooks/useAdmin";
 import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/hooks/useBatch7";
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
+import { adminApi } from "@/services/adminApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -40,6 +42,34 @@ type UserFormState = {
 type RoleFormState = {
   name: string;
   permissions: string[];
+};
+
+type ActivationLink = { link: string; expiresAt?: string };
+
+type UserSortKey = "fullName" | "companyName" | "roleName" | "status" | "lastLoginAt";
+
+const USER_PAGE_SIZE = 25;
+
+const USER_COLUMNS: Array<{ label: string; sortKey?: UserSortKey }> = [
+  { label: "User", sortKey: "fullName" },
+  { label: "Company", sortKey: "companyName" },
+  { label: "Role", sortKey: "roleName" },
+  { label: "Security" },
+  { label: "Status", sortKey: "status" },
+  { label: "Last Login", sortKey: "lastLoginAt" },
+  { label: "Actions" },
+];
+
+const USER_SORT_ACCESSORS: Record<UserSortKey, (user: AnyRecord) => string | number> = {
+  fullName: (user) => String(user.fullName ?? user.full_name ?? "").toLowerCase(),
+  companyName: (user) => String(user.companyName ?? user.company_name ?? "").toLowerCase(),
+  roleName: (user) => String(user.roleName ?? user.role_name ?? "").toLowerCase(),
+  status: (user) => String(user.status ?? "").toLowerCase(),
+  lastLoginAt: (user) => {
+    const raw = user.lastLoginAt ?? user.last_login_at;
+    const time = raw ? new Date(String(raw)).getTime() : 0;
+    return Number.isFinite(time) ? time : 0;
+  },
 };
 
 const TAB_OPTIONS: Array<{ key: AdminTab; label: string }> = [
@@ -146,6 +176,12 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
+/** Pulls the human-readable message out of an Axios/ApiResponse error. */
+function extractApiError(err: unknown, fallback: string): string {
+  const data = (err as { response?: { data?: { message?: string; errors?: string[] } } })?.response?.data;
+  return data?.errors?.[0] ?? data?.message ?? fallback;
+}
+
 function MfaBadge({ status }: { status: unknown }) {
   const enabled = String(status ?? "").toLowerCase() === "enabled";
   return (
@@ -153,6 +189,33 @@ function MfaBadge({ status }: { status: unknown }) {
       <ShieldCheck className={`h-3 w-3 shrink-0 ${enabled ? "text-emerald-600" : "text-slate-300"}`} />
       <span>{enabled ? "MFA" : "No MFA"}</span>
     </span>
+  );
+}
+
+/** One-time activation link panel (same pattern as the API-key panel on SettingsPage). */
+function ActivationLinkPanel({
+  result, copied, onCopy, onDismiss,
+}: {
+  result: ActivationLink; copied: boolean; onCopy: () => void; onDismiss: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+      <p className="text-xs font-semibold text-amber-800">One-time activation link — copy it now and share it securely; it will not be shown again.</p>
+      <div className="flex items-center gap-2 min-w-0">
+        <code className="min-w-0 flex-1 whitespace-nowrap rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 overflow-x-auto select-all">
+          {result.link}
+        </code>
+        <button type="button" className="btn-secondary text-xs shrink-0" onClick={onCopy}>
+          {copied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+        </button>
+      </div>
+      {result.expiresAt && (
+        <p className="text-xs text-amber-700">Link expires {new Date(result.expiresAt).toLocaleDateString()}</p>
+      )}
+      <button type="button" className="text-xs font-semibold text-amber-800 underline" onClick={onDismiss}>
+        Dismiss
+      </button>
+    </div>
   );
 }
 
@@ -196,6 +259,18 @@ export function AdminPage() {
     name: "",
     permissions: [],
   });
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [inviteResult, setInviteResult] = useState<ActivationLink | null>(null);
+  const [drawerLink, setDrawerLink] = useState<ActivationLink | null>(null);
+  const [drawerAccessError, setDrawerAccessError] = useState<string | null>(null);
+  const [copiedLinkKey, setCopiedLinkKey] = useState<"invite" | "drawer" | null>(null);
+  const [userSort, setUserSort] = useState<{ key: UserSortKey; dir: "asc" | "desc" }>({ key: "fullName", dir: "asc" });
+  const [userPage, setUserPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkNotice, setBulkNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [rolesView, setRolesView] = useState<"cards" | "matrix">("cards");
+
+  const queryClient = useQueryClient();
 
   const overviewQ = useAdminOverview();
   const usersQ = useAdminUsers({ search, role: roleFilter, status: statusFilter });
@@ -223,7 +298,38 @@ export function AdminPage() {
   const permissions = permissionsQ.data ?? [];
   const roleOptions = roles;
 
-  const filteredUsers = useMemo(() => users, [users]);
+  // Client-side sort + pagination (search/role/status filtering stays server-side).
+  const sortedUsers = useMemo(() => {
+    const accessor = USER_SORT_ACCESSORS[userSort.key];
+    return [...users].sort((a, b) => {
+      const va = accessor(a);
+      const vb = accessor(b);
+      const cmp = typeof va === "number" && typeof vb === "number"
+        ? va - vb
+        : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+      return userSort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [users, userSort]);
+  const userPageCount = Math.max(1, Math.ceil(sortedUsers.length / USER_PAGE_SIZE));
+  const safeUserPage = Math.min(userPage, userPageCount);
+  const pagedUsers = useMemo(
+    () => sortedUsers.slice((safeUserPage - 1) * USER_PAGE_SIZE, safeUserPage * USER_PAGE_SIZE),
+    [sortedUsers, safeUserPage],
+  );
+
+  const selectedUserId = selectedUser ? Number(selectedUser.id) : null;
+  const sessionsQ = useQuery({
+    queryKey: ["admin-user-sessions", selectedUserId],
+    queryFn: () => adminApi.userSessions(Number(selectedUserId)),
+    enabled: selectedUserId != null && Number.isFinite(selectedUserId),
+  });
+  const generateLink = useMutation({ mutationFn: (id: number) => adminApi.activationLink(id) });
+  const revokeSessions = useMutation({
+    mutationFn: (id: number) => adminApi.revokeUserSessions(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-user-sessions"] });
+    },
+  });
 
   if (!canViewUsers && !canViewRoles && !canViewSettings && !canViewAudit && !canViewAccessReviews) {
     return <PermissionDenied permission="users:view" />;
@@ -239,6 +345,7 @@ export function AdminPage() {
       status: "Active",
       password: "",
     });
+    setModalError(null);
     setUserModal("create");
   };
 
@@ -253,6 +360,7 @@ export function AdminPage() {
       status: String(user.status ?? "Active"),
       password: "",
     });
+    setModalError(null);
     setUserModal("edit");
   };
 
@@ -265,29 +373,126 @@ export function AdminPage() {
       roleName: userForm.roleName,
       status: userForm.status,
     };
-    if (userModal === "create") {
-      body.password = userForm.password;
-      await createUser.mutateAsync(body);
-    } else if (userModal === "edit" && userForm.id) {
-      if (userForm.password.trim()) body.password = userForm.password;
-      await updateUser.mutateAsync({ id: Number(userForm.id), body });
+    try {
+      setModalError(null);
+      if (userModal === "create") {
+        // Password is optional: leaving it blank creates a Pending user and
+        // returns a one-time activation link to hand to the new teammate.
+        if (userForm.password.trim()) body.password = userForm.password;
+        const result = await createUser.mutateAsync(body);
+        if (result?.activationLink) {
+          setInviteResult({ link: String(result.activationLink), expiresAt: result.activationExpiresAt });
+        }
+      } else if (userModal === "edit" && userForm.id) {
+        if (userForm.password.trim()) body.password = userForm.password;
+        await updateUser.mutateAsync({ id: Number(userForm.id), body });
+      }
+      setUserModal(null);
+    } catch (err) {
+      // Surface API validation failures (duplicate email, seat limit, weak
+      // password) instead of leaving the modal open with no explanation.
+      setModalError(extractApiError(err, "Could not save the user."));
     }
-    setUserModal(null);
   };
 
   const saveRole = async () => {
-    if (roleModal?.id) {
-      await updateRole.mutateAsync({ id: Number(roleModal.id), body: roleForm });
-    } else {
-      await createRole.mutateAsync(roleForm);
+    try {
+      setModalError(null);
+      if (roleModal?.id) {
+        await updateRole.mutateAsync({ id: Number(roleModal.id), body: roleForm });
+      } else {
+        await createRole.mutateAsync(roleForm);
+      }
+      setRoleModal(null);
+    } catch (err) {
+      setModalError(extractApiError(err, "Could not save the role."));
     }
-    setRoleModal(null);
   };
 
   const exportUsers = async () => {
-    downloadCsv("admin-users.csv", filteredUsers, ["fullName", "email", "companyName", "roleName", "status"]);
-    setPermissionsExportNotice(`Exported ${filteredUsers.length} user rows to CSV.`);
+    downloadCsv("admin-users.csv", sortedUsers, ["fullName", "email", "companyName", "roleName", "status"]);
+    setPermissionsExportNotice(`Exported ${sortedUsers.length} user rows to CSV.`);
     window.setTimeout(() => setPermissionsExportNotice(null), 3500);
+  };
+
+  const copyActivationLink = async (key: "invite" | "drawer", link: string) => {
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      // Clipboard API can be unavailable (insecure context); the <code> block stays select-all.
+    }
+    setCopiedLinkKey(key);
+    window.setTimeout(() => setCopiedLinkKey((current) => (current === key ? null : current)), 2000);
+  };
+
+  // Drawer open/close resets the per-user Access state so a previous user's
+  // one-time link or error never bleeds into the next drawer.
+  const openUserDrawer = (user: AnyRecord) => {
+    setDrawerLink(null);
+    setDrawerAccessError(null);
+    setSelectedUser(user);
+  };
+
+  const closeUserDrawer = () => {
+    setDrawerLink(null);
+    setDrawerAccessError(null);
+    setSelectedUser(null);
+  };
+
+  const generateActivationLink = async (id: number) => {
+    try {
+      setDrawerAccessError(null);
+      const result = await generateLink.mutateAsync(id);
+      setDrawerLink(result);
+    } catch (err) {
+      setDrawerAccessError(extractApiError(err, "Could not generate an activation link."));
+    }
+  };
+
+  const signOutAllSessions = async (id: number, name: string) => {
+    if (!window.confirm(`Sign out all active sessions for ${name}?`)) return;
+    try {
+      setDrawerAccessError(null);
+      await revokeSessions.mutateAsync(id);
+    } catch (err) {
+      setDrawerAccessError(extractApiError(err, "Could not revoke this user's sessions."));
+    }
+  };
+
+  const toggleUserSort = (key: UserSortKey) => {
+    setUserSort((current) => (current.key === key ? { key, dir: current.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+    setUserPage(1);
+  };
+
+  const toggleSelected = (id: number) => {
+    setSelectedIds((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
+  };
+
+  const bulkDeactivate = async () => {
+    const ownUserId = Number(session?.user?.id);
+    const targets = selectedIds.filter((id) => id !== ownUserId);
+    const skippedSelf = targets.length !== selectedIds.length;
+    if (targets.length === 0) {
+      setBulkNotice({ tone: "error", text: "You cannot deactivate your own account." });
+      return;
+    }
+    const confirmText = `Deactivate ${targets.length} selected user${targets.length === 1 ? "" : "s"}?${skippedSelf ? " Your own account will be skipped." : ""}`;
+    if (!window.confirm(confirmText)) return;
+    let failures = 0;
+    for (const id of targets) {
+      try {
+        await deleteUser.mutateAsync(id);
+      } catch {
+        failures += 1;
+      }
+    }
+    setSelectedIds([]);
+    if (failures > 0) {
+      setBulkNotice({ tone: "error", text: `Could not deactivate ${failures} of ${targets.length} selected user${targets.length === 1 ? "" : "s"}.` });
+    } else {
+      setBulkNotice({ tone: "success", text: `Deactivated ${targets.length} user${targets.length === 1 ? "" : "s"}.` });
+      window.setTimeout(() => setBulkNotice(null), 3500);
+    }
   };
 
   const exportRoles = async () => {
@@ -295,14 +500,16 @@ export function AdminPage() {
   };
 
   const openRoleEditor = (role: AnyRecord) => {
+    setModalError(null);
     setRoleModal(role);
     setRoleForm({
       name: String(role.name ?? ""),
-      permissions: permissionList(role.permissions ?? role.permissions_json),
+      permissions: permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json),
     });
   };
 
   const openCreateRole = () => {
+    setModalError(null);
     setRoleModal({});
     setRoleForm({ name: "", permissions: [] });
   };
@@ -430,17 +637,17 @@ export function AdminPage() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-              <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
             </div>
-            <select className="field" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <select className="field" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>
               {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
             </select>
-            <select className="field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select className="field" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setUserPage(1); }}>
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
-            <button className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); }}>
+            <button className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setStatusFilter(""); setUserPage(1); }}>
               <X className="h-4 w-4" />
               Clear
             </button>
@@ -454,6 +661,42 @@ export function AdminPage() {
             </button>
           </div>
 
+          {inviteResult && (
+            <ActivationLinkPanel
+              result={inviteResult}
+              copied={copiedLinkKey === "invite"}
+              onCopy={() => copyActivationLink("invite", inviteResult.link)}
+              onDismiss={() => setInviteResult(null)}
+            />
+          )}
+
+          {bulkNotice && (
+            <div
+              role={bulkNotice.tone === "error" ? "alert" : undefined}
+              className={`rounded-xl border px-4 py-3 text-sm ${bulkNotice.tone === "error" ? "border-rose-400/30 bg-rose-50 text-rose-700" : "border-emerald-400/30 bg-emerald-50 text-emerald-700"}`}
+            >
+              {bulkNotice.text}
+            </div>
+          )}
+
+          {selectedIds.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5">
+              <p className="min-w-0 truncate text-sm font-semibold text-slate-700">{selectedIds.length} selected</p>
+              <div className="flex shrink-0 items-center gap-2">
+                <button className="btn-ghost h-8 px-3" onClick={() => setSelectedIds([])}>Clear selection</button>
+                <button
+                  className="btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700"
+                  onClick={bulkDeactivate}
+                  disabled={!canDeleteUsers || deleteUser.isPending}
+                  title={!canDeleteUsers ? "You do not have permission to perform this action." : "Deactivate the selected users"}
+                >
+                  <Trash2 className="mr-1 h-3.5 w-3.5" />
+                  Deactivate selected
+                </button>
+              </div>
+            </div>
+          )}
+
           {usersQ.isLoading ? <LoadingState /> : usersQ.isError ? <ErrorState message="Could not load users." /> : users.length === 0 ? (
             <EmptyState title="No users found" subtitle="Try another filter or add a new user for this tenant." />
           ) : (
@@ -461,18 +704,60 @@ export function AdminPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200">
-                    {["User", "Company", "Role", "Security", "Status", "Last Login", "Actions"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">{header}</th>
-                    ))}
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="accent-teal-600"
+                        aria-label="Select all users on this page"
+                        checked={pagedUsers.length > 0 && pagedUsers.every((user) => selectedIds.includes(Number(user.id)))}
+                        onChange={() => {
+                          const pageIds = pagedUsers.map((user) => Number(user.id));
+                          const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+                          setSelectedIds((ids) => (allSelected ? ids.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...ids, ...pageIds]))));
+                        }}
+                      />
+                    </th>
+                    {USER_COLUMNS.map((column) => {
+                      const isActive = column.sortKey != null && userSort.key === column.sortKey;
+                      return (
+                        <th
+                          key={column.label}
+                          aria-sort={column.sortKey ? (isActive ? (userSort.dir === "asc" ? "ascending" : "descending") : "none") : undefined}
+                          className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap"
+                        >
+                          {column.sortKey ? (
+                            <button
+                              type="button"
+                              className={`inline-flex items-center gap-1 uppercase tracking-widest transition ${isActive ? "text-teal-700" : "hover:text-slate-700"}`}
+                              onClick={() => toggleUserSort(column.sortKey!)}
+                            >
+                              {column.label}
+                              {isActive
+                                ? (userSort.dir === "asc" ? <ChevronUp className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />)
+                                : <ChevronUp className="h-3 w-3 shrink-0 opacity-25" />}
+                            </button>
+                          ) : column.label}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((user: AnyRecord) => {
+                  {pagedUsers.map((user: AnyRecord) => {
                     const name = String(user.fullName ?? user.full_name ?? "User");
                     return (
                     <tr key={String(user.id)} className="transition hover:bg-white/60">
+                      <td className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="accent-teal-600"
+                          aria-label={`Select ${name}`}
+                          checked={selectedIds.includes(Number(user.id))}
+                          onChange={() => toggleSelected(Number(user.id))}
+                        />
+                      </td>
                       <td className="px-4 py-3 max-w-[260px]">
-                        <button className="flex w-full min-w-0 items-center gap-3 text-left" onClick={() => setSelectedUser(user)}>
+                        <button className="flex w-full min-w-0 items-center gap-3 text-left" onClick={() => openUserDrawer(user)}>
                           <Avatar name={name} />
                           <span className="min-w-0">
                             <p className="font-semibold text-slate-900 truncate" title={name}>{name}</p>
@@ -489,7 +774,7 @@ export function AdminPage() {
                       <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{user.lastLoginAt ? new Date(String(user.lastLoginAt)).toLocaleString() : "Never"}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button className="btn-ghost h-8 px-3" onClick={() => setSelectedUser(user)}>View</button>
+                          <button className="btn-ghost h-8 px-3" onClick={() => openUserDrawer(user)}>View</button>
                           <button className="btn-ghost h-8 px-3" onClick={() => openEditUser(user)} disabled={!canUpdateUsers}>Edit</button>
                           <button
                             className="btn-ghost h-8 px-3 text-rose-600 hover:text-rose-700"
@@ -509,6 +794,14 @@ export function AdminPage() {
                   );})}
                 </tbody>
               </table>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-2.5">
+                <p className="min-w-0 truncate text-xs text-slate-500">{sortedUsers.length} user{sortedUsers.length === 1 ? "" : "s"}</p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button className="btn-ghost h-8 px-3" onClick={() => setUserPage(safeUserPage - 1)} disabled={safeUserPage <= 1}>Prev</button>
+                  <span className="text-xs text-slate-600 whitespace-nowrap">page {safeUserPage} of {userPageCount}</span>
+                  <button className="btn-ghost h-8 px-3" onClick={() => setUserPage(safeUserPage + 1)} disabled={safeUserPage >= userPageCount}>Next</button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -516,16 +809,66 @@ export function AdminPage() {
 
       {tab === "roles" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">Roles list and permission bundles.</p>
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-sm text-slate-500">Roles list and permission bundles.</p>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Roles view">
+                {([["cards", "Cards"], ["matrix", "Matrix"]] as Array<["cards" | "matrix", string]>).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={rolesView === key}
+                    className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${rolesView === key ? "bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"}`}
+                    onClick={() => setRolesView(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
               <button className="btn-primary" onClick={openCreateRole} disabled={!canCreateRoles}>
                 <Plus className="h-4 w-4" /> Create role
               </button>
             </div>
           </div>
-          {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : (
+          {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : rolesView === "matrix" ? (
+            <div className="iam-card overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">Permission group</th>
+                    {roles.map((role: AnyRecord) => (
+                      <th key={String(role.id)} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 max-w-[110px]">
+                        <span className="block truncate" title={String(role.name)}>{String(role.name)}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {permissionsByGroup(permissions).map((group) => (
+                    <tr key={group.title}>
+                      <td className="px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">{group.title}</td>
+                      {roles.map((role: AnyRecord) => {
+                        const grantedList = permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json);
+                        const granted = group.permissions.filter((permission) => grantedList.includes(permission)).length;
+                        const total = group.permissions.length;
+                        const tone = granted === total
+                          ? "bg-teal-500/10 font-semibold text-teal-700"
+                          : granted === 0
+                          ? "text-slate-300"
+                          : "text-slate-600";
+                        return (
+                          <td key={String(role.id)} className={`px-4 py-3 whitespace-nowrap tabular-nums ${tone}`} title={`${granted} of ${total} ${group.title} permissions granted`}>
+                            {granted}/{total}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
             <div className="grid gap-4 xl:grid-cols-2">
               {roles.map((role: AnyRecord) => (
                 <div key={String(role.id)} className="iam-card p-5 min-w-0">
@@ -539,12 +882,12 @@ export function AdminPage() {
                     </button>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {permissionList(role.permissions ?? role.permissions_json).slice(0, 8).map((permission) => (
+                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).slice(0, 8).map((permission) => (
                       <span key={permission} className="iam-chip"><span>{permission}</span></span>
                     ))}
-                    {permissionList(role.permissions ?? role.permissions_json).length > 8 && (
+                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length > 8 && (
                       <span className="iam-chip !text-slate-400">
-                        <span>+{permissionList(role.permissions ?? role.permissions_json).length - 8} more</span>
+                        <span>+{permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length - 8} more</span>
                       </span>
                     )}
                   </div>
@@ -709,7 +1052,7 @@ export function AdminPage() {
               <h3 className="font-bold text-slate-900">Export Requests</h3>
               {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
                 <div key={String(entry.id)} className="iam-kv">
-                  <p className="text-sm font-semibold text-slate-900 truncate min-w-0">{String(entry.requested_by_name ?? "—")}</p>
+                  <p className="text-sm font-semibold text-slate-900 truncate min-w-0">{String(entry.requestedByName ?? entry.requested_by_name ?? "—")}</p>
                   <p className="text-xs text-slate-500 shrink-0">{String(entry.status ?? "Pending")}</p>
                 </div>
               ))}
@@ -730,9 +1073,9 @@ export function AdminPage() {
       )}
 
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={() => setSelectedUser(null)}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={closeUserDrawer}>
           <aside className="iam iam-drawer max-w-lg p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="User detail">
-            <button className="float-right icon-btn" onClick={() => setSelectedUser(null)} aria-label="Close user detail"><X className="h-4 w-4" /></button>
+            <button className="float-right icon-btn" onClick={closeUserDrawer} aria-label="Close user detail"><X className="h-4 w-4" /></button>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">User Detail</p>
             <div className="mt-4 flex items-center gap-3 min-w-0">
               <Avatar name={String(selectedUser.fullName ?? selectedUser.full_name ?? "User")} />
@@ -757,8 +1100,64 @@ export function AdminPage() {
                 </div>
               ))}
             </div>
+            <div className="mt-6">
+              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">Access</p>
+              <div className="mt-3 space-y-3">
+                <div className="iam-kv">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5 shrink-0">Sessions</p>
+                  <p className="text-right text-sm font-medium text-slate-800 min-w-0 truncate">
+                    {sessionsQ.isLoading
+                      ? "Loading…"
+                      : sessionsQ.isError
+                      ? "Unavailable"
+                      : `${(sessionsQ.data ?? []).length} active session${(sessionsQ.data ?? []).length === 1 ? "" : "s"}`}
+                  </p>
+                </div>
+                {canUpdateUsers && /^(active|pending)$/i.test(String(selectedUser.status ?? "")) && (
+                  <button
+                    className="btn-ghost w-full"
+                    onClick={() => generateActivationLink(Number(selectedUser.id))}
+                    disabled={generateLink.isPending}
+                  >
+                    <KeyRound className="h-4 w-4" />
+                    {generateLink.isPending ? "Generating…" : "Generate activation link"}
+                  </button>
+                )}
+                {drawerLink && (
+                  <ActivationLinkPanel
+                    result={drawerLink}
+                    copied={copiedLinkKey === "drawer"}
+                    onCopy={() => copyActivationLink("drawer", drawerLink.link)}
+                    onDismiss={() => setDrawerLink(null)}
+                  />
+                )}
+                {canUpdateUsers && (
+                  <button
+                    className="btn-ghost w-full text-rose-600 hover:text-rose-700"
+                    onClick={() => signOutAllSessions(Number(selectedUser.id), String(selectedUser.fullName ?? selectedUser.full_name ?? selectedUser.email ?? "this user"))}
+                    disabled={(sessionsQ.data ?? []).length === 0 || revokeSessions.isPending}
+                    title={(sessionsQ.data ?? []).length === 0 ? "This user has no active sessions." : "Revoke every active session for this user"}
+                  >
+                    {revokeSessions.isPending ? "Signing out…" : "Sign out all sessions"}
+                  </button>
+                )}
+                {drawerAccessError && (
+                  <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{drawerAccessError}</p>
+                )}
+                {canViewAudit && (
+                  <button
+                    className="btn-ghost w-full"
+                    onClick={() => window.location.assign(`/audit-logs?actor=${encodeURIComponent(String(selectedUser.fullName ?? selectedUser.full_name ?? ""))}`)}
+                    title="Open the audit trail filtered to this user's actions"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    View audit trail
+                  </button>
+                )}
+              </div>
+            </div>
             {canUpdateUsers && (
-              <button className="btn-primary mt-6 w-full" onClick={() => { openEditUser(selectedUser); setSelectedUser(null); }}>
+              <button className="btn-primary mt-6 w-full" onClick={() => { openEditUser(selectedUser); closeUserDrawer(); }}>
                 Edit User
               </button>
             )}
@@ -793,17 +1192,21 @@ export function AdminPage() {
                 </select>
               </div>
               <div>
-                <label className="label">Password</label>
+                <label className="label">{userModal === "create" ? "Password (optional)" : "Password"}</label>
                 <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder={userModal === "create" ? "Set initial password" : "Leave blank to keep current password"} />
+                {userModal === "create" && (
+                  <p className="mt-1 text-xs text-slate-500">Leave blank to invite: you'll get a one-time activation link to share.</p>
+                )}
               </div>
               <div>
                 <label className="label">Company ID</label>
                 <input className="field w-full" type="number" value={Number(userForm.companyId || 0)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />
               </div>
             </div>
+            {modalError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{modalError}</p>}
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || (userModal === "create" ? !canCreateUsers || !String(userForm.password ?? "").trim() : !canUpdateUsers)}>
+              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || (userModal === "create" ? !canCreateUsers : !canUpdateUsers)}>
                 Save User
               </button>
             </div>
@@ -846,6 +1249,7 @@ export function AdminPage() {
                 </div>
               ))}
             </div>
+            {modalError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{modalError}</p>}
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setRoleModal(null)}>Cancel</button>
               <button type="button" className="btn-primary flex-1" onClick={saveRole} disabled={!roleForm.name.trim() || (roleModal.id ? !canUpdateRoles : !canCreateRoles)}>{roleModal.id ? "Save Role" : "Create Role"}</button>

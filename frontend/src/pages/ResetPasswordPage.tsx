@@ -10,6 +10,9 @@ export function ResetPasswordPage() {
   const token = params.get("token") ?? "";
   const linkedEmail = params.get("email") ?? "";
   const resetting = Boolean(token && linkedEmail);
+  // Activation links from the admin invite flow carry welcome=1 — same set-password
+  // mechanics, different framing for a first-time user.
+  const welcome = params.get("welcome") === "1";
   const [email, setEmail] = useState(linkedEmail);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -31,9 +34,9 @@ export function ResetPasswordPage() {
   return <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-5 py-12">
     <div className="w-full max-w-md rounded-[26px] border border-white/15 bg-white/95 p-8 shadow-2xl">
       <div className="mb-7 flex items-center gap-3"><OpsTraxLogo size={38} /><div><p className="font-bold text-slate-950">OpsTrax</p><p className="text-xs text-slate-500">Secure account recovery</p></div></div>
-      <h1 className="text-2xl font-bold text-slate-950">{resetting ? "Choose a new password" : "Reset your password"}</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{resetting ? "Create a new password for your account. This one-time link expires after 30 minutes." : "Enter your work email. If an active account matches, we’ll send a secure reset link."}</p>
-      {action.isSuccess ? <div role="status" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><CheckCircle2 className="mb-2 h-5 w-5" />{resetting ? "Password updated. You can now sign in." : "If an active account matches that email, reset instructions have been sent."}<div className="mt-3"><Link to="/login" className="font-semibold underline">Return to sign in</Link></div></div> :
+      <h1 className="text-2xl font-bold text-slate-950">{resetting ? (welcome ? "Welcome to OpsTrax" : "Choose a new password") : "Reset your password"}</h1>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{resetting ? (welcome ? "Set a password to activate your account. This one-time link was issued by your administrator." : "Create a new password for your account. This one-time link expires after 30 minutes.") : "Enter your work email. If an active account matches, we’ll send a secure reset link."}</p>
+      {action.isSuccess ? <div role="status" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><CheckCircle2 className="mb-2 h-5 w-5" />{resetting ? (welcome ? "Your account is active. You can now sign in." : "Password updated. You can now sign in.") : "If an active account matches that email, reset instructions have been sent."}<div className="mt-3"><Link to="/login" className="font-semibold underline">Return to sign in</Link></div></div> :
       <form onSubmit={submit} className="mt-6 space-y-4">
         {!resetting && <label className="block text-sm font-medium text-slate-700">Work email<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" /></label>}
         {resetting && <><label className="block text-sm font-medium text-slate-700">New password<input type="password" autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500" /></label><label className="block text-sm font-medium text-slate-700">Confirm password<input type="password" autoComplete="new-password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500" /></label></>}

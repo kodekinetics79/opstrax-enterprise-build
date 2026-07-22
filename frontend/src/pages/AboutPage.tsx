@@ -78,10 +78,12 @@ export function AboutPage() {
               <h1 className="text-2xl font-extrabold text-white">About OpsTrax</h1>
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-teal-300/70">Transport Management Solution</p>
             </div>
-            <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
-              <span className="live-dot h-[6px] w-[6px]" />
-              <span className="text-xs font-bold text-teal-300">Live Tenant Active</span>
-            </div>
+            {statusOk(health?.databaseStatus) && (
+              <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
+                <span className="live-dot h-[6px] w-[6px]" />
+                <span className="text-xs font-bold text-teal-300">Live Tenant Connected</span>
+              </div>
+            )}
           </div>
           <p className="max-w-3xl text-base text-slate-300 leading-relaxed">
             OpsTrax Transport Management Solution is an enterprise-grade connected operations platform for fleets, transport teams, drivers, vehicles, assets, dispatch, maintenance, safety, compliance, cost intelligence, and AI-powered decision support.
@@ -99,9 +101,9 @@ export function AboutPage() {
             { label: "API",          ok: statusOk(health.apiStatus),        value: String(health.apiStatus ?? "—") },
             { label: "Database",     ok: statusOk(health.databaseStatus),   value: String(health.databaseStatus ?? "—") },
             { label: "Node Events",  ok: statusOk(health.nodeEventsStatus), value: String(health.nodeEventsStatus ?? "—") },
-            { label: "Modules",      ok: true,  value: String(health.moduleCount ?? "35+") },
-            { label: "Version",      ok: true,  value: String(health.version ?? "Enterprise Build") },
-            { label: "Environment",  ok: false, value: String(health.environment ?? "Local / Seeded") },
+            { label: "Modules",      ok: health.moduleCount != null,  value: String(health.moduleCount ?? "—") },
+            { label: "Version",      ok: health.version != null,  value: String(health.version ?? "—") },
+            { label: "Environment",  ok: health.environment != null, value: String(health.environment ?? "—") },
           ].map((item) => (
             <div key={item.label} className="panel p-3 text-center">
               <div className="flex items-center justify-center gap-1.5 mb-1">
