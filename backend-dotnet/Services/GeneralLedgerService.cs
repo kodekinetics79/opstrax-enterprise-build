@@ -2,6 +2,11 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
+// Thrown when a posting targets a closed GL period. Callers surface reason 'period_closed' — the
+// financially-correct behavior is to reject and require an adjusting entry in the open period,
+// never to silently re-date. (The DB trigger trg_gl_period_lock is the hard backstop.)
+public sealed class PeriodClosedException(string message) : InvalidOperationException(message);
+
 // General Ledger posting service. Enforces the two invariants that make it a book of record:
 //   (1) every journal entry balances — sum(debit) == sum(credit);
 //   (2) each source event posts at most once — UNIQUE(company_id, source_type, source_ref).
@@ -50,6 +55,14 @@ public sealed class GeneralLedgerService(Database db)
         var credits = lines.Sum(l => l.Credit);
         if (Math.Round(debits, 2) != Math.Round(credits, 2))
             throw new InvalidOperationException($"Journal entry does not balance: debits {debits:0.00} != credits {credits:0.00}.");
+
+        // App-level period lock (friendly error before the DB trigger's hard backstop).
+        var closed = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM gl_periods
+              WHERE company_id=@c AND status='closed' AND @d BETWEEN period_start AND period_end",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", entryDate.Date); }, ct);
+        if (closed > 0)
+            throw new PeriodClosedException($"Entry date {entryDate:yyyy-MM-dd} falls in a closed GL period for company {companyId}.");
 
         await EnsureChartAsync(companyId, ct);
 
@@ -152,16 +165,28 @@ public sealed class GeneralLedgerService(Database db)
     // Trial balance: per-account debit/credit totals plus the grand totals. In a correct ledger the grand
     // total of debits equals the grand total of credits.
     public async Task<TrialBalance> TrialBalanceAsync(long companyId, CancellationToken ct = default)
+        => await TrialBalanceAsync(companyId, from: null, to: null, ct);
+
+    // Per-period trial balance (both bounds optional; the full-ledger overload passes nulls).
+    public async Task<TrialBalance> TrialBalanceAsync(long companyId, DateTime? from, DateTime? to, CancellationToken ct = default)
     {
         var rows = await db.QueryAsync(
             @"SELECT jl.account_code, COALESCE(coa.account_name,'') account_name,
                      SUM(jl.debit) debits, SUM(jl.credit) credits
               FROM journal_lines jl
+              JOIN journal_entries je ON je.id=jl.journal_entry_id
               LEFT JOIN chart_of_accounts coa ON coa.company_id=jl.company_id AND coa.account_code=jl.account_code
               WHERE jl.company_id=@c
+                AND (@from::date IS NULL OR je.entry_date >= @from::date)
+                AND (@to::date IS NULL OR je.entry_date <= @to::date)
               GROUP BY jl.account_code, coa.account_name
               ORDER BY jl.account_code",
-            c => c.Parameters.AddWithValue("@c", companyId), ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", companyId);
+                c.Parameters.AddWithValue("@from", (object?)from?.Date ?? DBNull.Value);
+                c.Parameters.AddWithValue("@to", (object?)to?.Date ?? DBNull.Value);
+            }, ct);
 
         var accounts = rows.Select(r => new TrialBalanceRow(
             r["accountCode"]?.ToString() ?? "",

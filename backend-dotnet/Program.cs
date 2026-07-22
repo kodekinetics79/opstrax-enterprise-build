@@ -235,6 +235,9 @@ builder.Services.AddSingleton<RevenueRecognitionSchemaService>();
 builder.Services.AddSingleton<FinancialConfigSchemaService>();
 builder.Services.AddSingleton<GeneralLedgerSchemaService>();
 builder.Services.AddSingleton<GeneralLedgerService>();
+builder.Services.AddSingleton<GeneralLedgerPeriodSchemaService>();
+builder.Services.AddSingleton<GeneralLedgerPeriodService>();
+builder.Services.AddSingleton<GeneralLedgerExportService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
@@ -463,6 +466,7 @@ using (var scope = app.Services.CreateScope())
     if (glSchemaEnabled)
     {
         await RunSchemaStep(app, "GeneralLedger", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerSchemaService>().EnsureAsync());
+        await RunSchemaStep(app, "GeneralLedgerPeriods", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerPeriodSchemaService>().EnsureAsync());
     }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)

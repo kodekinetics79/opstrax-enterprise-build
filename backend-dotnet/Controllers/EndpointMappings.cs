@@ -77,6 +77,12 @@ public static partial class EndpointMappings
         // General Ledger (double-entry book of record).
         app.MapGet("/api/finance/gl/trial-balance", GlTrialBalance);
         app.MapPost("/api/finance/gl/backfill-invoices", GlBackfillInvoices);
+        // Period close (maker-checker) + ERP journal export.
+        app.MapGet("/api/finance/gl/periods", GlPeriods);
+        app.MapPost("/api/finance/gl/periods/{code}/request-close", GlRequestClose);
+        app.MapPost("/api/finance/gl/periods/{code}/approve-close", GlApproveClose);
+        app.MapPost("/api/finance/gl/periods/{code}/reopen", GlReopenPeriod);
+        app.MapGet("/api/finance/gl/export", GlExport);
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2742,6 +2748,73 @@ public static partial class EndpointMappings
             posted++;
         }
         return Results.Ok(ApiResponse<object>.Ok(new { posted }, $"Posted {posted} invoice(s) to the general ledger"));
+    }
+
+    // GET /api/finance/gl/periods — the tenant's GL periods with lock state + frozen totals.
+    private static async Task<IResult> GlPeriods(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<GeneralLedgerPeriodService>();
+        var companyId = GetCompanyId(http);
+        await svc.EnsurePeriodAsync(companyId, DateTime.UtcNow, ct);   // current month always visible
+        return Results.Ok(ApiResponse<object>.Ok(await svc.ListPeriodsAsync(companyId, ct)));
+    }
+
+    // POST /api/finance/gl/periods/{code}/request-close — maker step of the dual-control close.
+    private static async Task<IResult> GlRequestClose(HttpContext http, string code, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<GeneralLedgerPeriodService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var outcome = await svc.RequestCloseAsync(GetCompanyId(http), code, userId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot request close", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "gl.period.close_requested", "GlPeriod", null, code, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { periodCode = code, status = outcome.Status }));
+    }
+
+    // POST /api/finance/gl/periods/{code}/approve-close — checker step; must be a different user.
+    private static async Task<IResult> GlApproveClose(HttpContext http, string code, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<GeneralLedgerPeriodService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var outcome = await svc.ApproveCloseAsync(GetCompanyId(http), code, userId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot close period", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "gl.period.closed", "GlPeriod", null, code, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { periodCode = code, status = outcome.Status }));
+    }
+
+    // POST /api/finance/gl/periods/{code}/reopen — audited escape hatch for corrections.
+    private static async Task<IResult> GlReopenPeriod(HttpContext http, string code, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<GeneralLedgerPeriodService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var outcome = await svc.ReopenAsync(GetCompanyId(http), code, userId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot reopen period", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "gl.period.reopened", "GlPeriod", null, code, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { periodCode = code, status = outcome.Status }));
+    }
+
+    // GET /api/finance/gl/export?period=YYYY-MM&format=csv|quickbooks|netsuite — streams the journal.
+    // Fail-closed: 422 when the period is unbalanced or empty, so a bad journal never reaches the ERP.
+    private static async Task<IResult> GlExport(HttpContext http, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var period = http.Request.Query["period"].FirstOrDefault() ?? "";
+        var format = http.Request.Query["format"].FirstOrDefault() ?? "csv";
+        if (string.IsNullOrWhiteSpace(period))
+            return Results.BadRequest(ApiResponse<object>.Fail("Missing ?period=YYYY-MM"));
+
+        var svc = http.RequestServices.GetRequiredService<GeneralLedgerExportService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var result = await svc.BuildExportAsync(GetCompanyId(http), period, format, userId, ct);
+        if (!result.Ok)
+            return Results.Json(ApiResponse<object>.Fail("Export refused", result.Reason ?? "failed"),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+
+        await audit.LogAsync(http, "gl.export", "GlPeriod", null, $"{period}:{format}:{result.Checksum}", ct);
+        return Results.File(result.Bytes!, "text/csv", result.FileName);
     }
 
     // POST /api/auth/mfa/enroll — authenticated tenant user starts TOTP enrollment. The secret is
