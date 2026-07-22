@@ -33,8 +33,10 @@ public sealed class MaintenanceSchemaService(Database db)
         new("vehicles", "last_inspection_at",  "TIMESTAMPTZ NULL"),
         new("vehicles", "engine_hours",        "DECIMAL(12,2) NULL"),
 
-        // maintenance_items — odometer reading at last service
+        // maintenance_items — odometer + engine-hours readings recorded at service completion. These are
+        // the baselines the PM evaluator reads to arm the next mileage / engine-hours interval.
         new("maintenance_items", "odometer_miles", "DECIMAL(12,2) NULL"),
+        new("maintenance_items", "engine_hours",   "DECIMAL(12,2) NULL"),
 
         // DVIR reports — trip binding + odometer + review workflow
         new("dvir_reports", "trip_id",         "BIGINT NULL"),

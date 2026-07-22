@@ -51,7 +51,80 @@ jobs:
       - run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore
       - run: dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj
       - run: dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore
-      # DB-backed suites run in the dedicated SIT environment (isolated Neon branch),
-      # not in unit CI — they require a live connection and write tenant data.
+      # DB-backed suites run in the dedicated integration job below (hermetic Postgres service),
+      # not here — they require a live connection and write tenant data.
       - name: Run unit/source/regression tests
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName!~Postgres&Category!=Integration"
+
+  # Integration / DB-backed suites against a hermetic, disposable Postgres service (never prod).
+  # Targets the DB via OPSTRAX_TEST_DB (TestDb helper). Schema is materialized the way a dev box
+  # builds it: base init SQL + owner migrations, then the app's EnsureAsync at boot.
+  dotnet-integration-tests:
+    runs-on: ubuntu-latest
+    # BLOCKING gate: the full DB-backed suite (94 tests incl. the rating engine money-math) runs
+    # against a hermetic Postgres and must pass. Legacy schema drift that surfaced here has been
+    # reconciled (feature_flags creation, enroll-on-create RLS, ai_recommendations backfills).
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_local
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_local"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
+      PGPASSWORD: zayra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create restricted opstrax_app role
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_app_local'; END IF; END \$\$;"
+      - name: Apply base schema + seeds + owner migrations
+        run: |
+          for f in database/init/001_schema.sql database/init/002_seed.sql database/init/004_jobs_execution.sql; do
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -q -f "$f" || true
+          done
+          for f in $(ls database/migrations/*.sql | sort); do
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -q -f "$f" || true
+          done
+      - name: Build API + tests
+        run: |
+          dotnet build backend-dotnet/Opstrax.Api.csproj
+          dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj
+      - name: Materialize app schema (EnsureAsync via a bounded boot)
+        env:
+          ConnectionStrings__DefaultConnection: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
+          Rls__EnforceTenantContext: "false"
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:8099
+          Jwt__Key: "ci-only-jwt-signing-key-at-least-32-chars-long-000"
+          Telemetry__GatewaySecret: "ci-gateway-secret-at-least-32-characters-long-00"
+        run: |
+          (dotnet run --no-build --project backend-dotnet > /tmp/api_boot.log 2>&1 & echo $! > /tmp/api.pid)
+          # Schema init (all *SchemaService.EnsureAsync) runs during startup and completes BEFORE the
+          # app begins listening — so wait for that signal, not an arbitrary table count (which fired
+          # mid-init and left issued_invoices/ai_action_outcomes uncreated + backfills unapplied).
+          ok=0
+          for i in $(seq 1 90); do
+            if grep -qiE "Now listening on|Application started" /tmp/api_boot.log 2>/dev/null; then ok=1; break; fi
+            if grep -qiE "Unhandled exception|Application startup exception|schema init.*fail" /tmp/api_boot.log 2>/dev/null; then echo "BOOT FAILED:"; tail -40 /tmp/api_boot.log; exit 1; fi
+            sleep 2
+          done
+          sleep 8   # grace for any trailing ensure step
+          kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
+          [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
+          echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -c "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO opstrax_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO opstrax_app;" || true
+      - name: Run DB-backed integration suites
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"

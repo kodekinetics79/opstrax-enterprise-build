@@ -106,10 +106,20 @@ export function PredictiveAnalyticsPage() {
           <p className="text-sm text-slate-500 mt-0.5">Predictive risk scoring for maintenance, driver safety, and SLA performance</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5">
-            <Bot className="h-3.5 w-3.5 text-violet-600" />
-            <span className="text-xs font-semibold text-violet-700">ML Models Active</span>
-          </div>
+          {(() => {
+            // Honest status: reflect whether real risk signals are present rather than asserting
+            // running ML models. These feeds are rule-based risk scoring, not a trained model.
+            const signals = maintenance.length + driverRisk.length + slaRisk.length;
+            const active = signals > 0;
+            return (
+              <div className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 ${active ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"}`}>
+                <Bot className={`h-3.5 w-3.5 ${active ? "text-violet-600" : "text-slate-400"}`} />
+                <span className={`text-xs font-semibold ${active ? "text-violet-700" : "text-slate-500"}`}>
+                  {active ? `Risk scoring · ${signals} active` : "Preview — no active risk signals"}
+                </span>
+              </div>
+            );
+          })()}
           <button type="button" className="btn-secondary flex items-center gap-2 text-sm" onClick={handleExport}>
             <Download className="h-4 w-4" />Export All Risks
           </button>
@@ -123,7 +133,7 @@ export function PredictiveAnalyticsPage() {
           { label: "Maintenance Alerts",  value: `${criticalMaint} Critical`,                        icon: <Wrench className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "Drivers at Risk",     value: `${urgentDrivers} Urgent`,                          icon: <Shield className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "SLA Breach Risk",     value: `${highSlaRisk} High Risk`,                         icon: <Clock className="h-5 w-5" />,      accent: "text-red-700",   bg: "bg-red-50" },
-          { label: "Avg ML Confidence",   value: `${avgConfidence}%`,                                icon: <Activity className="h-5 w-5" />,   accent: "text-violet-700",bg: "bg-violet-50" },
+          { label: "Avg Confidence",       value: (maintenance.length + driverRisk.length + slaRisk.length) > 0 ? `${avgConfidence}%` : "—", icon: <Activity className="h-5 w-5" />, accent: "text-violet-700",bg: "bg-violet-50" },
         ].map((k) => (
           <div key={k.label} className="panel flex items-start gap-3 p-4">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${k.bg} ${k.accent}`}>

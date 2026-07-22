@@ -88,6 +88,9 @@ builder.Services.AddRateLimiter(options =>
 
     static bool IsLogin(PathString path) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        // Second-factor completion shares the strict login bucket — a leaked challenge token
+        // is code-guessable, so it must be rate-limited like a password attempt.
+        path.Equals("/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
         // Identifier-first SSO discovery is the entry point to every login, so it
         // shares the strict login rate-limit bucket (domain-harvesting burns the
         // same budget as password guessing).
@@ -186,6 +189,7 @@ builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>
 // Server-side Google Maps (geocoding/routing) using the tenant's stored Maps key.
 // Map tiles stay on free Leaflet; Google is used only where it adds capability.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GoogleMapsService>();
+builder.Services.AddSingleton<CoreSchemaService>();
 builder.Services.AddSingleton<Batch1SchemaService>();
 builder.Services.AddSingleton<Batch2SchemaService>();
 builder.Services.AddSingleton<Batch3SchemaService>();
@@ -212,6 +216,9 @@ builder.Services.AddSingleton<TelemetryLiveStateService>();
 builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<CustomerPortalService>();
+// Computes customers' SLA health / delivery experience / risk from real delivery history
+// (jobs, POD, feedback, invoices). Replaces the hardcoded 94/92/18 scores.
+builder.Services.AddScoped<CustomerHealthService>();
 builder.Services.AddScoped<DemoTenantSeeder>();
 builder.Services.AddScoped<OpsMetricsService>();
 builder.Services.AddSingleton<FoundationSchemaService>();
@@ -221,8 +228,37 @@ builder.Services.AddSingleton<BusinessSpineSchemaService>();
 builder.Services.AddSingleton<CommercialFoundationSchemaService>();
 builder.Services.AddSingleton<RevenueReadinessSchemaService>();
 builder.Services.AddSingleton<FinanceActivationSchemaService>();
+builder.Services.AddSingleton<SettlementSchemaService>();
+builder.Services.AddSingleton<TaxSchemaService>();
+builder.Services.AddSingleton<BillingProfileSchemaService>();
+builder.Services.AddSingleton<RevenueRecognitionSchemaService>();
+builder.Services.AddSingleton<FinancialConfigSchemaService>();
+builder.Services.AddSingleton<GeneralLedgerSchemaService>();
+builder.Services.AddSingleton<GeneralLedgerService>();
+builder.Services.AddSingleton<GeneralLedgerPeriodSchemaService>();
+builder.Services.AddSingleton<GeneralLedgerPeriodService>();
+builder.Services.AddSingleton<GeneralLedgerExportService>();
+builder.Services.AddSingleton<DetentionSchemaService>();
+builder.Services.AddSingleton<DetentionReviewService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
+builder.Services.AddSingleton<RatingService>();
+builder.Services.AddSingleton<SettlementService>();
+builder.Services.AddSingleton<TaxService>();
+builder.Services.AddSingleton<BillingConsolidationService>();
+builder.Services.AddSingleton<RevenueRecognitionService>();
+builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedRecognitionHandler>();
+// Fan-out sibling on the same invoice.issued event: auto-post the invoice to the general ledger.
+builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedGeneralLedgerHandler>();
+// AP -> GL: accrue the payable on settlement approval, relieve it on payment.
+builder.Services.AddSingleton<IOutboxMessageHandler, SettlementApprovedGlPostingHandler>();
+builder.Services.AddSingleton<IOutboxMessageHandler, SettlementPaymentGlPostingHandler>();
+// AR credit notes: maker-checker corrections against issued invoices; GL reversal on issue.
+builder.Services.AddSingleton<CreditNoteService>();
+builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedgerHandler>();
+// Detention: real email delivery for the pre-expiry 'meter running' notice.
+builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
+builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
 builder.Services.AddSingleton<Stage9OperationalFoundationService>();
@@ -241,6 +277,7 @@ var outboxDispatcherOptions = builder.Configuration.GetSection("OutboxDispatcher
 builder.Services.AddSingleton(outboxDispatcherOptions);
 builder.Services.AddSingleton<IEventProcessingLogService, PostgresEventProcessingLogService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, FoundationSmokeRequestedHandler>();
+builder.Services.AddSingleton<IOutboxMessageHandler, JobDeliveredBillingHandler>();
 builder.Services.AddSingleton<IOutboxMessageHandlerRegistry, OutboxMessageHandlerRegistry>();
 builder.Services.AddSingleton<IOutboxDispatcher, PostgresOutboxDispatcher>();
 if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || outboxDispatcherOptions.AllowProduction))
@@ -267,6 +304,7 @@ builder.Services.AddScoped<ZatcaService>();
 builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
 builder.Services.AddScoped<FeatureFlagService>();
+builder.Services.AddSingleton<RolePermissionReconciler>();
 // Market-pack engine (Canada/NA + Saudi/GCC) — regional capability + compliance
 builder.Services.AddSingleton<MarketPackSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
@@ -276,6 +314,8 @@ builder.Services.AddSingleton<FleetTmsColdChainSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainFoundationSchemaService>();
 builder.Services.AddSingleton<FleetTmsColdChainFoundationService>();
 builder.Services.AddSingleton<FleetTmsLogisticsSchemaService>();
+builder.Services.AddSingleton<FeatureFlagSchemaService>();
+builder.Services.AddSingleton<RlsReconciliationSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
 builder.Services.AddScoped<SecurityEventService>();
@@ -289,6 +329,8 @@ builder.Services.AddScoped<PasswordPolicyService>();
 builder.Services.AddHostedService<TelemetryBackgroundService>();
 builder.Services.AddHostedService<TelemetrySimulatorBackgroundService>();
 builder.Services.AddHostedService<SafetyBackgroundService>();
+// Automatic third-party position sync (Samsara overlay -> continuous positions -> detention).
+builder.Services.AddHostedService<ConnectorSyncBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
@@ -360,8 +402,20 @@ using (var scope = app.Services.CreateScope())
     var runSchemaInit = await ShouldRunSchemaInitAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
     if (runSchemaInit)
     {
+    await RunSchemaStep(app, "Core", () => scope.ServiceProvider.GetRequiredService<CoreSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch1", () => scope.ServiceProvider.GetRequiredService<Batch1SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch2", () => scope.ServiceProvider.GetRequiredService<Batch2SchemaService>().EnsureAsync());
+    // Secure customer-ETA tracking token (breach-class P0 fix): the public /api/customer-eta/track
+    // endpoint must key on an unguessable 256-bit secret, never the enumerable jobs.tracking_code.
+    // Add the column, enforce uniqueness, and disable every legacy link that has no secure token so
+    // the old 'ETA-JOB-xxxx' / 'B2ETA-xxxx' codes stop resolving. Idempotent; safe to re-run.
+    await RunSchemaStep(app, "CustomerEtaSecureToken", async () =>
+    {
+        var etaDb = scope.ServiceProvider.GetRequiredService<Database>();
+        await etaDb.ExecuteAsync("ALTER TABLE customer_eta_links ADD COLUMN IF NOT EXISTS secure_token VARCHAR(80) NULL");
+        await etaDb.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_customer_eta_links_secure_token ON customer_eta_links (secure_token) WHERE secure_token IS NOT NULL");
+        await etaDb.ExecuteAsync("UPDATE customer_eta_links SET public_status='Disabled' WHERE secure_token IS NULL AND public_status <> 'Disabled'");
+    });
     await RunSchemaStep(app, "Batch3", () => scope.ServiceProvider.GetRequiredService<Batch3SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch4", () => scope.ServiceProvider.GetRequiredService<Batch4SchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Batch5", () => scope.ServiceProvider.GetRequiredService<Batch5SchemaService>().EnsureAsync());
@@ -392,11 +446,43 @@ using (var scope = app.Services.CreateScope())
     {
         await RunSchemaStep(app, "FinanceActivation", () => scope.ServiceProvider.GetRequiredService<FinanceActivationSchemaService>().EnsureAsync());
     }
+    var settlementSchemaEnabled = builder.Configuration.GetValue("SettlementSchema:Enabled", !app.Environment.IsProduction());
+    if (settlementSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Settlement", () => scope.ServiceProvider.GetRequiredService<SettlementSchemaService>().EnsureAsync());
+    }
+    var taxSchemaEnabled = builder.Configuration.GetValue("TaxSchema:Enabled", !app.Environment.IsProduction());
+    if (taxSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Tax", () => scope.ServiceProvider.GetRequiredService<TaxSchemaService>().EnsureAsync());
+    }
+    var billingSchemaEnabled = builder.Configuration.GetValue("BillingSchema:Enabled", !app.Environment.IsProduction());
+    if (billingSchemaEnabled)
+    {
+        await RunSchemaStep(app, "Billing", () => scope.ServiceProvider.GetRequiredService<BillingProfileSchemaService>().EnsureAsync());
+    }
+    var revrecSchemaEnabled = builder.Configuration.GetValue("RevRecSchema:Enabled", !app.Environment.IsProduction());
+    if (revrecSchemaEnabled)
+    {
+        await RunSchemaStep(app, "RevRec", () => scope.ServiceProvider.GetRequiredService<RevenueRecognitionSchemaService>().EnsureAsync());
+    }
+    var finConfigSchemaEnabled = builder.Configuration.GetValue("FinConfigSchema:Enabled", !app.Environment.IsProduction());
+    if (finConfigSchemaEnabled)
+    {
+        await RunSchemaStep(app, "FinConfig", () => scope.ServiceProvider.GetRequiredService<FinancialConfigSchemaService>().EnsureAsync());
+    }
+    var glSchemaEnabled = builder.Configuration.GetValue("GeneralLedgerSchema:Enabled", !app.Environment.IsProduction());
+    if (glSchemaEnabled)
+    {
+        await RunSchemaStep(app, "GeneralLedger", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerSchemaService>().EnsureAsync());
+        await RunSchemaStep(app, "GeneralLedgerPeriods", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerPeriodSchemaService>().EnsureAsync());
+    }
     var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
     if (stage9SchemaEnabled)
     {
         await RunSchemaStep(app, "Stage9", () => scope.ServiceProvider.GetRequiredService<Stage9SchemaService>().EnsureAsync());
     }
+    await RunSchemaStep(app, "FeatureFlags",       () => scope.ServiceProvider.GetRequiredService<FeatureFlagSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "TenantApi",         () => scope.ServiceProvider.GetRequiredService<TenantApiSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
@@ -410,12 +496,28 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "FleetTmsLogistics",  () => scope.ServiceProvider.GetRequiredService<FleetTmsLogisticsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsSeed",        () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.FleetTmsSeeder>().EnsureAsync());
     await RunSchemaStep(app, "MarketPackSeed",      () => scope.ServiceProvider.GetRequiredService<Opstrax.Api.Seed.MarketPackSeeder>().EnsureAsync());
+    // MUST run LAST: enrolls every tenant-scoped table created above (feature_flags and
+    // any table added by a later schema service) into RLS + FORCE, closing the coverage
+    // gap the point-in-time Stage 19/22 migrations cannot cover for boot-created tables.
+    await RunSchemaStep(app, "Detention",           () => scope.ServiceProvider.GetRequiredService<DetentionSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "RlsReconciliation",   () => scope.ServiceProvider.GetRequiredService<RlsReconciliationSchemaService>().EnsureAsync());
     }
     else
     {
         app.Logger.LogWarning("Schema init SKIPPED — runtime is connected as the restricted role under RLS enforcement. " +
             "Ensure migrations/seeders have been applied out-of-band by the DB owner.");
     }
+}
+
+// Built-in role permissions are reconciled from RolePermissionDefaults on EVERY boot,
+// deliberately OUTSIDE the schema-init gate above. This is DML, not DDL, so the restricted
+// `opstrax_app` role can run it — which matters because production is exactly the
+// environment where schema init is skipped, and exactly where the drift this repairs
+// (the Driver role missing `driver:self`, locking every driver out of the driver portal)
+// was fatal. Additive and idempotent; see RolePermissionReconciler for the full rationale.
+using (var scope = app.Services.CreateScope())
+{
+    await scope.ServiceProvider.GetRequiredService<RolePermissionReconciler>().ReconcileAsync();
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
@@ -472,6 +574,9 @@ app.UseWhen(
                 finally { scopes.Current = null; }
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                // Second-factor login completion is pre-session too: it validates a challenge, reads
+                // users/user_mfa_status and mints a session with no prior tenant context, like login.
+                string.Equals(path, "/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
                 // Pre-login SSO discovery: no tenant context exists at email-entry
                 // time, so it reads the RLS-forced sso_connections table under the
                 // platform-admin bypass scope, exactly like /api/auth/login.
@@ -505,7 +610,10 @@ app.UseWhen(
                  path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||
                 // Fleet TMS public shipment tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                 path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)))
+                 path.StartsWith("/api/public/shipments/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Detention evidence page — the no-login artifact an AP clerk verifies; token-scoped, expiring, revocable
+                (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/public/detention/evidence/", StringComparison.OrdinalIgnoreCase)))
             {
                 await InvokeUnderBypassAsync();
                 return;
@@ -586,33 +694,22 @@ app.UseWhen(
             var roleName = session["roleName"]?.ToString() ?? string.Empty;
             var roleId = session.TryGetValue("roleId", out var rid) && rid is not null && rid is not DBNull ? Convert.ToInt64(rid) : 0;
 
-            // Role membership is authoritative. Legacy user-level JSON is consulted
-            // only for accounts without a role, so removed role grants cannot linger.
-            var permissions = (roleId > 0
-                    ? ParsePermissions(session.GetValueOrDefault("rolePermissionsJson"))
-                    : ParsePermissions(session.GetValueOrDefault("permissionsJson")))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (roleId > 0)
-            {
-                var rows = await db.QueryAsync(
-                    "SELECT permission_key FROM role_permissions WHERE role_id=@roleId",
-                    c => c.Parameters.AddWithValue("@roleId", roleId));
-                foreach (var row in rows)
-                {
-                    var key = row.GetValueOrDefault("permissionKey")?.ToString();
-                    if (!string.IsNullOrWhiteSpace(key))
-                    {
-                        permissions.Add(key.Trim());
-                    }
-                }
-            }
-
-            if (permissions.Count == 0 &&
-                EndpointMappings.RolePermissionDefaults.TryGetValue(roleName, out var defaultPermissions))
-            {
-                permissions.UnionWith(defaultPermissions);
-            }
+            // Role membership is authoritative. Legacy user-level JSON is consulted only for
+            // accounts without a role, so removed role grants cannot linger.
+            //
+            // This calls the SAME resolver as the login endpoint. It previously duplicated the
+            // logic, and the two copies had drifted into opposite precedence — login answered
+            // from users.permissions_json, this answered from the role — so the SPA could be
+            // told it had permissions the API would then deny (and vice versa). One resolver,
+            // one answer. Do not re-inline this.
+            var permissionSet = await EndpointMappings.ResolveEffectivePermissionsAsync(
+                roleId,
+                roleName,
+                session.GetValueOrDefault("rolePermissionsJson"),
+                session.GetValueOrDefault("permissionsJson"),
+                db,
+                context.RequestAborted);
+            var permissions = permissionSet.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
@@ -880,59 +977,18 @@ app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapRevenueEndpoints();
 app.MapRevenueReadinessEndpoints();
+app.MapRatingEndpoints();
+app.MapSettlementEndpoints();
+app.MapTaxEndpoints();
+app.MapBillingEndpoints();
+app.MapRevenueRecognitionEndpoints();
+app.MapFinancialConfigEndpoints();
 app.MapCustomerPortalEndpoints();
 app.MapDevSeedEndpoints();
 app.MapMarketPackEndpoints();
 app.MapSafetyMaintenanceFoundationEndpoints();
 
 app.Run();
-
-static IEnumerable<string> ParsePermissions(object? source)
-{
-    if (source is null or DBNull) yield break;
-
-    if (source is byte[] bytes)
-    {
-        source = System.Text.Encoding.UTF8.GetString(bytes);
-    }
-
-    if (source is JsonElement json)
-    {
-        if (json.ValueKind != JsonValueKind.Array) yield break;
-        foreach (var item in json.EnumerateArray())
-        {
-            var key = item.GetString();
-            if (!string.IsNullOrWhiteSpace(key)) yield return key.Trim();
-        }
-        yield break;
-    }
-
-    if (source is string str && !string.IsNullOrWhiteSpace(str))
-    {
-        str = str.Trim();
-        if (str.StartsWith("[", StringComparison.Ordinal))
-        {
-            List<string>? values = null;
-            try
-            {
-                values = JsonSerializer.Deserialize<List<string>>(str);
-            }
-            catch
-            {
-                yield break;
-            }
-
-            if (values is null) yield break;
-            foreach (var value in values.Where(v => !string.IsNullOrWhiteSpace(v)))
-            {
-                yield return value.Trim();
-            }
-            yield break;
-        }
-
-        yield return str;
-    }
-}
 
 // Maps an /api/* request path to the entitlement module_key that gates it.
 // Returns null for paths that are not entitlement-gated (always allowed).

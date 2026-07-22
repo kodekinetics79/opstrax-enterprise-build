@@ -16,13 +16,11 @@ namespace Opstrax.Tests;
 // like the other DB-backed integration tests; it runs locally against :5433.
 public class RlsTenantIsolationPostgresTests
 {
-    private const string OwnerConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string OwnerConnectionString = TestDb.ConnectionString;
 
     // Restricted app role created by 2026_06_30_stage20_rls_force_and_app_role.sql.
     // Local-only test password (set out-of-band via ALTER ROLE; not a production secret).
-    private const string AppConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_app;Password=opstrax_app_local";
+    private static readonly string AppConnectionString = TestDb.AppConnectionString;
 
     private const long TenantA = 910001;
     private const long TenantB = 910002;

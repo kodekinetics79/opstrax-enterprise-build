@@ -63,6 +63,12 @@ const MaintenancePlanningPage = lazy(() => import("@/pages/MaintenancePlanningPa
 const MaintenanceCommandPage = lazy(() => import("@/pages/MaintenanceCommandPage").then((module) => ({ default: module.MaintenanceCommandPage })));
 const CustomerVisibilityPage = lazy(() => import("@/pages/CustomerVisibilityPage").then((module) => ({ default: module.CustomerVisibilityPage })));
 const FinancialAnalyticsPage = lazy(() => import("@/pages/FinancialAnalyticsPage").then((module) => ({ default: module.FinancialAnalyticsPage })));
+const TaxAdminPage = lazy(() => import("@/pages/TaxAdminPage").then((module) => ({ default: module.TaxAdminPage })));
+const BillingConsolidationPage = lazy(() => import("@/pages/BillingConsolidationPage").then((m) => ({ default: m.BillingConsolidationPage })));
+const SettlementPage = lazy(() => import("@/pages/SettlementPage").then((m) => ({ default: m.SettlementPage })));
+const RevenueRecognitionPage = lazy(() => import("@/pages/RevenueRecognitionPage").then((m) => ({ default: m.RevenueRecognitionPage })));
+const DetentionPage = lazy(() => import("@/pages/DetentionPage").then((m) => ({ default: m.DetentionPage })));
+const DetentionEvidencePage = lazy(() => import("@/pages/DetentionEvidencePage").then((m) => ({ default: m.DetentionEvidencePage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
@@ -77,6 +83,8 @@ const HosEldPage = lazy(() => import("@/pages/HosEldPage").then((module) => ({ d
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ControlTowerPage = lazy(() => import("@/pages/ControlTowerPage").then((module) => ({ default: module.ControlTowerPage })));
 const LiveMapPage = lazy(() => import("@/pages/LiveMapPage").then((module) => ({ default: module.LiveMapPage })));
+const FleetLiveWallPage = lazy(() => import("@/pages/FleetLiveWallPage").then((module) => ({ default: module.FleetLiveWallPage })));
+const VehicleLiveMonitorPage = lazy(() => import("@/pages/VehicleLiveMonitorPage").then((module) => ({ default: module.VehicleLiveMonitorPage })));
 const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.CustomerEtaPage })));
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const FleetWorkspacePage = lazy(() => import("@/pages/FleetWorkspacePage").then((module) => ({ default: module.FleetWorkspacePage })));
@@ -170,6 +178,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
+        <Route path="/evidence/:token" element={<DetentionEvidencePage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
         {/* The driver portal is a SEPARATE shell from ProtectedShell, so it needs its own
@@ -194,6 +203,8 @@ export default function App() {
         <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
         <Route path="/map-view" element={<RequirePermission permission="telemetry.live_state.read"><LiveMapPage /></RequirePermission>} />
+        <Route path="/fleet/live-wall" element={<RequirePermission permission="telemetry.live_state.read"><FleetLiveWallPage /></RequirePermission>} />
+        <Route path="/vehicles/:id/live" element={<RequirePermission permission="telemetry.live_state.read"><VehicleLiveMonitorPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
         <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
         <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
@@ -293,6 +304,11 @@ export default function App() {
         <Route path="/ar-aging"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/payments"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/profitability" element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
+        <Route path="/finance/tax-config" element={<RequirePermission permission="tax.read"><TaxAdminPage /></RequirePermission>} />
+        <Route path="/finance/billing" element={<RequirePermission permission="billing.read"><BillingConsolidationPage /></RequirePermission>} />
+        <Route path="/finance/settlements" element={<RequirePermission permission="settlement.read"><SettlementPage /></RequirePermission>} />
+        <Route path="/finance/revenue-recognition" element={<RequirePermission permission="revrec.read"><RevenueRecognitionPage /></RequirePermission>} />
+        <Route path="/detention" element={<RequirePermission permission="finance:view"><DetentionPage /></RequirePermission>} />
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
@@ -339,12 +355,12 @@ export default function App() {
         {/* ── Remaining module routes (permission from moduleConfig) ── */}
           {modules
             .filter((module) => ![
-              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","alerts-center",
+              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","fleet-live-wall","alerts-center",
               "dispatch","dispatch-board","vehicles","drivers","jobs","route-planning","routes","iot-devices","gps-tracking","obd-j1939","sensor-health","cold-chain",
               "customer-portal","customer-eta","maintenance","work-orders","dvir-inspections","documents",
               "safety","dashcam","coaching","incidents","evidence-packages","customers","assets",
               "ai-copilot","predictive-analytics","fuel-idling","expenses","contracts-rates","carrier-management","predictive-margin",
-              "cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
+              "tax-config","billing-consolidation","driver-pay","revenue-recognition","cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
               "executive","about","reports","shipments","load-bookings","route-plans","proof-of-delivery",
               "last-mile-delivery","leads","sales-pipeline","opportunities","campaigns","account-health",
               "follow-ups","support-tickets","renewals","upsell-opportunities","contracts","rate-cards",

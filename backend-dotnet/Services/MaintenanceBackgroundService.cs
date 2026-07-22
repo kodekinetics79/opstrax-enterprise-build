@@ -87,7 +87,10 @@ public sealed class MaintenanceBackgroundService(
                             AND mi.status IN ('Completed','Closed') LIMIT 1) AS last_service_at,
                          (SELECT MAX(mi.odometer_miles) FROM maintenance_items mi
                           WHERE mi.vehicle_id=v.id AND mi.service_type=@stype
-                            AND mi.status IN ('Completed','Closed') LIMIT 1) AS last_service_odo
+                            AND mi.status IN ('Completed','Closed') LIMIT 1) AS last_service_odo,
+                         (SELECT MAX(mi.engine_hours) FROM maintenance_items mi
+                          WHERE mi.vehicle_id=v.id AND mi.service_type=@stype
+                            AND mi.status IN ('Completed','Closed') LIMIT 1) AS last_service_hrs
                   FROM vehicles v
                   WHERE v.company_id=@cid AND v.deleted_at IS NULL
                     AND (CAST(@vclass AS TEXT) IS NULL OR v.type=CAST(@vclass AS TEXT))",
@@ -105,6 +108,7 @@ public sealed class MaintenanceBackgroundService(
                 var engineHrs   = v["engineHours"]     is null ? (decimal?)null : Convert.ToDecimal(v["engineHours"]);
                 var lastSvcAt   = v["lastServiceAt"]   is null ? (DateTime?)null : Convert.ToDateTime(v["lastServiceAt"]);
                 var lastSvcOdo  = v["lastServiceOdo"]  is null ? (decimal?)null : Convert.ToDecimal(v["lastServiceOdo"]);
+                var lastSvcHrs  = v["lastServiceHrs"]  is null ? (decimal?)null : Convert.ToDecimal(v["lastServiceHrs"]);
 
                 bool isDue = false;
                 bool isOverdue = false;
@@ -125,7 +129,7 @@ public sealed class MaintenanceBackgroundService(
                 {
                     var interval   = Convert.ToInt32(rule["intervalEngineHours"]);
                     var warnPct    = Convert.ToInt32(rule["warningThresholdPct"] ?? 10);
-                    var nextDueHrs = (lastSvcAt.HasValue ? 0 : 0) + interval;
+                    var nextDueHrs = (lastSvcHrs ?? 0m) + interval;
                     var warnHrs    = nextDueHrs - (interval * warnPct / 100m);
 
                     if (engineHrs >= nextDueHrs) { isOverdue = true; dueReason = $"Engine hours {engineHrs:N1} >= due at {nextDueHrs:N0}"; }
@@ -183,7 +187,16 @@ public sealed class MaintenanceBackgroundService(
                     }, ct);
 
                 log.LogInformation("[MaintBgSvc] PM item {Id} created: {ServiceType} for vehicle {VehicleId} ({Reason})", itemId, serviceType, vehicleId, dueReason);
-                await CreateMaintenanceRecommendationAsync(companyId, itemId, vehicleId, serviceType, status, dueReason, ct);
+                // Best-effort AI enrichment: a recommendation failure must not abort evaluation of the
+                // remaining vehicles/rules in this tick (the PM item is already persisted above).
+                try
+                {
+                    await CreateMaintenanceRecommendationAsync(companyId, itemId, vehicleId, serviceType, status, dueReason, ct);
+                }
+                catch (Exception recEx)
+                {
+                    log.LogWarning(recEx, "[MaintBgSvc] PM recommendation enrichment failed for item {Id}; the maintenance item was still recorded", itemId);
+                }
             }
         }
     }

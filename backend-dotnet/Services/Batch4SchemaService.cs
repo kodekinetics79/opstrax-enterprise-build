@@ -2,14 +2,20 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch4SchemaService(Database db)
+public sealed class Batch4SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var column in Columns) await EnsureColumnAsync(column.Table, column.Name, column.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
+        // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
+        // These used to run on EVERY boot, inventing safety events / contracts / invoices /
+        // SLA + cost records that the product then presented as fact. Now they require the
+        // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
+        // schema only.
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -177,7 +183,7 @@ public sealed class Batch4SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS ix_b4_insurance_reports ON insurance_reports(company_id, report_number, status)"
     ];
 
-    private static readonly string[] Seeds =
+    private static readonly string[] DemoSeeds =
     [
         @"UPDATE safety_events SET event_number=COALESCE(event_number, 'SAFE-' || LPAD(id::TEXT,5,'0')), occurred_at=COALESCE(occurred_at,event_time), location_description=COALESCE(location_description, (ARRAY['Manassas Yard','Woodbridge I-95','Alexandria Medical Zone','Dulles Toll Road','Fairfax Delivery Zone','Arlington Urban Core','Washington DC Service Zone'])[(id%7)+1]), coaching_status=CASE WHEN status='Coaching Assigned' THEN 'Created' ELSE coaching_status END, incident_status=CASE WHEN severity='Critical' THEN 'Open' ELSE incident_status END, risk_score=CASE WHEN risk_score=35 THEN CASE WHEN severity='Critical' THEN 90 WHEN severity='High' THEN 72 ELSE 22+(id%30) END ELSE risk_score END, ai_summary=COALESCE(ai_summary,'OpsTrax AI detected a safety signal requiring review.'), recommended_action=COALESCE(recommended_action, CASE WHEN severity IN ('High','Critical') THEN 'Review and create coaching task' ELSE 'Review event evidence' END)",
         @"UPDATE dashcam_events SET event_number=COALESCE(event_number, 'VID-' || LPAD(id::TEXT,5,'0')), event_type=COALESCE(event_type,title), occurred_at=COALESCE(occurred_at,event_time), driver_id=COALESCE(driver_id, ((id-1)%20)+1), vehicle_id=COALESCE(vehicle_id, ((id-1)%20)+1), location_description=COALESCE(location_description,'Northern Virginia corridor'), thumbnail_url=COALESCE(thumbnail_url,'/placeholder/dashcam-thumb.jpg'), road_facing_clip_url=COALESCE(road_facing_clip_url,'/placeholder/road-facing.mp4'), driver_facing_clip_url=COALESCE(driver_facing_clip_url,'/placeholder/driver-facing.mp4'), ai_summary=COALESCE(ai_summary,'AI dashcam placeholder summary with driver behavior, road context and exoneration signals.'), review_status=COALESCE(review_status,'Pending Review'), recommended_action=COALESCE(recommended_action,'Review video and determine coaching/evidence path')",

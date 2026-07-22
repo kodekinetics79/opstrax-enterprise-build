@@ -1,13 +1,10 @@
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8088";
+import { apiClient, unwrap } from "./apiClient";
+import type { AnyRecord } from "@/types";
 
-async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
-  if (!r.ok) throw new Error(`${r.status} ${path}`);
-  const json = await r.json();
-  return json.data ?? json;
-}
-
+// Uses the shared authenticated client: /api/about/* sits behind the bearer
+// middleware, and apiClient carries the token plus the real base-URL env vars
+// (a raw fetch with VITE_API_URL pointed every deployed build at localhost).
 export const aboutApi = {
-  platform:      () => get("/api/about/platform"),
-  healthSummary: () => get("/api/about/health-summary"),
+  platform:      (): Promise<AnyRecord> => unwrap<AnyRecord>(apiClient.get("/api/about/platform")),
+  healthSummary: (): Promise<AnyRecord> => unwrap<AnyRecord>(apiClient.get("/api/about/health-summary")),
 };

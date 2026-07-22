@@ -62,7 +62,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         var correlation = new InMemoryCorrelationContext($"demo-{Guid.NewGuid():N}", $"demo-cause-{Guid.NewGuid():N}", $"demo-req-{Guid.NewGuid():N}", companyId.ToString(), ActorTypes.TenantUser, "1");
         var spine = new BusinessSpineService(db);
         var approval = new PostgresApprovalWorkflowService(db, correlation);
-        var revenue = new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), approval, new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation);
+        var revenue = new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), approval, new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation, new TaxService(db));
         var portal = new CustomerPortalService(db);
 
         // ── Customers (3) ──

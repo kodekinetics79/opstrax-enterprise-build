@@ -86,7 +86,9 @@ public sealed class TenantIsolationAdversarialTests
 
         AssertOrdered(ingest, "Telemetry:GatewaySecret", "FROM eld_devices");
         AssertOrdered(ingest, "FixedTimeEquals", "FROM eld_devices");
-        Assert.Contains("GpsGatewayReplayCache.TryAdd", ingest, StringComparison.Ordinal);
+        // Replay defense is now the durable, cross-instance guard (TEL-P1-REPLAY-005), not the old
+        // process-local in-memory cache. The reservation is scoped to the resolved device/tenant.
+        Assert.Contains("GpsGatewayReplayGuard.TryReserveDurableAsync", ingest, StringComparison.Ordinal);
         Assert.Contains("var companyId = Convert.ToInt64(device[\"companyId\"]);", ingest, StringComparison.Ordinal);
         Assert.Contains("device[\"vehicleId\"]", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("Str(\"companyId\"", ingest, StringComparison.Ordinal);

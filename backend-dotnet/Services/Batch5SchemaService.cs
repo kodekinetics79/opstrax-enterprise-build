@@ -2,14 +2,20 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch5SchemaService(Database db)
+public sealed class Batch5SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
+        // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
+        // These used to run on EVERY boot, inventing safety events / contracts / invoices /
+        // SLA + cost records that the product then presented as fact. Now they require the
+        // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
+        // schema only.
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -230,7 +236,7 @@ public sealed class Batch5SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS ix_b5_cost_leakage ON cost_leakage_items(company_id, category, severity, status)",
     ];
 
-    private static readonly string[] Seeds =
+    private static readonly string[] DemoSeeds =
     [
         @"UPDATE fuel_transactions
           SET transaction_number = COALESCE(transaction_number, 'FT-' || LPAD(id::TEXT,5,'0')),
@@ -592,6 +598,6 @@ public sealed class Batch5SchemaService(Database db)
             UNION ALL SELECT 'contract.created','Contract',1, NOW() - 4 * INTERVAL '1 hour'
             UNION ALL SELECT 'carrier.created','Carrier',1, NOW() - 5 * INTERVAL '1 hour'
             UNION ALL SELECT 'cost.leakage.detected','CostLeakage',1, NOW() - 6 * INTERVAL '1 hour'
-          ) x WHERE (SELECT COUNT(*) FROM audit_logs WHERE action_name LIKE 'fuel.%' OR action_name LIKE 'expense.%') < 5",
+          ) x WHERE (SELECT COUNT(*) FROM audit_logs WHERE action_name LIKE 'fuel.%' OR action_name LIKE 'expense.%') < 5"
     ];
 }

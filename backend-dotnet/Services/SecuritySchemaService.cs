@@ -125,6 +125,10 @@ public sealed class SecuritySchemaService(Database db)
             )
             """);
 
+        // Encrypted TOTP secret for tenant-user MFA enrollment (mirrors platform_admins.mfa_secret).
+        // Without this, "require MFA" was a login lockout with no enrollment path (audit P0).
+        await db.ExecuteAsync("ALTER TABLE user_mfa_status ADD COLUMN IF NOT EXISTS mfa_secret TEXT NULL");
+
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS security_events (
                 id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -399,6 +403,24 @@ public sealed class SecuritySchemaService(Database db)
         {
             try { await db.ExecuteAsync(col); }
             catch { /* column already exists — safe to ignore */ }
+        }
+
+        // Declared entity relationships for the IAM tables. NOT VALID skips the
+        // backfill scan (and tolerates any legacy orphan rows) while still
+        // enforcing referential integrity for every new write. Duplicate-add
+        // throws, which the catch treats as already-present.
+        foreach (var fk in new[]
+        {
+            "ALTER TABLE user_mfa_status ADD CONSTRAINT fk_mfa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE NOT VALID",
+            "ALTER TABLE sso_connections ADD CONSTRAINT fk_sso_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE access_reviews ADD CONSTRAINT fk_ar_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE access_review_items ADD CONSTRAINT fk_ari_review FOREIGN KEY (review_id) REFERENCES access_reviews(id) ON DELETE CASCADE NOT VALID",
+            "ALTER TABLE access_review_items ADD CONSTRAINT fk_ari_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE company_security_settings ADD CONSTRAINT fk_css_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+        })
+        {
+            try { await db.ExecuteAsync(fk); }
+            catch { /* constraint already exists — safe to ignore */ }
         }
 
         // Seed default compliance controls if none exist

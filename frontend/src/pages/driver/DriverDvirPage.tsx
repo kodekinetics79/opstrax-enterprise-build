@@ -48,17 +48,31 @@ export function DriverDvirPage() {
     queryFn: driverApi.dvirTemplates,
   });
 
-  // The driver's own vehicles, derived from their assignments — a real picker
-  // instead of asking a driver to type a numeric vehicle id.
+  // The driver's own vehicles — a real picker instead of asking a driver to type a numeric
+  // vehicle id (a primary key they have no way of knowing).
+  //
+  // Sourced from BOTH the driver's permanently-assigned vehicle (/driver/me) and any vehicle
+  // on an active assignment. Assignments alone are not enough: a pre-trip inspection happens
+  // BEFORE accepting a load, which is the single most common DVIR in a real fleet, and a
+  // driver with no active assignment was dropped to a free-text "Vehicle ID" box — a dead end.
+  const meQ = useQuery<AnyRecord>({ queryKey: ["driver", "me"], queryFn: driverApi.me });
   const assignmentsQ = useQuery<AnyRecord[]>({ queryKey: ["driver", "assignments"], queryFn: driverApi.assignments });
   const vehicles = useMemo(() => {
     const map = new Map<string, string>();
+
+    const me = meQ.data as AnyRecord | undefined;
+    const driver = (me?.["driver"] ?? me) as AnyRecord | undefined;
+    const myVid = driver?.["vehicleId"] ?? driver?.["vehicle_id"];
+    if (myVid != null && myVid !== "") {
+      map.set(String(myVid), String(driver?.["vehicleCode"] ?? driver?.["vehicle_code"] ?? myVid));
+    }
+
     for (const a of assignmentsQ.data ?? []) {
       const vid = a["vehicleId"] ?? a["vehicle_id"];
       if (vid != null && vid !== "") map.set(String(vid), String(a["vehicleCode"] ?? a["vehicle_code"] ?? vid));
     }
     return [...map.entries()].map(([id, code]) => ({ id, code }));
-  }, [assignmentsQ.data]);
+  }, [meQ.data, assignmentsQ.data]);
 
   const submitMut = useMutation({
     mutationFn: driverApi.submitDvir,

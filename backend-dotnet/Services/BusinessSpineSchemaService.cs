@@ -106,6 +106,15 @@ public sealed class BusinessSpineSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_job_charges_company_job_status ON job_charges (company_id, job_id, status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_job_charges_company_trip ON job_charges (company_id, trip_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_job_charges_company_rate_card ON job_charges (company_id, rate_card_id, status)",
+        // Rating-engine seam (ADR-008 P0): distinguish machine-computed charges from hand-keyed
+        // ones so re-rating is idempotent and never destroys a manual override. ALTER (not just the
+        // CREATE) so an existing job_charges table is backfilled, not skipped.
+        "ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'manual'",
+        "ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS rate_basis VARCHAR(40) NULL",
+        "ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS rated_at TIMESTAMPTZ NULL",
+        // One rating-owned charge per (job, charge_type): makes delete-and-recompute a no-op on
+        // unchanged inputs and a concurrent double-commit throw instead of duplicating.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_rated ON job_charges (company_id, job_id, charge_type) WHERE source = 'rating'",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS rate_card_id BIGINT NULL",
         "ALTER TABLE trips ADD COLUMN IF NOT EXISTS trip_number VARCHAR(60) NULL",
         "ALTER TABLE trip_stops ADD COLUMN IF NOT EXISTS address_id BIGINT NULL",

@@ -22,6 +22,19 @@ export type VehiclePosition = {
   secondsSincePing: number | null;
   isStale: boolean;
   address: string | null;
+  // ── Provenance & trust (all OPTIONAL) ──────────────────────────────────────
+  // Added by TelemetrySchemaService / telematics migration 001 on
+  // latest_vehicle_positions. In production the app runs as a restricted role
+  // that skips startup schema init, so the API may omit these entirely until the
+  // migration is applied. Every field is therefore nullable and every consumer
+  // treats absence gracefully (missing source ⇒ "unknown"). NEVER assume present.
+  source: string | null;            // native_eld | gateway | simulator | partner_api | legacy | seed
+  provider: string | null;          // upstream provider / OEM (e.g. Concox, Samsara)
+  protocol: string | null;          // wire protocol (e.g. GT06, JT808, rest_json)
+  confidence: number | null;        // 0..1 positional confidence
+  deviceFixTime: string | null;     // fix timestamp asserted by the device
+  gatewayReceivedAt: string | null; // when the trusted gateway/forwarder received it
+  freshness: string | null;         // optional server-computed bucket; else derived client-side
 };
 
 
@@ -48,6 +61,17 @@ function toPosition(r: AnyRecord): VehiclePosition {
     secondsSincePing: ssp,
     isStale:          ssp !== null ? ssp > 900 : false,
     address:          r["address"] != null ? String(r["address"]) : null,
+    // Provenance — accept camelCase (API-mapped) or snake_case (raw DB) keys; any
+    // that the API doesn't send stay null and downstream renders a neutral state.
+    source:            r["source"]            != null ? String(r["source"])                              : null,
+    provider:          r["provider"]          != null ? String(r["provider"])                            : null,
+    protocol:          r["protocol"]          != null ? String(r["protocol"])                            : null,
+    confidence:        r["confidence"]        != null ? Number(r["confidence"])                          : null,
+    deviceFixTime:     r["deviceFixTime"]     != null ? String(r["deviceFixTime"])
+                       : r["device_fix_time"] != null ? String(r["device_fix_time"])                     : null,
+    gatewayReceivedAt: r["gatewayReceivedAt"]  != null ? String(r["gatewayReceivedAt"])
+                       : r["gateway_received_at"] != null ? String(r["gateway_received_at"])             : null,
+    freshness:         r["freshness"]         != null ? String(r["freshness"])                           : null,
   };
 }
 

@@ -45,6 +45,16 @@ export const driverApi = {
       evidenceHash?: string;
       lat?: number;
       lng?: number;
+      // POD media captured on the device. These MUST travel in their own field — they used
+      // to be JSON-packed into evidenceHash, which is a VARCHAR(128) on the server, so any
+      // POD with a photo attached blew the column and 500'd. A driver could not confirm a
+      // delivery with proof. Do not fold these back into evidenceHash.
+      artifacts?: Array<{
+        kind: "photo" | "signature";
+        reference: string;
+        contentType?: string;
+        size?: number;
+      }>;
     }
   ) =>
     unwrap<AnyRecord>(
