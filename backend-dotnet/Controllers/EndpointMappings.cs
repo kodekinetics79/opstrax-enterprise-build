@@ -70,6 +70,9 @@ public static partial class EndpointMappings
         app.MapPost("/api/auth/mfa/enroll", TenantMfaEnroll);
         app.MapPost("/api/auth/mfa/verify", TenantMfaVerify);
         app.MapGet("/api/auth/mfa/status", TenantMfaStatus);
+        // Public: completes a two-step login for an MFA-enrolled user (challenge token + TOTP code -> session).
+        app.MapPost("/api/auth/mfa/login-verify", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
+            MfaLoginVerify(http, body, db, audit, ct));
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2620,11 +2623,34 @@ public static partial class EndpointMappings
         {
             await audit.LogAsync(http, "user.login.mfa_required", "User", userId,
                 JsonSerializer.Serialize(new { source = "login", role }), ct);
-            return Results.Json(
-                ApiResponse<object>.Fail(
-                    "Multi-factor authentication required",
-                    "This account cannot receive a session until a configured second factor is verified."),
-                statusCode: StatusCodes.Status403Forbidden);
+
+            // Is a second factor actually enrolled? Only an enrolled user can complete a challenge.
+            var enrolled = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM user_mfa_status WHERE user_id=@id AND mfa_enabled=true AND mfa_secret IS NOT NULL",
+                c => c.Parameters.AddWithValue("@id", userId), ct) > 0;
+
+            if (!enrolled)
+            {
+                // No factor on file: do NOT issue a session, but return an actionable state instead of a
+                // dead lockout. The enrollment path (/api/auth/mfa/enroll) must be completed before MFA is
+                // enforced for the role; an admin can reset if the user is stuck.
+                return Results.Json(
+                    ApiResponse<object>.Fail("MFA enrollment required",
+                        "This account must enrol a second factor before it can sign in under the current policy. Enrol via /api/auth/mfa/enroll (or ask an administrator to reset MFA)."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            // Enrolled: hand back a short-lived signed challenge. No session is issued until the TOTP code
+            // is proven at /api/auth/mfa/login-verify. (MFA is enforced here, before any token/session.)
+            var mfaKey = http.RequestServices.GetRequiredService<IConfiguration>()["Jwt:Key"] ?? "";
+            var challengeToken = Opstrax.Api.Security.MfaChallengeService.Issue(mfaKey, userId, companyId, DateTimeOffset.UtcNow);
+            return Results.Json(ApiResponse<object>.Ok(new
+            {
+                mfaRequired = true,
+                challengeToken,
+                email = user["email"],
+            }, "Enter the 6-digit code from your authenticator to finish signing in."),
+                statusCode: StatusCodes.Status200OK);
         }
 
         await audit.LogAsync(http, "user.login", "User", userId,
@@ -2767,6 +2793,75 @@ public static partial class EndpointMappings
             provider = row?["mfaProvider"]?.ToString(),
             enrolledAt = row?["enrolledAt"],
         }));
+    }
+
+    // POST /api/auth/mfa/login-verify {challengeToken, code} — completes a two-step login for an
+    // MFA-enrolled user: validate the signed challenge, prove the TOTP code, then issue the session.
+    // Public/pre-session (allow-listed in Program.cs + CsrfMiddleware), rate-limited in the login bucket.
+    private static async Task<IResult> MfaLoginVerify(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var challengeToken = body.TryGetValue("challengeToken", out var t0) ? t0?.ToString() : null;
+        var code = body.TryGetValue("code", out var c0) ? c0?.ToString() : null;
+
+        var mfaKey = http.RequestServices.GetRequiredService<IConfiguration>()["Jwt:Key"] ?? "";
+        if (!Opstrax.Api.Security.MfaChallengeService.TryValidate(mfaKey, challengeToken, DateTimeOffset.UtcNow, out var userId, out var companyId))
+            return Results.Json(ApiResponse<object>.Fail("Invalid or expired challenge", "Restart sign-in."), statusCode: StatusCodes.Status401Unauthorized);
+
+        // Reload the user (same shape as Login's success response).
+        var user = await db.QuerySingleAsync(
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.status user_status,
+                     c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency
+              FROM users u JOIN companies c ON c.id = u.company_id
+              WHERE u.id=@id AND u.company_id=@cid LIMIT 1",
+            c => { c.Parameters.AddWithValue("@id", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (user is null)
+            return Results.Json(ApiResponse<object>.Fail("Invalid or expired challenge"), statusCode: StatusCodes.Status401Unauthorized);
+
+        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        http.Items[AuthCompanyIdItemKey] = companyId;
+        http.Items[AuthUserIdItemKey] = userId;
+        http.Items[AuthRoleItemKey] = role;
+
+        // Prove possession of the second factor.
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var secret = pii.Decrypt((await db.QuerySingleAsync(
+            "SELECT mfa_secret FROM user_mfa_status WHERE user_id=@id AND mfa_enabled=true",
+            c => c.Parameters.AddWithValue("@id", userId), ct))?["mfaSecret"]?.ToString());
+        if (string.IsNullOrWhiteSpace(secret) || !Opstrax.Api.Security.TotpService.VerifyCode(secret, code))
+        {
+            await audit.LogAsync(http, "user.login.mfa_failed", "User", userId, JsonSerializer.Serialize(new { source = "login-verify" }), ct: ct);
+            return Results.Json(ApiResponse<object>.Fail("Invalid code"), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        await db.ExecuteAsync("UPDATE user_mfa_status SET last_used_at=NOW(), updated_at=NOW() WHERE user_id=@id",
+            c => c.Parameters.AddWithValue("@id", userId), ct);
+        await audit.LogAsync(http, "user.login", "User", userId, JsonSerializer.Serialize(new { source = "login-verify", mfa = true }), ct: ct);
+
+        var permissions = await ResolvePermissionsAsync(user, db, ct);
+        var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+        var csrfToken = http.Request.Cookies["__CSRF_Token__"] ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        await db.ExecuteAsync(
+            @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
+              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@tok", token); }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            token,
+            csrfToken,
+            user = new { id = user["id"], email = user["email"], name = user["fullName"] },
+            role,
+            company = new
+            {
+                id = companyId,
+                name = user["companyName"],
+                code = user["companyCode"],
+                country = user.GetValueOrDefault("companyCountry"),
+                currency = user.GetValueOrDefault("companyCurrency"),
+            },
+            permissions,
+        }, "Login successful"));
     }
 
     // POST /api/auth/sso/discover — identifier-first login routing hint.

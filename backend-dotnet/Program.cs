@@ -88,6 +88,9 @@ builder.Services.AddRateLimiter(options =>
 
     static bool IsLogin(PathString path) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        // Second-factor completion shares the strict login bucket — a leaked challenge token
+        // is code-guessable, so it must be rate-limited like a password attempt.
+        path.Equals("/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
         // Identifier-first SSO discovery is the entry point to every login, so it
         // shares the strict login rate-limit bucket (domain-harvesting burns the
         // same budget as password guessing).
@@ -545,6 +548,9 @@ app.UseWhen(
                 finally { scopes.Current = null; }
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+                // Second-factor login completion is pre-session too: it validates a challenge, reads
+                // users/user_mfa_status and mints a session with no prior tenant context, like login.
+                string.Equals(path, "/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
                 // Pre-login SSO discovery: no tenant context exists at email-entry
                 // time, so it reads the RLS-forced sso_connections table under the
                 // platform-admin bypass scope, exactly like /api/auth/login.
