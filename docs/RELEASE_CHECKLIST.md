@@ -24,15 +24,13 @@ database/migrations/2026_07_21_stage43_tenant_mfa.sql
 database/migrations/2026_07_21_stage44_maintenance_pm_baseline.sql
 database/migrations/2026_07_22_stage45_general_ledger.sql
 database/migrations/2026_07_22_stage46_gl_period_close_export.sql
+database/migrations/2026_07_22_stage47_detention_recovery.sql
 ```
 
-NOTE (Detention Recovery): the detention tables (detention_rule_cards / detention_dwells /
-detention_dwell_events / detention_notices / detention_evidence + the evidence-immutability
-trigger, geofences.customer_id/site_role, jobs reference columns, job_charges weld columns,
-outbox partial-unique indexes) are created by DetentionSchemaService at boot in non-prod. For
-restricted-role PROD, apply the same DDL out-of-band as the DB owner (mirror the schema service;
-the detector health-gates and refuses to run until the tables exist). The GL boot step is gated
-by GeneralLedgerSchema:Enabled (non-prod default on; prod uses the stage45/46 migrations).
+NOTE: stage47 is the full Detention Recovery DDL (tables + evidence-immutability trigger +
+RLS + grants), mirroring DetentionSchemaService; the detector health-gates and refuses to run
+until these tables exist, so applying it is what activates detention in prod. The GL boot step
+is gated by GeneralLedgerSchema:Enabled (non-prod default on; prod uses stage45/46).
 
 Each migration also RLS-enrolls its new tables and grants the restricted `opstrax_app` role, so no
 separate RLS step is needed. Verify after: `SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'`
@@ -71,11 +69,16 @@ For each of the 4 tenants, in the admin UI:
 - PT40-Q telematics: see docs/telematics/pt40/pt40-e2e-simulation-results.md.
 
 ## 6. Known deferred items (not release-blocking)
-- Platform Admin P0s not yet done: MFA-at-login enforcement, entitlement-cap enforcement, real
-  time-limited impersonation (see the Platform Admin review).
-- Telematics C3 (GT06 gateway alarm/diagnostics bridge) + H1 (canonical-model unification).
-- Config-envelope is inert scaffolding (no module reads it yet); AI-dashcam + certified ELD are net-new
-  programs (largest competitive gaps).
+- MFA-at-login is DONE (tenant TOTP enroll + two-step login, stage43). Still open from the
+  Platform Admin review: entitlement-cap enforcement and real time-limited impersonation
+  (post-launch governance hardening; the platform operator is currently the only cross-tenant actor).
+- Telematics C3 (GT06 alarm/diagnostics bridge) + H1 (canonical-model unification); GT06 raw-TCP
+  gateway deploy needs a Render TCP service (dashboard action).
+- Config-envelope is inert scaffolding (no module reads it yet); AI-dashcam and certified ELD go
+  via partner programs per the director-panel verdict (do not build ground-up).
+- Detention fast-follows after first revenue: Motive connector (needs partner API), QuickBooks
+  direct push (needs OAuth app), dual-ring fences, broker mode, suggested-sites bootstrap.
+- Notice email delivery requires SMTP config in prod (unconfigured -> notices stay honestly 'logged').
 
 ## Verification
 - Cross-module chain: `OrderToCashE2EPostgresTests` (rate→bill→tax→issue→recognize→settle) is green in CI.
