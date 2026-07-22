@@ -67,6 +67,7 @@ public sealed class SafetyBackgroundService(
                     {
                         await ProcessTelemetryAlertsAsync(stoppingToken);
                         await GeofenceEvaluator.EvaluateAsync(tickDb, stoppingToken);
+                        await DetentionService.DetectAsync(tickDb, stoppingToken);
                         await DetectRepeatedSpeedingAsync(stoppingToken);
                         await RecomputeDriverScoresAsync(stoppingToken);
                         await RefreshFleetHealthSnapshotsAsync(stoppingToken);

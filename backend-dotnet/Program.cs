@@ -238,6 +238,7 @@ builder.Services.AddSingleton<GeneralLedgerService>();
 builder.Services.AddSingleton<GeneralLedgerPeriodSchemaService>();
 builder.Services.AddSingleton<GeneralLedgerPeriodService>();
 builder.Services.AddSingleton<GeneralLedgerExportService>();
+builder.Services.AddSingleton<DetentionSchemaService>();
 builder.Services.AddSingleton<Stage9SchemaService>();
 builder.Services.AddSingleton<BusinessSpineService>();
 builder.Services.AddSingleton<RatingService>();
@@ -493,6 +494,7 @@ using (var scope = app.Services.CreateScope())
     // MUST run LAST: enrolls every tenant-scoped table created above (feature_flags and
     // any table added by a later schema service) into RLS + FORCE, closing the coverage
     // gap the point-in-time Stage 19/22 migrations cannot cover for boot-created tables.
+    await RunSchemaStep(app, "Detention",           () => scope.ServiceProvider.GetRequiredService<DetentionSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "RlsReconciliation",   () => scope.ServiceProvider.GetRequiredService<RlsReconciliationSchemaService>().EnsureAsync());
     }
     else
