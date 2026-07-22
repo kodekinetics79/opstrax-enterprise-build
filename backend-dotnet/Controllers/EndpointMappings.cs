@@ -65,6 +65,11 @@ public static partial class EndpointMappings
         app.MapPost("/api/auth/refresh", AuthRefresh);
         app.MapPost("/api/auth/logout", AuthLogout);
         app.MapPost("/api/auth/change-password", ChangePassword);
+        // Tenant-user MFA enrollment (authenticated). Closes the P0 where "require MFA" was a login
+        // lockout with no way for a tenant user to enroll a TOTP factor.
+        app.MapPost("/api/auth/mfa/enroll", TenantMfaEnroll);
+        app.MapPost("/api/auth/mfa/verify", TenantMfaVerify);
+        app.MapGet("/api/auth/mfa/status", TenantMfaStatus);
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2672,6 +2677,97 @@ public static partial class EndpointMappings
         Results.Json(
             ApiResponse<object>.Fail("Invalid credentials"),
             statusCode: StatusCodes.Status401Unauthorized);
+
+    // POST /api/auth/mfa/enroll — authenticated tenant user starts TOTP enrollment. The secret is
+    // returned ONCE; mfa_enabled flips only after /verify proves possession of the authenticator.
+    // This is the enrollment path whose absence made "require MFA" a login lockout (audit P0).
+    private static async Task<IResult> TenantMfaEnroll(HttpContext http, Database db, AuditService audit, CancellationToken ct)
+    {
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (userId <= 0)
+            return Results.Json(ApiResponse<object>.Fail("Unauthenticated"), statusCode: StatusCodes.Status401Unauthorized);
+
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        if (!pii.Enabled)
+            return Results.Json(ApiResponse<object>.Fail("MFA unavailable",
+                "The PII encryption envelope is not configured, so a TOTP secret cannot be stored securely."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        // Never silently rebind an already-active factor — a hijacked session could otherwise swap in the
+        // attacker's authenticator. Replacing an active factor must go through a re-authenticated reset.
+        var alreadyEnabled = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM user_mfa_status WHERE user_id=@id AND mfa_enabled=true",
+            c => c.Parameters.AddWithValue("@id", userId), ct);
+        if (alreadyEnabled > 0)
+            return Results.Json(ApiResponse<object>.Fail("MFA is already enabled", "mfa_already_enabled"),
+                statusCode: StatusCodes.Status409Conflict);
+
+        var email = (await db.QuerySingleAsync("SELECT email FROM users WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", userId), ct))?["email"]?.ToString() ?? $"user-{userId}";
+
+        var secret = Opstrax.Api.Security.TotpService.GenerateSecret();
+        var enc = pii.Encrypt(secret);
+        await db.ExecuteAsync(
+            @"INSERT INTO user_mfa_status (user_id, mfa_enabled, mfa_provider, mfa_secret, updated_at)
+              VALUES (@id, false, 'totp', @s, NOW())
+              ON CONFLICT (user_id) DO UPDATE SET mfa_secret=@s, mfa_enabled=false, mfa_provider='totp', updated_at=NOW()",
+            c => { c.Parameters.AddWithValue("@id", userId); c.Parameters.AddWithValue("@s", enc!); }, ct);
+
+        await audit.LogAsync(http, "user.mfa.enroll_started", "User", userId, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            secret,
+            otpauthUri = Opstrax.Api.Security.TotpService.BuildOtpAuthUri("OpsTrax", email, secret),
+        }, "Add this secret to your authenticator app, then verify a 6-digit code to activate MFA."));
+    }
+
+    // POST /api/auth/mfa/verify {code} — activate the enrolled factor after proving possession.
+    private static async Task<IResult> TenantMfaVerify(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (userId <= 0)
+            return Results.Json(ApiResponse<object>.Fail("Unauthenticated"), statusCode: StatusCodes.Status401Unauthorized);
+
+        var code = body.TryGetValue("code", out var c0) ? c0?.ToString() : null;
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var row = await db.QuerySingleAsync("SELECT mfa_secret FROM user_mfa_status WHERE user_id=@id",
+            c => c.Parameters.AddWithValue("@id", userId), ct);
+        var secret = pii.Decrypt(row?["mfaSecret"]?.ToString());
+        if (string.IsNullOrWhiteSpace(secret))
+            return Results.BadRequest(ApiResponse<object>.Fail("No MFA enrollment in progress — call enroll first"));
+
+        if (!Opstrax.Api.Security.TotpService.VerifyCode(secret, code))
+        {
+            await audit.LogAsync(http, "user.mfa.verify_failed", "User", userId, ct: ct);
+            return Results.Json(ApiResponse<object>.Fail("Invalid code"), statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        await db.ExecuteAsync(
+            @"UPDATE user_mfa_status
+              SET mfa_enabled=true, mfa_provider='totp',
+                  enrolled_at=COALESCE(enrolled_at, NOW()), last_used_at=NOW(), updated_at=NOW()
+              WHERE user_id=@id",
+            c => c.Parameters.AddWithValue("@id", userId), ct);
+        await audit.LogAsync(http, "user.mfa.enabled", "User", userId, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { mfaEnabled = true }, "MFA is now active on your account."));
+    }
+
+    // GET /api/auth/mfa/status — whether the current user has an active second factor.
+    private static async Task<IResult> TenantMfaStatus(HttpContext http, Database db, CancellationToken ct)
+    {
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (userId <= 0)
+            return Results.Json(ApiResponse<object>.Fail("Unauthenticated"), statusCode: StatusCodes.Status401Unauthorized);
+        var row = await db.QuerySingleAsync(
+            "SELECT mfa_enabled, mfa_provider, enrolled_at FROM user_mfa_status WHERE user_id=@id",
+            c => c.Parameters.AddWithValue("@id", userId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            mfaEnabled = row?["mfaEnabled"] is bool b && b,
+            provider = row?["mfaProvider"]?.ToString(),
+            enrolledAt = row?["enrolledAt"],
+        }));
+    }
 
     // POST /api/auth/sso/discover — identifier-first login routing hint.
     //
