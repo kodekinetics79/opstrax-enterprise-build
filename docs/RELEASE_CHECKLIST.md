@@ -20,7 +20,19 @@ database/migrations/2026_07_16_stage39_billing_consolidation.sql
 database/migrations/2026_07_16_stage40_revenue_recognition.sql
 database/migrations/2026_07_16_stage41_fin_config_envelope.sql
 database/migrations/2026_07_16_stage42_telemetry_gateways.sql
+database/migrations/2026_07_21_stage43_tenant_mfa.sql
+database/migrations/2026_07_21_stage44_maintenance_pm_baseline.sql
+database/migrations/2026_07_22_stage45_general_ledger.sql
+database/migrations/2026_07_22_stage46_gl_period_close_export.sql
 ```
+
+NOTE (Detention Recovery): the detention tables (detention_rule_cards / detention_dwells /
+detention_dwell_events / detention_notices / detention_evidence + the evidence-immutability
+trigger, geofences.customer_id/site_role, jobs reference columns, job_charges weld columns,
+outbox partial-unique indexes) are created by DetentionSchemaService at boot in non-prod. For
+restricted-role PROD, apply the same DDL out-of-band as the DB owner (mirror the schema service;
+the detector health-gates and refuses to run until the tables exist). The GL boot step is gated
+by GeneralLedgerSchema:Enabled (non-prod default on; prod uses the stage45/46 migrations).
 
 Each migration also RLS-enrolls its new tables and grants the restricted `opstrax_app` role, so no
 separate RLS step is needed. Verify after: `SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'`
