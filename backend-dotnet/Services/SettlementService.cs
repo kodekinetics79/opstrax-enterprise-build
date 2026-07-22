@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Text.Json;
 using Npgsql;
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 
 namespace Opstrax.Api.Services;
 
@@ -24,7 +26,10 @@ public sealed record SettlementStatementOutcome(
 // Fail-closed like RatingService: no pay agreement, an unsupported basis, or no delivered loads
 // yields Generated=false with zero writes — never invent a pay rate. Commit is idempotent
 // (delete-and-recompute of the system statement) and refuses to touch an approved/paid statement.
-public sealed class SettlementService(Database db)
+// The publisher is optional so existing `new SettlementService(db)` construction (tests) keeps working;
+// when present, approve/payment emit durable settlement.approved / settlement.paid outbox events that
+// drive the derive-beside GL posting handlers.
+public sealed class SettlementService(Database db, IDomainEventPublisher? events = null)
 {
     public async Task<SettlementStatementOutcome> GenerateDriverStatementAsync(
         long companyId, long driverId, DateOnly periodStart, DateOnly periodEnd,
@@ -247,7 +252,7 @@ public sealed class SettlementService(Database db)
     public async Task<SettlementActionOutcome> ApproveStatementAsync(long companyId, long statementId, long userId, CancellationToken ct = default)
     {
         var row = await db.QuerySingleAsync(
-            "SELECT status FROM settlement_statements WHERE company_id=@cid AND id=@id",
+            "SELECT status, total, currency FROM settlement_statements WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
         if (row is null) return new SettlementActionOutcome(false, "missing", "not_found");
         var status = row.GetValueOrDefault("status")?.ToString() ?? "draft";
@@ -261,6 +266,17 @@ public sealed class SettlementService(Database db)
               WHERE company_id=@cid AND id=@id AND status IN ('draft','pending_review')",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId);
                    c.Parameters.AddWithValue("@uid", userId); }, ct);
+
+        // Durable event on the REAL draft/pending_review -> approved transition only (the re-approve
+        // no-op above returns before reaching here). Drives the derive-beside GL accrual handler.
+        _ = events?.Publish(
+            companyId.ToString(CultureInfo.InvariantCulture),
+            "settlement.approved",
+            "settlement_statement",
+            statementId.ToString(CultureInfo.InvariantCulture),
+            JsonSerializer.Serialize(new { statementId, total = row.GetValueOrDefault("total"), currency = row.GetValueOrDefault("currency") }),
+            idempotencyKey: $"settlement-approved-{statementId}");
+
         return new SettlementActionOutcome(true, "approved");
     }
 
@@ -336,6 +352,16 @@ public sealed class SettlementService(Database db)
             }
             return (pid, paid, status2);
         }, ct);
+
+        // Durable event for the NEW payment only (the duplicate-idempotency-key path returned earlier,
+        // so a retried payment never re-publishes). Drives the derive-beside GL cash-out handler.
+        _ = events?.Publish(
+            companyId.ToString(CultureInfo.InvariantCulture),
+            "settlement.paid",
+            "settlement_payment",
+            paymentId.ToString(CultureInfo.InvariantCulture),
+            JsonSerializer.Serialize(new { statementId, paymentId, amount, newStatus }),
+            idempotencyKey: $"settlement-paid-{paymentId}");
 
         return new SettlementPaymentOutcome(true, paymentId, newStatus, amountPaid);
     }

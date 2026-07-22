@@ -108,6 +108,47 @@ public sealed class GeneralLedgerService(Database db)
             $"AR invoice {inv["invoiceNumber"]}", lines, ct);
     }
 
+    // Post an APPROVED (or paid) AP settlement statement: accrue the payable.
+    // Dr Driver Pay Expense (5000) / Cr Accounts Payable (2000) = statement total.
+    // Fail-closed: a draft or zero statement posts nothing (approval is the maker-checker posting control);
+    // a missing row throws so the outbox retries/dead-letters. Idempotent on (company, 'settlement', id).
+    public async Task<long> PostSettlementAsync(long companyId, long statementId, CancellationToken ct = default)
+    {
+        var row = await db.QuerySingleAsync(
+            "SELECT status, total, statement_no, approved_at, created_at FROM settlement_statements WHERE company_id=@c AND id=@id",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
+        if (row is null) throw new InvalidOperationException($"Settlement statement {statementId} not found for company {companyId}.");
+
+        var status = row.GetValueOrDefault("status")?.ToString() ?? "draft";
+        if (status is not ("approved" or "paid")) return 0;   // a draft is not a recognized liability
+        var total = ToDec(row["total"]);
+        if (total <= 0) return 0;
+
+        var when = row["approvedAt"] is DateTime a ? a : row["createdAt"] is DateTime cr ? cr : DateTime.UtcNow;
+        return await PostEntryAsync(companyId, when, "settlement", statementId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"AP settlement {row["statementNo"]}",
+            new List<Line> { new("5000", total, 0m), new("2000", 0m, total) }, ct);
+    }
+
+    // Post an AP settlement PAYMENT: relieve the payable on cash-out.
+    // Dr Accounts Payable (2000) / Cr Cash (1000) = payment amount. One entry per payment id, so
+    // partial payments accumulate and reconcile. Idempotent on (company, 'settlement_payment', id).
+    public async Task<long> PostSettlementPaymentAsync(long companyId, long paymentId, CancellationToken ct = default)
+    {
+        var row = await db.QuerySingleAsync(
+            "SELECT amount, statement_id, paid_at FROM settlement_payments WHERE company_id=@c AND id=@id",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@id", paymentId); }, ct);
+        if (row is null) throw new InvalidOperationException($"Settlement payment {paymentId} not found for company {companyId}.");
+
+        var amount = ToDec(row["amount"]);
+        if (amount <= 0) return 0;
+
+        var when = row["paidAt"] is DateTime p ? p : DateTime.UtcNow;
+        return await PostEntryAsync(companyId, when, "settlement_payment", paymentId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"AP payment {paymentId} on statement {row["statementId"]}",
+            new List<Line> { new("2000", amount, 0m), new("1000", 0m, amount) }, ct);
+    }
+
     // Trial balance: per-account debit/credit totals plus the grand totals. In a correct ledger the grand
     // total of debits equals the grand total of credits.
     public async Task<TrialBalance> TrialBalanceAsync(long companyId, CancellationToken ct = default)

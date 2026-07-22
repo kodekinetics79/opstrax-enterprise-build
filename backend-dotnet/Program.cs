@@ -245,6 +245,9 @@ builder.Services.AddSingleton<RevenueRecognitionService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedRecognitionHandler>();
 // Fan-out sibling on the same invoice.issued event: auto-post the invoice to the general ledger.
 builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedGeneralLedgerHandler>();
+// AP -> GL: accrue the payable on settlement approval, relieve it on payment.
+builder.Services.AddSingleton<IOutboxMessageHandler, SettlementApprovedGlPostingHandler>();
+builder.Services.AddSingleton<IOutboxMessageHandler, SettlementPaymentGlPostingHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
