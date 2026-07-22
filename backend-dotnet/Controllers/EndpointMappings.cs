@@ -74,6 +74,10 @@ public static partial class EndpointMappings
         app.MapPost("/api/auth/mfa/login-verify", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
             MfaLoginVerify(http, body, db, audit, ct));
 
+        // General Ledger (double-entry book of record).
+        app.MapGet("/api/finance/gl/trial-balance", GlTrialBalance);
+        app.MapPost("/api/finance/gl/backfill-invoices", GlBackfillInvoices);
+
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
         app.MapGet("/api/alerts/{id:long}", AlertDetail);
@@ -2703,6 +2707,42 @@ public static partial class EndpointMappings
         Results.Json(
             ApiResponse<object>.Fail("Invalid credentials"),
             statusCode: StatusCodes.Status401Unauthorized);
+
+    // GET /api/finance/gl/trial-balance — per-account debit/credit totals; balanced == debits equal credits.
+    private static async Task<IResult> GlTrialBalance(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var gl = http.RequestServices.GetRequiredService<GeneralLedgerService>();
+        var tb = await gl.TrialBalanceAsync(GetCompanyId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            accounts = tb.Accounts.Select(a => new { a.AccountCode, a.AccountName, a.Debits, a.Credits }),
+            totalDebits = tb.TotalDebits,
+            totalCredits = tb.TotalCredits,
+            balanced = tb.IsBalanced,
+        }));
+    }
+
+    // POST /api/finance/gl/backfill-invoices — post every issued invoice not yet in the GL (idempotent).
+    private static async Task<IResult> GlBackfillInvoices(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var gl = http.RequestServices.GetRequiredService<GeneralLedgerService>();
+        var invoices = await db.QueryAsync(
+            @"SELECT ii.id FROM issued_invoices ii
+              WHERE ii.company_id=@c
+                AND NOT EXISTS (SELECT 1 FROM journal_entries je
+                                WHERE je.company_id=ii.company_id AND je.source_type='invoice' AND je.source_ref=ii.id::text)",
+            c => c.Parameters.AddWithValue("@c", companyId), ct);
+        var posted = 0;
+        foreach (var inv in invoices)
+        {
+            await gl.PostInvoiceAsync(companyId, inv["id"]!.ToString()!, ct);
+            posted++;
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { posted }, $"Posted {posted} invoice(s) to the general ledger"));
+    }
 
     // POST /api/auth/mfa/enroll — authenticated tenant user starts TOTP enrollment. The secret is
     // returned ONCE; mfa_enabled flips only after /verify proves possession of the authenticator.
