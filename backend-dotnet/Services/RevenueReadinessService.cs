@@ -994,7 +994,17 @@ public sealed class RevenueReadinessService(
             var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, currency, paymentReference, paymentMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
 
             var newAmountPaid = invoice.AmountPaid + amount;
-            var newBalance = invoice.Total - newAmountPaid;
+            // Balance derives from total - paid - CREDITED. Without subtracting credit_total, recording
+            // a payment would silently resurrect balance that a credit note already relieved.
+            decimal creditTotal;
+            await using (var creditCmd = new Npgsql.NpgsqlCommand(
+                "SELECT credit_total FROM issued_invoices WHERE id=@id AND company_id=@companyId", conn, tx))
+            {
+                creditCmd.Parameters.AddWithValue("@id", invoiceId);
+                creditCmd.Parameters.AddWithValue("@companyId", companyId);
+                creditTotal = Convert.ToDecimal(await creditCmd.ExecuteScalarAsync(ct) ?? 0m);
+            }
+            var newBalance = invoice.Total - creditTotal - newAmountPaid;
             var paymentStatus = newBalance <= 0 ? "paid" : "partial";
 
             await using (var update = new Npgsql.NpgsqlCommand(

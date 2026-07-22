@@ -83,6 +83,10 @@ public static partial class EndpointMappings
         app.MapPost("/api/finance/gl/periods/{code}/approve-close", GlApproveClose);
         app.MapPost("/api/finance/gl/periods/{code}/reopen", GlReopenPeriod);
         app.MapGet("/api/finance/gl/export", GlExport);
+        // AR credit notes (maker-checker corrections against issued invoices).
+        app.MapPost("/api/finance/invoices/{id:guid}/credit-note", CreditNoteCreate);
+        app.MapPost("/api/finance/credit-notes/{draftId:guid}/approve", CreditNoteApprove);
+        app.MapGet("/api/finance/credit-notes", CreditNoteList);
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2748,6 +2752,54 @@ public static partial class EndpointMappings
             posted++;
         }
         return Results.Ok(ApiResponse<object>.Ok(new { posted }, $"Posted {posted} invoice(s) to the general ledger"));
+    }
+
+    // POST /api/finance/invoices/{id}/credit-note {amount?, reason} — maker creates a credit-note draft
+    // + approval request against an issued invoice.
+    private static async Task<IResult> CreditNoteCreate(HttpContext http, Guid id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<CreditNoteService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        decimal? amount = body.TryGetValue("amount", out var a) && a is not null and not DBNull ? Convert.ToDecimal(a.ToString()) : null;
+        var reason = body.TryGetValue("reason", out var r) ? r?.ToString() : null;
+        var outcome = await svc.CreateCreditNoteAsync(GetCompanyId(http), id, amount, reason, userId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot create credit note", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "finance.credit_note.requested", "IssuedInvoice", null, id.ToString(), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            creditNoteDraftId = outcome.CreditNoteDraftId,
+            approvalRequestId = outcome.ApprovalRequestId,
+            creditTotal = outcome.CreditTotal,
+            status = outcome.Status,
+        }, "Credit note pending approval — a different user must approve."));
+    }
+
+    // POST /api/finance/credit-notes/{draftId}/approve — checker (must differ from maker) approves + issues.
+    private static async Task<IResult> CreditNoteApprove(HttpContext http, Guid draftId, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<CreditNoteService>();
+        var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var outcome = await svc.ApproveCreditNoteAsync(GetCompanyId(http), draftId, userId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot approve credit note", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "finance.credit_note.issued", "IssuedInvoice", null, outcome.CreditNoteId?.ToString(), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            creditNoteId = outcome.CreditNoteId,
+            creditTotal = outcome.CreditTotal,
+            relieved = outcome.Relieved,
+            refundDue = outcome.RefundDue,
+            replay = outcome.Replay,
+        }, outcome.Replay ? "Already issued (idempotent replay)." : "Credit note issued."));
+    }
+
+    // GET /api/finance/credit-notes — the tenant's credit notes joined to the invoices they adjust.
+    private static async Task<IResult> CreditNoteList(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<CreditNoteService>();
+        return Results.Ok(ApiResponse<object>.Ok(await svc.ListCreditNotesAsync(GetCompanyId(http), ct)));
     }
 
     // GET /api/finance/gl/periods — the tenant's GL periods with lock state + frozen totals.

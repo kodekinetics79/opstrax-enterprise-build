@@ -22,6 +22,7 @@ public sealed class GeneralLedgerService(Database db)
         ("1000", "Cash",                 "asset",     "debit"),
         ("1100", "Accounts Receivable",  "asset",     "debit"),
         ("2000", "Accounts Payable",     "liability", "credit"),
+        ("2100", "Customer Refunds Payable", "liability", "credit"),
         ("2200", "Tax Payable",          "liability", "credit"),
         ("4000", "Freight Revenue",      "revenue",   "credit"),
         ("5000", "Driver Pay Expense",   "expense",   "debit"),
@@ -119,6 +120,46 @@ public sealed class GeneralLedgerService(Database db)
 
         return await PostEntryAsync(companyId, when, "invoice", invoiceId,
             $"AR invoice {inv["invoiceNumber"]}", lines, ct);
+    }
+
+    // Post an issued AR credit note: reverse revenue + tax; relieve AR for the portion that reduced the
+    // original's balance, and book the excess (credit against an already-paid invoice) as a refund
+    // liability. relieved/refundable come from the CN's metadata (frozen at approval) so the posting is
+    // deterministic on outbox replay. Idempotent on (company, 'credit_note', cnId).
+    public async Task<long> PostCreditNoteAsync(long companyId, string creditNoteId, CancellationToken ct = default)
+    {
+        var cn = await db.QuerySingleAsync(
+            @"SELECT subtotal, tax_total, total, issued_at, invoice_number, metadata_json
+              FROM issued_invoices WHERE id=@id::uuid AND company_id=@c AND document_type='credit_note'",
+            c => { c.Parameters.AddWithValue("@id", creditNoteId); c.Parameters.AddWithValue("@c", companyId); }, ct);
+        if (cn is null) throw new InvalidOperationException($"Credit note {creditNoteId} not found for company {companyId}.");
+
+        // Amounts are stored negative on the CN row; post their magnitudes.
+        var subtotal = Math.Abs(ToDec(cn["subtotal"]));
+        var tax = Math.Abs(ToDec(cn["taxTotal"]));
+        var total = Math.Abs(ToDec(cn["total"]));
+        var when = cn["issuedAt"] is DateTime dt ? dt : DateTime.UtcNow;
+
+        decimal refundable = 0m;
+        var metaRaw = cn["metadataJson"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(metaRaw))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(metaRaw);
+                if (doc.RootElement.TryGetProperty("refundDue", out var r)) refundable = r.GetDecimal();
+            }
+            catch { /* malformed metadata -> treat as fully relieving AR */ }
+        }
+        var relieved = total - refundable;
+
+        var lines = new List<Line> { new("4000", subtotal, 0m) };
+        if (tax > 0) lines.Add(new Line("2200", tax, 0m));
+        if (relieved > 0) lines.Add(new Line("1100", 0m, relieved));
+        if (refundable > 0) lines.Add(new Line("2100", 0m, refundable));
+
+        return await PostEntryAsync(companyId, when, "credit_note", creditNoteId,
+            $"AR credit note {cn["invoiceNumber"]}", lines, ct);
     }
 
     // Post an APPROVED (or paid) AP settlement statement: accrue the payable.

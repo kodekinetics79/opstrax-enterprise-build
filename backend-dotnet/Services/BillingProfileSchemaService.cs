@@ -87,6 +87,11 @@ public sealed class BillingProfileSchemaService(Database db)
         "ALTER TABLE issued_invoices ADD COLUMN IF NOT EXISTS document_type VARCHAR(20) NOT NULL DEFAULT 'invoice'",
         "ALTER TABLE issued_invoices ADD COLUMN IF NOT EXISTS adjusts_invoice_id UUID NULL",
         "ALTER TABLE issued_invoices ADD COLUMN IF NOT EXISTS payment_terms_days INT NULL",
+        // Cumulative credit-note total applied against this invoice. balance_due derives as
+        // total - amount_paid - credit_total; kept as a column so payment recording can't resurrect
+        // credited balance (see RecordInvoicePaymentAsync).
+        "ALTER TABLE issued_invoices ADD COLUMN IF NOT EXISTS credit_total NUMERIC(18,2) NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_issued_invoices_adjusts ON issued_invoices (company_id, adjusts_invoice_id) WHERE adjusts_invoice_id IS NOT NULL",
         "ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS billing_status VARCHAR(20) NOT NULL DEFAULT 'unbilled'"
     ];
 

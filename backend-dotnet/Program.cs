@@ -251,6 +251,9 @@ builder.Services.AddSingleton<IOutboxMessageHandler, InvoiceIssuedGeneralLedgerH
 // AP -> GL: accrue the payable on settlement approval, relieve it on payment.
 builder.Services.AddSingleton<IOutboxMessageHandler, SettlementApprovedGlPostingHandler>();
 builder.Services.AddSingleton<IOutboxMessageHandler, SettlementPaymentGlPostingHandler>();
+// AR credit notes: maker-checker corrections against issued invoices; GL reversal on issue.
+builder.Services.AddSingleton<CreditNoteService>();
+builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedgerHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
