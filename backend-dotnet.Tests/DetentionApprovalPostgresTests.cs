@@ -110,8 +110,8 @@ public class DetentionApprovalPostgresTests
     private static async Task<long> SeedPricedDwellAsync(Database db, long cid, long custId, long vid, long fenceId, bool withReferences)
     {
         await db.ExecuteAsync(
-            @"INSERT INTO detention_rule_cards (company_id, scope_type, scope_id, free_minutes, rate_per_hour, billing_increment_minutes)
-              VALUES (@c, 'customer', @cust, 60, 60, 15)",
+            @"INSERT INTO detention_rule_cards (company_id, scope_type, scope_id, free_minutes, rate_per_hour, billing_increment_minutes, effective_date)
+              VALUES (@c, 'customer', @cust, 60, 60, 15, CURRENT_DATE - 2)",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); });
 
         var t0 = DateTime.UtcNow.AddHours(-6);
@@ -178,6 +178,7 @@ public class DetentionApprovalPostgresTests
         {
             await db.ExecuteAsync("ALTER TABLE detention_evidence ENABLE TRIGGER trg_detention_evidence_immutable");
         }
+        await db.ExecuteAsync("DELETE FROM outbox_messages WHERE tenant_id=@t", c => c.Parameters.AddWithValue("@t", cid));
         foreach (var t in new[] { "detention_notices", "detention_dwell_events", "detention_dwells",
                                   "detention_rule_cards", "notifications", "invoice_draft_lines", "invoice_drafts",
                                   "job_charges", "geofence_events", "geofences", "dispatch_assignments", "jobs", "vehicles", "customers" })

@@ -97,6 +97,11 @@ public static partial class EndpointMappings
         app.MapPost("/api/detention/dwells/{id:long}/evidence/share", DetentionShareEvidence);
         app.MapGet("/api/public/detention/evidence/{token}", DetentionPublicEvidence);
         app.MapGet("/api/detention/funnel", DetentionFunnel);
+        // Dead-end resolution + stranded-revenue visibility.
+        app.MapPut("/api/detention/dwells/{id:long}/appointment", DetentionSetAppointment);
+        app.MapPost("/api/detention/dwells/{id:long}/attest-no-appointment", DetentionAttestNoAppointment);
+        app.MapPost("/api/detention/dwells/{id:long}/attach-job", DetentionAttachJob);
+        app.MapGet("/api/detention/stranded", DetentionStranded);
 
         app.MapGet("/api/alerts/summary", AlertsSummary);
         app.MapGet("/api/alerts", AlertsList);
@@ -2778,32 +2783,61 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        var scopeId = Get(body, "customerId") is DBNull or null ? (object)DBNull.Value : Convert.ToInt64(Get(body, "customerId")!.ToString());
-        await db.ExecuteAsync(
-            @"UPDATE detention_rule_cards SET active=FALSE
-              WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL)) AND active",
-            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@st", scopeId is DBNull ? "tenant" : "customer"); c.Parameters.AddWithValue("@sid", scopeId); }, ct);
-        var id = await db.InsertAsync(
-            @"INSERT INTO detention_rule_cards
-                (company_id, scope_type, scope_id, free_minutes, rate_per_hour, currency, billing_increment_minutes,
-                 max_charge_amount, claim_window_days, notice_percent,
-                 version)
-              VALUES (@c, @st, @sid, @free, @rate, COALESCE(@cur,'USD'), COALESCE(@inc,15), @cap, COALESCE(@cw,30), COALESCE(@np,75),
-                      COALESCE((SELECT MAX(version)+1 FROM detention_rule_cards WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL))), 1))
-              RETURNING id",
-            c =>
+
+        // Parse/validate EVERYTHING before touching the DB (consultant major: a parse failure after the
+        // deactivate previously left the scope with NO active card — a silent fail-closed revenue gap).
+        int free; decimal rate; int inc; decimal? cap; int cw; int np;
+        long? scopeCustomer = null;
+        try
+        {
+            if (Get(body, "customerId") is { } cust and not DBNull) scopeCustomer = Convert.ToInt64(cust.ToString());
+            free = Get(body, "freeMinutes") is { } fm and not DBNull ? Convert.ToInt32(fm.ToString()) : 120;
+            rate = Convert.ToDecimal(Get(body, "ratePerHour")?.ToString() ?? "0");
+            inc = Get(body, "billingIncrementMinutes") is { } i and not DBNull ? Convert.ToInt32(i.ToString()) : 15;
+            cap = Get(body, "maxChargeAmount") is { } cp and not DBNull ? Convert.ToDecimal(cp.ToString()) : null;
+            cw = Get(body, "claimWindowDays") is { } c1 and not DBNull ? Convert.ToInt32(c1.ToString()) : 30;
+            np = Get(body, "noticePercent") is { } n1 and not DBNull ? Convert.ToInt32(n1.ToString()) : 75;
+        }
+        catch (Exception)
+        {
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid rule card values"));
+        }
+        if (rate <= 0) return Results.BadRequest(ApiResponse<object>.Fail("ratePerHour must be positive"));
+        var scopeType = scopeCustomer.HasValue ? "customer" : "tenant";
+
+        // One transaction: deactivate + insert. The partial-unique active index makes a raced second
+        // save fail loudly instead of leaving two active cards.
+        var id = await db.WithTransactionAsync(async (conn, tx) =>
+        {
+            await using (var deact = new Npgsql.NpgsqlCommand(
+                @"UPDATE detention_rule_cards SET active=FALSE
+                  WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL)) AND active", conn, tx))
             {
-                c.Parameters.AddWithValue("@c", companyId);
-                c.Parameters.AddWithValue("@st", scopeId is DBNull ? "tenant" : "customer");
-                c.Parameters.AddWithValue("@sid", scopeId);
-                c.Parameters.AddWithValue("@free", Convert.ToInt32(Get(body, "freeMinutes")?.ToString() ?? "120"));
-                c.Parameters.AddWithValue("@rate", Convert.ToDecimal(Get(body, "ratePerHour")?.ToString() ?? "0"));
-                c.Parameters.AddWithValue("@cur", Get(body, "currency") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@inc", Get(body, "billingIncrementMinutes") is { } inc and not DBNull ? Convert.ToInt32(inc.ToString()) : (object)DBNull.Value);
-                c.Parameters.AddWithValue("@cap", Get(body, "maxChargeAmount") is { } cap and not DBNull ? Convert.ToDecimal(cap.ToString()) : (object)DBNull.Value);
-                c.Parameters.AddWithValue("@cw", Get(body, "claimWindowDays") is { } cw and not DBNull ? Convert.ToInt32(cw.ToString()) : (object)DBNull.Value);
-                c.Parameters.AddWithValue("@np", Get(body, "noticePercent") is { } np and not DBNull ? Convert.ToInt32(np.ToString()) : (object)DBNull.Value);
-            }, ct);
+                deact.Parameters.AddWithValue("@c", companyId);
+                deact.Parameters.AddWithValue("@st", scopeType);
+                deact.Parameters.AddWithValue("@sid", (object?)scopeCustomer ?? DBNull.Value);
+                await deact.ExecuteNonQueryAsync(ct);
+            }
+            await using var ins = new Npgsql.NpgsqlCommand(
+                @"INSERT INTO detention_rule_cards
+                    (company_id, scope_type, scope_id, free_minutes, rate_per_hour, currency, billing_increment_minutes,
+                     max_charge_amount, claim_window_days, notice_percent, version)
+                  VALUES (@c, @st, @sid, @free, @rate, COALESCE(@cur,'USD'), @inc, @cap, @cw, @np,
+                          COALESCE((SELECT MAX(version)+1 FROM detention_rule_cards
+                                    WHERE company_id=@c AND scope_type=@st AND (scope_id=@sid OR (@sid IS NULL AND scope_id IS NULL))), 1))
+                  RETURNING id", conn, tx);
+            ins.Parameters.AddWithValue("@c", companyId);
+            ins.Parameters.AddWithValue("@st", scopeType);
+            ins.Parameters.AddWithValue("@sid", (object?)scopeCustomer ?? DBNull.Value);
+            ins.Parameters.AddWithValue("@free", free);
+            ins.Parameters.AddWithValue("@rate", rate);
+            ins.Parameters.AddWithValue("@cur", Get(body, "currency") ?? (object)DBNull.Value);
+            ins.Parameters.AddWithValue("@inc", inc);
+            ins.Parameters.AddWithValue("@cap", (object?)cap ?? DBNull.Value);
+            ins.Parameters.AddWithValue("@cw", cw);
+            ins.Parameters.AddWithValue("@np", np);
+            return Convert.ToInt64((await ins.ExecuteScalarAsync(ct))!);
+        }, ct);
         await audit.LogAsync(http, "detention.rule_card.saved", "DetentionRuleCard", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Rule card saved (new version)"));
     }
@@ -2832,14 +2866,61 @@ public static partial class EndpointMappings
         var note = body.TryGetValue("overrideNote", out var n) ? n?.ToString() : null;
         var outcome = await svc.ApproveAsync(GetCompanyId(http), id, userId, note, ct);
         if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot approve", outcome.Reason ?? outcome.Status));
-        await audit.LogAsync(http, "detention.approve", "DetentionDwell", id, $"charge:{outcome.JobChargeId}", ct);
+        // External anchor: the audit row carries the amount + full evidence sha, so hiding tampering
+        // requires rewriting append-only audit history too.
+        var chargeRow = await db.QuerySingleAsync(
+            "SELECT amount, evidence_sha256 FROM job_charges WHERE company_id=@c AND id=@id",
+            c => { c.Parameters.AddWithValue("@c", GetCompanyId(http)); c.Parameters.AddWithValue("@id", outcome.JobChargeId!.Value); }, ct);
+        await audit.LogAsync(http, "detention.approve", "DetentionDwell", id,
+            $"charge:{outcome.JobChargeId};amount:{chargeRow?["amount"]};sha:{chargeRow?["evidenceSha256"]}", ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             jobChargeId = outcome.JobChargeId,
             supplementalDraftId = outcome.SupplementalDraftId,
         }, outcome.SupplementalDraftId is not null
             ? "Detention charge created and routed to a supplemental invoice draft (job already invoiced)."
-            : "Detention charge created — it will bill with the job's next consolidation."));
+            : "Detention charge created — it bills when this job's delivery period is consolidated; if it misses the window it appears under Stranded for one-click supplemental billing."));
+    }
+
+    private static async Task<IResult> DetentionSetAppointment(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        if (!DateTime.TryParse(body.TryGetValue("appointmentAt", out var a) ? a?.ToString() : null, out var appt))
+            return Results.BadRequest(ApiResponse<object>.Fail("appointmentAt (ISO timestamp) required"));
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var outcome = await svc.SetAppointmentAsync(GetCompanyId(http), id, appt.ToUniversalTime(), ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot set appointment", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "detention.appointment.set", "DetentionDwell", id, appt.ToString("o"), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Appointment recorded — the dwell reprices on the next detection tick."));
+    }
+
+    private static async Task<IResult> DetentionAttestNoAppointment(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var outcome = await svc.AttestNoAppointmentAsync(GetCompanyId(http), id, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot attest", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "detention.appointment.attested_none", "DetentionDwell", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Attested: no appointment was scheduled — the clock runs from arrival; reprices next tick."));
+    }
+
+    private static async Task<IResult> DetentionAttachJob(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
+        if (!long.TryParse(body.TryGetValue("jobId", out var j) ? j?.ToString() : null, out var jobId))
+            return Results.BadRequest(ApiResponse<object>.Fail("jobId required"));
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        var outcome = await svc.AttachJobAsync(GetCompanyId(http), id, jobId, ct);
+        if (!outcome.Ok) return Results.BadRequest(ApiResponse<object>.Fail("Cannot attach job", outcome.Reason ?? outcome.Status));
+        await audit.LogAsync(http, "detention.job.attached", "DetentionDwell", id, jobId.ToString(), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, jobId }, "Job attached — the dwell reprices on the next detection tick."));
+    }
+
+    private static async Task<IResult> DetentionStranded(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        var svc = http.RequestServices.GetRequiredService<DetentionReviewService>();
+        return Results.Ok(ApiResponse<object>.Ok(await svc.StrandedAsync(GetCompanyId(http), ct)));
     }
 
     private static async Task<IResult> DetentionDismiss(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)

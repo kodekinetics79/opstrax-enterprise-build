@@ -43,6 +43,9 @@ public sealed class DetentionSchemaService(Database db)
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_detention_rule_cards ON detention_rule_cards (company_id, scope_type, scope_id, active)");
+        // One ACTIVE card per scope — makes the deactivate-then-insert upsert race-safe (a raced second
+        // insert violates this index instead of leaving two active cards with nondeterministic resolution).
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_detention_rule_card_active ON detention_rule_cards (company_id, scope_type, COALESCE(scope_id, 0)) WHERE active");
 
         // 4) Dwells — the unit of detention (bounded intervals, clock rule, review state machine).
         await db.ExecuteAsync("""
@@ -138,11 +141,18 @@ public sealed class DetentionSchemaService(Database db)
                 IF TG_OP = 'DELETE' THEN
                     RAISE EXCEPTION 'detention_evidence is immutable';
                 END IF;
+                -- Every column except the share fields is frozen (incl. created_at, which backs the
+                -- customer-facing 'unaltered since {date}' claim).
                 IF NEW.evidence_canonical IS DISTINCT FROM OLD.evidence_canonical
                    OR NEW.evidence_json::text IS DISTINCT FROM OLD.evidence_json::text
                    OR NEW.evidence_sha256 IS DISTINCT FROM OLD.evidence_sha256
                    OR NEW.dwell_id IS DISTINCT FROM OLD.dwell_id
-                   OR NEW.company_id IS DISTINCT FROM OLD.company_id THEN
+                   OR NEW.company_id IS DISTINCT FROM OLD.company_id
+                   OR NEW.schema_version IS DISTINCT FROM OLD.schema_version
+                   OR NEW.breadcrumb_count IS DISTINCT FROM OLD.breadcrumb_count
+                   OR NEW.breadcrumbs_included IS DISTINCT FROM OLD.breadcrumbs_included
+                   OR NEW.full_trail_sha256 IS DISTINCT FROM OLD.full_trail_sha256
+                   OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
                     RAISE EXCEPTION 'detention_evidence is immutable (only share fields may change)';
                 END IF;
                 RETURN NEW;
@@ -156,5 +166,9 @@ public sealed class DetentionSchemaService(Database db)
         await db.ExecuteAsync("ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS detention_dwell_id BIGINT NULL");
         await db.ExecuteAsync("ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS evidence_sha256 CHAR(64) NULL");
         await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_detention ON job_charges (company_id, detention_dwell_id) WHERE detention_dwell_id IS NOT NULL");
+
+        // 9) External evidence anchor: one detention.dwell.priced outbox event per dwell (partial-unique)
+        // carrying the full evidence sha — a DB-write tamperer must also rewrite the outbox/audit history.
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_priced ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.priced'");
     }
 }

@@ -49,11 +49,11 @@ public static class DetentionService
                   JOIN geofences g ON g.id = d2.geofence_id AND g.company_id = d2.company_id
                   JOIN dispatch_assignments da ON da.company_id = d2.company_id AND da.vehicle_id = d2.vehicle_id
                   JOIN jobs j ON j.id = da.job_id AND j.company_id = da.company_id AND j.customer_id = d2.customer_id
-                  WHERE d2.status = 'closed' AND d2.job_id IS NULL AND d2.billed_to_at IS NOT NULL
-                    AND da.assigned_at <= d2.billed_to_at
+                  WHERE d2.status IN ('open','closed','needs_appointment','unpriced_no_terms') AND d2.job_id IS NULL
+                    AND da.assigned_at <= COALESCE(d2.billed_to_at, NOW())
                     AND COALESCE(da.actual_delivery_at, da.completed_at, 'infinity'::timestamptz) >= d2.entered_at
                   ORDER BY d2.id,
-                           LEAST(COALESCE(da.actual_delivery_at, da.completed_at, d2.billed_to_at), d2.billed_to_at)
+                           LEAST(COALESCE(da.actual_delivery_at, da.completed_at, d2.billed_to_at, NOW()), COALESCE(d2.billed_to_at, NOW()))
                          - GREATEST(da.assigned_at, d2.entered_at) DESC
               ) m
               WHERE d.id = m.dwell_id AND d.company_id = m.cid", ct: ct);
@@ -62,47 +62,51 @@ public static class DetentionService
     // never accrues. No appointment and no attestation -> 'needs_appointment' (detected, never priced). ──
     private static async Task ApplyClockAsync(Database db, CancellationToken ct)
     {
-        // Pull the appointment from the attributed assignment's planned time by stop role.
+        // Pull the appointment from the attributed assignment's planned time by stop role — for OPEN
+        // dwells too, so the pre-expiry notice can be appointment-anchored (consultant major: a notice
+        // computed from bare arrival is a factually wrong customer-facing statement for early arrivals).
         await db.ExecuteAsync(
             @"UPDATE detention_dwells d
               SET appointment_at = CASE WHEN d.stop_role = 'dropoff' THEN da.planned_delivery_at ELSE da.planned_pickup_at END,
                   appointment_source = 'assignment_planned', updated_at = NOW()
               FROM dispatch_assignments da
-              WHERE d.status = 'closed' AND d.appointment_at IS NULL AND d.appointment_source IS NULL
+              WHERE d.status IN ('open','closed','needs_appointment') AND d.appointment_at IS NULL AND d.appointment_source IS NULL
                 AND da.id = d.dispatch_assignment_id AND da.company_id = d.company_id
                 AND (CASE WHEN d.stop_role = 'dropoff' THEN da.planned_delivery_at ELSE da.planned_pickup_at END) IS NOT NULL", ct: ct);
 
-        // Clock: later-of(appointment, arrival). Attested-none clocks from arrival.
+        // Clock: later-of(appointment, arrival). Attested-none clocks from arrival. Open dwells get a
+        // provisional clock (for the notice threshold); it is recomputed identically at close.
         await db.ExecuteAsync(
             @"UPDATE detention_dwells SET
                   clock_start_at = CASE WHEN appointment_source = 'attested_none' OR appointment_at IS NULL
                                         THEN billed_from_at
                                         ELSE GREATEST(appointment_at, billed_from_at) END,
                   clock_rule = 'later_of_appointment_arrival_v1', updated_at = NOW()
-              WHERE status = 'closed' AND clock_start_at IS NULL AND billed_from_at IS NOT NULL
+              WHERE status IN ('open','closed','needs_appointment') AND clock_start_at IS NULL AND billed_from_at IS NOT NULL
                 AND (appointment_at IS NOT NULL OR appointment_source = 'attested_none')", ct: ct);
     }
 
     // ── Phase C½ — PRE-EXPIRY NOTICE: where detention money is legally won. Guarded stamp is the race lock. ──
     private static async Task NotifyPreExpiryAsync(Database db, CancellationToken ct)
     {
+        // Spec gate: OPEN dwells with a resolved rule card AND a KNOWN clock start (appointment resolved
+        // or attested) — never a bare-arrival guess (consultant major). Card resolution is as-of entered_at.
         var due = await db.QueryAsync(
             @"SELECT d.id, d.company_id, d.customer_id, g.name AS site_name,
                      rc.free_minutes, rc.rate_per_hour, rc.currency, rc.notice_percent,
-                     GREATEST(COALESCE(d.appointment_at, d.billed_from_at), d.billed_from_at) AS clock_base,
+                     d.clock_start_at AS clock_base,
                      c.contact_name, c.email AS contact_email
               FROM detention_dwells d
               JOIN geofences g ON g.id = d.geofence_id AND g.company_id = d.company_id
               JOIN customers c ON c.id = d.customer_id AND c.company_id = d.company_id
               JOIN LATERAL (
                   SELECT free_minutes, rate_per_hour, currency, notice_percent FROM detention_rule_cards rc
-                  WHERE rc.company_id = d.company_id AND rc.active
+                  WHERE rc.company_id = d.company_id AND rc.active AND rc.effective_date <= d.entered_at::date
                     AND ((rc.scope_type = 'customer' AND rc.scope_id = d.customer_id) OR rc.scope_type = 'tenant')
                   ORDER BY CASE WHEN rc.scope_type = 'customer' THEN 0 ELSE 1 END, rc.effective_date DESC, rc.version DESC
                   LIMIT 1) rc ON TRUE
-              WHERE d.status = 'open' AND d.warning_notified_at IS NULL AND d.billed_from_at IS NOT NULL
-                AND NOW() >= GREATEST(COALESCE(d.appointment_at, d.billed_from_at), d.billed_from_at)
-                             + make_interval(mins => rc.free_minutes * rc.notice_percent / 100)",
+              WHERE d.status = 'open' AND d.warning_notified_at IS NULL AND d.clock_start_at IS NOT NULL
+                AND NOW() >= d.clock_start_at + make_interval(mins => rc.free_minutes * rc.notice_percent / 100)",
             ct: ct);
 
         foreach (var d in due)
@@ -115,34 +119,43 @@ public static class DetentionService
             var expiresAt = Convert.ToDateTime(d["clockBase"]).AddMinutes(freeMin);
             var body = $"Free time at {site} expires {expiresAt:yyyy-MM-dd HH:mm} UTC; detention meter starts at {rate:0.00}/h.";
 
-            // The guarded stamp — exactly one tick wins.
-            var won = await db.ExecuteAsync(
-                "UPDATE detention_dwells SET warning_notified_at=NOW(), updated_at=NOW() WHERE company_id=@c AND id=@id AND warning_notified_at IS NULL",
-                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId); }, ct);
-            if (won == 0) continue;
+            // One transaction: the guarded stamp (exactly one tick wins) + BOTH notice writes. A crash
+            // can no longer stamp the dwell 'notified' while losing the contemporaneous-notice proof.
+            await db.WithTransactionAsync<object?>(async (conn, tx) =>
+            {
+                long won;
+                await using (var stamp = new Npgsql.NpgsqlCommand(
+                    "UPDATE detention_dwells SET warning_notified_at=NOW(), updated_at=NOW() WHERE company_id=@c AND id=@id AND warning_notified_at IS NULL", conn, tx))
+                {
+                    stamp.Parameters.AddWithValue("@c", cid); stamp.Parameters.AddWithValue("@id", dwellId);
+                    won = await stamp.ExecuteNonQueryAsync(ct);
+                }
+                if (won == 0) return null;
 
-            await db.ExecuteAsync(
-                @"INSERT INTO notifications (company_id, event_type, severity, title, message, body, audience_type, channel, status, dedupe_key)
-                  VALUES (@c, 'detention.warning', 'warning', @title, @body, @body, 'dispatch', 'in_app', 'unread', @dedupe)
-                  ON CONFLICT DO NOTHING",
-                c =>
+                await using (var notif = new Npgsql.NpgsqlCommand(
+                    @"INSERT INTO notifications (company_id, event_type, severity, title, message, body, audience_type, channel, status, dedupe_key)
+                      VALUES (@c, 'detention.warning', 'warning', @title, @body, @body, 'dispatch', 'in_app', 'unread', @dedupe)
+                      ON CONFLICT DO NOTHING", conn, tx))
                 {
-                    c.Parameters.AddWithValue("@c", cid);
-                    c.Parameters.AddWithValue("@title", $"Detention warning — {site}");
-                    c.Parameters.AddWithValue("@body", body);
-                    c.Parameters.AddWithValue("@dedupe", $"detention-warning-{dwellId}");
-                }, ct);
-            await db.ExecuteAsync(
-                @"INSERT INTO detention_notices (company_id, dwell_id, notice_type, recipient_name, recipient_address, channel, body_snapshot, delivery_status)
-                  VALUES (@c, @d, 'customer_meter_running', @name, @addr, 'email', @body, 'logged')
-                  ON CONFLICT DO NOTHING",
-                c =>
+                    notif.Parameters.AddWithValue("@c", cid);
+                    notif.Parameters.AddWithValue("@title", $"Detention warning — {site}");
+                    notif.Parameters.AddWithValue("@body", body);
+                    notif.Parameters.AddWithValue("@dedupe", $"detention-warning-{dwellId}");
+                    await notif.ExecuteNonQueryAsync(ct);
+                }
+                await using (var log = new Npgsql.NpgsqlCommand(
+                    @"INSERT INTO detention_notices (company_id, dwell_id, notice_type, recipient_name, recipient_address, channel, body_snapshot, delivery_status)
+                      VALUES (@c, @d, 'customer_meter_running', @name, @addr, 'email', @body, 'logged')
+                      ON CONFLICT DO NOTHING", conn, tx))
                 {
-                    c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@d", dwellId);
-                    c.Parameters.AddWithValue("@name", (object?)d["contactName"] ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@addr", (object?)d["contactEmail"] ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@body", body);
-                }, ct);
+                    log.Parameters.AddWithValue("@c", cid); log.Parameters.AddWithValue("@d", dwellId);
+                    log.Parameters.AddWithValue("@name", (object?)d["contactName"] ?? DBNull.Value);
+                    log.Parameters.AddWithValue("@addr", (object?)d["contactEmail"] ?? DBNull.Value);
+                    log.Parameters.AddWithValue("@body", body);
+                    await log.ExecuteNonQueryAsync(ct);
+                }
+                return null;
+            }, ct);
         }
     }
 
@@ -151,11 +164,13 @@ public static class DetentionService
     // appointment/attestation -> 'needs_appointment'; below free time is terminal. Round DOWN. ──
     private static async Task PriceDwellsAsync(Database db, CancellationToken ct)
     {
+        // Also re-selects the fail-closed rest states so a later rule card or resolved appointment
+        // recovers the revenue (consultant major: dead ends must be re-priceable, not dismiss-only).
         var settled = await db.QueryAsync(
-            @"SELECT d.id, d.company_id, d.customer_id, d.billed_from_at, d.billed_to_at, d.clock_start_at,
-                     d.appointment_at, d.appointment_source
+            @"SELECT d.id, d.company_id, d.customer_id, d.status, d.billed_from_at, d.billed_to_at, d.clock_start_at,
+                     d.appointment_at, d.appointment_source, d.entered_at
               FROM detention_dwells d
-              WHERE d.status = 'closed'
+              WHERE d.status IN ('closed','unpriced_no_terms','needs_appointment')
                 AND d.exited_at IS NOT NULL AND NOW() > d.exited_at + make_interval(mins => @gap)
               ORDER BY d.id",
             c => c.Parameters.AddWithValue("@gap", DefaultMergeGapMinutes), ct);
@@ -165,25 +180,27 @@ public static class DetentionService
             var cid = Convert.ToInt64(d["companyId"]);
             var dwellId = Convert.ToInt64(d["id"]);
             var custId = d["customerId"] is null or DBNull ? 0L : Convert.ToInt64(d["customerId"]);
+            var prior = d["status"]?.ToString() ?? "closed";
 
+            // Rule card as-of entered_at (spec: 'saving never retro-bills' beyond the card's effective date).
             var card = await db.QuerySingleAsync(
                 @"SELECT id, version, free_minutes, rate_per_hour, currency, billing_increment_minutes,
-                         max_charge_amount, claim_window_days
+                         max_charge_amount, claim_window_days, grace_minutes
                   FROM detention_rule_cards rc
-                  WHERE rc.company_id=@c AND rc.active
+                  WHERE rc.company_id=@c AND rc.active AND rc.effective_date <= @entered::date
                     AND ((rc.scope_type='customer' AND rc.scope_id=@cust) OR rc.scope_type='tenant')
                   ORDER BY CASE WHEN rc.scope_type='customer' THEN 0 ELSE 1 END, rc.effective_date DESC, rc.version DESC
                   LIMIT 1",
-                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); }, ct);
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); c.Parameters.AddWithValue("@entered", Convert.ToDateTime(d["enteredAt"])); }, ct);
             if (card is null)
             {
-                await SetStatusAsync(db, cid, dwellId, "unpriced_no_terms", ct);
+                if (prior == "closed") await SetStatusAsync(db, cid, dwellId, prior, "unpriced_no_terms", ct);
                 continue;
             }
             if (d["clockStartAt"] is null or DBNull)
             {
                 // No appointment recorded and no attestation — detected and shown, never priced.
-                await SetStatusAsync(db, cid, dwellId, "needs_appointment", ct);
+                if (prior != "needs_appointment") await SetStatusAsync(db, cid, dwellId, prior, "needs_appointment", ct);
                 continue;
             }
 
@@ -194,6 +211,7 @@ public static class DetentionService
             var rate = Convert.ToDecimal(card["ratePerHour"]);
             var cap = card["maxChargeAmount"] is null or DBNull ? (decimal?)null : Convert.ToDecimal(card["maxChargeAmount"]);
             var claimDays = Convert.ToInt32(card["claimWindowDays"]);
+            var graceMin = Convert.ToInt32(card["graceMinutes"]);
 
             var dwellMinutes = (int)Math.Max(0, (billedTo - clockStart).TotalMinutes);
             var billable = Math.Max(0, dwellMinutes - freeMin);
@@ -204,10 +222,11 @@ public static class DetentionService
                 await db.ExecuteAsync(
                     @"UPDATE detention_dwells SET status='below_free_time', dwell_minutes=@dm, free_minutes_applied=@fm,
                           billable_minutes=0, rule_card_id=@rc, rule_card_version=@ver, updated_at=NOW()
-                      WHERE company_id=@c AND id=@id AND status='closed'",
+                      WHERE company_id=@c AND id=@id AND status=@prior",
                     c =>
                     {
                         c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId);
+                        c.Parameters.AddWithValue("@prior", prior);
                         c.Parameters.AddWithValue("@dm", dwellMinutes); c.Parameters.AddWithValue("@fm", freeMin);
                         c.Parameters.AddWithValue("@rc", Convert.ToInt64(card["id"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(card["version"]));
                     }, ct);
@@ -218,16 +237,24 @@ public static class DetentionService
             var amount = Math.Round(qtyHours * rate, 2);
             if (cap.HasValue) amount = Math.Min(amount, cap.Value);
 
-            await db.ExecuteAsync(
-                @"UPDATE detention_dwells SET status='priced_pending_review',
+            // Late arrival (mandate + market blocker: 'your driver was late — detention void'): arrival
+            // past appointment+grace rests in 'late_arrival' — math shown, unapprovable without override.
+            var lateArrival = d["appointmentAt"] is DateTime appt
+                              && d["billedFromAt"] is DateTime arr
+                              && arr > appt.AddMinutes(graceMin);
+            var target = lateArrival ? "late_arrival" : "priced_pending_review";
+
+            var priced = await db.ExecuteAsync(
+                @"UPDATE detention_dwells SET status=@target,
                       dwell_minutes=@dm, free_minutes_applied=@fm, billable_minutes=@bm,
                       rule_card_id=@rc, rule_card_version=@ver,
                       quantity_hours=@qty, unit_rate=@rate, amount=@amt, currency=@cur,
                       claim_deadline_at = exited_at + make_interval(days => @cw), updated_at=NOW()
-                  WHERE company_id=@c AND id=@id AND status='closed'",
+                  WHERE company_id=@c AND id=@id AND status=@prior",
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId);
+                    c.Parameters.AddWithValue("@prior", prior); c.Parameters.AddWithValue("@target", target);
                     c.Parameters.AddWithValue("@dm", dwellMinutes); c.Parameters.AddWithValue("@fm", freeMin);
                     c.Parameters.AddWithValue("@bm", billable);
                     c.Parameters.AddWithValue("@rc", Convert.ToInt64(card["id"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(card["version"]));
@@ -236,15 +263,33 @@ public static class DetentionService
                     c.Parameters.AddWithValue("@cw", claimDays);
                 }, ct);
 
-            // Freeze the evidence bundle for the priced dwell (immutable by DB trigger from here on).
-            await new DetentionReviewService(db).BuildEvidenceAsync(cid, dwellId, ct);
+            // Evidence freezes ONLY when THIS tick won the pricing update (consultant blocker: a raced
+            // 0-row update must never freeze a bundle from a reopened/unpriced dwell).
+            if (priced > 0)
+            {
+                var sha = await new DetentionReviewService(db).BuildEvidenceAsync(cid, dwellId, ct);
+                // External tamper anchor: one durable outbox event per dwell carrying the full sha.
+                if (sha is not null)
+                    await db.ExecuteAsync(
+                        @"INSERT INTO outbox_messages (tenant_id, event_type, aggregate_type, aggregate_id, payload_json, status, retry_count)
+                          VALUES (@t, 'detention.dwell.priced', 'detention_dwell', @a,
+                                  jsonb_build_object('dwellId', @a, 'amount', @amt, 'evidenceSha256', @sha), 'pending', 0)
+                          ON CONFLICT (tenant_id, aggregate_id) WHERE event_type='detention.dwell.priced' DO NOTHING",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@t", cid);
+                            c.Parameters.AddWithValue("@a", dwellId.ToString());
+                            c.Parameters.AddWithValue("@amt", amount);
+                            c.Parameters.AddWithValue("@sha", sha);
+                        }, ct);
+            }
         }
     }
 
-    private static Task SetStatusAsync(Database db, long cid, long dwellId, string status, CancellationToken ct) =>
+    private static Task SetStatusAsync(Database db, long cid, long dwellId, string priorStatus, string status, CancellationToken ct) =>
         db.ExecuteAsync(
-            "UPDATE detention_dwells SET status=@s, updated_at=NOW() WHERE company_id=@c AND id=@id AND status='closed'",
-            c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId); c.Parameters.AddWithValue("@s", status); }, ct);
+            "UPDATE detention_dwells SET status=@s, updated_at=NOW() WHERE company_id=@c AND id=@id AND status=@prior",
+            c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId); c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@prior", priorStatus); }, ct);
 
     // ── Phase A — OPEN. Candidates: unconsumed Entry events at customer sites (7-day lookback). ──
     private static async Task OpenDwellsAsync(Database db, CancellationToken ct)
@@ -379,29 +424,61 @@ public static class DetentionService
         }
     }
 
-    // ── Phase C — TIMEOUT / GPS-GAP: never bill un-witnessed time; forced review. ──
+    // ── Phase C — GPS-GAP then TIMEOUT: NEVER bill un-witnessed time; forced review.
+    // Consultant fixes applied: gps-gap runs FIRST (so a dark-then-timed-out dwell bills to the last
+    // witnessed moment, not NOW()); both closes verify the position is INSIDE the fence (an outside or
+    // absent position bills only to entry — the last provably-inside moment); truncated derives from a
+    // fresh INSIDE position, not mere position freshness. ──
     private static async Task TimeoutDwellsAsync(Database db, CancellationToken ct)
     {
-        // Timeout: open too long. If the vehicle is provably still inside, mark truncated (undercharge, disclosed).
-        await db.ExecuteAsync(
-            @"UPDATE detention_dwells d SET status='closed', close_reason='timeout', exited_at=NOW(),
-                  departure_lower=NOW(), billed_to_at=NOW(), review_required=TRUE, updated_at=NOW(),
-                  truncated = EXISTS (SELECT 1 FROM latest_vehicle_positions p
-                                      WHERE p.company_id=d.company_id AND p.vehicle_id=d.vehicle_id
-                                        AND p.event_time > NOW() - make_interval(mins => @gap))
-              WHERE d.status='open' AND d.entered_at < NOW() - make_interval(hours => @maxh)",
-            c => { c.Parameters.AddWithValue("@maxh", DefaultMaxDwellHours); c.Parameters.AddWithValue("@gap", GpsGapMinutes); }, ct);
-
-        // GPS gap: position stale while dwell open — close at the last-known-inside time.
+        // GPS gap first: position stale while dwell open — close at the last INSIDE-witnessed time.
+        // An outside/unknown last position means departure is un-witnessed: bill only to entry.
         await db.ExecuteAsync(
             @"UPDATE detention_dwells d SET status='closed', close_reason='gps_gap',
-                  exited_at=p.event_time, departure_lower=p.event_time, billed_to_at=p.event_time,
+                  exited_at   = w.bill_to, departure_lower = w.bill_to, billed_to_at = w.bill_to,
                   review_required=TRUE, updated_at=NOW()
-              FROM latest_vehicle_positions p
-              WHERE d.status='open' AND p.company_id=d.company_id AND p.vehicle_id=d.vehicle_id
-                AND p.event_time < NOW() - make_interval(mins => @gap)
-                AND p.event_time > d.entered_at",
+              FROM (SELECT d2.id AS dwell_id,
+                           GREATEST(d2.entered_at,
+                               CASE WHEN 2 * 6371000 * asin(sqrt(
+                                         power(sin(radians(p.lat - g.center_lat) / 2), 2) +
+                                         cos(radians(g.center_lat)) * cos(radians(p.lat)) *
+                                         power(sin(radians(p.lng - g.center_lng) / 2), 2))) <= g.radius_meters
+                                    THEN p.event_time ELSE d2.entered_at END) AS bill_to
+                    FROM detention_dwells d2
+                    JOIN geofences g ON g.id = d2.geofence_id AND g.company_id = d2.company_id
+                    JOIN latest_vehicle_positions p ON p.company_id = d2.company_id AND p.vehicle_id = d2.vehicle_id
+                    WHERE d2.status='open' AND p.event_time < NOW() - make_interval(mins => @gap)) w
+              WHERE d.id = w.dwell_id AND d.status='open'",
             c => c.Parameters.AddWithValue("@gap", GpsGapMinutes), ct);
+
+        // Timeout second: open too long. Bill to the last INSIDE-witnessed position time (never NOW()
+        // unless a fresh inside position proves the vehicle is genuinely still there -> truncated).
+        await db.ExecuteAsync(
+            @"UPDATE detention_dwells d SET status='closed', close_reason='timeout',
+                  exited_at   = GREATEST(d.entered_at, COALESCE(w.witnessed_to, d.entered_at)),
+                  departure_lower = GREATEST(d.entered_at, COALESCE(w.witnessed_to, d.entered_at)),
+                  billed_to_at    = GREATEST(d.entered_at, COALESCE(w.witnessed_to, d.entered_at)),
+                  truncated = COALESCE(w.still_inside, FALSE),
+                  review_required=TRUE, updated_at=NOW()
+              FROM (SELECT d2.id AS dwell_id,
+                           CASE WHEN ins.inside AND p2.event_time > NOW() - make_interval(mins => @gap)
+                                THEN NOW()                                   -- provably still inside: bill to now, disclose truncation
+                                WHEN ins.inside THEN p2.event_time            -- last witnessed inside moment
+                                ELSE NULL END AS witnessed_to,               -- outside/unknown: entry only
+                           (ins.inside AND p2.event_time > NOW() - make_interval(mins => @gap)) AS still_inside
+                    FROM detention_dwells d2
+                    JOIN geofences g ON g.id = d2.geofence_id AND g.company_id = d2.company_id
+                    LEFT JOIN latest_vehicle_positions p2 ON p2.company_id = d2.company_id AND p2.vehicle_id = d2.vehicle_id
+                    LEFT JOIN LATERAL (
+                        SELECT (p2.lat IS NOT NULL AND
+                                2 * 6371000 * asin(sqrt(
+                                    power(sin(radians(p2.lat - g.center_lat) / 2), 2) +
+                                    cos(radians(g.center_lat)) * cos(radians(p2.lat)) *
+                                    power(sin(radians(p2.lng - g.center_lng) / 2), 2))) <= g.radius_meters) AS inside
+                    ) ins ON TRUE
+                    WHERE d2.status='open' AND d2.entered_at < NOW() - make_interval(hours => @maxh)) w
+              WHERE d.id = w.dwell_id AND d.status='open'",
+            c => { c.Parameters.AddWithValue("@maxh", DefaultMaxDwellHours); c.Parameters.AddWithValue("@gap", GpsGapMinutes); }, ct);
     }
 
     private static Task ConsumeAsync(Database db, long cid, long dwellId, long geofenceEventId, string type, DateTime at, string role, CancellationToken ct) =>

@@ -14,10 +14,14 @@ public static class GeofenceEvaluator
 
     internal static async Task EvaluateAsync(Database db, CancellationToken ct = default)
     {
+        // GIS: both zone shapes evaluate — circular (center+radius, haversine) and polygon
+        // (polygon_json vertex ring, ray-casting point-in-polygon) for docks/yards/irregular sites.
         var fences = await db.QueryAsync(
-            @"SELECT id, company_id, center_lat, center_lng, radius_meters
+            @"SELECT id, company_id, center_lat, center_lng, radius_meters, polygon_json
               FROM geofences
-              WHERE status='Active' AND center_lat IS NOT NULL AND center_lng IS NOT NULL AND radius_meters IS NOT NULL",
+              WHERE status='Active'
+                AND ((center_lat IS NOT NULL AND center_lng IS NOT NULL AND radius_meters IS NOT NULL)
+                     OR polygon_json IS NOT NULL)",
             ct: ct);
         if (fences.Count == 0) return;
 
@@ -39,15 +43,23 @@ public static class GeofenceEvaluator
         {
             var gid    = Convert.ToInt64(f["id"]);
             var fcid   = Convert.ToInt64(f["companyId"]);
-            var clat   = Convert.ToDouble(f["centerLat"]);
-            var clng   = Convert.ToDouble(f["centerLng"]);
-            var radius = Convert.ToDouble(f["radiusMeters"]);
+            var polygon = ParsePolygon(f["polygonJson"]?.ToString());
+            var hasCircle = f["centerLat"] is not null and not DBNull && f["centerLng"] is not null and not DBNull && f["radiusMeters"] is not null and not DBNull;
+            if (polygon is null && !hasCircle) continue;
+            var clat   = hasCircle ? Convert.ToDouble(f["centerLat"]) : 0;
+            var clng   = hasCircle ? Convert.ToDouble(f["centerLng"]) : 0;
+            var radius = hasCircle ? Convert.ToDouble(f["radiusMeters"]) : 0;
 
             foreach (var p in positions)
             {
                 if (Convert.ToInt64(p["companyId"]) != fcid) continue;
                 var vid = Convert.ToInt64(p["vehicleId"]);
-                var inside = DistanceMeters(clat, clng, Convert.ToDouble(p["lat"]), Convert.ToDouble(p["lng"])) <= radius;
+                var lat = Convert.ToDouble(p["lat"]);
+                var lng = Convert.ToDouble(p["lng"]);
+                // A polygon zone, when present, is the authoritative boundary; else the circle.
+                var inside = polygon is not null
+                    ? PointInPolygon(lat, lng, polygon)
+                    : DistanceMeters(clat, clng, lat, lng) <= radius;
                 lastEvent.TryGetValue((gid, vid), out var last);
 
                 if (inside && last != "Entry")
@@ -56,6 +68,42 @@ public static class GeofenceEvaluator
                     await EmitAsync(db, fcid, gid, vid, "Exit", ct);
             }
         }
+    }
+
+    // Polygon ring from polygon_json: accepts [[lat,lng],...] or [{"lat":..,"lng":..},...].
+    internal static List<(double Lat, double Lng)>? ParsePolygon(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var ring = new List<(double, double)>();
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (el.ValueKind == System.Text.Json.JsonValueKind.Array && el.GetArrayLength() >= 2)
+                    ring.Add((el[0].GetDouble(), el[1].GetDouble()));
+                else if (el.ValueKind == System.Text.Json.JsonValueKind.Object
+                         && el.TryGetProperty("lat", out var la) && el.TryGetProperty("lng", out var lo))
+                    ring.Add((la.GetDouble(), lo.GetDouble()));
+            }
+            return ring.Count >= 3 ? ring : null;
+        }
+        catch { return null; }   // malformed polygon: fail-closed to the circle (or skip)
+    }
+
+    // Ray casting: odd number of edge crossings => inside.
+    internal static bool PointInPolygon(double lat, double lng, List<(double Lat, double Lng)> ring)
+    {
+        var inside = false;
+        for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
+        {
+            var (yi, xi) = (ring[i].Lat, ring[i].Lng);
+            var (yj, xj) = (ring[j].Lat, ring[j].Lng);
+            if (((yi > lat) != (yj > lat)) &&
+                (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+                inside = !inside;
+        }
+        return inside;
     }
 
     private static Task EmitAsync(Database db, long companyId, long geofenceId, long vehicleId, string eventType, CancellationToken ct) =>

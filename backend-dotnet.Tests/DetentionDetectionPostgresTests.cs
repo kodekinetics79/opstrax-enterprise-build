@@ -158,11 +158,15 @@ public class DetentionDetectionPostgresTests
             await SeedEventAsync(db, cid, fenceId, vid, "Entry", DateTime.UtcNow.AddHours(-30));
             await DetentionService.DetectAsync(db);
             var d = (await db.QuerySingleAsync(
-                "SELECT status, close_reason, review_required FROM detention_dwells WHERE company_id=@c AND geofence_id=@g",
+                "SELECT status, close_reason, review_required, billed_to_at, entered_at FROM detention_dwells WHERE company_id=@c AND geofence_id=@g",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@g", fenceId); }))!;
-            Assert.Equal("closed", d["status"]?.ToString());
+            // Settled immediately (exit stamped at entry — no witnessed time) and, with no rule card,
+            // rests fail-closed in unpriced_no_terms. close_reason + forced review preserved.
+            Assert.Equal("unpriced_no_terms", d["status"]?.ToString());
             Assert.Equal("timeout", d["closeReason"]?.ToString());
             Assert.True((bool)d["reviewRequired"]!);
+            // Never bill un-witnessed time: with NO position data, billing stops at the entry moment.
+            Assert.Equal(((DateTime)d["enteredAt"]!), ((DateTime)d["billedToAt"]!), TimeSpan.FromSeconds(2));
         }
         finally { await CleanupAsync(db, cid); }
     }

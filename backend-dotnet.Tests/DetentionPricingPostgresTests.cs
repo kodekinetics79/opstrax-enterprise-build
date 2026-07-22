@@ -63,6 +63,55 @@ public class DetentionPricingPostgresTests
     }
 
     [Fact]
+    public async Task Late_Arrival_Rests_Unapprovable_Without_Override()
+    {
+        var db = CreateDatabase();
+        await new DetentionSchemaService(db).EnsureAsync();
+        var (cid, custId, vid, fenceId) = await SeedAsync(db);
+        try
+        {
+            await SeedRuleCardAsync(db, cid, custId, freeMinutes: 60, ratePerHour: 60m, incrementMinutes: 15, graceMinutes: 30);
+
+            // Appointment at T-8h; the truck arrives 2h LATE (grace 30min) — the standard shipper denial.
+            var appointment = DateTime.UtcNow.AddHours(-8);
+            var arrival = appointment.AddHours(2);
+            var jobId = await db.InsertAsync(
+                @"INSERT INTO jobs (company_id, customer_id, job_code, job_type, pickup_latitude, pickup_longitude, po_number)
+                  VALUES (@c, @cust, @code, 'freight', 34.05, -118.24, 'PO-9') RETURNING id",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); c.Parameters.AddWithValue("@code", $"DL-{Guid.NewGuid():N}".Substring(0, 12)); });
+            await db.ExecuteAsync(
+                @"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, assigned_at, planned_pickup_at)
+                  VALUES (@c, @j, @v, @assigned, @appt)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@j", jobId);
+                    c.Parameters.AddWithValue("@v", vid); c.Parameters.AddWithValue("@assigned", appointment.AddHours(-1));
+                    c.Parameters.AddWithValue("@appt", appointment);
+                });
+            await SeedEventAsync(db, cid, fenceId, vid, "Entry", arrival);
+            await DetentionService.DetectAsync(db);
+            await SeedEventAsync(db, cid, fenceId, vid, "Exit", arrival.AddHours(3));
+            await DetentionService.DetectAsync(db);
+
+            var d = (await db.QuerySingleAsync(
+                "SELECT id, status, amount FROM detention_dwells WHERE company_id=@c",
+                c => c.Parameters.AddWithValue("@c", cid)))!;
+            Assert.Equal("late_arrival", d["status"]?.ToString());        // priced but resting — math shown
+            Assert.True(Convert.ToDecimal(d["amount"]) > 0);
+
+            // Unapprovable without an explicit override note; approvable with one.
+            var svc = new DetentionReviewService(db);
+            var dwellId = Convert.ToInt64(d["id"]);
+            var blocked = await svc.ApproveAsync(cid, dwellId, userId: 9, overrideNote: null);
+            Assert.False(blocked.Ok);
+            Assert.Equal("late_arrival_override_required", blocked.Reason);
+            var overridden = await svc.ApproveAsync(cid, dwellId, userId: 9, overrideNote: "shipper accepted late arrival; detention agreed on call");
+            Assert.True(overridden.Ok);
+        }
+        finally { await CleanupApprovalArtifactsAsync(db, cid); }
+    }
+
+    [Fact]
     public async Task No_Appointment_Means_Detected_But_Never_Priced()
     {
         var db = CreateDatabase();
@@ -96,10 +145,28 @@ public class DetentionPricingPostgresTests
         {
             await SeedRuleCardAsync(db, cid, custId, freeMinutes: 120, ratePerHour: 60m, incrementMinutes: 15); // notice at 75% = 90min
 
+            // The notice is appointment-anchored (consultant fix): seed the assignment whose planned
+            // pickup IS the appointment so the OPEN dwell resolves its clock before the notice can fire.
+            var entry = DateTime.UtcNow.AddHours(-2);
+            var jobId = await db.InsertAsync(
+                @"INSERT INTO jobs (company_id, customer_id, job_code, job_type, pickup_latitude, pickup_longitude)
+                  VALUES (@c, @cust, @code, 'freight', 34.05, -118.24) RETURNING id",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); c.Parameters.AddWithValue("@code", $"DN-{Guid.NewGuid():N}".Substring(0, 12)); });
+            await db.ExecuteAsync(
+                @"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, assigned_at, planned_pickup_at)
+                  VALUES (@c, @j, @v, @assigned, @appt)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@j", jobId);
+                    c.Parameters.AddWithValue("@v", vid); c.Parameters.AddWithValue("@assigned", entry.AddHours(-1));
+                    c.Parameters.AddWithValue("@appt", entry);   // on-time appointment: clock = arrival
+                });
+
             // Truck has been inside for 2h — past the 90-minute notice threshold, still on site.
-            await SeedEventAsync(db, cid, fenceId, vid, "Entry", DateTime.UtcNow.AddHours(-2));
+            await SeedEventAsync(db, cid, fenceId, vid, "Entry", entry);
             await DetentionService.DetectAsync(db);
-            await DetentionService.DetectAsync(db);   // second tick must NOT duplicate the notice
+            await DetentionService.DetectAsync(db);   // second tick resolves clock -> notice; third must NOT duplicate
+            await DetentionService.DetectAsync(db);
 
             var d = (await db.QuerySingleAsync(
                 "SELECT status, warning_notified_at FROM detention_dwells WHERE company_id=@c",
@@ -143,15 +210,15 @@ public class DetentionPricingPostgresTests
         return (cid, custId, vid, fenceId);
     }
 
-    private static Task SeedRuleCardAsync(Database db, long cid, long custId, int freeMinutes, decimal ratePerHour, int incrementMinutes) =>
+    private static Task SeedRuleCardAsync(Database db, long cid, long custId, int freeMinutes, decimal ratePerHour, int incrementMinutes, int graceMinutes = 0) =>
         db.ExecuteAsync(
-            @"INSERT INTO detention_rule_cards (company_id, scope_type, scope_id, free_minutes, rate_per_hour, billing_increment_minutes)
-              VALUES (@c, 'customer', @cust, @free, @rate, @inc)",
+            @"INSERT INTO detention_rule_cards (company_id, scope_type, scope_id, free_minutes, rate_per_hour, billing_increment_minutes, grace_minutes, effective_date)
+              VALUES (@c, 'customer', @cust, @free, @rate, @inc, @grace, CURRENT_DATE - 2)",   // effective before the dwell (as-of resolution)
             c =>
             {
                 c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId);
                 c.Parameters.AddWithValue("@free", freeMinutes); c.Parameters.AddWithValue("@rate", ratePerHour);
-                c.Parameters.AddWithValue("@inc", incrementMinutes);
+                c.Parameters.AddWithValue("@inc", incrementMinutes); c.Parameters.AddWithValue("@grace", graceMinutes);
             });
 
     private static async Task<long> SeedEventAsync(Database db, long cid, long fenceId, long vid, string type, DateTime at) =>
@@ -167,10 +234,28 @@ public class DetentionPricingPostgresTests
 
     private static async Task CleanupAsync(Database db, long cid)
     {
+        await db.ExecuteAsync("DELETE FROM outbox_messages WHERE tenant_id=@t", c => c.Parameters.AddWithValue("@t", cid));
         foreach (var t in new[] { "detention_notices", "detention_dwell_events", "detention_dwells", "detention_rule_cards",
                                   "notifications", "geofence_events", "geofences", "dispatch_assignments", "jobs", "vehicles", "customers" })
             await db.ExecuteAsync($"DELETE FROM {t} WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", cid));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", cid));
+    }
+
+    // The late-arrival test approves a charge, so evidence + charges exist too.
+    private static async Task CleanupApprovalArtifactsAsync(Database db, long cid)
+    {
+        await db.ExecuteAsync("ALTER TABLE detention_evidence DISABLE TRIGGER trg_detention_evidence_immutable");
+        try
+        {
+            await db.ExecuteAsync("DELETE FROM detention_evidence WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", cid));
+        }
+        finally
+        {
+            await db.ExecuteAsync("ALTER TABLE detention_evidence ENABLE TRIGGER trg_detention_evidence_immutable");
+        }
+        await db.ExecuteAsync("DELETE FROM outbox_messages WHERE tenant_id=@t", c => c.Parameters.AddWithValue("@t", cid));
+        await db.ExecuteAsync("DELETE FROM job_charges WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", cid));
+        await CleanupAsync(db, cid);
     }
 
     private static Database CreateDatabase() =>
