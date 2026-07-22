@@ -5899,10 +5899,29 @@ public static partial class EndpointMappings
     private static async Task<IResult> WorkOrderComplete(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         await db.ExecuteAsync("UPDATE work_orders SET status='Completed', completed_at=NOW() WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        await CloseLinkedPmItemAsync(db, GetCompanyId(http), id, ct);
         await AddWorkOrderEvent(db, GetCompanyId(http), id, null, "Completed", "Work order completed", ct);
         await audit.LogAsync(http, "workorder.completed", "WorkOrder", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Work order completed"));
     }
+
+    // When a work order tied to a preventive-maintenance item is completed, close that item AND stamp the
+    // vehicle's current odometer + engine hours onto it. This recorded value is the service baseline the PM
+    // evaluator reads to arm the NEXT interval; without it baselines stayed ~0 and every vehicle past its
+    // first interval was flagged overdue forever (audit P1, both mileage and engine-hours PM).
+    private static Task CloseLinkedPmItemAsync(Database db, long companyId, long workOrderId, CancellationToken ct) =>
+        db.ExecuteAsync(
+            @"UPDATE maintenance_items mi
+              SET status='Completed',
+                  odometer_miles = COALESCE(v.odometer_miles, mi.odometer_miles),
+                  engine_hours   = COALESCE(v.engine_hours, mi.engine_hours),
+                  updated_at = NOW()
+              FROM work_orders wo
+              JOIN vehicles v ON v.id = wo.vehicle_id
+              WHERE wo.id = @woId AND wo.company_id = @cid
+                AND mi.id = wo.maintenance_item_id AND mi.company_id = @cid
+                AND mi.status NOT IN ('Completed','Cancelled','Closed','Deleted')",
+            c => { c.Parameters.AddWithValue("@woId", workOrderId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
     private static async Task<IResult> WorkOrderApproveCost(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -14562,6 +14581,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             }, ct);
 
         if (rows == 0) return Results.BadRequest(ApiResponse<object>.Fail("Work order not found or already closed"));
+
+        // Close the originating PM item and record the service odo/hours baseline so the next interval arms.
+        await CloseLinkedPmItemAsync(db, companyId, id, ct);
 
         // Attempt to restore vehicle availability if no remaining blockers.
         await Services.MaintenanceBackgroundService.UpdateVehicleAvailabilityAsync(db, ct);
