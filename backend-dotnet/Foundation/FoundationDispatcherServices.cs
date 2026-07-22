@@ -45,13 +45,19 @@ public sealed class PostgresEventProcessingLogService(Database db) : IEventProce
 
 public sealed class OutboxMessageHandlerRegistry(IEnumerable<IOutboxMessageHandler> handlers) : IOutboxMessageHandlerRegistry
 {
-    private readonly IReadOnlyDictionary<string, IOutboxMessageHandler> _handlers =
-        handlers.ToDictionary(handler => handler.EventType, StringComparer.OrdinalIgnoreCase);
+    // Group (not ToDictionary): an event type may legitimately have several derive-beside consumers
+    // (invoice.issued -> rev-rec AND general ledger). Registration order is preserved within a group.
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<IOutboxMessageHandler>> _handlers =
+        handlers.GroupBy(handler => handler.EventType, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<IOutboxMessageHandler>)g.ToList(), StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyCollection<string> RegisteredEventTypes => _handlers.Keys.ToArray();
 
     public IOutboxMessageHandler? Resolve(string eventType)
-        => _handlers.TryGetValue(eventType, out var handler) ? handler : null;
+        => _handlers.TryGetValue(eventType, out var list) && list.Count > 0 ? list[0] : null;
+
+    public IReadOnlyList<IOutboxMessageHandler> ResolveAll(string eventType)
+        => _handlers.TryGetValue(eventType, out var list) ? list : Array.Empty<IOutboxMessageHandler>();
 }
 
 public sealed class FoundationSmokeRequestedHandler(
@@ -129,8 +135,8 @@ public sealed class PostgresOutboxDispatcher(
                 ActorTypes.System,
                 options.WorkerName);
 
-            var handler = outboxHandlers.Resolve(message.EventType);
-            if (handler is null)
+            var handlers = outboxHandlers.ResolveAll(message.EventType);
+            if (handlers.Count == 0)
             {
                 await HandleOutboxFailureAsync(message, new InvalidOperationException($"No handler registered for {message.EventType}"), ct);
                 continue;
@@ -138,7 +144,21 @@ public sealed class PostgresOutboxDispatcher(
 
             try
             {
-                await handler.HandleAsync(message, ct);
+                // Fan-out: run every registered handler for this event type; the message is marked
+                // processed only after ALL succeed. On any failure the whole message goes to retry,
+                // re-running already-succeeded handlers — safe because every handler is idempotent.
+                // The failing handler's type name is preserved in last_error for audit.
+                foreach (var handler in handlers)
+                {
+                    try
+                    {
+                        await handler.HandleAsync(message, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException($"{handler.GetType().Name}: {ex.Message}", ex);
+                    }
+                }
                 await MarkOutboxProcessedAsync(message, ct);
                 eventLogs.Record(message.TenantId, message.EventType, options.WorkerName, "success", null, message.CorrelationId, message.CausationId, message.RetryCount);
                 processed++;

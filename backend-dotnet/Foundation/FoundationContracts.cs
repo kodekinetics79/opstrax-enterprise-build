@@ -383,6 +383,9 @@ public interface IOutboxMessageHandler
 public interface IOutboxMessageHandlerRegistry
 {
     IOutboxMessageHandler? Resolve(string eventType);
+    // Fan-out: an event type may have multiple independent derive-beside consumers (e.g. invoice.issued
+    // drives BOTH rev-rec and the general ledger). Returns all handlers in registration order.
+    IReadOnlyList<IOutboxMessageHandler> ResolveAll(string eventType);
     IReadOnlyCollection<string> RegisteredEventTypes { get; }
 }
 
