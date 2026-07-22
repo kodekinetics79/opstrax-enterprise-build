@@ -27,7 +27,8 @@ public class DetentionDetectionPostgresTests
             var dwell = (await db.QuerySingleAsync(
                 "SELECT id, status, close_reason FROM detention_dwells WHERE company_id=@c AND vehicle_id=@v",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@v", vid); }))!;
-            Assert.Equal("closed", dwell["status"]?.ToString());
+            // No rule card seeded -> the settled dwell lands fail-closed: detected + shown, priced NOTHING.
+            Assert.Equal("unpriced_no_terms", dwell["status"]?.ToString());
             Assert.Equal("exit_event", dwell["closeReason"]?.ToString());
 
             // Both events consumed exactly once, with the right roles.
@@ -90,7 +91,7 @@ public class DetentionDetectionPostgresTests
             var final = (await db.QuerySingleAsync(
                 "SELECT status, billed_to_at FROM detention_dwells WHERE company_id=@c AND vehicle_id=@v",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@v", vid); }))!;
-            Assert.Equal("closed", final["status"]?.ToString());
+            Assert.Equal("unpriced_no_terms", final["status"]?.ToString());   // settled + fail-closed (no rule card)
             Assert.Equal(x2Time, ((DateTime)final["billedToAt"]!).ToUniversalTime(), TimeSpan.FromSeconds(2));
 
             // ONE dwell total — the bounce never fragmented into a second dwell (blocker #1 regression).
