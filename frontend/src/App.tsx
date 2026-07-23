@@ -137,11 +137,15 @@ const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((mod
 
 function ProtectedShell() {
   const { session } = useAuth();
+  if (!session) return <Navigate to="/login" replace />;
+  // Drivers are confined to their own portal — the back-office shell is never rendered for them.
+  // getLandingRouteForSession returns "/driver" for a driver-scoped session (driver:self, no
+  // dashboard:view); anything they type under the protected shell bounces to the portal. Defense in
+  // depth over the API side, where the isolated Driver role simply lacks any back-office permission.
+  if (getLandingRouteForSession(session) === "/driver") return <Navigate to="/driver" replace />;
   // Flags are only resolvable for an authenticated user (they're evaluated per-user
   // server-side), so the provider lives inside the authenticated shell.
-  return session
-    ? <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>
-    : <Navigate to="/login" replace />;
+  return <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>;
 }
 
 /**

@@ -2063,7 +2063,15 @@ public static partial class EndpointMappings
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
         // customer visibility links — see P41HardeningTests.
         ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send"],
-        ["Driver"]                   = ["driver:self","dispatch:view","shipments:view","vehicles:view","drivers:view","safety:view","maintenance:create","compliance:view","alerts:view","notifications:view","messages:send"],
+        // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
+        // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
+        // in-app messaging with dispatch, their notifications, and maintenance:create (a narrow
+        // WRITE the DVIR submit needs, since DriverSubmitDvir delegates to MaintInspectionCreate).
+        // It deliberately grants NO back-office READS (dispatch/shipments/vehicles/drivers/safety/
+        // compliance), so a driver can never pull tenant operational data even by calling an admin
+        // API directly. Driver is an AUTHORITATIVE role in RolePermissionReconciler, so this list
+        // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
+        ["Driver"]                   = ["driver:self","notifications:view","messages:send","maintenance:create"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view","notifications:view"],
         ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
         ["Customer"]                 = ["shipments:view","customer_portal:view","alerts:view"],

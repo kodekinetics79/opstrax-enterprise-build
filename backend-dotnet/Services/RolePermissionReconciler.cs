@@ -54,6 +54,17 @@ public sealed class RolePermissionReconciler(Database db, ILogger<RolePermission
     /// </summary>
     private static readonly string[] Retired = ["driver:portal", "dvir:manage"];
 
+    /// <summary>
+    /// Roles whose grant set is AUTHORITATIVE — the code default is the exact, single source of
+    /// truth, so a grant present in the DB but absent from the default is REVOKED (not preserved
+    /// additively). Reserved for locked-down, isolated roles where over-granting is a security
+    /// problem, not a convenience. The Driver role is portal-only: a driver must never accumulate
+    /// back-office grants (dispatch/shipments/etc.), so it is reconciled to exactly its default.
+    /// Broad staff roles are intentionally NOT here — for them additive reconciliation stands, so a
+    /// tenant's bespoke extra grant is never silently stripped.
+    /// </summary>
+    private static readonly HashSet<string> Authoritative = new(StringComparer.OrdinalIgnoreCase) { "Driver" };
+
     public async Task ReconcileAsync(CancellationToken ct = default)
     {
         try
@@ -110,9 +121,12 @@ public sealed class RolePermissionReconciler(Database db, ILogger<RolePermission
             }
 
             // desired = everything the DB already grants, plus everything the code declares,
-            // minus the proven-dead keys. Additive by construction (see class remarks).
-            var desired = new HashSet<string>(current, StringComparer.OrdinalIgnoreCase);
-            desired.UnionWith(codeDefault);
+            // minus the proven-dead keys. Additive by construction (see class remarks) — EXCEPT for
+            // authoritative roles (e.g. Driver), whose desired set is exactly the code default so
+            // stray back-office grants are revoked, keeping the role truly isolated.
+            var authoritative = Authoritative.Contains(name);
+            var desired = new HashSet<string>(authoritative ? codeDefault : current, StringComparer.OrdinalIgnoreCase);
+            if (!authoritative) desired.UnionWith(codeDefault);
             desired.ExceptWith(Retired);
 
             var toAdd = desired.Except(currentGrantRows, StringComparer.OrdinalIgnoreCase).ToArray();
