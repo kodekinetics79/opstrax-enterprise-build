@@ -586,6 +586,18 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "driver:self");
             return denied is not null ? Task.FromResult(denied) : DriverHos(http, db, ct);
         });
+        // Driver self-service earnings — the driver sees their OWN pay, including their share of
+        // detention we collected (the differentiator). Read-only; statements stay admin-generated.
+        app.MapGet("/api/driver/earnings", (HttpContext http, Database db, SettlementService svc, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "driver:self");
+            return denied is not null ? Task.FromResult(denied) : DriverEarnings(http, db, svc, ct);
+        });
+        app.MapGet("/api/driver/earnings/statements/{id:long}", (HttpContext http, long id, Database db, SettlementService svc, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "driver:self");
+            return denied is not null ? Task.FromResult(denied) : DriverStatementDetail(http, id, db, svc, ct);
+        });
 
         app.MapGet("/api/geofences", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT g.*, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count, (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND ge.event_time::date=CURRENT_DATE) events_today FROM geofences g WHERE g.company_id=@companyId ORDER BY g.name", c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct));
         app.MapGet("/api/geofences/summary", (HttpContext http, Database db, CancellationToken ct) => db.QuerySingleAsync(@"SELECT COUNT(*) total, SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_count, SUM(CASE WHEN status='Inactive' THEN 1 ELSE 0 END) inactive_count, (SELECT COUNT(*) FROM geofence_events ge JOIN geofences own ON own.id=ge.geofence_id WHERE own.company_id=@companyId AND ge.event_time::date=CURRENT_DATE AND ge.event_type='Entry') entry_events_today, (SELECT COUNT(*) FROM geofence_events ge JOIN geofences own ON own.id=ge.geofence_id WHERE own.company_id=@companyId AND ge.event_time::date=CURRENT_DATE AND ge.event_type='Exit') exit_events_today, (SELECT COUNT(DISTINCT ge.vehicle_id) FROM geofence_events ge JOIN geofences own ON own.id=ge.geofence_id WHERE own.company_id=@companyId AND ge.event_time::date=CURRENT_DATE) vehicles_triggered FROM geofences WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct).ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
@@ -17774,6 +17786,32 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             eldIdentifier        = record["eldIdentifier"],
             warnings,
         }));
+    }
+
+    // Driver self-service earnings. Identity is strictly the session driver; the whole screen —
+    // live open-period preview, committed statements, YTD/lifetime, detention pay, last payment —
+    // is assembled by SettlementService against the driver's own committed statements. Employer
+    // economics (customer charge, internal share %) are withheld at the SQL projection.
+    private static async Task<IResult> DriverEarnings(HttpContext http, Database db, SettlementService svc, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http);
+        var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+        if (driverId < 0) return DriverIdentityNotFound();
+        return Results.Ok(ApiResponse<object>.Ok(await svc.GetDriverEarningsAsync(companyId, driverId, ct)));
+    }
+
+    // One owned statement's receipt (drill-down). The {id} is a lookup key, never an authorization
+    // grant: ownership is re-verified inside the service, which returns null for anything that is not
+    // this driver's own committed statement — mapped to 404 here, identical to a nonexistent id.
+    private static async Task<IResult> DriverStatementDetail(HttpContext http, long id, Database db, SettlementService svc, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http);
+        var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+        if (driverId < 0) return DriverIdentityNotFound();
+        var detail = await svc.GetDriverStatementDetailAsync(companyId, driverId, id, ct);
+        return detail is null
+            ? Results.NotFound(ApiResponse<object>.Fail("Statement not found"))
+            : Results.Ok(ApiResponse<object>.Ok(detail));
     }
 
     // ── Driver Guidance Builder ────────────────────────────────────────────────────

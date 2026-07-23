@@ -468,6 +468,262 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
         return row ?? new Dictionary<string, object?>();
     }
 
+    // ── Driver self-service earnings (driver:self) ──────────────────────────────
+    // The driver-facing read surface for their OWN pay. The payee_id + payee_type +
+    // company_id + source='system' + status predicate lives ONLY here so no driver route
+    // can accidentally widen it. "Earned/owed" money comes exclusively from COMMITTED
+    // statements (source='system', status approved|paid): drafts are mutable
+    // (delete-and-recompute) and manual statements are uncommunicated adjustments, so
+    // neither counts. The open period is a live read-only Preview, clearly flagged
+    // estimated. Employer economics — basis_amount (the customer's collected charge) and
+    // unit_rate (the internal share %) — are NEVER projected to the driver.
+    public async Task<Dictionary<string, object?>> GetDriverEarningsAsync(
+        long companyId, long driverId, CancellationToken ct = default)
+    {
+        // Open (uncommitted) window: day after the last cut statement through today, else the
+        // current week. Derived in SQL so Postgres owns the week/date semantics.
+        // Anchor on the last COMMITTED statement, not the last draft: an unapproved draft is
+        // (source='system', status='draft'); anchoring on it would push open_start past today and
+        // render live earnings as a misleading $0. The open window is everything since the last
+        // statement AP actually cut, which is exactly the driver's not-yet-finalized earnings.
+        var window = await db.QuerySingleAsync(
+            @"SELECT COALESCE(
+                        (SELECT (MAX(period_end) + INTERVAL '1 day')::date FROM settlement_statements
+                         WHERE company_id=@cid AND payee_type='driver' AND payee_id=@did
+                           AND source='system' AND status IN ('approved','paid')),
+                        date_trunc('week', now())::date) AS open_start,
+                     CURRENT_DATE AS open_end",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+        var openStart = DateOnly.FromDateTime(Convert.ToDateTime(window!["openStart"], CultureInfo.InvariantCulture));
+        var openEnd   = DateOnly.FromDateTime(Convert.ToDateTime(window["openEnd"], CultureInfo.InvariantCulture));
+
+        // A read-only Preview — zero writes — so the driver watches detention accrue live
+        // before AP cuts the statement. If the last statement already runs through today the
+        // window is empty; the preview fails closed and we present it as "caught up".
+        SettlementStatementOutcome preview = openStart > openEnd
+            ? new SettlementStatementOutcome(false, null, null, "preview", 0, 0, "USD", Array.Empty<SettlementComputedLine>(), "invalid_period")
+            : await GenerateDriverStatementAsync(companyId, driverId, openStart, openEnd, SettlementMode.Preview, ct);
+
+        var openDetention = preview.Lines.Where(l => l.PayCode == "detention").ToList();
+        var openLoads     = preview.Lines.Where(l => l.PayCode != "detention").Select(l => l.JobId).Distinct().Count();
+        var openAvailable = preview.Reason == "preview";
+        var openPeriod = new Dictionary<string, object?>
+        {
+            ["periodStart"] = openStart.ToString("yyyy-MM-dd"),
+            ["periodEnd"]   = openEnd.ToString("yyyy-MM-dd"),
+            ["status"]      = "open",
+            ["estimated"]   = true,
+            ["available"]   = openAvailable,
+            ["reason"]      = openAvailable ? null : FriendlyOpenReason(preview.Reason),
+            ["grossPay"]    = openAvailable ? preview.Total : 0m,
+            ["detentionPay"] = openDetention.Sum(l => l.Amount),
+            ["linehaulPay"] = openAvailable ? preview.Total - openDetention.Sum(l => l.Amount) : 0m,
+            ["loadCount"]   = openLoads,
+            ["detentionEventCount"] = openDetention.Count,
+        };
+
+        // Committed statements (the money): source='system', approved|paid only.
+        var rows = await db.QueryAsync(
+            @"SELECT s.id, s.statement_no, s.period_start, s.period_end, s.status, s.currency,
+                     s.subtotal, s.total, s.amount_paid,
+                     (SELECT COALESCE(SUM(sl.amount),0) FROM settlement_lines sl
+                        WHERE sl.statement_id=s.id AND sl.company_id=s.company_id AND sl.pay_code='detention') AS detention_total,
+                     (SELECT COUNT(DISTINCT sl.job_id) FROM settlement_lines sl
+                        WHERE sl.statement_id=s.id AND sl.company_id=s.company_id AND sl.pay_code<>'detention') AS load_count
+              FROM settlement_statements s
+              WHERE s.company_id=@cid AND s.payee_type='driver' AND s.payee_id=@did
+                AND s.source='system' AND s.status IN ('approved','paid')
+              ORDER BY s.period_end DESC, s.id DESC
+              LIMIT 12",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+
+        var statements = rows.Select(r => (object)new Dictionary<string, object?>
+        {
+            ["id"]           = r["id"],
+            ["statementNo"]  = r["statementNo"],
+            ["periodStart"]  = r["periodStart"],
+            ["periodEnd"]    = r["periodEnd"],
+            ["status"]       = r["status"],
+            ["currency"]     = r["currency"],
+            ["subtotal"]     = Money(r["subtotal"]),
+            ["total"]        = Money(r["total"]),
+            ["amountPaid"]   = Money(r["amountPaid"]),
+            ["outstanding"]  = Money(r["total"]) - Money(r["amountPaid"]),
+            ["detentionTotal"] = Money(r["detentionTotal"]),
+            ["loadCount"]    = r["loadCount"],
+        }).ToList();
+
+        // Money rollups over the same committed scope (statement-level totals).
+        var roll = await db.QuerySingleAsync(
+            @"SELECT
+                COALESCE(SUM(total),0) AS lifetime_earned,
+                COALESCE(SUM(amount_paid),0) AS lifetime_paid,
+                COALESCE(SUM(total) FILTER (WHERE period_start >= date_trunc('year', now())::date),0) AS ytd_earned,
+                COALESCE(SUM(amount_paid) FILTER (WHERE period_start >= date_trunc('year', now())::date),0) AS ytd_paid,
+                COUNT(*) FILTER (WHERE period_start >= date_trunc('year', now())::date) AS ytd_count,
+                COALESCE(SUM(total - amount_paid) FILTER (WHERE status='approved'),0) AS unpaid_total
+              FROM settlement_statements
+              WHERE company_id=@cid AND payee_type='driver' AND payee_id=@did AND source='system' AND status IN ('approved','paid')",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+
+        // Detention rollups need the line grain (a statement carries linehaul + detention).
+        var det = await db.QuerySingleAsync(
+            @"SELECT
+                COALESCE(SUM(sl.amount),0) AS lifetime_detention,
+                COALESCE(SUM(sl.amount) FILTER (WHERE s.period_start >= date_trunc('year', now())::date),0) AS ytd_detention,
+                COUNT(*) FILTER (WHERE s.period_start >= date_trunc('year', now())::date) AS ytd_detention_events
+              FROM settlement_lines sl
+              JOIN settlement_statements s ON s.id = sl.statement_id AND s.company_id = sl.company_id
+              WHERE sl.company_id=@cid AND s.payee_type='driver' AND s.payee_id=@did
+                AND s.source='system' AND s.status IN ('approved','paid') AND sl.pay_code='detention'",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+
+        // Amount + date only — bank/ACH routing (method, reference) is withheld.
+        var lastPay = await db.QuerySingleAsync(
+            @"SELECT p.amount, p.paid_at
+              FROM settlement_payments p
+              JOIN settlement_statements s ON s.id = p.statement_id AND s.company_id = p.company_id
+              WHERE p.company_id=@cid AND s.payee_type='driver' AND s.payee_id=@did
+                AND s.source='system' AND s.status IN ('approved','paid')
+              ORDER BY p.paid_at DESC LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+
+        var policy = await db.QuerySingleAsync(
+            "SELECT enabled FROM driver_detention_pay_policy WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        var policyEnabled = policy is not null && policy["enabled"] is true;
+
+        // Single-currency-per-driver assumption (mirrors GetApSummaryAsync): a driver's pay
+        // agreement fixes one currency, so rollups are not blind-summed across currencies. The
+        // authoritative currency is the most recent COMMITTED statement — the preview's currency
+        // is hardcoded 'USD' when the agreement is missing/lapsed, which would mislabel a non-USD
+        // driver's real committed figures. Fall back to the preview only when nothing is committed.
+        var currency = statements.Count > 0
+            ? (statements[0] as Dictionary<string, object?>)!["currency"]?.ToString() ?? preview.Currency
+            : preview.Currency;
+
+        return new Dictionary<string, object?>
+        {
+            ["currency"] = currency,
+            ["openPeriod"] = openPeriod,
+            ["ytd"] = new Dictionary<string, object?>
+            {
+                ["year"]         = openEnd.Year,
+                ["earned"]       = Money(roll?["ytdEarned"]),
+                ["paid"]         = Money(roll?["ytdPaid"]),
+                ["detentionPay"] = Money(det?["ytdDetention"]),
+                ["detentionEvents"] = det?["ytdDetentionEvents"] ?? 0,
+                ["statementCount"] = roll?["ytdCount"] ?? 0,
+            },
+            ["lifetime"] = new Dictionary<string, object?>
+            {
+                ["detentionPay"] = Money(det?["lifetimeDetention"]),
+                ["earned"]       = Money(roll?["lifetimeEarned"]),
+                ["paid"]         = Money(roll?["lifetimePaid"]),
+            },
+            ["detentionPolicyEnabled"] = policyEnabled,
+            ["unpaidTotal"] = Money(roll?["unpaidTotal"]),
+            ["lastPayment"] = lastPay is null ? null : new Dictionary<string, object?>
+            {
+                ["amount"] = Money(lastPay["amount"]),
+                ["paidAt"] = lastPay["paidAt"],
+            },
+            ["statements"] = statements,
+        };
+    }
+
+    // One owned statement's receipt: header + allow-listed lines + payments. Returns null when the
+    // statement is not the driver's own committed statement — the caller maps null to 404 (identical
+    // to a nonexistent id, so a sequential-id probe reveals nothing). basis_amount / unit_rate / basis
+    // / job_id / payment method / reference are DELIBERATELY omitted from the projection.
+    public async Task<Dictionary<string, object?>?> GetDriverStatementDetailAsync(
+        long companyId, long driverId, long statementId, CancellationToken ct = default)
+    {
+        var header = await db.QuerySingleAsync(
+            @"SELECT id, statement_no, period_start, period_end, status, currency, subtotal, total, amount_paid
+              FROM settlement_statements
+              WHERE id=@id AND company_id=@cid AND payee_type='driver' AND payee_id=@did
+                AND source='system' AND status IN ('approved','paid')",
+            c => { c.Parameters.AddWithValue("@id", statementId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+        if (header is null) return null;   // not owned / not committed -> 404 at the edge
+
+        var lines = await db.QueryAsync(
+            "SELECT line_no, pay_code, description, quantity, amount FROM settlement_lines WHERE company_id=@cid AND statement_id=@id ORDER BY line_no",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
+        var payments = await db.QueryAsync(
+            "SELECT amount, paid_at FROM settlement_payments WHERE company_id=@cid AND statement_id=@id ORDER BY paid_at",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
+
+        decimal detention = 0m, linehaul = 0m, other = 0m;
+        var lineOut = new List<object>(lines.Count);
+        foreach (var l in lines)
+        {
+            var payCode = l["payCode"]?.ToString() ?? "linehaul";
+            var amount  = Money(l["amount"]);
+            if (payCode == "detention") detention += amount;
+            else if (payCode == "linehaul") linehaul += amount;
+            else other += amount;
+            lineOut.Add(new Dictionary<string, object?>
+            {
+                ["lineNo"]      = l["lineNo"],
+                ["payCode"]     = payCode,
+                ["label"]       = PayCodeLabel(payCode),
+                ["description"] = l["description"],
+                ["quantity"]    = l["quantity"],
+                ["amount"]      = amount,
+            });
+        }
+
+        var total = Money(header["total"]);
+        return new Dictionary<string, object?>
+        {
+            ["statement"] = new Dictionary<string, object?>
+            {
+                ["id"]          = header["id"],
+                ["statementNo"] = header["statementNo"],
+                ["periodStart"] = header["periodStart"],
+                ["periodEnd"]   = header["periodEnd"],
+                ["status"]      = header["status"],
+                ["currency"]    = header["currency"],
+                ["subtotal"]    = Money(header["subtotal"]),
+                ["total"]       = total,
+                ["amountPaid"]  = Money(header["amountPaid"]),
+                ["outstanding"] = total - Money(header["amountPaid"]),
+            },
+            ["totals"] = new Dictionary<string, object?>
+            {
+                ["linehaul"]  = linehaul,
+                ["detention"] = detention,
+                ["other"]     = other,
+                ["gross"]     = linehaul + detention + other,
+            },
+            ["lines"] = lineOut,
+            ["payments"] = payments.Select(p => (object)new Dictionary<string, object?>
+            {
+                ["amount"] = Money(p["amount"]),
+                ["paidAt"] = p["paidAt"],
+            }).ToList(),
+        };
+    }
+
+    private static decimal Money(object? v) => v is null or DBNull ? 0m : Convert.ToDecimal(v, CultureInfo.InvariantCulture);
+
+    private static string PayCodeLabel(string payCode) => payCode switch
+    {
+        "linehaul"  => "Line-haul",
+        "detention" => "Detention pay",
+        _ => System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(payCode.Replace('_', ' ')),
+    };
+
+    private static string FriendlyOpenReason(string? reason) => reason switch
+    {
+        "no_pay_agreement"   => "Your pay setup is being finalized.",
+        "no_delivered_loads" => "No earnings calculated for this period yet.",
+        "invalid_period"     => "You're all caught up — no open period yet.",
+        _ when reason is not null && reason.StartsWith("basis_unsupported_phase1") => "Your pay plan isn't supported for a live preview yet.",
+        _ => "No earnings calculated for this period yet.",
+    };
+
     private sealed record PayAgreement(long Id, string Basis, decimal Rate, decimal? MinPay, string Currency);
     private sealed record DeliveredLoad(long JobId, decimal? Miles);
 }

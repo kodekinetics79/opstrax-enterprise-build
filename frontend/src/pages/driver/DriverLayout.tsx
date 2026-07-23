@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { AlertTriangle, Bell, BookOpen, ClipboardList, Clock, LogOut, Package, Truck } from "lucide-react";
+import { AlertTriangle, Bell, BookOpen, ClipboardList, Clock, DollarSign, LogOut, Package, Truck } from "lucide-react";
 import { useOfflineQueue } from "@/hooks/useOfflineQueue";
 import { useQuery } from "@tanstack/react-query";
 import { notificationsApi } from "@/services/notificationsApi";
@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 const NAV = [
   { to: "/driver",               icon: Truck,         label: "Home",     end: true,  badge: false },
   { to: "/driver/assignments",   icon: Package,       label: "Trip",     end: false, badge: false },
+  { to: "/driver/earnings",      icon: DollarSign,    label: "Pay",      end: false, badge: false },
   { to: "/driver/dvir",          icon: ClipboardList, label: "DVIR",     end: false, badge: false },
   { to: "/driver/coaching",      icon: BookOpen,      label: "Coaching", end: false, badge: false },
   { to: "/driver/hos",           icon: Clock,         label: "HOS",      end: false, badge: false },

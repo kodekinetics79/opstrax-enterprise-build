@@ -121,6 +121,7 @@ const DriverAssignmentPage = lazy(() => import("@/pages/driver/DriverAssignmentP
 const DriverDvirPage      = lazy(() => import("@/pages/driver/DriverDvirPage").then(m => ({ default: m.DriverDvirPage })));
 const DriverCoachingPage  = lazy(() => import("@/pages/driver/DriverCoachingPage").then(m => ({ default: m.DriverCoachingPage })));
 const DriverHosPage       = lazy(() => import("@/pages/driver/DriverHosPage").then(m => ({ default: m.DriverHosPage })));
+const DriverEarningsPage  = lazy(() => import("@/pages/driver/DriverEarningsPage").then(m => ({ default: m.DriverEarningsPage })));
 // P7 Notifications + Messaging
 const NotificationCenterPage = lazy(() => import("@/pages/NotificationCenterPage").then(m => ({ default: m.NotificationCenterPage })));
 const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").then(m => ({ default: m.MessageCenterPage })));
@@ -191,6 +192,7 @@ export default function App() {
             <Route path="/driver/dvir"           element={<DriverDvirPage />} />
             <Route path="/driver/coaching"       element={<DriverCoachingPage />} />
             <Route path="/driver/hos"            element={<DriverHosPage />} />
+            <Route path="/driver/earnings"       element={<DriverEarningsPage />} />
             <Route path="/driver/notifications"  element={<DriverNotificationsPage />} />
           </Route>
         ) : null}
