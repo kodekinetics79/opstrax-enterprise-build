@@ -18,6 +18,30 @@ public static class SettlementEndpoints
         app.MapPost("/api/settlements/{id:long}/approve", ApproveStatement);
         app.MapPost("/api/settlements/{id:long}/payments", RecordPayment);
         app.MapGet("/api/finance/ap-summary", ApSummary);
+        // Detention -> driver pay policy (the differentiator).
+        app.MapGet("/api/settlements/detention-pay-policy", GetDetentionPayPolicy);
+        app.MapPut("/api/settlements/detention-pay-policy", SetDetentionPayPolicy);
+    }
+
+    private static async Task<IResult> GetDetentionPayPolicy(HttpContext http, SettlementService svc, CancellationToken ct)
+    {
+        if (EndpointMappings.RequirePermission(http, "settlement.read") is { } denied) return denied;
+        return Results.Ok(ApiResponse<object>.Ok(await svc.GetDetentionPayPolicyAsync(EndpointMappings.GetCompanyId(http), ct)));
+    }
+
+    private static async Task<IResult> SetDetentionPayPolicy(HttpContext http, Dictionary<string, object?> body, SettlementService svc, AuditService audit, CancellationToken ct)
+    {
+        if (EndpointMappings.RequirePermission(http, "settlement.manage") is { } denied) return denied;
+        var trigger = Str(body, "triggerState") ?? "collected";
+        var shareType = Str(body, "shareType") ?? "percent";
+        if (trigger is not ("billed" or "collected")) return Results.BadRequest(ApiResponse<object>.Fail("triggerState must be 'billed' or 'collected'"));
+        if (shareType is not ("percent" or "flat_per_hour")) return Results.BadRequest(ApiResponse<object>.Fail("shareType must be 'percent' or 'flat_per_hour'"));
+        var enabled = body.TryGetValue("enabled", out var e) && e is not null && bool.TryParse(e.ToString(), out var eb) && eb;
+        decimal shareValue = decimal.TryParse(Str(body, "shareValue"), out var sv) ? sv : 0m;
+        await svc.SetDetentionPayPolicyAsync(EndpointMappings.GetCompanyId(http), enabled, trigger, shareType, shareValue, ct);
+        await audit.LogAsync(http, "settlement.detention_pay_policy.saved", "DriverDetentionPayPolicy", null,
+            System.Text.Json.JsonSerializer.Serialize(new { enabled, trigger, shareType, shareValue }), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { enabled, triggerState = trigger, shareType, shareValue }, "Detention pay policy saved"));
     }
 
     private static async Task<IResult> GenerateStatement(HttpContext http, Dictionary<string, object?> body, SettlementService svc, CancellationToken ct)

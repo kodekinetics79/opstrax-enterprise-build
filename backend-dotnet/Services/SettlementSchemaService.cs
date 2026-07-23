@@ -29,6 +29,20 @@ public sealed class SettlementSchemaService(Database db)
 
     private static readonly string[] Tables =
     [
+        // Detention -> driver pay policy (the differentiator: we collect detention AND pay drivers).
+        // One active policy per tenant. Fail-closed: no enabled policy => drivers are paid no detention.
+        @"CREATE TABLE IF NOT EXISTS driver_detention_pay_policy (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            trigger_state VARCHAR(20) NOT NULL DEFAULT 'collected',  -- billed | collected
+            share_type VARCHAR(20) NOT NULL DEFAULT 'percent',       -- percent | flat_per_hour
+            share_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+            currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (company_id)
+        )",
         // AP analogue of rate_cards: how a payee (driver/carrier) is paid for a load.
         @"CREATE TABLE IF NOT EXISTS pay_agreements (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

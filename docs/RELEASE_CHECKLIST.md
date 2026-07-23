@@ -25,12 +25,19 @@ database/migrations/2026_07_21_stage44_maintenance_pm_baseline.sql
 database/migrations/2026_07_22_stage45_general_ledger.sql
 database/migrations/2026_07_22_stage46_gl_period_close_export.sql
 database/migrations/2026_07_22_stage47_detention_recovery.sql
+database/migrations/2026_07_22_stage48_driver_detention_pay.sql
 ```
 
 NOTE: stage47 is the full Detention Recovery DDL (tables + evidence-immutability trigger +
 RLS + grants), mirroring DetentionSchemaService; the detector health-gates and refuses to run
 until these tables exist, so applying it is what activates detention in prod. The GL boot step
 is gated by GeneralLedgerSchema:Enabled (non-prod default on; prod uses stage45/46).
+
+NOTE: stage48 is the detention→driver-pay policy table (`driver_detention_pay_policy`, one row
+per tenant, fail-closed: no enabled policy ⇒ drivers paid no detention). Detention pay lines are
+DERIVED during settlement generation keyed on the trigger date (billed/collected), so
+delete-and-recompute stays honest and never double-pays. This closes the differentiator: OpsTrax
+collects detention AND pays the driver their share on the same evidence chain.
 
 Each migration also RLS-enrolls its new tables and grants the restricted `opstrax_app` role, so no
 separate RLS step is needed. Verify after: `SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'`

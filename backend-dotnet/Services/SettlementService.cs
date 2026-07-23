@@ -51,10 +51,14 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
                 $"basis_unsupported_phase1:{agreement.Basis}");
 
         var loads = await LoadDeliveredJobsAsync(companyId, driverId, periodStart, periodEnd, ct);
-        if (loads.Count == 0)
+        // Detention pay is keyed on the TRIGGER date (billed/collected), not the delivery date, so a
+        // driver can have a statement of detention pay alone (dwell collected this period, load delivered
+        // earlier). Fail only when there is nothing at all to pay.
+        var detentionLines = await ComputeDetentionPayLinesAsync(companyId, driverId, periodStart, periodEnd, ct);
+        if (loads.Count == 0 && detentionLines.Count == 0)
             return new SettlementStatementOutcome(false, null, null, "empty", 0, 0, agreement.Currency, empty, "no_delivered_loads");
 
-        var lines = new List<SettlementComputedLine>(loads.Count);
+        var lines = new List<SettlementComputedLine>(loads.Count + detentionLines.Count);
         foreach (var load in loads)
         {
             decimal qty, unitRate, basisAmount, amount;
@@ -80,6 +84,10 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
                 agreement.Basis, basisAmount, qty, unitRate, amount));
         }
 
+        // Detention pay lines derived here (not appended post-hoc) so delete-and-recompute always
+        // re-produces them consistently — a regenerate can never orphan or duplicate them.
+        lines.AddRange(detentionLines);
+
         var subtotal = lines.Sum(l => l.Amount);
         var total = subtotal;
 
@@ -87,6 +95,83 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
             return new SettlementStatementOutcome(false, null, null, "preview", subtotal, total, agreement.Currency, lines, "preview");
 
         return await CommitAsync(companyId, driverId, periodStart, periodEnd, agreement, lines, subtotal, total, ct);
+    }
+
+    public async Task<Dictionary<string, object?>> GetDetentionPayPolicyAsync(long companyId, CancellationToken ct = default) =>
+        await db.QuerySingleAsync(
+            "SELECT enabled, trigger_state, share_type, share_value, currency FROM driver_detention_pay_policy WHERE company_id=@c",
+            c => c.Parameters.AddWithValue("@c", companyId), ct)
+        ?? new Dictionary<string, object?> { ["enabled"] = false, ["triggerState"] = "collected", ["shareType"] = "percent", ["shareValue"] = 0m };
+
+    public Task SetDetentionPayPolicyAsync(long companyId, bool enabled, string trigger, string shareType, decimal shareValue, CancellationToken ct = default) =>
+        db.ExecuteAsync(
+            @"INSERT INTO driver_detention_pay_policy (company_id, enabled, trigger_state, share_type, share_value)
+              VALUES (@c, @en, @tr, @st, @sv)
+              ON CONFLICT (company_id) DO UPDATE SET
+                  enabled=@en, trigger_state=@tr, share_type=@st, share_value=@sv, updated_at=NOW()",
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@en", enabled);
+                c.Parameters.AddWithValue("@tr", trigger); c.Parameters.AddWithValue("@st", shareType);
+                c.Parameters.AddWithValue("@sv", shareValue);
+            }, ct);
+
+    // Detention -> driver pay (the differentiator). Fail-closed: no enabled policy => empty. One line per
+    // dwell attributed to this driver whose detention charge reached the policy's trigger state within the
+    // period. 'billed' = the charge is on an invoice issued in-period; 'collected' = that invoice is paid
+    // in-period. Amount = share% of the charge, or a flat rate per billable detention hour. Because this is
+    // recomputed on every generation and keyed by the dwell's charge, it is inherently idempotent.
+    private async Task<List<SettlementComputedLine>> ComputeDetentionPayLinesAsync(
+        long companyId, long driverId, DateOnly periodStart, DateOnly periodEnd, CancellationToken ct)
+    {
+        var policy = await db.QuerySingleAsync(
+            "SELECT enabled, trigger_state, share_type, share_value FROM driver_detention_pay_policy WHERE company_id=@c",
+            c => c.Parameters.AddWithValue("@c", companyId), ct);
+        var result = new List<SettlementComputedLine>();
+        if (policy is null || policy["enabled"] is not true) return result;   // fail-closed
+
+        var trigger = policy["triggerState"]?.ToString() ?? "collected";
+        var shareType = policy["shareType"]?.ToString() ?? "percent";
+        var shareValue = Convert.ToDecimal(policy["shareValue"], CultureInfo.InvariantCulture);
+        if (shareValue <= 0) return result;
+
+        var rows = await db.QueryAsync(
+            @"SELECT d.id AS dwell_id, d.job_id, d.quantity_hours, jc.amount AS charge_amount, g.name AS site_name
+              FROM detention_dwells d
+              JOIN job_charges jc ON jc.id = d.job_charge_id AND jc.company_id = d.company_id AND jc.source='detention'
+              JOIN geofences g ON g.id = d.geofence_id AND g.company_id = d.company_id
+              JOIN issued_invoice_lines iil ON iil.job_charge_id = jc.id AND iil.company_id = jc.company_id
+              JOIN issued_invoices ii ON ii.id = iil.issued_invoice_id AND ii.company_id = iil.company_id
+              WHERE d.company_id=@c AND d.driver_id=@driver AND d.job_charge_id IS NOT NULL AND d.job_id IS NOT NULL
+                AND (
+                    (@trigger='billed'    AND ii.issued_at::date BETWEEN @ps AND @pe)
+                 OR (@trigger='collected' AND ii.payment_status='paid' AND ii.paid_at IS NOT NULL AND ii.paid_at::date BETWEEN @ps AND @pe)
+                )",
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@driver", driverId);
+                c.Parameters.AddWithValue("@trigger", trigger);
+                c.Parameters.AddWithValue("@ps", periodStart); c.Parameters.AddWithValue("@pe", periodEnd);
+            }, ct);
+
+        foreach (var r in rows)
+        {
+            var jobId = Convert.ToInt64(r["jobId"], CultureInfo.InvariantCulture);
+            var hours = r["quantityHours"] is null or DBNull ? 0m : Convert.ToDecimal(r["quantityHours"], CultureInfo.InvariantCulture);
+            var chargeAmount = r["chargeAmount"] is null or DBNull ? 0m : Convert.ToDecimal(r["chargeAmount"], CultureInfo.InvariantCulture);
+            var site = r["siteName"]?.ToString() ?? "site";
+
+            decimal amount; decimal basisAmount; decimal unitRate;
+            if (shareType == "flat_per_hour") { basisAmount = hours; unitRate = shareValue; amount = Math.Round(hours * shareValue, 2, MidpointRounding.AwayFromZero); }
+            else { basisAmount = chargeAmount; unitRate = shareValue; amount = Math.Round(chargeAmount * shareValue / 100m, 2, MidpointRounding.AwayFromZero); }   // percent
+            if (amount <= 0) continue;
+
+            result.Add(new SettlementComputedLine(
+                jobId, "detention",
+                $"Detention pay — {site} ({trigger})",
+                shareType, basisAmount, basisAmount, unitRate, amount));
+        }
+        return result;
     }
 
     private async Task<SettlementStatementOutcome> CommitAsync(
