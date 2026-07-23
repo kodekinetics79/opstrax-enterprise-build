@@ -112,7 +112,6 @@ const ExecutivePage = lazy(() => import("@/pages/ExecutivePage").then((module) =
 const AboutPage = lazy(() => import("@/pages/AboutPage").then((module) => ({ default: module.AboutPage })));
 const PredictiveAnalyticsPage = lazy(() => import("@/pages/PredictiveAnalyticsPage").then((module) => ({ default: module.PredictiveAnalyticsPage })));
 const AlertRulesPage = lazy(() => import("@/pages/AlertRulesPage").then((module) => ({ default: module.AlertRulesPage })));
-const DriverMessagingPage = lazy(() => import("@/pages/DriverMessagingPage").then((module) => ({ default: module.DriverMessagingPage })));
 const WorkforceManagementPage = lazy(() => import("@/pages/WorkforceManagementPage").then((module) => ({ default: module.WorkforceManagementPage })));
 // P6 Mobile Driver Workflow — mobile-first portal at /driver/*
 const DriverLayout        = lazy(() => import("@/pages/driver/DriverLayout").then(m => ({ default: m.DriverLayout })));
@@ -122,6 +121,7 @@ const DriverDvirPage      = lazy(() => import("@/pages/driver/DriverDvirPage").t
 const DriverCoachingPage  = lazy(() => import("@/pages/driver/DriverCoachingPage").then(m => ({ default: m.DriverCoachingPage })));
 const DriverHosPage       = lazy(() => import("@/pages/driver/DriverHosPage").then(m => ({ default: m.DriverHosPage })));
 const DriverEarningsPage  = lazy(() => import("@/pages/driver/DriverEarningsPage").then(m => ({ default: m.DriverEarningsPage })));
+const DriverMessagesPage  = lazy(() => import("@/pages/driver/DriverMessagesPage").then(m => ({ default: m.DriverMessagesPage })));
 // P7 Notifications + Messaging
 const NotificationCenterPage = lazy(() => import("@/pages/NotificationCenterPage").then(m => ({ default: m.NotificationCenterPage })));
 const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").then(m => ({ default: m.MessageCenterPage })));
@@ -193,6 +193,7 @@ export default function App() {
             <Route path="/driver/coaching"       element={<DriverCoachingPage />} />
             <Route path="/driver/hos"            element={<DriverHosPage />} />
             <Route path="/driver/earnings"       element={<DriverEarningsPage />} />
+            <Route path="/driver/messages"       element={<DriverMessagesPage />} />
             <Route path="/driver/notifications"  element={<DriverNotificationsPage />} />
           </Route>
         ) : null}
@@ -339,7 +340,11 @@ export default function App() {
 
         {/* ── Alert Rules, Driver Messaging & Workforce ── */}
         <Route path="/alert-rules"       element={<RequirePermission permission="alerts:view"><AlertRulesPage /></RequirePermission>} />
-        <Route path="/driver-messaging"  element={<RequirePermission permission="dispatch:view"><DriverMessagingPage /></RequirePermission>} />
+        {/* The old "Driver Messaging" page wrote to module_records and delivered NOTHING to a driver
+            (a facade). Real dispatcher↔driver messaging lives at /messages (MessageCenterPage), which
+            shares the same messaging_conversations threads the driver portal now reads. Redirect so no
+            dispatcher lands on the dead surface; the page + /api/driver-messages stay dead-in-place. */}
+        <Route path="/driver-messaging"  element={<Navigate to="/messages" replace />} />
         <Route path="/workforce"         element={<RequirePermission permission="dispatch:view"><WorkforceManagementPage /></RequirePermission>} />
 
         {/* ── P7 Notifications + Messaging ── */}
@@ -371,7 +376,7 @@ export default function App() {
               "invoices","payments","profitability","integrations","owners","assignments","feature-flags",
               "carbon-tracking","digital-forms",
               "geofences","driver-scorecards",
-              "alert-rules","driver-messaging","workforce",
+              "alert-rules","workforce",
               "notifications","messages",
               "user-management",
               "fleet-health",

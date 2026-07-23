@@ -1999,6 +1999,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/notifications/acknowledge-all",        NotificationBulkAcknowledge);
 
         app.MapGet("/api/messages/conversations",                MessageConversationList);
+        app.MapGet("/api/messages/unread-count",                 MessageUnreadCount);
         app.MapGet("/api/messages/conversations/{id:long}",      MessageConversationDetail);
         app.MapPost("/api/messages/conversations",               MessageConversationCreate);
         app.MapPost("/api/messages/conversations/{id:long}/messages", MessageSend);
@@ -16958,22 +16959,24 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             conversations = await db.QueryAsync(
                 @"SELECT c.*, (SELECT COUNT(*) FROM messaging_messages m WHERE m.conversation_id=c.id) message_count,
-                         (SELECT MAX(sent_at) FROM messaging_messages m WHERE m.conversation_id=c.id) last_message_at
+                         (SELECT MAX(sent_at) FROM messaging_messages m WHERE m.conversation_id=c.id) last_message_at,
+                         (SELECT COUNT(*) FROM messaging_messages m WHERE m.conversation_id=c.id AND m.read_at IS NULL AND m.sender_user_id!=@uid) unread_count
                   FROM messaging_conversations c
                   WHERE c.company_id=@cid AND c.driver_id=@did
                   ORDER BY c.updated_at DESC LIMIT 50",
-                cmd => { cmd.Parameters.AddWithValue("@cid", companyId); cmd.Parameters.AddWithValue("@did", driverId); }, ct);
+                cmd => { cmd.Parameters.AddWithValue("@cid", companyId); cmd.Parameters.AddWithValue("@did", driverId); cmd.Parameters.AddWithValue("@uid", userId); }, ct);
         }
         else
         {
             // Dispatcher/fleet manager sees all company conversations
             conversations = await db.QueryAsync(
                 @"SELECT c.*, (SELECT COUNT(*) FROM messaging_messages m WHERE m.conversation_id=c.id) message_count,
-                         (SELECT MAX(sent_at) FROM messaging_messages m WHERE m.conversation_id=c.id) last_message_at
+                         (SELECT MAX(sent_at) FROM messaging_messages m WHERE m.conversation_id=c.id) last_message_at,
+                         (SELECT COUNT(*) FROM messaging_messages m WHERE m.conversation_id=c.id AND m.read_at IS NULL AND m.sender_user_id!=@uid) unread_count
                   FROM messaging_conversations c
                   WHERE c.company_id=@cid
                   ORDER BY c.updated_at DESC LIMIT 100",
-                cmd => cmd.Parameters.AddWithValue("@cid", companyId), ct);
+                cmd => { cmd.Parameters.AddWithValue("@cid", companyId); cmd.Parameters.AddWithValue("@uid", userId); }, ct);
         }
 
         return Results.Ok(ApiResponse<object>.Ok(conversations));
@@ -17020,11 +17023,23 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "messages:send") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var userRole  = http.Items.TryGetValue(AuthRoleItemKey, out var rv) ? rv?.ToString() ?? "" : "";
 
         var subject    = Get(body, "subject")?.ToString();
         var driverId   = body.TryGetValue("driverId", out var dd) && dd is not null ? Convert.ToInt64(dd) : (long?)null;
         var assignId   = body.TryGetValue("dispatchAssignmentId", out var aid) && aid is not null ? Convert.ToInt64(aid) : (long?)null;
         var tripId     = body.TryGetValue("tripId", out var tid) && tid is not null ? Convert.ToInt64(tid) : (long?)null;
+
+        // A driver-created conversation is ALWAYS owned by the session driver — never a payload driverId.
+        // Otherwise a driver could open a thread as another driver, and a driver who omits driverId (the
+        // "Message dispatch" button does) would create a driver_id=NULL thread that is invisible in their
+        // own list and unroutable for the dispatcher-reply notification. Identity from the session only.
+        if (string.Equals(userRole, "Driver", StringComparison.OrdinalIgnoreCase))
+        {
+            var selfDriverId = await GetDriverIdFromAuthAsync(http, db, ct);
+            if (selfDriverId < 0) return DriverIdentityNotFound();
+            driverId = selfDriverId;
+        }
 
         // Verify driver belongs to tenant if provided
         if (driverId.HasValue)
@@ -17056,7 +17071,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     // POST /api/messages/conversations/{id}/messages
     private static async Task<IResult> MessageSend(long id, HttpContext http,
-        Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+        Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notifs, CancellationToken ct)
     {
         if (RequirePermission(http, "messages:send") is { } denied) return denied;
         var companyId = GetCompanyId(http);
@@ -17105,6 +17120,34 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "UPDATE messaging_conversations SET updated_at=NOW() WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", id), ct);
 
+        // Notify the OTHER party so they get a bell/badge — best-effort: a notification failure must
+        // never fail the send (the message + /api/messages/unread-count are the source of truth). Deduped
+        // per conversation+recipient over a 5-min window so a burst collapses to one live signal. The raw
+        // body goes in the MESSAGE arg (SanitizeMessage auto-runs for audienceType 'driver'); the title
+        // stays generic so no internal note leaks through the (unsanitized) title.
+        try
+        {
+            var senderName = (await db.QuerySingleAsync(
+                "SELECT full_name FROM users WHERE id=@uid",
+                c => c.Parameters.AddWithValue("@uid", userId), ct))?["fullName"]?.ToString() ?? "a teammate";
+            if (string.Equals(userRole, "Driver", StringComparison.OrdinalIgnoreCase))
+            {
+                await notifs.CreateAsync(companyId, "message.received", "MessagingConversation", id, "info",
+                    $"New message from {senderName}", msgBody, "dispatcher", ct,
+                    dedupeKey: $"msg:conv:{id}:dispatcher", suppressionWindow: TimeSpan.FromMinutes(5));
+            }
+            else
+            {
+                var convDriverId = conv.TryGetValue("driverId", out var cdd) && cdd is not null and not DBNull ? Convert.ToInt64(cdd) : (long?)null;
+                if (convDriverId.HasValue)
+                    await notifs.CreateAsync(companyId, "message.received", "MessagingConversation", id, "info",
+                        "New message from dispatch", msgBody, "driver", ct,
+                        targetDriverId: convDriverId.Value,
+                        dedupeKey: $"msg:conv:{id}:driver", suppressionWindow: TimeSpan.FromMinutes(5));
+            }
+        }
+        catch (Exception ex) { LogSafeEndpointFailure(http, ex, "message.notify"); }
+
         return Results.Created($"/api/messages/conversations/{id}/messages/{msgId}",
             ApiResponse<object>.Ok(new { id = msgId }, "Message sent"));
     }
@@ -17115,18 +17158,65 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "messages:send") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var userRole  = http.Items.TryGetValue(AuthRoleItemKey, out var rv) ? rv?.ToString() ?? "" : "";
 
-        // Verify conversation access
-        var count = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM messaging_conversations WHERE id=@id AND company_id=@cid",
+        // Verify conversation access — and, for a driver, row-ownership: without it a driver could
+        // flip read_at on ANOTHER driver's thread in the tenant, corrupting that driver's unread badge
+        // and the dispatcher's read receipt. Mirror the ownership check on Detail/Send.
+        var conv = await db.QuerySingleAsync(
+            "SELECT driver_id FROM messaging_conversations WHERE id=@id AND company_id=@cid LIMIT 1",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        if (count == 0) return Results.NotFound(ApiResponse<object>.Fail("Conversation not found"));
+        if (conv is null) return Results.NotFound(ApiResponse<object>.Fail("Conversation not found"));
+        if (string.Equals(userRole, "Driver", StringComparison.OrdinalIgnoreCase))
+        {
+            var driverId = await GetDriverIdFromAuthAsync(http, db, ct);
+            var convDriverId = conv.TryGetValue("driverId", out var cd) && cd is not null and not DBNull ? Convert.ToInt64(cd) : (long?)null;
+            if (convDriverId != driverId)
+                return Results.Json(ApiResponse<object>.Fail("Forbidden"), statusCode: StatusCodes.Status403Forbidden);
+        }
 
         await db.ExecuteAsync(
             "UPDATE messaging_messages SET read_at=COALESCE(read_at, NOW()) WHERE conversation_id=@id AND company_id=@cid AND sender_user_id!=@uid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", userId); }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new { conversationId = id, status = "read" }));
+    }
+
+    // GET /api/messages/unread-count — drives the driver-portal "Messages" nav badge (and any
+    // dispatcher badge). Counts DISTINCT conversations with unread INBOUND messages (not-me,
+    // read_at IS NULL), so the badge reads as "N unread threads", matching the per-row dot.
+    private static async Task<IResult> MessageUnreadCount(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "messages:send") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var userRole  = http.Items.TryGetValue(AuthRoleItemKey, out var rv) ? rv?.ToString() ?? "" : "";
+
+        long count;
+        if (string.Equals(userRole, "Driver", StringComparison.OrdinalIgnoreCase))
+        {
+            var driverId = await GetDriverIdFromAuthAsync(http, db, ct);
+            // An unlinked driver account has no threads — an honest 0, never a 500 or a cross-tenant read.
+            if (driverId < 0) return Results.Ok(ApiResponse<object>.Ok(new { count = 0 }));
+            count = await db.ScalarLongAsync(
+                @"SELECT COUNT(DISTINCT c.id) FROM messaging_conversations c
+                  JOIN messaging_messages m ON m.conversation_id=c.id
+                  WHERE c.company_id=@cid AND c.driver_id=@did AND m.read_at IS NULL AND m.sender_user_id!=@uid",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@uid", userId); }, ct);
+        }
+        else
+        {
+            // Dispatch side: "inbound unread" = unread messages FROM drivers. read_at is a single shared
+            // column, so filtering merely on sender_user_id!=me would count a *colleague's* unread
+            // outbound-to-driver messages as this dispatcher's unread and inflate the badge. Threads
+            // are driver<->dispatch, so sender_role='Driver' is exactly the inbound-to-dispatch set.
+            count = await db.ScalarLongAsync(
+                @"SELECT COUNT(DISTINCT c.id) FROM messaging_conversations c
+                  JOIN messaging_messages m ON m.conversation_id=c.id
+                  WHERE c.company_id=@cid AND m.read_at IS NULL AND m.sender_role='Driver'",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { count }));
     }
 
     // ── P7 Escalation Rule Handlers ────────────────────────────────────────────
