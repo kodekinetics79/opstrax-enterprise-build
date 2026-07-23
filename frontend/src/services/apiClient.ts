@@ -48,7 +48,12 @@ export function newTraceParent(): { traceparent: string; traceId: string; correl
 
 // Request interceptor: Add auth token and CSRF token
 apiClient.interceptors.request.use((config) => {
-  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
+  // Must track the session key used by useAuth (currently v3). Older keys stay as read fallbacks so
+  // an in-flight session isn't dropped, but the CURRENT key MUST be first or the bearer token is
+  // never attached and every call 401s. Keep this list in sync with useAuth.STORAGE_KEY.
+  const session = localStorage.getItem("opstrax.session.v3")
+    || localStorage.getItem("opstrax.session.v2")
+    || localStorage.getItem("opstrax.session");
   if (session) {
     try {
       const parsed = JSON.parse(session);
