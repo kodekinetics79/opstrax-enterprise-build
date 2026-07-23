@@ -1,5 +1,6 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, resolveDriverIdentity } from "@/auth/accessScope";
+import { readRawSession } from "@/auth/sessionStorage";
 import type { AnyRecord, UserSession } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
@@ -214,7 +215,7 @@ export type TelematicsClusterRecord = {
 
 function getSession(): UserSession | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem("opstrax.session.v2") || window.localStorage.getItem("opstrax.session");
+  const raw = readRawSession();
   if (!raw) return null;
   try {
     return JSON.parse(raw) as UserSession;

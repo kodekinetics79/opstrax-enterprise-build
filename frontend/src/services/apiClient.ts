@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { ApiEnvelope } from "@/types";
 import { getGlobalCsrfToken, setGlobalCsrfToken } from "@/hooks/useCsrf";
+import { readRawSession, clearAllSessionKeys } from "@/auth/sessionStorage";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
@@ -48,12 +49,9 @@ export function newTraceParent(): { traceparent: string; traceId: string; correl
 
 // Request interceptor: Add auth token and CSRF token
 apiClient.interceptors.request.use((config) => {
-  // Must track the session key used by useAuth (currently v3). Older keys stay as read fallbacks so
-  // an in-flight session isn't dropped, but the CURRENT key MUST be first or the bearer token is
-  // never attached and every call 401s. Keep this list in sync with useAuth.STORAGE_KEY.
-  const session = localStorage.getItem("opstrax.session.v3")
-    || localStorage.getItem("opstrax.session.v2")
-    || localStorage.getItem("opstrax.session");
+  // Read the session (for the bearer token) from the SHARED key list — never hardcode it here, or a
+  // key bump silently drops the Authorization header and every authenticated call 401s.
+  const session = readRawSession();
   if (session) {
     try {
       const parsed = JSON.parse(session);
@@ -70,7 +68,7 @@ apiClient.interceptors.request.use((config) => {
         setGlobalCsrfToken(inner.csrfToken);
       }
     } catch {
-      localStorage.removeItem("opstrax.session");
+      clearAllSessionKeys();
     }
   }
 
@@ -113,8 +111,7 @@ apiClient.interceptors.response.use(
         url.includes("/api/auth/refresh");
 
       if (shouldClearSession) {
-        localStorage.removeItem("opstrax.session.v2");
-        localStorage.removeItem("opstrax.session");
+        clearAllSessionKeys();
         if (window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
@@ -140,7 +137,7 @@ export const nodeApiClient = axios.create({
 });
 
 nodeApiClient.interceptors.request.use((config) => {
-  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
+  const session = readRawSession();
   if (session) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
