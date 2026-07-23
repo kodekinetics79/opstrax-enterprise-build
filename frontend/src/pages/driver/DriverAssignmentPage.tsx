@@ -1,10 +1,12 @@
 import { useState, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Camera, CheckCircle, ChevronRight,
-  MapPin, Package, X, XCircle,
+  MapPin, MessageSquare, Package, X, XCircle,
 } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { messagesApi } from "@/services/messagesApi";
 import { useFlag } from "@/hooks/useFeatureFlags";
 import type { AnyRecord } from "@/types";
 
@@ -85,6 +87,27 @@ function ActionButton({
 
 export function DriverAssignmentPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [messaging, setMessaging] = useState(false);
+
+  // Open (or create, once) the load-scoped conversation with dispatch and jump into it. Dedupes
+  // against an existing open thread for this assignment so repeat taps never spawn duplicate threads.
+  const messageDispatch = async (assignmentId: number, shipment: string) => {
+    if (messaging) return;
+    setMessaging(true);
+    try {
+      const convs = (await messagesApi.listConversations()) as AnyRecord[];
+      const existing = convs.find(
+        (c) => Number(c.dispatchAssignmentId) === assignmentId && String(c.status) !== "closed"
+      );
+      const convId = existing
+        ? existing.id
+        : ((await messagesApi.createConversation({ dispatchAssignmentId: assignmentId, subject: `Load ${shipment}` })) as AnyRecord)["id"];
+      navigate("/driver/messages", { state: { convId } });
+    } finally {
+      setMessaging(false);
+    }
+  };
   const [showException, setShowException] = useState(false);
   const [showProof, setShowProof] = useState<"pickup" | "delivery" | null>(null);
   const [exceptionType, setExceptionType] = useState("general");
@@ -138,8 +161,19 @@ export function DriverAssignmentPage() {
   });
 
   const proofMut = useMutation({
-    mutationFn: ({ id, type, notes, hash }: { id: number; type: "pickup" | "delivery"; notes: string; hash: string }) =>
-      driverApi.submitProof(id, { proofType: type, notes: notes || undefined, evidenceHash: hash || undefined }),
+    mutationFn: ({ id, type, notes, hash, media }: {
+      id: number;
+      type: "pickup" | "delivery";
+      notes: string;
+      hash: string;
+      media: Array<{ kind: "photo" | "signature"; reference: string; contentType?: string; size?: number }>;
+    }) =>
+      driverApi.submitProof(id, {
+        proofType: type,
+        notes: notes || undefined,
+        evidenceHash: hash || undefined,
+        artifacts: media.length ? media : undefined,
+      }),
     onSuccess: () => { setShowProof(null); setArtifacts([]); setProofNotes(""); setProofHash(""); setUploadErr(null); void qc.invalidateQueries({ queryKey: ["driver"] }); },
   });
 
@@ -190,6 +224,15 @@ export function DriverAssignmentPage() {
         {assignment["customerName"] != null ? (
           <p className="text-sm text-slate-500">{String(assignment["customerName"])}</p>
         ) : null}
+        <button
+          type="button"
+          onClick={() => void messageDispatch(id, String(assignment["shipmentNumber"] ?? id))}
+          disabled={messaging}
+          className="mt-3 flex items-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3.5 py-2 text-sm font-semibold text-teal-700 active:bg-teal-100 disabled:opacity-50"
+        >
+          <MessageSquare className="h-4 w-4" />
+          {messaging ? "Opening…" : "Message dispatch"}
+        </button>
       </div>
 
       {/* Route */}
@@ -400,10 +443,18 @@ export function DriverAssignmentPage() {
               className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700 disabled:opacity-50"
               disabled={proofMut.isPending || uploading}
               onClick={() => {
-                const evidence = artifacts.length
-                  ? JSON.stringify({ artifacts: artifacts.map((a) => ({ kind: a.kind, reference: a.reference })), ref: proofHash || undefined })
-                  : proofHash;
-                proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: evidence });
+                // Media travels in `artifacts`, the reference/hash stays a hash. Packing the
+                // media manifest into evidenceHash (a VARCHAR(128)) is what made every POD
+                // with a photo fail to submit at all.
+                const media = artifacts
+                  .filter((a) => a.reference && (a.kind === "photo" || a.kind === "signature"))
+                  .map((a) => ({
+                    kind: a.kind as "photo" | "signature",
+                    reference: String(a.reference),
+                    contentType: a.contentType ? String(a.contentType) : undefined,
+                    size: typeof a.size === "number" ? a.size : undefined,
+                  }));
+                proofMut.mutate({ id, type: showProof, notes: proofNotes, hash: proofHash, media });
               }}
             >
               {proofMut.isPending ? "Submitting…" : `Confirm ${showProof === "delivery" ? "Delivery" : "Pickup"}`}

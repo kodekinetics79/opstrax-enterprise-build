@@ -38,6 +38,9 @@ services:
       Telemetry__GatewaySecret: ${TELEMETRY_GATEWAY_SECRET}
       Telemetry__Simulator__Enabled: ${TELEMETRY_SIMULATOR_ENABLED:-false}
       Sse__TicketKey: ${SSE_TICKET_KEY}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       PLATFORM_SUPERADMIN_PASSWORD: ${PLATFORM_SUPERADMIN_PASSWORD}
       PLATFORM_SUPERADMIN_EMAIL: ${PLATFORM_SUPERADMIN_EMAIL:-platform@opstrax.local}
       DemoSeed__Enabled: ${DEMO_SEED_ENABLED:-false}

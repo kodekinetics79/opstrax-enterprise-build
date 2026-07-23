@@ -64,6 +64,9 @@ public class CsrfMiddleware
         if (!SAFE_METHODS.Contains(context.Request.Method) &&
             !bearerOnly &&
             !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            // Second-factor login completion is pre-session like login: no CSRF cookie exists yet,
+            // and it is gated by a signed challenge token + a single-use TOTP code.
+            !string.Equals(path, "/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) &&
             // Identifier-first SSO discovery is pre-session (no bearer/CSRF cookie
             // yet, same as login) and read-only apart from an audit log entry.
             !string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) &&

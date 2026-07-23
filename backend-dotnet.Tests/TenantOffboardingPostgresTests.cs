@@ -15,8 +15,7 @@ namespace Opstrax.Tests;
 //   - ZERO rows remain in every table carrying its company_id/tenant_id.
 public class TenantOffboardingPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task DeleteTenant_Removes_Every_Row_For_A_Real_Tenant()

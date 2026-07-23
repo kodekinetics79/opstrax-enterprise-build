@@ -482,7 +482,7 @@ public sealed class TripBackgroundService(
                   SELECT @cid, t.driver_id, t.vehicle_id,
                          'route_deviation', 'High', 'open',
                          NOW(),
-                         @desc, @meta, 10,
+                         @desc, @meta::jsonb, 10,
                          @insight
                   FROM trips t WHERE t.id=@tid",
                 c =>

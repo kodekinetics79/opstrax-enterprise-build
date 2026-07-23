@@ -125,6 +125,12 @@ export function DispatchCommandPage() {
       dispatchApi.createException(id, { exceptionType: type, notes }),
     onSuccess: () => { invalidateAll(); setExceptionAssignId(null); setExceptionNotes(""); },
   });
+  const assignMutation = useMutation({
+    mutationFn: (payload: {
+      vehicleId: number; driverId: number; jobId?: number; override?: boolean; overrideReason?: string;
+    }) => dispatchApi.createAssignment(payload),
+    onSuccess: () => { invalidateAll(); },
+  });
 
   if (board.isLoading) return <LoadingState />;
   if (board.isError)
@@ -235,6 +241,10 @@ export function DispatchCommandPage() {
               isLoading={eligQuery.isLoading}
               canAssign={canAssign}
               canOverride={canOverride}
+              onAssign={(payload) => assignMutation.mutate(payload)}
+              assignPending={assignMutation.isPending}
+              assignError={assignMutation.isError ? (assignMutation.error as Error)?.message ?? "Assignment failed" : null}
+              assignResult={assignMutation.isSuccess ? assignMutation.data : null}
             />
           )}
           {activeTab === "Exceptions" && (
@@ -552,6 +562,7 @@ function AssignmentsTab({
 // ── Eligibility Tab ───────────────────────────────────────────────────────────
 function EligibilityTab({
   vehicleId, driverId, onVehicleChange, onDriverChange, result, isLoading, canAssign, canOverride,
+  onAssign, assignPending, assignError, assignResult,
 }: {
   vehicleId: string;
   driverId: string;
@@ -561,7 +572,33 @@ function EligibilityTab({
   isLoading: boolean;
   canAssign: boolean;
   canOverride: boolean;
+  onAssign: (payload: { vehicleId: number; driverId: number; jobId?: number; override?: boolean; overrideReason?: string }) => void;
+  assignPending: boolean;
+  assignError: string | null;
+  assignResult: AnyRecord | null;
 }) {
+  const [assignJobId, setAssignJobId] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+
+  const outOfService   = !!result?.["vehicleOutOfService"];
+  const overrideNeeded = !!result?.["overrideRequired"];
+  const eligible       = !!result?.["eligible"];
+  // The pairing can be committed when eligible, or when an override is needed and the user is allowed
+  // to override (with a reason). An out-of-service vehicle can never be assigned.
+  const canCommit = canAssign && !!result && !outOfService &&
+    (eligible || (overrideNeeded && canOverride)) &&
+    (!overrideNeeded || overrideReason.trim().length > 0);
+
+  const submitAssign = () => {
+    onAssign({
+      vehicleId: Number(vehicleId),
+      driverId:  Number(driverId),
+      jobId:     Number(assignJobId) > 0 ? Number(assignJobId) : undefined,
+      override:  overrideNeeded ? true : undefined,
+      overrideReason: overrideNeeded ? overrideReason.trim() : undefined,
+    });
+  };
+
   return (
     <div className="space-y-6">
       <section>
@@ -660,6 +697,61 @@ function EligibilityTab({
               Vehicle is out of service. This block cannot be overridden — resolve critical defects first.
             </div>
           ) : null}
+
+          {/* Commit the pairing — the core dispatcher action. */}
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            {assignResult ? (
+              <div className="rounded-lg bg-teal-100 p-3 text-sm text-teal-900">
+                <strong>Assignment created</strong>
+                {assignResult["id"] != null ? ` — #${String(assignResult["id"])}` : ""}
+                {assignResult["status"] != null ? ` (${String(assignResult["status"])})` : ""}. It now appears
+                on the board and can be accepted by the driver.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Job ID (optional)</span>
+                    <input
+                      type="number"
+                      className="mt-1 block w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+                      value={assignJobId}
+                      onChange={(e) => setAssignJobId(e.target.value)}
+                      placeholder="link a job"
+                    />
+                  </label>
+                  {overrideNeeded && canOverride ? (
+                    <label className="block flex-1 min-w-[16rem]">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">Override reason (required)</span>
+                      <input
+                        type="text"
+                        className="mt-1 block w-full rounded-lg border border-amber-300 px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none"
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        placeholder="why you are overriding the eligibility block"
+                      />
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!canCommit || assignPending}
+                    onClick={submitAssign}
+                    className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {assignPending ? "Assigning…" : overrideNeeded ? "Override & Assign" : "Create Assignment"}
+                  </button>
+                </div>
+                {!canAssign ? (
+                  <p className="text-xs text-slate-500">You do not have permission to create assignments (dispatch:assign).</p>
+                ) : outOfService ? (
+                  <p className="text-xs text-red-600">Cannot assign an out-of-service vehicle.</p>
+                ) : !eligible && !overrideNeeded ? (
+                  <p className="text-xs text-red-600">Not eligible — resolve the blocking reasons above before assigning.</p>
+                ) : null}
+                {assignError ? <p className="text-xs text-red-600">{assignError}</p> : null}
+              </div>
+            )}
+          </div>
         </section>
       )}
 

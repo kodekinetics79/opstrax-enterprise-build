@@ -23,8 +23,7 @@ public class PlatformControlPlaneCollection;
 [Trait("Category", "Integration")]
 public class PlatformOperatorManagementTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     private static Database CreateDatabase()
     {

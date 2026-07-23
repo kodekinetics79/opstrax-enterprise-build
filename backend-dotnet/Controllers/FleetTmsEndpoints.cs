@@ -496,7 +496,10 @@ WHERE id=@stopId AND shipment_id=@sid AND company_id=@companyId",
         if (await RequireModule(http, db, Opstrax.Api.Services.RevenueSchemaService.Modules.CustomerTracking, ct) is { } denied)
             return denied;
         if (await FindShipment(db, companyId, shipmentId, ct) is null) return NotFound();
-        var token = string.IsNullOrWhiteSpace(req.Token) ? Guid.NewGuid().ToString("N") : req.Token.Trim();
+        // Public tracking tokens are ALWAYS server-generated with enforced 256-bit entropy — never accept a
+        // caller-supplied value (a tenant or compromised integration could otherwise set a short, sequential
+        // or guessable public token, defeating the unguessable-secret guarantee). (P2 security fix.)
+        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var id = await db.InsertAsync(@"
 INSERT INTO fleet_tms_tracking_links (company_id, shipment_id, token, expires_at_utc, shared_by, created_at_utc)
 VALUES (@companyId, @sid, @token, @expires, @sharedBy, NOW())",

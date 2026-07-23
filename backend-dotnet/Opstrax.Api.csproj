@@ -13,6 +13,9 @@
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.1.2" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="../database/init/001_schema.sql" Link="Schema/001_schema.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Opstrax.Tests</_Parameter1>
     </AssemblyAttribute>

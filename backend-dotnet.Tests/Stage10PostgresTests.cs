@@ -7,8 +7,7 @@ namespace Opstrax.Tests;
 
 public class Stage10PostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task ExecutionSummary_Collects_All_Workflow_Sections_And_DoesNotMutate_Data()

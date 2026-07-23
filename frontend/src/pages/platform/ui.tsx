@@ -1,4 +1,4 @@
-import { useState, useRef, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 // Dark, executive-grade primitives for the Platform Admin control plane.
@@ -152,137 +152,18 @@ export function PError({ message }: { message?: string }) {
   );
 }
 
-// Destructive-action confirmation. When `confirmText` is provided the user must
-// type it exactly (e.g. the tenant code) before the confirm button enables —
-// required by the control-plane standard for cancel/offboard-class actions.
-export function PConfirm({ open, title, body, confirmLabel = "Confirm", confirmText, danger = true, busy, onConfirm, onClose }: {
-  open: boolean; title: string; body?: ReactNode; confirmLabel?: string; confirmText?: string;
-  danger?: boolean; busy?: boolean; onConfirm: () => void; onClose: () => void;
-}) {
-  const [typed, setTyped] = useState("");
-  if (!open) return null;
-  const blocked = Boolean(confirmText) && typed !== confirmText;
-  return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm" onClick={onClose}>
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        className="w-full max-w-md rounded-[20px] border border-slate-200 bg-white p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-        {body && <div className="mt-2 text-sm leading-6 text-slate-600">{body}</div>}
-        {confirmText && (
-          <div className="mt-4">
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Type <span className="font-mono text-slate-800">{confirmText}</span> to confirm
-            </p>
-            <PInput value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={confirmText} autoFocus />
-          </div>
-        )}
-        <div className="mt-5 flex justify-end gap-2">
-          <PButton variant="ghost" onClick={onClose} disabled={busy}>Cancel</PButton>
-          <PButton variant={danger ? "danger" : "primary"} onClick={onConfirm} disabled={busy || blocked}>
-            {confirmLabel}
-          </PButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Bulk selection primitives ────────────────────────────────────────────────
-// Shared across every platform table that supports multi-select CRUD (Tenants,
-// Invoices, …) so the selection model and action bar behave identically product-
-// wide. Selection is keyed by string id. Callers pass the CURRENTLY VISIBLE
-// (filtered) ids, so "select all" only ever targets rows the operator can see,
-// while any selected id that scrolls out of the active filter is preserved.
-export function useRowSelection(visibleIds: unknown[]) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Anchor for shift-click / Shift+Space range selection (the last row toggled).
-  const anchorRef = useRef<string | null>(null);
-  const ids = visibleIds.map(String);
-  const allVisibleSelected = ids.length > 0 && ids.every((id) => selected.has(id));
-  const someVisibleSelected = ids.some((id) => selected.has(id));
-
-  // toggle(id, shiftKey): a plain toggle flips one row and sets the anchor. A
-  // shift-toggle selects the whole contiguous range between the anchor and this
-  // row (Gmail/Finder semantics), so you can pick many rows in two clicks/keys.
-  const toggle = (id: unknown, shiftKey = false) => {
-    const key = String(id);
-    const idx = ids.indexOf(key);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const anchor = anchorRef.current;
-      if (shiftKey && anchor !== null && idx !== -1) {
-        const aIdx = ids.indexOf(anchor);
-        if (aIdx !== -1) {
-          const [lo, hi] = aIdx <= idx ? [aIdx, idx] : [idx, aIdx];
-          for (let i = lo; i <= hi; i++) next.add(ids[i]);
-          return next;
-        }
-      }
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-    anchorRef.current = key;
-  };
-
-  const toggleAllVisible = () =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (ids.every((id) => prev.has(id))) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-
-  return {
-    selectedIds: [...selected],
-    count: selected.size,
-    isSelected: (id: unknown) => selected.has(String(id)),
-    toggle,
-    toggleAllVisible,
-    allVisibleSelected,
-    someVisibleSelected,
-    clear: () => { anchorRef.current = null; setSelected(new Set()); },
-  };
-}
-
-// Native checkbox: fully keyboard-operable out of the box (Tab to focus, Space to
-// toggle, Shift+Space to range-select). We handle the toggle in onClick so we can
-// read `shiftKey` — which is set for both mouse clicks and keyboard Space — and
-// keep onChange as a no-op to satisfy React's controlled-input contract.
-export function PCheckbox({ checked, indeterminate, onToggle, ariaLabel }: {
-  checked: boolean; indeterminate?: boolean; onToggle: (shiftKey: boolean) => void; ariaLabel: string;
-}) {
-  return (
-    <input
-      type="checkbox"
-      checked={checked}
-      ref={(el) => { if (el) el.indeterminate = Boolean(indeterminate) && !checked; }}
-      onChange={() => {}}
-      onClick={(e) => { e.stopPropagation(); onToggle(e.shiftKey); }}
-      aria-label={ariaLabel}
-      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-teal-500 focus:ring-2 focus:ring-teal-400/30"
-    />
-  );
-}
-
-// Sticky action bar shown while ≥1 row is selected. `children` are the action
-// buttons, already permission-filtered by the caller.
-export function PBulkBar({ count, onClear, children }: {
-  count: number; onClear: () => void; children: ReactNode;
-}) {
-  if (count === 0) return null;
-  return (
-    <div className="sticky bottom-4 z-40 flex flex-wrap items-center gap-3 rounded-[16px] border border-slate-300 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
-      <span className="text-sm font-semibold text-slate-700">{count} selected</span>
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-      <button type="button" onClick={onClear} className="ml-auto text-sm font-medium text-slate-500 hover:text-slate-700">Clear</button>
-    </div>
-  );
-}
+// ─── Bulk selection + confirmation primitives ─────────────────────────────────
+// These now live in the shared components/bulk.tsx so the tenant app and the
+// platform control plane use ONE selection model (shift-click range select,
+// indeterminate header checkbox, sticky action bar, type-to-confirm dialog).
+// Re-exported under their original P-names so PlatformTenantsPage,
+// PlatformOperatorsPage and PlatformBillingPage keep working unchanged.
+export {
+  useRowSelection,
+  BulkCheckbox as PCheckbox,
+  BulkBar as PBulkBar,
+  ConfirmDialog as PConfirm,
+} from '@/components/bulk';
 
 export function PDrawer({ open, onClose, title, children }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode;

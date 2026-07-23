@@ -1,360 +1,1166 @@
-import { useState } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { customersApi } from "@/services/customersApi";
+import { Link } from "react-router-dom";
+import {
+  Plus,
+  Download,
+  Pencil,
+  Trash2,
+  RotateCcw,
+  Users,
+  ShieldCheck,
+  AlertTriangle,
+  Gauge,
+  Crown,
+  Truck,
+  FileText,
+  MapPin,
+  Sparkles,
+  Clock,
+  X,
+  Search,
+  ExternalLink,
+  Tag,
+  Activity,
+  MailWarning,
+} from "lucide-react";
+import {
+  customersApi,
+  type BulkAction,
+  type BulkResponse,
+  type CustomerStatus,
+  type CustomerSlaTier,
+  type CustomerTimelineEntry,
+  type CustomerRecommendation,
+} from "@/services/customersApi";
+import { useRowSelection, BulkCheckbox, BulkBar, ConfirmDialog } from "@/components/bulk";
+import {
+  ClayCard,
+  ClayButton,
+  ClayStat,
+  ClayBadge,
+  ClayGauge,
+  ClayInput,
+  ClaySelect,
+  ClayWell,
+  ClaySkeleton,
+  ClayStatSkeleton,
+  type ClayTone,
+} from "@/components/clay";
+import { useHasPermission, PERMISSIONS } from "@/hooks/usePermission";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Domain vocabulary ─────────────────────────────────────────────────────────
+// The canonical status/tier vocabularies the bulk contract accepts. Kept here so
+// the filter chips, the row badges, and the bulk mutation all speak one language.
+const STATUSES: CustomerStatus[] = ["Active", "At Risk", "Inactive"];
+const TIERS: CustomerSlaTier[] = ["Standard", "Gold", "Platinum"];
 
-function RiskBadge({ level }: { level: string }) {
-  const cls =
-    level === "High" ? "bg-red-50 border-red-200 text-red-700" :
-    level === "Medium" ? "bg-amber-50 border-amber-200 text-amber-700" :
-    "bg-teal-50 border-teal-200 text-teal-700";
-  return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{level}</span>;
-}
+const statusTone = (status: unknown): ClayTone => {
+  switch (String(status)) {
+    case "Active": return "good";
+    case "At Risk": return "bad";
+    case "Inactive": return "neutral";
+    default: return "warn";
+  }
+};
 
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "Active" ? "bg-teal-50 border-teal-200 text-teal-700" :
-    status === "At Risk" ? "bg-red-50 border-red-200 text-red-700" :
-    status === "Inactive" ? "bg-slate-100 border-slate-200 text-slate-600" :
-    "bg-amber-50 border-amber-200 text-amber-700";
-  return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
-}
+const tierTone = (tier: unknown): ClayTone => {
+  switch (String(tier)) {
+    case "Platinum": return "info";
+    case "Gold": return "warn";
+    default: return "neutral";
+  }
+};
 
-function SlaTierBadge({ tier }: { tier: string }) {
-  const cls =
-    tier === "Platinum" ? "bg-violet-50 border-violet-200 text-violet-700" :
-    tier === "Gold" ? "bg-amber-50 border-amber-200 text-amber-700" :
-    "bg-slate-100 border-slate-200 text-slate-600";
-  return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{tier}</span>;
-}
+const riskTone = (risk: unknown): ClayTone => {
+  switch (String(risk)) {
+    case "High": return "bad";
+    case "Medium": return "warn";
+    case "Low": return "good";
+    default: return "neutral";
+  }
+};
 
-function ScoreBar({ score, thresholdHigh = 90, thresholdMid = 80 }: { score: number; thresholdHigh?: number; thresholdMid?: number }) {
-  const pct = Math.min(100, Math.max(0, score));
-  const color = pct >= thresholdHigh ? "bg-teal-500" : pct >= thresholdMid ? "bg-amber-400" : "bg-red-400";
+/** null / undefined -> real score number or null. Never coerces null to 0 — a
+ * customer with no delivery history must read as "no data", not as a zero score. */
+const toScore = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" ? null : Number(v);
+
+const fmtInt = (v: unknown): string =>
+  v === null || v === undefined || v === "" ? "—" : String(v);
+
+// ── Focus-trapping modal (Escape closes, Tab wraps) ─────────────────────────────
+// Used for the create / edit / set-status / set-tier forms. Traps keyboard focus,
+// restores it to the trigger on unmount, and closes on Escape.
+function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  wide = false,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    const node = ref.current;
+    const focusables = () =>
+      node
+        ? Array.from(
+            node.querySelectorAll<HTMLElement>(
+              'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter((el) => !el.hasAttribute("disabled"))
+        : [];
+    focusables()[0]?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key === "Tab") {
+        const items = focusables();
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      prev?.focus?.();
+    };
+  }, [onClose]);
+
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={wide ? "w-full max-w-2xl" : "w-full max-w-lg"}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <ClayCard
+          title={title}
+          actions={
+            <ClayButton size="sm" icon={X} aria-label="Close dialog" onClick={onClose} />
+          }
+          footer={footer}
+        >
+          {children}
+        </ClayCard>
       </div>
-      <span className="w-7 text-right text-slate-700 font-medium">{Math.round(pct)}</span>
     </div>
   );
 }
 
-// ── Add Customer Modal ────────────────────────────────────────────────────────
+// ── Customer form (create + edit) ───────────────────────────────────────────────
+type FormState = {
+  name: string;
+  customerCode: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  billingAddress: string;
+  shippingAddress: string;
+  status: CustomerStatus;
+  slaTier: CustomerSlaTier;
+};
 
-function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ name: "", customerCode: "", contactName: "", email: "", phone: "", slaTier: "Standard" });
+const emptyForm = (): FormState => ({
+  name: "",
+  customerCode: "",
+  contactName: "",
+  email: "",
+  phone: "",
+  billingAddress: "",
+  shippingAddress: "",
+  status: "Active",
+  slaTier: "Standard",
+});
+
+const formFromRecord = (r: AnyRecord): FormState => ({
+  name: String(r.name ?? ""),
+  customerCode: String(r.customerCode ?? ""),
+  contactName: String(r.contactName ?? ""),
+  email: String(r.email ?? ""),
+  phone: String(r.phone ?? ""),
+  billingAddress: String(r.billingAddress ?? ""),
+  shippingAddress: String(r.shippingAddress ?? ""),
+  status: (STATUSES.includes(r.status as CustomerStatus) ? r.status : "Active") as CustomerStatus,
+  slaTier: (TIERS.includes(r.slaTier as CustomerSlaTier) ? r.slaTier : "Standard") as CustomerSlaTier,
+});
+
+function CustomerForm({
+  mode,
+  initial,
+  onClose,
+  onSaved,
+}: {
+  mode: "create" | "edit";
+  initial?: AnyRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const qc = useQueryClient();
+  const [form, setForm] = useState<FormState>(initial ? formFromRecord(initial) : emptyForm());
+  const set = (k: keyof FormState) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
+
   const mut = useMutation({
-    mutationFn: () => customersApi.create(form as unknown as AnyRecord),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["customers"] }); onSaved(); },
+    mutationFn: () =>
+      mode === "create"
+        ? customersApi.create(form as unknown as AnyRecord)
+        : customersApi.update(initial!.id as string | number, form as unknown as AnyRecord),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["customers"] });
+      onSaved();
+    },
   });
 
+  const valid = form.name.trim() && form.customerCode.trim();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="panel w-full max-w-lg p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-base font-bold text-slate-900">Add Customer</h2>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: "Company Name*", key: "name", placeholder: "Gulf Express Logistics" },
-            { label: "Customer Code*", key: "customerCode", placeholder: "CUS-001" },
-            { label: "Primary Contact", key: "contactName", placeholder: "Jane Doe" },
-            { label: "Email", key: "email", placeholder: "ops@company.com" },
-            { label: "Phone", key: "phone", placeholder: "+966 11 XXX XXXX" },
-          ].map(({ label, key, placeholder }) => (
-            <div key={key} className={key === "name" ? "col-span-2" : ""}>
-              <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-              <input
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
-                placeholder={placeholder}
-                value={String(form[key as keyof typeof form])}
-                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-              />
-            </div>
-          ))}
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">SLA Tier</label>
-            <select
-              title="SLA Tier"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
-              value={form.slaTier}
-              onChange={(e) => setForm((f) => ({ ...f, slaTier: e.target.value }))}
+    <Modal
+      title={mode === "create" ? "New customer account" : `Edit — ${initial?.name ?? ""}`}
+      onClose={onClose}
+      wide
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[0.72rem] font-medium text-red-700" role="alert">
+            {mut.isError ? (mut.error as Error)?.message ?? "Save failed." : ""}
+          </p>
+          <div className="flex gap-2">
+            <ClayButton variant="ghost" size="sm" onClick={onClose}>
+              Cancel
+            </ClayButton>
+            <ClayButton
+              variant="primary"
+              size="sm"
+              icon={mode === "create" ? Plus : Pencil}
+              loading={mut.isPending}
+              disabled={!valid}
+              onClick={() => mut.mutate()}
             >
-              {["Standard", "Gold", "Platinum"].map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+              {mode === "create" ? "Create customer" : "Save changes"}
+            </ClayButton>
           </div>
         </div>
-        {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
-        <div className="flex justify-end gap-2 mt-2">
-          <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
-          <button
-            type="button"
-            disabled={!form.name || !form.customerCode || mut.isPending}
-            className="btn-primary text-sm"
-            onClick={() => mut.mutate()}
-          >
-            {mut.isPending ? "Saving…" : "Add Customer"}
-          </button>
-        </div>
+      }
+    >
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <ClayInput
+          label="Company name"
+          wrapperClassName="sm:col-span-2"
+          placeholder="Gulf Express Logistics"
+          value={form.name}
+          onChange={(e) => set("name")(e.target.value)}
+        />
+        <ClayInput
+          label="Customer code"
+          placeholder="CUS-001"
+          value={form.customerCode}
+          onChange={(e) => set("customerCode")(e.target.value)}
+        />
+        <ClayInput
+          label="Primary contact"
+          placeholder="Jane Doe"
+          value={form.contactName}
+          onChange={(e) => set("contactName")(e.target.value)}
+        />
+        <ClayInput
+          label="Email"
+          type="email"
+          placeholder="ops@company.com"
+          value={form.email}
+          onChange={(e) => set("email")(e.target.value)}
+        />
+        <ClayInput
+          label="Phone"
+          placeholder="+966 11 000 0000"
+          value={form.phone}
+          onChange={(e) => set("phone")(e.target.value)}
+        />
+        <ClaySelect
+          label="Account status"
+          value={form.status}
+          onChange={(e) => set("status")(e.target.value)}
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </ClaySelect>
+        <ClaySelect
+          label="SLA tier"
+          value={form.slaTier}
+          onChange={(e) => set("slaTier")(e.target.value)}
+        >
+          {TIERS.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </ClaySelect>
+        <ClayInput
+          label="Billing address"
+          wrapperClassName="sm:col-span-2"
+          placeholder="Street, city, region"
+          value={form.billingAddress}
+          onChange={(e) => set("billingAddress")(e.target.value)}
+        />
+        <ClayInput
+          label="Shipping address"
+          wrapperClassName="sm:col-span-2"
+          placeholder="Street, city, region"
+          value={form.shippingAddress}
+          onChange={(e) => set("shippingAddress")(e.target.value)}
+        />
       </div>
+      <p className="mt-3 text-[0.72rem] font-medium leading-snug text-slate-500">
+        New accounts start with no SLA health or delivery score — those are computed from real
+        delivery history once jobs complete, never seeded.
+      </p>
+    </Modal>
+  );
+}
+
+// ── Bulk "set value" modal (status / tier) ──────────────────────────────────────
+function SetValueModal({
+  kind,
+  count,
+  busy,
+  onApply,
+  onClose,
+}: {
+  kind: "status" | "tier";
+  count: number;
+  busy: boolean;
+  onApply: (value: string) => void;
+  onClose: () => void;
+}) {
+  const options = kind === "status" ? STATUSES : TIERS;
+  const [value, setValue] = useState<string>(options[0]);
+  return (
+    <Modal
+      title={kind === "status" ? "Set account status" : "Set SLA tier"}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          <ClayButton variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </ClayButton>
+          <ClayButton
+            variant="primary"
+            size="sm"
+            icon={kind === "status" ? Activity : Tag}
+            loading={busy}
+            onClick={() => onApply(value)}
+          >
+            Apply to {count}
+          </ClayButton>
+        </div>
+      }
+    >
+      <p className="mb-3 text-sm font-medium text-slate-600">
+        Update {count} selected {count === 1 ? "customer" : "customers"} to a new{" "}
+        {kind === "status" ? "account status" : "SLA tier"}.
+      </p>
+      <ClaySelect
+        label={kind === "status" ? "New status" : "New tier"}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </ClaySelect>
+    </Modal>
+  );
+}
+
+// ── Score cell — honest about missing data ──────────────────────────────────────
+function ScoreCell({ score }: { score: number | null }) {
+  if (score === null || !Number.isFinite(score)) {
+    return <span className="text-[0.72rem] font-semibold text-slate-600">Unrated</span>;
+  }
+  const pct = Math.min(100, Math.max(0, score));
+  const tone: ClayTone = pct >= 85 ? "good" : pct >= 70 ? "info" : pct >= 50 ? "warn" : "bad";
+  const color =
+    tone === "good" ? "#059669" : tone === "info" ? "#2563eb" : tone === "warn" ? "#d97706" : "#dc2626";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="cx-well h-1.5 w-16 overflow-hidden rounded-full">
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <span className="w-7 text-right text-[0.78rem] font-bold tabular-nums text-slate-800">
+        {Math.round(pct)}
+      </span>
     </div>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Related-record row inside the detail panel ──────────────────────────────────
+function RelatedRow({
+  to,
+  primary,
+  secondary,
+  badge,
+}: {
+  to?: string;
+  primary: string;
+  secondary?: string;
+  badge?: ReactNode;
+}) {
+  const inner = (
+    <div className="flex items-center gap-2.5 rounded-[12px] px-3 py-2 transition-colors hover:bg-white/60">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[0.8rem] font-semibold text-slate-800">{primary}</p>
+        {secondary && <p className="truncate text-[0.72rem] font-medium text-slate-500">{secondary}</p>}
+      </div>
+      {badge}
+      {to && <ExternalLink size={13} strokeWidth={2.3} className="shrink-0 text-slate-400" aria-hidden />}
+    </div>
+  );
+  return to ? (
+    <Link to={to} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/40">
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
+}
 
-type StatusFilter = "All" | "Active" | "At Risk" | "Inactive";
+function RelSection({
+  icon: Icon,
+  title,
+  count,
+  children,
+  empty,
+}: {
+  icon: typeof Truck;
+  title: string;
+  count: number;
+  children: ReactNode;
+  empty: string;
+}) {
+  return (
+    <section className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 px-1">
+        <Icon size={14} strokeWidth={2.3} className="text-teal-700" aria-hidden />
+        <h4 className="text-[0.72rem] font-bold uppercase tracking-[0.1em] text-slate-700">{title}</h4>
+        <ClayBadge tone="neutral" className="ml-auto !px-2 !py-0.5 !text-[0.66rem]">
+          {count}
+        </ClayBadge>
+      </div>
+      {count === 0 ? (
+        <p className="px-3 py-1.5 text-[0.74rem] font-medium text-slate-600">{empty}</p>
+      ) : (
+        <div className="flex flex-col">{children}</div>
+      )}
+    </section>
+  );
+}
 
-export function CustomersPage() {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
-  const [tierFilter, setTierFilter] = useState<"All" | "Platinum" | "Gold" | "Standard">("All");
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<AnyRecord | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
-
-  const listQ = useQuery({ queryKey: ["customers", "list"], queryFn: customersApi.list, refetchInterval: 30_000 });
-  const sumQ = useQuery({ queryKey: ["customers", "summary"], queryFn: customersApi.summary });
-  const detailQ = useQuery({
-    queryKey: ["customers", "detail", selected?.id],
-    queryFn: () => customersApi.detail(selected!.id as string | number),
-    enabled: selected != null,
+// ── Detail panel ────────────────────────────────────────────────────────────────
+function DetailPanel({
+  customer,
+  onClose,
+  onEdit,
+  onDelete,
+  canUpdate,
+  canDelete,
+}: {
+  customer: AnyRecord;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  canUpdate: boolean;
+  canDelete: boolean;
+}) {
+  const id = customer.id as string | number;
+  const detailQ = useQuery({ queryKey: ["customers", "detail", id], queryFn: () => customersApi.detail(id) });
+  const timelineQ = useQuery({
+    queryKey: ["customers", "timeline", id],
+    queryFn: () => customersApi.timeline(id),
   });
-  const qc = useQueryClient();
+  const recsQ = useQuery({
+    queryKey: ["customers", "recommendations", id],
+    queryFn: () => customersApi.recommendations(id),
+  });
 
-  const customers = (listQ.data ?? []) as AnyRecord[];
-  const s = (sumQ.data ?? {}) as AnyRecord;
   const detail = (detailQ.data ?? {}) as AnyRecord;
+  const record = (detail.record as AnyRecord) ?? customer;
+  const jobs = (detail.activeJobs as AnyRecord[] | undefined) ?? [];
+  const contracts = (detail.contracts as AnyRecord[] | undefined) ?? [];
+  const sites = (detail.sites as AnyRecord[] | undefined) ?? [];
+  const comms = (detail.communications as AnyRecord[] | undefined) ?? [];
+  const timeline = (timelineQ.data ?? []) as CustomerTimelineEntry[];
+  const recs = (recsQ.data ?? []) as CustomerRecommendation[];
 
-  const filtered = customers.filter((c) => {
-    if (statusFilter !== "All" && c.status !== statusFilter) return false;
-    if (tierFilter !== "All" && c.slaTier !== tierFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        String(c.name ?? "").toLowerCase().includes(q) ||
-        String(c.customerCode ?? "").toLowerCase().includes(q) ||
-        String(c.contactName ?? "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-
-  if (listQ.isLoading) return <LoadingState />;
-  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
+  const sla = toScore(record.slaHealthScore ?? customer.slaHealthScore);
+  const dx = toScore(
+    record.deliveryExperienceScore ??
+      customer.deliveryExperienceScore ??
+      customer.customerDeliveryExperienceScore,
+  );
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
-      {showAdd && (
-        <AddCustomerModal
-          onClose={() => setShowAdd(false)}
-          onSaved={() => setShowAdd(false)}
-        />
-      )}
-
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Customers</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Customer accounts, SLA health, delivery experience, and risk monitoring</p>
+    <ClayCard
+      fill
+      scrollBody
+      className="h-full"
+      title={String(record.name ?? "Customer")}
+      subtitle={`${String(record.customerCode ?? "—")} · ${String(record.contactName ?? "No contact")}`}
+      icon={Users}
+      actions={<ClayButton size="sm" icon={X} aria-label="Close detail panel" onClick={onClose} />}
+      bodyClassName="flex flex-col gap-5"
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          {canUpdate && (
+            <ClayButton size="sm" variant="ghost" icon={Pencil} onClick={onEdit}>
+              Edit
+            </ClayButton>
+          )}
+          {canDelete && (
+            <ClayButton size="sm" variant="danger" icon={Trash2} onClick={onDelete}>
+              Delete
+            </ClayButton>
+          )}
         </div>
-        <div className="flex gap-2">
-          <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("customers", filtered)}>Export CSV</button>
-          <button type="button" className="btn-primary text-sm" onClick={() => setShowAdd(true)}>Add Customer</button>
-        </div>
+      }
+    >
+      {/* Status chips */}
+      <div className="flex flex-wrap gap-2">
+        <ClayBadge tone={statusTone(record.status)} dot>
+          {String(record.status ?? "Active")}
+        </ClayBadge>
+        <ClayBadge tone={tierTone(record.slaTier)} icon={Crown}>
+          {String(record.slaTier ?? "Standard")}
+        </ClayBadge>
+        <ClayBadge tone={riskTone(record.riskHeatScore)} icon={AlertTriangle}>
+          {String(record.riskHeatScore ?? "Unrated")} risk
+        </ClayBadge>
       </div>
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
+      {/* Health gauges — render "not enough data" honestly */}
+      <div className="grid grid-cols-2 gap-3">
+        <ClayWell padded className="flex items-center justify-center py-4">
+          <ClayGauge
+            score={sla}
+            size={128}
+            label="SLA Health"
+            emptyHint="No completed deliveries yet to score SLA health."
+          />
+        </ClayWell>
+        <ClayWell padded className="flex items-center justify-center py-4">
+          <ClayGauge
+            score={dx}
+            size={128}
+            label="Delivery Exp."
+            emptyHint="Delivery experience appears once jobs complete."
+          />
+        </ClayWell>
+      </div>
+
+      {/* Contact facts */}
+      <div className="grid grid-cols-2 gap-2.5">
         {[
-          { label: "Total Customers",         val: s.total ?? customers.length },
-          { label: "Active",                  val: s.active ?? customers.filter((c) => c.status === "Active").length, accent: "text-teal-600" },
-          { label: "At Risk",                 val: s.atRisk ?? customers.filter((c) => c.status === "At Risk").length, accent: "text-red-600" },
-          { label: "Avg SLA Health",          val: `${s.slaHealthScore ?? "--"}%`, accent: "text-violet-600" },
-          { label: "Avg Delivery Experience", val: `${s.deliveryExperienceScore ?? "--"}%`, accent: "text-teal-600" },
-          { label: "Platinum Accounts",       val: s.platinumAccounts ?? customers.filter((c) => c.slaTier === "Platinum").length, accent: "text-amber-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+          ["Email", record.email],
+          ["Phone", record.phone],
+          ["Billing", record.billingAddress],
+          ["Shipping", record.shippingAddress],
+        ].map(([k, v]) => (
+          <div key={String(k)} className="min-w-0">
+            <p className="text-[0.66rem] font-bold uppercase tracking-[0.1em] text-slate-500">{String(k)}</p>
+            <p className="mt-0.5 truncate text-[0.8rem] font-semibold text-slate-800">
+              {v ? String(v) : "—"}
+            </p>
           </div>
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5">
-          {(["All", "Active", "At Risk", "Inactive"] as StatusFilter[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {f}
-            </button>
+      {/* Entity relationships — this account wired into the rest of the product */}
+      <div className="flex flex-col gap-4">
+        <RelSection icon={Truck} title="Active jobs" count={jobs.length} empty="No open jobs for this account.">
+          {jobs.slice(0, 8).map((j) => (
+            <RelatedRow
+              key={String(j.id)}
+              to="/jobs"
+              primary={String(j.jobNumber ?? j.jobCode ?? `Job #${j.id}`)}
+              secondary={`${String(j.pickupAddress ?? "—")} → ${String(j.dropoffAddress ?? "—")}`}
+              badge={<ClayBadge tone={riskTone(j.riskHeatScore)} className="!px-2 !py-0.5 !text-[0.64rem]">{String(j.status ?? "")}</ClayBadge>}
+            />
           ))}
-        </div>
-        <select
-          title="SLA Tier filter"
-          value={tierFilter}
-          onChange={(e) => setTierFilter(e.target.value as typeof tierFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
-        >
-          <option value="All">All Tiers</option>
-          <option value="Platinum">Platinum</option>
-          <option value="Gold">Gold</option>
-          <option value="Standard">Standard</option>
-        </select>
-        <input
-          type="search"
-          placeholder="Search by name, code, contact…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
-        />
-      </div>
+        </RelSection>
 
-      {/* Table */}
-      <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? (
-          <EmptyState title="No customers match your filters" />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Customer", "Status", "SLA Tier", "SLA Health", "Delivery Exp.", "Risk", "Active Jobs", "Action"].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((c, i) => (
-                  <tr
-                    key={String(c.id ?? i)}
-                    className={`hover:bg-slate-50 cursor-pointer ${selected?.id === c.id ? "bg-teal-50" : ""}`}
-                    onClick={() => setSelected(selected?.id === c.id ? null : c)}
-                  >
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{String(c.name ?? "--")}</p>
-                      <p className="text-xs text-slate-400">{String(c.customerCode ?? "")} · {String(c.contactName ?? "")}</p>
-                    </td>
-                    <td className="px-4 py-3"><StatusBadge status={String(c.status ?? "Active")} /></td>
-                    <td className="px-4 py-3"><SlaTierBadge tier={String(c.slaTier ?? "Standard")} /></td>
-                    <td className="px-4 py-3"><ScoreBar score={Number(c.slaHealthScore ?? 0)} /></td>
-                    <td className="px-4 py-3"><ScoreBar score={Number(c.deliveryExperienceScore ?? c.customerDeliveryExperienceScore ?? 0)} /></td>
-                    <td className="px-4 py-3"><RiskBadge level={String(c.riskHeatScore ?? "Low")} /></td>
-                    <td className="px-4 py-3 text-slate-700">
-                      {Number(c.activeJobs ?? 0) > 0 ? (
-                        <span className="text-xs font-semibold text-teal-700">{String(c.activeJobs)}</span>
-                      ) : (
-                        <span className="text-slate-400 text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {c.recommendedAction ? (
-                        <span className="text-xs text-slate-600 italic">{String(c.recommendedAction)}</span>
-                      ) : (
-                        <span className="text-slate-400 text-xs">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <RelSection icon={FileText} title="Contracts" count={contracts.length} empty="No contracts on file.">
+          {contracts.slice(0, 6).map((ct) => (
+            <RelatedRow
+              key={String(ct.id)}
+              to="/contracts"
+              primary={String(ct.contractNumber ?? ct.contractType ?? `Contract #${ct.id}`)}
+              secondary={ct.expirationDate ? `Expires ${String(ct.expirationDate).slice(0, 10)}` : undefined}
+              badge={<ClayBadge tone={statusTone(ct.status)} className="!px-2 !py-0.5 !text-[0.64rem]">{String(ct.status ?? "")}</ClayBadge>}
+            />
+          ))}
+        </RelSection>
+
+        <RelSection icon={MapPin} title="Operational sites" count={sites.length} empty="No sites captured yet.">
+          {sites.slice(0, 6).map((st) => (
+            <RelatedRow
+              key={String(st.id)}
+              primary={String(st.siteName ?? st.siteCode ?? "Site")}
+              secondary={[st.city, st.state].filter(Boolean).map(String).join(", ") || String(st.siteType ?? "")}
+              badge={<ClayBadge tone={statusTone(st.status)} className="!px-2 !py-0.5 !text-[0.64rem]">{String(st.status ?? "Active")}</ClayBadge>}
+            />
+          ))}
+        </RelSection>
+
+        {comms.length > 0 && (
+          <RelSection icon={MailWarning} title="Recent communications" count={comms.length} empty="">
+            {comms.slice(0, 5).map((cm) => (
+              <RelatedRow
+                key={String(cm.id)}
+                primary={String(cm.subject ?? cm.channel ?? "Message")}
+                secondary={cm.sentAt ? String(cm.sentAt).slice(0, 16).replace("T", " ") : undefined}
+              />
+            ))}
+          </RelSection>
         )}
       </div>
 
-      {/* Detail drawer */}
-      {selected && (
-        <div className="fixed inset-0 z-40 flex justify-end" onClick={() => setSelected(null)}>
-          <div className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-              <span className="text-sm font-semibold text-white">{String(selected.name)}</span>
-              <button type="button" className="text-slate-400 hover:text-white" aria-label="Close" onClick={() => setSelected(null)}>✕</button>
-            </div>
-            <div className="px-5 py-4 border-b border-white/6 flex gap-2 flex-wrap">
-              <StatusBadge status={String(selected.status ?? "Active")} />
-              <SlaTierBadge tier={String(selected.slaTier ?? "Standard")} />
-              <RiskBadge level={String(selected.riskHeatScore ?? "Low")} />
-            </div>
-            <div className="px-5 py-4 flex flex-col gap-3 border-b border-white/6">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Scores</p>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="w-28 text-slate-400 shrink-0">SLA Health</span>
-                <ScoreBar score={Number(selected.slaHealthScore ?? 0)} />
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="w-28 text-slate-400 shrink-0">Delivery Exp.</span>
-                <ScoreBar score={Number(selected.deliveryExperienceScore ?? selected.customerDeliveryExperienceScore ?? 0)} />
-              </div>
-            </div>
-            <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
-              {[
-                ["Code", String(selected.customerCode ?? "")],
-                ["Contact", String(selected.contactName ?? "—")],
-                ["Email", String(selected.email ?? "—")],
-                ["Phone", String(selected.phone ?? "—")],
-                ["Active Jobs", String(selected.activeJobs ?? 0)],
-                ["Risk Score", String(selected.riskScore ?? "—")],
-              ].map(([k, v]) => (
-                <div key={String(k)}>
-                  <p className="text-xs text-slate-400">{String(k)}</p>
-                  <p className="text-sm font-semibold text-white mt-0.5 break-all">{String(v)}</p>
-                </div>
-              ))}
-            </div>
-            {!!selected.recommendedAction && (
-              <div className="px-5 py-4">
-                <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Recommended Action</p>
-                <p className="text-sm text-slate-300 leading-relaxed">{String(selected.recommendedAction)}</p>
-              </div>
-            )}
-            {!!selected.billingAddress && (
-              <div className="px-5 pb-4">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Billing Address</p>
-                <p className="text-xs text-slate-300">{String(selected.billingAddress)}</p>
-              </div>
-            )}
-            <div className="px-5 py-4 border-t border-white/6">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Operational Sites</p>
-              {(detail.sites as AnyRecord[] | undefined)?.length ? (
-                <div className="space-y-2">
-                  {(detail.sites as AnyRecord[]).slice(0, 4).map((site) => (
-                    <div key={String(site.id)} className="rounded-lg border border-white/10 bg-white/5 p-3">
-                      <p className="text-sm font-semibold text-white">{String(site.siteName ?? site.site_code ?? "Site")}</p>
-                      <p className="text-xs text-slate-300 mt-1">{String(site.siteType ?? site.site_type ?? "service")} · {String(site.status ?? "Active")}</p>
-                      <p className="text-xs text-slate-400 mt-1">{String(site.city ?? "")} {String(site.state ?? "")}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400">No operational sites captured yet.</p>
-              )}
-            </div>
-            <div className="px-5 py-4 border-t border-white/6 mt-auto">
-              <button
-                type="button"
-                className="w-full text-sm px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-medium transition-colors"
-                onClick={() => {
-                  void qc.invalidateQueries({ queryKey: ["customers"] });
-                  setSelected(null);
-                }}
-              >
-                Refresh Data
-              </button>
-            </div>
-          </div>
+      {/* Recommendations — real ai_recommendations rows */}
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 px-1">
+          <Sparkles size={14} strokeWidth={2.3} className="text-teal-700" aria-hidden />
+          <h4 className="text-[0.72rem] font-bold uppercase tracking-[0.1em] text-slate-700">Recommendations</h4>
         </div>
+        {recsQ.isLoading ? (
+          <ClaySkeleton variant="text" lines={2} />
+        ) : recs.length === 0 ? (
+          <p className="px-3 py-1.5 text-[0.74rem] font-medium text-slate-600">
+            No recommendations for this account.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {recs.slice(0, 5).map((r) => (
+              <ClayWell key={String(r.id)} padded className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <p className="min-w-0 flex-1 truncate text-[0.8rem] font-bold text-slate-800">{String(r.title ?? "Recommendation")}</p>
+                  {r.score != null && (
+                    <ClayBadge tone="info" className="!px-2 !py-0.5 !text-[0.64rem]">
+                      {Math.round(Number(r.score))}
+                    </ClayBadge>
+                  )}
+                </div>
+                {Boolean(r.body) && <p className="text-[0.74rem] font-medium leading-snug text-slate-600">{String(r.body)}</p>}
+              </ClayWell>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Timeline — real audit / domain events */}
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 px-1">
+          <Clock size={14} strokeWidth={2.3} className="text-teal-700" aria-hidden />
+          <h4 className="text-[0.72rem] font-bold uppercase tracking-[0.1em] text-slate-700">Activity timeline</h4>
+        </div>
+        {timelineQ.isLoading ? (
+          <ClaySkeleton variant="text" lines={3} />
+        ) : timeline.length === 0 ? (
+          <p className="px-3 py-1.5 text-[0.74rem] font-medium text-slate-600">No recorded activity yet.</p>
+        ) : (
+          <ol className="flex flex-col gap-2.5 border-l border-slate-200/80 pl-4">
+            {timeline.slice(0, 12).map((ev, i) => (
+              <li key={String(ev.id ?? i)} className="relative">
+                <span
+                  className="absolute -left-[1.42rem] top-1 size-2 rounded-full bg-teal-500 ring-2 ring-white"
+                  aria-hidden
+                />
+                <p className="text-[0.78rem] font-semibold text-slate-800">{String(ev.title ?? ev.eventType ?? "Event")}</p>
+                {Boolean(ev.body) && <p className="text-[0.72rem] font-medium leading-snug text-slate-600">{String(ev.body)}</p>}
+                {(ev.eventTime as string) && (
+                  <p className="mt-0.5 text-[0.66rem] font-medium tabular-nums text-slate-600">
+                    {String(ev.eventTime).slice(0, 16).replace("T", " ")}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </ClayCard>
+  );
+}
+
+// ── Bulk result banner — shows exactly what the API reported, per id ─────────────
+function BulkResultBanner({
+  result,
+  nameById,
+  onDismiss,
+}: {
+  result: BulkResponse;
+  nameById: Map<string, string>;
+  onDismiss: () => void;
+}) {
+  const failed = result.results.filter((r) => !r.ok);
+  const allOk = result.failed === 0;
+  return (
+    <ClayCard
+      className="shrink-0"
+      rail={allOk ? "good" : "warn"}
+      dense
+      title={`Bulk ${result.action}: ${result.succeeded}/${result.requested} succeeded`}
+      subtitle={allOk ? "Every selected customer was updated." : `${result.failed} could not be updated — details below.`}
+      actions={<ClayButton size="sm" icon={X} aria-label="Dismiss results" onClick={onDismiss} />}
+    >
+      {!allOk && (
+        <ul className="flex flex-col gap-1">
+          {failed.map((r) => (
+            <li key={r.id} className="flex items-center gap-2 text-[0.76rem]">
+              <AlertTriangle size={13} strokeWidth={2.4} className="shrink-0 text-amber-600" aria-hidden />
+              <span className="font-semibold text-slate-800">
+                {nameById.get(String(r.id)) ?? `#${r.id}`}
+              </span>
+              <span className="text-slate-500">— {r.error ?? "Failed"}</span>
+            </li>
+          ))}
+        </ul>
       )}
+    </ClayCard>
+  );
+}
+
+// ── Page ────────────────────────────────────────────────────────────────────────
+type StatusFilter = "All" | CustomerStatus;
+type TierFilter = "All" | CustomerSlaTier;
+
+export function CustomersPage() {
+  const can = useHasPermission();
+  const canCreate = can(PERMISSIONS.CUSTOMERS_CREATE);
+  const canUpdate = can(PERMISSIONS.CUSTOMERS_UPDATE);
+  const canDelete = can(PERMISSIONS.CUSTOMERS_DELETE);
+
+  const qc = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
+  const [tierFilter, setTierFilter] = useState<TierFilter>("All");
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [editRow, setEditRow] = useState<AnyRecord | null>(null);
+  const [setValueKind, setSetValueKind] = useState<"status" | "tier" | null>(null);
+  const [confirmKind, setConfirmKind] = useState<"bulk-delete" | "bulk-restore" | "row-delete" | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkResponse | null>(null);
+
+  const listQ = useQuery({ queryKey: ["customers", "list"], queryFn: customersApi.list, refetchInterval: 30_000 });
+  const sumQ = useQuery({ queryKey: ["customers", "summary"], queryFn: customersApi.summary });
+
+  const customers = (listQ.data ?? []) as AnyRecord[];
+  const summary = sumQ.data;
+
+  const filtered = useMemo(
+    () =>
+      customers.filter((c) => {
+        if (statusFilter !== "All" && c.status !== statusFilter) return false;
+        if (tierFilter !== "All" && c.slaTier !== tierFilter) return false;
+        if (search) {
+          const q = search.toLowerCase();
+          return (
+            String(c.name ?? "").toLowerCase().includes(q) ||
+            String(c.customerCode ?? "").toLowerCase().includes(q) ||
+            String(c.contactName ?? "").toLowerCase().includes(q)
+          );
+        }
+        return true;
+      }),
+    [customers, statusFilter, tierFilter, search],
+  );
+
+  const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
+  const sel = useRowSelection(visibleIds);
+
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of customers) m.set(String(c.id), String(c.name ?? `#${c.id}`));
+    return m;
+  }, [customers]);
+
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === selectedId) ?? null,
+    [customers, selectedId],
+  );
+
+  // Escape closes the detail panel (modals trap their own Escape).
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedId(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [selectedId]);
+
+  // ── Bulk mutation ─────────────────────────────────────────────────────────────
+  const bulkMut = useMutation({
+    mutationFn: (vars: { action: BulkAction; opts?: Parameters<typeof customersApi.bulk>[2] }) =>
+      customersApi.bulk(vars.action, sel.selectedIds, vars.opts),
+    onSuccess: (res) => {
+      setBulkResult(res);
+      sel.clear();
+      setSetValueKind(null);
+      setConfirmKind(null);
+      void qc.invalidateQueries({ queryKey: ["customers"] });
+    },
+  });
+
+  // ── Single-row delete (optimistic, rolls back on failure) ──────────────────────
+  const rowDeleteMut = useMutation({
+    mutationFn: (id: string | number) => customersApi.remove(id),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["customers", "list"] });
+      const prev = qc.getQueryData<AnyRecord[]>(["customers", "list"]);
+      qc.setQueryData<AnyRecord[]>(["customers", "list"], (old) =>
+        (old ?? []).filter((c) => c.id !== id),
+      );
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["customers", "list"], ctx.prev);
+    },
+    onSuccess: () => {
+      setSelectedId(null);
+      setConfirmKind(null);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["customers"] });
+    },
+  });
+
+  if (listQ.isLoading) return <LoadingState />;
+  if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} onRetry={() => listQ.refetch()} />;
+
+  const kpis: Array<{ label: string; value: ReactNode; unit?: string; icon: typeof Users; tone: ClayTone; hint?: string }> = [
+    { label: "Total accounts", value: fmtInt(summary?.total), icon: Users, tone: "neutral" },
+    { label: "Active", value: fmtInt(summary?.active), icon: ShieldCheck, tone: "good" },
+    { label: "At risk", value: fmtInt(summary?.atRisk), icon: AlertTriangle, tone: "bad" },
+    { label: "Avg SLA health", value: fmtInt(summary?.slaHealthScore), unit: summary?.slaHealthScore != null ? "%" : undefined, icon: Gauge, tone: "info" },
+    { label: "Avg delivery exp.", value: fmtInt(summary?.deliveryExperienceScore), unit: summary?.deliveryExperienceScore != null ? "%" : undefined, icon: Activity, tone: "good" },
+    { label: "Platinum accounts", value: fmtInt(summary?.platinumAccounts), icon: Crown, tone: "warn" },
+  ];
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6">
+      {/* Header */}
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-[-0.01em] text-slate-900">Customers</h1>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">
+            Accounts, SLA health, delivery experience, and risk — wired into jobs, contracts, and sites.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <ClayButton variant="ghost" size="sm" icon={Download} onClick={() => exportCsv("customers", filtered)}>
+            Export CSV
+          </ClayButton>
+          {canCreate && (
+            <ClayButton variant="primary" size="sm" icon={Plus} onClick={() => setShowCreate(true)}>
+              New customer
+            </ClayButton>
+          )}
+        </div>
+      </header>
+
+      {/* KPI rail */}
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {sumQ.isLoading
+          ? Array.from({ length: 6 }, (_, i) => <ClayStatSkeleton key={i} />)
+          : kpis.map((k) => (
+              <ClayStat key={k.label} label={k.label} value={k.value} unit={k.unit} icon={k.icon} tone={k.tone} />
+            ))}
+      </div>
+
+      {bulkResult && (
+        <BulkResultBanner result={bulkResult} nameById={nameById} onDismiss={() => setBulkResult(null)} />
+      )}
+
+      {/* Master / detail split */}
+      <div className="flex min-h-0 flex-1 gap-4">
+        {/* Left: filters + table + bulk bar */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {/* Filter bar */}
+          <ClayCard dense className="shrink-0" bodyClassName="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap gap-1.5">
+              {(["All", ...STATUSES] as StatusFilter[]).map((f) => {
+                const active = statusFilter === f;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setStatusFilter(f)}
+                    aria-pressed={active}
+                    className={`cx-btn cx-btn-${active ? "primary" : "ghost"} px-3 py-1.5 text-[0.76rem]`}
+                  >
+                    {f}
+                  </button>
+                );
+              })}
+            </div>
+            <ClaySelect
+              aria-label="Filter by SLA tier"
+              wrapperClassName="w-auto"
+              value={tierFilter}
+              onChange={(e) => setTierFilter(e.target.value as TierFilter)}
+            >
+              <option value="All">All tiers</option>
+              {TIERS.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </ClaySelect>
+            <ClayInput
+              icon={Search}
+              type="search"
+              aria-label="Search customers"
+              placeholder="Search name, code, contact…"
+              wrapperClassName="ml-auto w-full sm:w-64"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </ClayCard>
+
+          {/* Table */}
+          <ClayWell fill scroll className="min-h-0">
+            {filtered.length === 0 ? (
+              <div className="grid h-full place-items-center p-8">
+                <EmptyState title="No customers match your filters" />
+              </div>
+            ) : (
+              <table className="w-full border-collapse text-sm">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[var(--cx-bg-sunken)] shadow-[0_1px_0_rgba(148,163,184,.35)]">
+                    <th className="w-10 px-3 py-2.5 text-left">
+                      <BulkCheckbox
+                        checked={sel.allVisibleSelected}
+                        indeterminate={sel.someVisibleSelected}
+                        onToggle={() => sel.toggleAllVisible()}
+                        ariaLabel="Select all visible customers"
+                      />
+                    </th>
+                    {["Customer", "Status", "Tier", "SLA health", "Delivery exp.", "Risk", "Jobs"].map((h) => (
+                      <th
+                        key={h}
+                        className="px-3 py-2.5 text-left text-[0.66rem] font-bold uppercase tracking-[0.1em] text-slate-500"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((c) => {
+                    const isSel = selectedId === c.id;
+                    const isChecked = sel.isSelected(c.id);
+                    return (
+                      <tr
+                        key={String(c.id)}
+                        onClick={() => setSelectedId(isSel ? null : (c.id as string | number))}
+                        className={`cursor-pointer border-b border-slate-200/60 transition-colors ${
+                          isSel ? "bg-teal-500/10" : isChecked ? "bg-teal-500/[0.04]" : "hover:bg-white/50"
+                        }`}
+                      >
+                        <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                          <BulkCheckbox
+                            checked={isChecked}
+                            onToggle={(shift) => sel.toggle(c.id, shift)}
+                            ariaLabel={`Select ${String(c.name ?? c.id)}`}
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <p className="font-semibold text-slate-900">{String(c.name ?? "—")}</p>
+                          <p className="text-[0.72rem] font-medium text-slate-600">
+                            {String(c.customerCode ?? "")}
+                            {c.contactName ? ` · ${String(c.contactName)}` : ""}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <ClayBadge tone={statusTone(c.status)} dot className="!px-2 !py-0.5 !text-[0.66rem]">
+                            {String(c.status ?? "Active")}
+                          </ClayBadge>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <ClayBadge tone={tierTone(c.slaTier)} className="!px-2 !py-0.5 !text-[0.66rem]">
+                            {String(c.slaTier ?? "Standard")}
+                          </ClayBadge>
+                        </td>
+                        <td className="px-3 py-2.5"><ScoreCell score={toScore(c.slaHealthScore)} /></td>
+                        <td className="px-3 py-2.5">
+                          <ScoreCell score={toScore(c.deliveryExperienceScore ?? c.customerDeliveryExperienceScore)} />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <ClayBadge tone={riskTone(c.riskHeatScore)} className="!px-2 !py-0.5 !text-[0.66rem]">
+                            {String(c.riskHeatScore ?? "Unrated")}
+                          </ClayBadge>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="text-[0.8rem] font-bold tabular-nums text-slate-700">
+                            {Number(c.activeJobs ?? 0) > 0 ? String(c.activeJobs) : "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </ClayWell>
+
+          {/* Sticky bulk action bar */}
+          <BulkBar count={sel.count} onClear={sel.clear}>
+            {canUpdate && (
+              <>
+                <ClayButton size="sm" variant="ghost" icon={Activity} onClick={() => setSetValueKind("status")}>
+                  Set status
+                </ClayButton>
+                <ClayButton size="sm" variant="ghost" icon={Tag} onClick={() => setSetValueKind("tier")}>
+                  Set tier
+                </ClayButton>
+              </>
+            )}
+            {canDelete && (
+              <>
+                <ClayButton size="sm" variant="ghost" icon={RotateCcw} onClick={() => setConfirmKind("bulk-restore")}>
+                  Restore
+                </ClayButton>
+                <ClayButton size="sm" variant="danger" icon={Trash2} onClick={() => setConfirmKind("bulk-delete")}>
+                  Delete
+                </ClayButton>
+              </>
+            )}
+          </BulkBar>
+        </div>
+
+        {/* Right: inline detail panel (overlay on < xl) */}
+        {selectedCustomer && (
+          <>
+            <button
+              type="button"
+              aria-label="Close detail panel"
+              className="fixed inset-0 z-30 bg-slate-950/40 xl:hidden"
+              onClick={() => setSelectedId(null)}
+            />
+            <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col p-4 xl:static xl:z-auto xl:w-[26rem] xl:max-w-none xl:shrink-0 xl:p-0">
+              <DetailPanel
+                customer={selectedCustomer}
+                onClose={() => setSelectedId(null)}
+                onEdit={() => setEditRow(selectedCustomer)}
+                onDelete={() => setConfirmKind("row-delete")}
+                canUpdate={canUpdate}
+                canDelete={canDelete}
+              />
+            </aside>
+          </>
+        )}
+      </div>
+
+      {/* ── Modals & dialogs ──────────────────────────────────────────────────── */}
+      {showCreate && (
+        <CustomerForm mode="create" onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />
+      )}
+      {editRow && (
+        <CustomerForm
+          mode="edit"
+          initial={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => setEditRow(null)}
+        />
+      )}
+      {setValueKind && (
+        <SetValueModal
+          kind={setValueKind}
+          count={sel.count}
+          busy={bulkMut.isPending}
+          onClose={() => setSetValueKind(null)}
+          onApply={(value) =>
+            bulkMut.mutate(
+              setValueKind === "status"
+                ? { action: "set-status", opts: { patch: { status: value as CustomerStatus } } }
+                : { action: "set-tier", opts: { patch: { slaTier: value as CustomerSlaTier } } },
+            )
+          }
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmKind === "bulk-delete"}
+        title={`Delete ${sel.count} ${sel.count === 1 ? "customer" : "customers"}?`}
+        body={
+          <>
+            This soft-deletes the selected {sel.count === 1 ? "account" : "accounts"} — they can be
+            restored later. Type <span className="font-mono">DELETE</span> to confirm.
+          </>
+        }
+        confirmText="DELETE"
+        confirmLabel="Delete customers"
+        busy={bulkMut.isPending}
+        onClose={() => setConfirmKind(null)}
+        onConfirm={() => bulkMut.mutate({ action: "delete", opts: { confirm: "DELETE" } })}
+      />
+      <ConfirmDialog
+        open={confirmKind === "bulk-restore"}
+        title={`Restore ${sel.count} ${sel.count === 1 ? "customer" : "customers"}?`}
+        body="Restored accounts return to Active status."
+        confirmLabel="Restore"
+        danger={false}
+        busy={bulkMut.isPending}
+        onClose={() => setConfirmKind(null)}
+        onConfirm={() => bulkMut.mutate({ action: "restore" })}
+      />
+      <ConfirmDialog
+        open={confirmKind === "row-delete"}
+        title={`Delete ${selectedCustomer?.name ?? "customer"}?`}
+        body={
+          <>
+            This soft-deletes the account. Type <span className="font-mono">DELETE</span> to confirm.
+            {rowDeleteMut.isError && (
+              <span className="mt-2 block font-semibold text-red-700">
+                {(rowDeleteMut.error as Error)?.message ?? "Delete failed."}
+              </span>
+            )}
+          </>
+        }
+        confirmText="DELETE"
+        confirmLabel="Delete customer"
+        busy={rowDeleteMut.isPending}
+        onClose={() => setConfirmKind(null)}
+        onConfirm={() => selectedCustomer && rowDeleteMut.mutate(selectedCustomer.id as string | number)}
+      />
     </div>
   );
 }

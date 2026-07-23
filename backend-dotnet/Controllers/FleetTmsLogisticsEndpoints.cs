@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
@@ -312,6 +314,16 @@ WHERE id=@id AND company_id=@companyId",
         var customer = stop["customerName"]?.ToString() ?? "";
         await db.ExecuteAsync("UPDATE fleet_tms_dispatch_orders SET status='Delivered', delivered_at_utc=NOW(), updated_at_utc=NOW() WHERE company_id=@companyId AND order_number=@num",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@num", orderNumber); }, ct);
+
+        // Revenue bridge (P0): feed the confirmed delivery into order-to-cash. Best-effort — a billing hiccup
+        // must never fail the operational delivery confirmation.
+        try { await BridgeLastMileToBillingAsync(db, companyId, orderNumber, customer, ct); }
+        catch (Exception ex)
+        {
+            http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("FleetTmsBilling")
+                .LogWarning(ex, "Last-mile billing bridge failed for order {Order} (company {Company}); delivery still confirmed", orderNumber, companyId);
+        }
+
         await db.ExecuteAsync(@"
 UPDATE fleet_tms_delivery_routes SET completed_stops=LEAST(planned_stops, completed_stops + 1),
   completion_percent=CASE WHEN planned_stops=0 THEN 0 ELSE ROUND(LEAST(planned_stops, completed_stops + 1) / planned_stops::numeric * 100, 1) END,
@@ -320,6 +332,60 @@ UPDATE fleet_tms_delivery_routes SET completed_stops=LEAST(planned_stops, comple
 WHERE company_id=@companyId AND route_code=@route",
             c => { c.Parameters.AddWithValue("@customer", customer); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@route", routeCode); }, ct);
         return Ok(await Row(db, "fleet_tms_last_mile_stops", companyId, id, ct)!);
+    }
+
+    // Revenue bridge (P0 fix): a confirmed last-mile delivery must reach order-to-cash. The fleet_tms lane
+    // has no job/customer/charge linkage, so a delivered order was invisible to invoicing/rev-rec/settlement.
+    // Materialize a canonical customer + job + delivered dispatch_assignment + a MANUAL job_charge from the
+    // order's order_value. A manual charge is billed by BillingConsolidationService (the rating/outbox path
+    // alone cannot bill it — a fleet_tms order has no rate card, so rating writes zero charges). Every step is
+    // idempotent, so a duplicate ConfirmDelivery never double-bills. internal for direct testing.
+    internal static async Task BridgeLastMileToBillingAsync(Database db, long companyId, string orderNumber, string customerName, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderNumber) || string.IsNullOrWhiteSpace(customerName)) return;
+
+        var orderValue = await db.ScalarDecimalAsync(
+            "SELECT order_value FROM fleet_tms_dispatch_orders WHERE company_id=@c AND order_number=@n LIMIT 1",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@n", orderNumber); }, ct) ?? 0m;
+
+        // 1) find-or-create the customer (deterministic code so re-runs converge on one row)
+        await db.ExecuteAsync(
+            @"INSERT INTO customers (company_id, customer_code, name)
+              VALUES (@c, 'FTMS-'||left(md5(lower(@name)),12), @name)
+              ON CONFLICT (company_id, customer_code) DO NOTHING",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@name", customerName); }, ct);
+        var customerId = await db.ScalarLongAsync(
+            "SELECT id FROM customers WHERE company_id=@c AND customer_code='FTMS-'||left(md5(lower(@name)),12) LIMIT 1",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@name", customerName); }, ct);
+        if (customerId <= 0) return;
+
+        // 2) materialize the canonical job (one per order via UNIQUE(company_id, job_code))
+        var jobId = await db.ScalarLongAsync(
+            @"INSERT INTO jobs (company_id, customer_id, job_code, job_type, status)
+              VALUES (@c, @cust, 'FTMS-'||@num, 'last_mile', 'delivered')
+              ON CONFLICT (company_id, job_code) DO UPDATE SET status='delivered', customer_id=EXCLUDED.customer_id
+              RETURNING id",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@cust", customerId); c.Parameters.AddWithValue("@num", orderNumber); }, ct);
+        if (jobId <= 0) return;
+
+        // 3) a delivered dispatch_assignment (BillingConsolidationService's period filter requires it)
+        await db.ExecuteAsync(
+            @"INSERT INTO dispatch_assignments (company_id, job_id, assignment_status, actual_delivery_at)
+              SELECT @c, @j, 'delivered', NOW()
+              WHERE NOT EXISTS (SELECT 1 FROM dispatch_assignments WHERE company_id=@c AND job_id=@j)",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobId); }, ct);
+        await db.ExecuteAsync(
+            @"UPDATE dispatch_assignments SET assignment_status='delivered', actual_delivery_at=COALESCE(actual_delivery_at, NOW())
+              WHERE company_id=@c AND job_id=@j",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobId); }, ct);
+
+        // 4) the manual revenue charge (idempotent on charge_code -> billed at most once)
+        if (orderValue > 0)
+            await db.ExecuteAsync(
+                @"INSERT INTO job_charges (company_id, job_id, charge_code, charge_name, charge_type, quantity, unit_rate, amount, source, billing_status)
+                  SELECT @c, @j, 'LASTMILE', 'Last-mile delivery', 'base', 1, @v, @v, 'manual', 'unbilled'
+                  WHERE NOT EXISTS (SELECT 1 FROM job_charges WHERE company_id=@c AND job_id=@j AND charge_code='LASTMILE')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobId); c.Parameters.AddWithValue("@v", orderValue); }, ct);
     }
 
     private static async Task<IResult> RecordAttempt(HttpContext http, long id, StopAttemptRequest req, Database db, CancellationToken ct)

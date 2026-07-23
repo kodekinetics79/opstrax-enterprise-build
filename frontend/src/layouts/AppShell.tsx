@@ -18,7 +18,7 @@ const NAV_SECTIONS = [
   {
     label: "Operations",
     color: "text-teal-600",
-    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "alerts"],
+    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "alerts"],
   },
   {
     label: "Fleet",
@@ -160,7 +160,7 @@ function getSessionPlanLabel(session: SessionLike) {
     company?.tier,
   ];
   const found = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  return found ? String(found) : "Enterprise";
+  return found ? String(found) : "";
 }
 
 function findActiveModule(pathname: string) {
@@ -706,7 +706,7 @@ export function AppShell() {
                     </span>
                     <span className="hidden min-w-0 flex-col items-start leading-tight lg:flex">
                       <span className="max-w-[140px] truncate text-[12px] font-semibold text-slate-900">{displayName}</span>
-                      <span className="max-w-[140px] truncate text-[10px] text-slate-500">{roleLabel} · {planLabel}</span>
+                      <span className="max-w-[140px] truncate text-[10px] text-slate-500">{planLabel ? `${roleLabel} · ${planLabel}` : roleLabel}</span>
                     </span>
                     <ChevronDown className="hidden h-3 w-3 shrink-0 text-slate-400 lg:block" />
                   </button>

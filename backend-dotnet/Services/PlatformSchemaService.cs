@@ -288,8 +288,22 @@ public sealed class PlatformSchemaService(Database db)
         var anyAdmin = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_admins");
         if (anyAdmin > 0) return;
 
-        var email = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_EMAIL") ?? "platform@opstrax.io";
-        var password = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD") ?? "Platform@12345";
+        var email = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_EMAIL");
+        var password = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD");
+
+        // SECURITY (fail-closed): never seed a repo-known default credential in production. If the
+        // bootstrap env vars are absent on a production deploy, skip seeding entirely — the operator
+        // must provide PLATFORM_SUPERADMIN_EMAIL/PASSWORD to mint the first admin. The well-known demo
+        // identity is ONLY a local/dev convenience. (A default super-admin whose password is in the
+        // source tree would grant cross-tenant control on any misconfigured deploy.)
+        var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+        var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        {
+            if (isProduction) return;
+            email ??= "platform@opstrax.io";
+            password ??= "Platform@12345";
+        }
 
         var roleId = await db.ScalarLongAsync("SELECT id FROM platform_roles WHERE role_key='platform_super_admin'");
         var hash = HashPassword(password);

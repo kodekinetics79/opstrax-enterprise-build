@@ -11,12 +11,10 @@ namespace Opstrax.Tests;
 // STEP-2 KPI spot-check (numbers are hand-calculated against what was seeded).
 public class DemoTenantSeederPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     // Isolated, throwaway tenant code — MUST differ from the production DemoTenantSeeder
     // code so this test never deletes/recreates the real runtime demo tenant a pilot uses.
-    private const string TestCompanyCode = "MERIDIAN-DEMO-TEST";
     private const string TestCompanyName = "Meridian Logistics — Demo (Test)";
 
     [Fact]
@@ -24,10 +22,11 @@ public class DemoTenantSeederPostgresTests
     {
         var db = CreateDatabase();
         await EnsureSchemasAsync(db);
-        await DeleteDemoTenantAsync(db); // clean slate for a full seed
+        var testCompanyCode = $"MERIDIAN-DEMO-TEST-{Guid.NewGuid():N}"[..36];
+        await DeleteDemoTenantAsync(db, testCompanyCode); // clean slate for a full seed
 
         var seeder = new DemoTenantSeeder(db);
-        var result = await seeder.SeedAsync(TestCompanyCode, TestCompanyName);
+        var result = await seeder.SeedAsync(testCompanyCode, TestCompanyName);
 
         Assert.False(result.AlreadySeeded);
         Assert.Equal(TestCompanyName, result.CompanyName);
@@ -79,10 +78,10 @@ public class DemoTenantSeederPostgresTests
         Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM customer_feedback WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // Idempotent — a second run must NOT duplicate.
-        var second = await seeder.SeedAsync(TestCompanyCode, TestCompanyName);
+        var second = await seeder.SeedAsync(testCompanyCode, TestCompanyName);
         Assert.True(second.AlreadySeeded);
         Assert.Equal(companyId, second.CompanyId);
-        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code", c => c.Parameters.AddWithValue("@code", TestCompanyCode)));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code", c => c.Parameters.AddWithValue("@code", testCompanyCode)));
         Assert.Equal(12, await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // Two demo login users were seeded (internal admin + customer-portal).
@@ -97,7 +96,7 @@ public class DemoTenantSeederPostgresTests
     private static RevenueReadinessService CreateRevenueService(Database db, long companyId)
     {
         var correlation = new InMemoryCorrelationContext("corr-demo", "cause-demo", "req-demo", companyId.ToString(), ActorTypes.TenantUser, "1");
-        return new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), new PostgresApprovalWorkflowService(db, correlation), new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation);
+        return new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), new PostgresApprovalWorkflowService(db, correlation), new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation, new TaxService(db));
     }
 
     private static Database CreateDatabase()
@@ -128,9 +127,9 @@ public class DemoTenantSeederPostgresTests
     // hand-maintained DELETE list omitted several child tables (driver_documents,
     // vehicle_documents, customer_contacts/addresses, maintenance_*, …), which left the
     // company row undeletable and made the idempotency assertion state-dependent.
-    private static async Task DeleteDemoTenantAsync(Database db)
+    private static async Task DeleteDemoTenantAsync(Database db, string companyCode)
     {
-        var companyId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM companies WHERE company_code=@code LIMIT 1),0)", c => c.Parameters.AddWithValue("@code", TestCompanyCode));
+        var companyId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM companies WHERE company_code=@code LIMIT 1),0)", c => c.Parameters.AddWithValue("@code", companyCode));
         if (companyId == 0) return;
 
         var pairs = await db.QueryAsync(

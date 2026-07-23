@@ -57,10 +57,43 @@ export function PlatformTenantsPage() {
     });
   }, [all, search, statusFilter]);
 
+  const pkgs = (packages ?? []) as AnyRecord[];
   const sel = useRowSelection(rows.map((t) => Number(t.id)));
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState<"suspend" | "cancel" | "delete" | null>(null);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [bulkPkg, setBulkPkg] = useState("");
+
+  // R (bulk read/export): dump the selected tenants — the live, company-scoped rows
+  // already rendered in the table — to a CSV the operator can open in a spreadsheet.
+  // Pure client-side over data the /api/platform/tenants read returned; no new fetch.
+  const exportSelected = () => {
+    const chosen = new Set(sel.selectedIds.map(String));
+    const picked = rows.filter((t) => chosen.has(String(t.id)));
+    if (picked.length === 0) return;
+    const cols: [string, string][] = [
+      ["id", "id"], ["name", "name"], ["companyCode", "code"], ["status", "status"],
+      ["packageName", "package"], ["seatLimit", "seat_limit"], ["mrrCents", "mrr_cents"],
+      ["userCount", "users"], ["country", "country"], ["currency", "currency"],
+      ["industry", "industry"], ["primaryContactEmail", "primary_contact_email"],
+      ["billingEmail", "billing_email"], ["createdAt", "created_at"],
+    ];
+    const esc = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [
+      cols.map(([, h]) => h).join(","),
+      ...picked.map((t) => cols.map(([k]) => esc(t[k])).join(",")),
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tenants-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setBulkNotice(`Exported ${picked.length} tenant${picked.length === 1 ? "" : "s"} to CSV`);
+  };
 
   const runBulk = async (action: string, extra?: AnyRecord) => {
     setBulkBusy(true); setBulkNotice(null);
@@ -186,6 +219,20 @@ export function PlatformTenantsPage() {
 
       {canManage && (
         <PBulkBar count={sel.count} onClear={sel.clear}>
+          <PButton variant="ghost" disabled={bulkBusy} onClick={exportSelected}>Export CSV</PButton>
+          <div className="flex items-center gap-1.5">
+            <PSelect value={bulkPkg} onChange={(e) => setBulkPkg(e.target.value)} aria-label="Assign package to selected tenants">
+              <option value="">Assign package…</option>
+              {pkgs.map((p) => <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>)}
+            </PSelect>
+            <PButton
+              variant="ghost"
+              disabled={bulkBusy || !bulkPkg}
+              onClick={() => runBulk("assign-package", { packageId: Number(bulkPkg) }).then(() => setBulkPkg(""))}
+            >
+              Assign
+            </PButton>
+          </div>
           <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("activate")}>Activate</PButton>
           <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("extend-trial", { days: 14 })}>Extend trial +14d</PButton>
           <PButton variant="ghost" disabled={bulkBusy} onClick={() => runBulk("revoke-sessions")}>Revoke sessions</PButton>

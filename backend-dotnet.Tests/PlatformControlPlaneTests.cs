@@ -19,8 +19,7 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public class PlatformControlPlaneTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     private static Database CreateDatabase()
     {
@@ -90,6 +89,11 @@ public class PlatformControlPlaneTests
             "DELETE FROM platform_invoices WHERE company_id=@id",
             "DELETE FROM tenant_entitlements WHERE company_id=@id",
             "DELETE FROM tenant_subscriptions WHERE company_id=@id",
+            // TenantCreate seeds each new tenant's default feature flags, and feature_flags has
+            // an FK to companies — so without this the final DELETE FROM companies fails 23503
+            // and every provisioned test tenant leaks. Anything TenantCreate writes has to be
+            // torn down here, in FK order, ending with companies.
+            "DELETE FROM feature_flags WHERE company_id=@id",
             "DELETE FROM user_sessions WHERE company_id=@id",
             "DELETE FROM users WHERE company_id=@id",
             "DELETE FROM companies WHERE id=@id",
@@ -322,16 +326,24 @@ public class PlatformControlPlaneTests
                 new Dictionary<string, object?> { ["seatLimit"] = 5L }, db, countries, CancellationToken.None);
             Assert.Equal(404, StatusOf(missing));
 
-            // TENANT ADMIN INVITE — creates an Invited user without any credential
+            // TENANT ADMIN INVITE — creates a Pending user with NO password, plus a single-use
+            // reset token so the admin can actually onboard. ('Pending', not the old dead-end
+            // 'Invited' that the login gate rejected forever; the invite now mints a
+            // password_reset_tokens row and emails an accept link.)
             var inviteEmail = $"invite-{Unique()}@opstrax.test";
             var invite = await PlatformEndpoints.TenantResetInvite(companyId, Http(token),
                 new Dictionary<string, object?> { ["adminEmail"] = inviteEmail }, db, CancellationToken.None);
             Assert.Equal(200, StatusOf(invite));
-            var invited = await db.QuerySingleAsync("SELECT status, password_hash FROM users WHERE email=@e",
+            var invited = await db.QuerySingleAsync("SELECT id, status, password_hash FROM users WHERE email=@e",
                 c => c.Parameters.AddWithValue("@e", inviteEmail));
             Assert.NotNull(invited);
-            Assert.Equal("Invited", invited!["status"]?.ToString());
+            Assert.Equal("Pending", invited!["status"]?.ToString());
             Assert.True(invited["passwordHash"] is null or DBNull, "invite must never set a password");
+            // The corrected flow must leave a live credential-setting path (unexpired reset token).
+            var inviteTokenCount = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id=@uid AND consumed_at IS NULL AND expires_at > NOW()",
+                c => c.Parameters.AddWithValue("@uid", Convert.ToInt64(invited["id"])));
+            Assert.True(inviteTokenCount >= 1, "invite must create a single-use, unexpired reset token");
 
             // ACTIVE USER SESSION → SUSPEND revokes it and locks the company
             var userId = await db.InsertAsync(
@@ -454,6 +466,7 @@ public class PlatformControlPlaneTests
     public async Task Seat_Limit_Blocks_User_Creation_At_Capacity()
     {
         var db = CreateDatabase();
+        await new CoreSchemaService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreSchemaService>.Instance).EnsureAsync();
         await new PlatformSchemaService(db).EnsureAsync();
         await new SecuritySchemaService(db).EnsureAsync();
         var code = $"CPT-{Unique()}";

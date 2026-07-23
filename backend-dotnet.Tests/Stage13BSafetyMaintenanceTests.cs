@@ -8,8 +8,7 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public class Stage13BSafetyMaintenanceTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task SafetyMaintenanceFoundation_Persists_Snapshot_And_Recommendations_Without_Mutating_Business_Tables()

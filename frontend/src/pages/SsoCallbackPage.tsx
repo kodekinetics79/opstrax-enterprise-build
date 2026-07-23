@@ -7,7 +7,8 @@ import { authApi } from "@/services/authApi";
 import { setGlobalCsrfToken } from "@/hooks/useCsrf";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
-const SESSION_KEY = "opstrax.session.v2";
+import { SESSION_STORAGE_KEY as SESSION_KEY } from "@/auth/sessionStorage";
+
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 /**

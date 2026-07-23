@@ -79,9 +79,15 @@ export const adminApi = {
     }, {})).toString()}` : ""}`
   ),
   user: async (id: number): Promise<AdminUser> => get<AdminUser>(`/api/admin/users/${id}`),
-  createUser: async (body: Record<string, unknown>) => post<{ id: number }>("/api/admin/users", body),
+  // password is optional on create — when omitted the user is created as
+  // "Pending" and the response carries a one-time activation link to share.
+  createUser: async (body: Record<string, unknown>) =>
+    post<{ id: number; activationLink?: string; activationExpiresAt?: string }>("/api/admin/users", body),
   updateUser: async (id: number, body: Record<string, unknown>) => put<{ id: number }>(`/api/admin/users/${id}`, body),
   deleteUser: async (id: number) => del<{ id: number }>(`/api/admin/users/${id}`),
+  activationLink: async (id: number) => post<{ link: string; expiresAt: string }>(`/api/admin/users/${id}/activation-link`),
+  userSessions: async (id: number): Promise<AnyRecord[]> => get<AnyRecord[]>(`/api/admin/users/${id}/sessions`),
+  revokeUserSessions: async (id: number) => del<{ id: number; sessionsRevoked: number }>(`/api/admin/users/${id}/sessions`),
   roles: async (): Promise<AdminRole[]> => get<AdminRole[]>("/api/admin/roles"),
   createRole: async (body: Record<string, unknown>) => post<{ id: number }>("/api/admin/roles", body),
   updateRole: async (id: number, body: Record<string, unknown>) => put<{ id: number }>(`/api/admin/roles/${id}`, body),

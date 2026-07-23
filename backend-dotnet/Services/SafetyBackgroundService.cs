@@ -31,6 +31,22 @@ public sealed class SafetyBackgroundService(
         ["Low"]      = 3m,
     };
 
+    // Map the raw telemetry alert_type to the safety-dashboard event_type vocabulary (SafetySummary sums
+    // Title-Case tokens like 'Harsh Braking'/'Speeding'). Without this the harsh tiles stayed empty and
+    // even speeding didn't match. Unknown types pass through unchanged.
+    private static string MapEventType(string alertType) => alertType.ToLowerInvariant() switch
+    {
+        "harsh_braking" => "Harsh Braking",
+        "harsh_acceleration" => "Harsh Acceleration",
+        "harsh_turn" or "harsh_cornering" => "Harsh Cornering",
+        "crash" => "Crash",
+        "sos" => "SOS",
+        "speeding" => "Speeding",
+        "geofence_breach" => "Geofence Breach",
+        "stale_device" => "Stale Device",
+        _ => alertType,
+    };
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Startup delay — schema migrations and telemetry service must complete first.
@@ -50,6 +66,8 @@ public sealed class SafetyBackgroundService(
                     await tickDb.RunInSystemScopeAsync(async () =>
                     {
                         await ProcessTelemetryAlertsAsync(stoppingToken);
+                        await GeofenceEvaluator.EvaluateAsync(tickDb, stoppingToken);
+                        await DetentionService.DetectAsync(tickDb, stoppingToken);
                         await DetectRepeatedSpeedingAsync(stoppingToken);
                         await RecomputeDriverScoresAsync(stoppingToken);
                         await RefreshFleetHealthSnapshotsAsync(stoppingToken);
@@ -87,7 +105,8 @@ public sealed class SafetyBackgroundService(
               LEFT JOIN location_events le ON le.id = ta.source_event_id
               LEFT JOIN safety_events se ON se.source_telemetry_alert_id = ta.id
               WHERE se.id IS NULL
-                AND ta.alert_type IN ('speeding','geofence_breach','stale_device')
+                AND ta.alert_type IN ('speeding','geofence_breach','stale_device',
+                                      'harsh_braking','harsh_acceleration','harsh_turn','harsh_cornering','crash','sos')
               ORDER BY ta.created_at
               LIMIT 200",
             ct: ct);
@@ -131,7 +150,7 @@ public sealed class SafetyBackgroundService(
                         (@cid, @did, @vid, @devId,
                          @alertId, @srcId,
                          @evType, @sev, @impact, 'open',
-                         @evTime, @hash, @meta)",
+                         @evTime, @hash, @meta::jsonb)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",    companyId);
@@ -140,7 +159,7 @@ public sealed class SafetyBackgroundService(
                         c.Parameters.AddWithValue("@devId",  deviceId  ?? (object)DBNull.Value);
                         c.Parameters.AddWithValue("@alertId", alertId);
                         c.Parameters.AddWithValue("@srcId",  eventSrcId ?? (object)DBNull.Value);
-                        c.Parameters.AddWithValue("@evType", alertType);
+                        c.Parameters.AddWithValue("@evType", MapEventType(alertType));
                         c.Parameters.AddWithValue("@sev",    severity);
                         c.Parameters.AddWithValue("@impact", scoreImpact);
                         c.Parameters.AddWithValue("@evTime", alert["createdAt"] ?? (object)DBNull.Value);
@@ -149,7 +168,19 @@ public sealed class SafetyBackgroundService(
                     }, ct);
 
                 logger.LogDebug("Safety event created from telemetry_alert {AlertId}", alertId);
-                await CreateSafetyRecommendationAsync(companyId, alertId, alertType, severity, driverId, vehicleId, scoreImpact, ct);
+
+                // Best-effort AI enrichment. The safety_event is already committed above; a recommendation
+                // failure (AI service unavailable, ai_recommendations write error) must NOT abort conversion
+                // of the remaining alerts in this batch — otherwise one bad alert stalls safety scoring for
+                // every tenant until the next tick.
+                try
+                {
+                    await CreateSafetyRecommendationAsync(companyId, alertId, alertType, severity, driverId, vehicleId, scoreImpact, ct);
+                }
+                catch (Exception recEx)
+                {
+                    logger.LogWarning(recEx, "Safety recommendation enrichment failed for telemetry_alert {AlertId}; safety_event was still recorded", alertId);
+                }
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
             {

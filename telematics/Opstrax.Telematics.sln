@@ -1,0 +1,51 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.Contracts", "src\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj", "{861B221C-BF9D-4A7D-B6B9-B2001AAA4B2D}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.Protocols.Gt06", "src\Opstrax.Telematics.Protocols.Gt06\Opstrax.Telematics.Protocols.Gt06.csproj", "{4DB8255A-A7A8-4556-9483-3F64DB938D76}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.Gateway", "src\Opstrax.Telematics.Gateway\Opstrax.Telematics.Gateway.csproj", "{FB55378D-B1C1-4429-B452-00AE88FFF459}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.Protocols.Tests", "tests\Opstrax.Telematics.Protocols.Tests\Opstrax.Telematics.Protocols.Tests.csproj", "{D451C1B9-353F-495A-B264-0432A70724C8}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.IntegrationTests", "tests\Opstrax.Telematics.IntegrationTests\Opstrax.Telematics.IntegrationTests.csproj", "{5FF54945-D9A6-47FC-B276-D87DEDD2C45F}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Opstrax.Telematics.Security.Tests", "tests\Opstrax.Telematics.Security.Tests\Opstrax.Telematics.Security.Tests.csproj", "{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{861B221C-BF9D-4A7D-B6B9-B2001AAA4B2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{861B221C-BF9D-4A7D-B6B9-B2001AAA4B2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{861B221C-BF9D-4A7D-B6B9-B2001AAA4B2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{861B221C-BF9D-4A7D-B6B9-B2001AAA4B2D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4DB8255A-A7A8-4556-9483-3F64DB938D76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4DB8255A-A7A8-4556-9483-3F64DB938D76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4DB8255A-A7A8-4556-9483-3F64DB938D76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4DB8255A-A7A8-4556-9483-3F64DB938D76}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FB55378D-B1C1-4429-B452-00AE88FFF459}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FB55378D-B1C1-4429-B452-00AE88FFF459}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FB55378D-B1C1-4429-B452-00AE88FFF459}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FB55378D-B1C1-4429-B452-00AE88FFF459}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D451C1B9-353F-495A-B264-0432A70724C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D451C1B9-353F-495A-B264-0432A70724C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D451C1B9-353F-495A-B264-0432A70724C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D451C1B9-353F-495A-B264-0432A70724C8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5FF54945-D9A6-47FC-B276-D87DEDD2C45F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5FF54945-D9A6-47FC-B276-D87DEDD2C45F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5FF54945-D9A6-47FC-B276-D87DEDD2C45F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5FF54945-D9A6-47FC-B276-D87DEDD2C45F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

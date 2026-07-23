@@ -63,6 +63,12 @@ const MaintenancePlanningPage = lazy(() => import("@/pages/MaintenancePlanningPa
 const MaintenanceCommandPage = lazy(() => import("@/pages/MaintenanceCommandPage").then((module) => ({ default: module.MaintenanceCommandPage })));
 const CustomerVisibilityPage = lazy(() => import("@/pages/CustomerVisibilityPage").then((module) => ({ default: module.CustomerVisibilityPage })));
 const FinancialAnalyticsPage = lazy(() => import("@/pages/FinancialAnalyticsPage").then((module) => ({ default: module.FinancialAnalyticsPage })));
+const TaxAdminPage = lazy(() => import("@/pages/TaxAdminPage").then((module) => ({ default: module.TaxAdminPage })));
+const BillingConsolidationPage = lazy(() => import("@/pages/BillingConsolidationPage").then((m) => ({ default: m.BillingConsolidationPage })));
+const SettlementPage = lazy(() => import("@/pages/SettlementPage").then((m) => ({ default: m.SettlementPage })));
+const RevenueRecognitionPage = lazy(() => import("@/pages/RevenueRecognitionPage").then((m) => ({ default: m.RevenueRecognitionPage })));
+const DetentionPage = lazy(() => import("@/pages/DetentionPage").then((m) => ({ default: m.DetentionPage })));
+const DetentionEvidencePage = lazy(() => import("@/pages/DetentionEvidencePage").then((m) => ({ default: m.DetentionEvidencePage })));
 const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })));
 const FleetAssignmentsPage = lazy(() => import("@/pages/FleetAssignmentsPage").then((module) => ({ default: module.FleetAssignmentsPage })));
 const CarbonTrackingPage = lazy(() => import("@/pages/CarbonTrackingPage").then((module) => ({ default: module.CarbonTrackingPage })));
@@ -77,6 +83,8 @@ const HosEldPage = lazy(() => import("@/pages/HosEldPage").then((module) => ({ d
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ControlTowerPage = lazy(() => import("@/pages/ControlTowerPage").then((module) => ({ default: module.ControlTowerPage })));
 const LiveMapPage = lazy(() => import("@/pages/LiveMapPage").then((module) => ({ default: module.LiveMapPage })));
+const FleetLiveWallPage = lazy(() => import("@/pages/FleetLiveWallPage").then((module) => ({ default: module.FleetLiveWallPage })));
+const VehicleLiveMonitorPage = lazy(() => import("@/pages/VehicleLiveMonitorPage").then((module) => ({ default: module.VehicleLiveMonitorPage })));
 const CustomerEtaPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.CustomerEtaPage })));
 const PublicEtaTrackingPage = lazy(() => import("@/pages/CustomerEtaPage").then((module) => ({ default: module.PublicEtaTrackingPage })));
 const FleetWorkspacePage = lazy(() => import("@/pages/FleetWorkspacePage").then((module) => ({ default: module.FleetWorkspacePage })));
@@ -104,7 +112,6 @@ const ExecutivePage = lazy(() => import("@/pages/ExecutivePage").then((module) =
 const AboutPage = lazy(() => import("@/pages/AboutPage").then((module) => ({ default: module.AboutPage })));
 const PredictiveAnalyticsPage = lazy(() => import("@/pages/PredictiveAnalyticsPage").then((module) => ({ default: module.PredictiveAnalyticsPage })));
 const AlertRulesPage = lazy(() => import("@/pages/AlertRulesPage").then((module) => ({ default: module.AlertRulesPage })));
-const DriverMessagingPage = lazy(() => import("@/pages/DriverMessagingPage").then((module) => ({ default: module.DriverMessagingPage })));
 const WorkforceManagementPage = lazy(() => import("@/pages/WorkforceManagementPage").then((module) => ({ default: module.WorkforceManagementPage })));
 // P6 Mobile Driver Workflow — mobile-first portal at /driver/*
 const DriverLayout        = lazy(() => import("@/pages/driver/DriverLayout").then(m => ({ default: m.DriverLayout })));
@@ -113,6 +120,8 @@ const DriverAssignmentPage = lazy(() => import("@/pages/driver/DriverAssignmentP
 const DriverDvirPage      = lazy(() => import("@/pages/driver/DriverDvirPage").then(m => ({ default: m.DriverDvirPage })));
 const DriverCoachingPage  = lazy(() => import("@/pages/driver/DriverCoachingPage").then(m => ({ default: m.DriverCoachingPage })));
 const DriverHosPage       = lazy(() => import("@/pages/driver/DriverHosPage").then(m => ({ default: m.DriverHosPage })));
+const DriverEarningsPage  = lazy(() => import("@/pages/driver/DriverEarningsPage").then(m => ({ default: m.DriverEarningsPage })));
+const DriverMessagesPage  = lazy(() => import("@/pages/driver/DriverMessagesPage").then(m => ({ default: m.DriverMessagesPage })));
 // P7 Notifications + Messaging
 const NotificationCenterPage = lazy(() => import("@/pages/NotificationCenterPage").then(m => ({ default: m.NotificationCenterPage })));
 const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").then(m => ({ default: m.MessageCenterPage })));
@@ -128,11 +137,15 @@ const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((mod
 
 function ProtectedShell() {
   const { session } = useAuth();
+  if (!session) return <Navigate to="/login" replace />;
+  // Drivers are confined to their own portal — the back-office shell is never rendered for them.
+  // getLandingRouteForSession returns "/driver" for a driver-scoped session (driver:self, no
+  // dashboard:view); anything they type under the protected shell bounces to the portal. Defense in
+  // depth over the API side, where the isolated Driver role simply lacks any back-office permission.
+  if (getLandingRouteForSession(session) === "/driver") return <Navigate to="/driver" replace />;
   // Flags are only resolvable for an authenticated user (they're evaluated per-user
   // server-side), so the provider lives inside the authenticated shell.
-  return session
-    ? <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>
-    : <Navigate to="/login" replace />;
+  return <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>;
 }
 
 /**
@@ -170,6 +183,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/eta/:trackingCode" element={<PublicEtaTrackingPage />} />
         <Route path="/track/:token" element={<PublicShipmentTrackingPage />} />
+        <Route path="/evidence/:token" element={<DetentionEvidencePage />} />
 
         {/* ── P6 Driver Portal — mobile-first, separate layout, requires driver:self ── */}
         {/* The driver portal is a SEPARATE shell from ProtectedShell, so it needs its own
@@ -182,6 +196,8 @@ export default function App() {
             <Route path="/driver/dvir"           element={<DriverDvirPage />} />
             <Route path="/driver/coaching"       element={<DriverCoachingPage />} />
             <Route path="/driver/hos"            element={<DriverHosPage />} />
+            <Route path="/driver/earnings"       element={<DriverEarningsPage />} />
+            <Route path="/driver/messages"       element={<DriverMessagesPage />} />
             <Route path="/driver/notifications"  element={<DriverNotificationsPage />} />
           </Route>
         ) : null}
@@ -194,6 +210,8 @@ export default function App() {
         <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
         <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
         <Route path="/map-view" element={<RequirePermission permission="telemetry.live_state.read"><LiveMapPage /></RequirePermission>} />
+        <Route path="/fleet/live-wall" element={<RequirePermission permission="telemetry.live_state.read"><FleetLiveWallPage /></RequirePermission>} />
+        <Route path="/vehicles/:id/live" element={<RequirePermission permission="telemetry.live_state.read"><VehicleLiveMonitorPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
         <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
         <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
@@ -293,6 +311,11 @@ export default function App() {
         <Route path="/ar-aging"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/payments"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
         <Route path="/profitability" element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />
+        <Route path="/finance/tax-config" element={<RequirePermission permission="tax.read"><TaxAdminPage /></RequirePermission>} />
+        <Route path="/finance/billing" element={<RequirePermission permission="billing.read"><BillingConsolidationPage /></RequirePermission>} />
+        <Route path="/finance/settlements" element={<RequirePermission permission="settlement.read"><SettlementPage /></RequirePermission>} />
+        <Route path="/finance/revenue-recognition" element={<RequirePermission permission="revrec.read"><RevenueRecognitionPage /></RequirePermission>} />
+        <Route path="/detention" element={<RequirePermission permission="finance:view"><DetentionPage /></RequirePermission>} />
 
         {/* ── Governance ── */}
         <Route path="/integrations"  element={<RequirePermission permission="telematics:providers:manage"><IntegrationsPage /></RequirePermission>} />
@@ -321,7 +344,11 @@ export default function App() {
 
         {/* ── Alert Rules, Driver Messaging & Workforce ── */}
         <Route path="/alert-rules"       element={<RequirePermission permission="alerts:view"><AlertRulesPage /></RequirePermission>} />
-        <Route path="/driver-messaging"  element={<RequirePermission permission="dispatch:view"><DriverMessagingPage /></RequirePermission>} />
+        {/* The old "Driver Messaging" page wrote to module_records and delivered NOTHING to a driver
+            (a facade). Real dispatcher↔driver messaging lives at /messages (MessageCenterPage), which
+            shares the same messaging_conversations threads the driver portal now reads. Redirect so no
+            dispatcher lands on the dead surface; the page + /api/driver-messages stay dead-in-place. */}
+        <Route path="/driver-messaging"  element={<Navigate to="/messages" replace />} />
         <Route path="/workforce"         element={<RequirePermission permission="dispatch:view"><WorkforceManagementPage /></RequirePermission>} />
 
         {/* ── P7 Notifications + Messaging ── */}
@@ -339,12 +366,12 @@ export default function App() {
         {/* ── Remaining module routes (permission from moduleConfig) ── */}
           {modules
             .filter((module) => ![
-              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","alerts-center",
+              "command-center","control-tower","live-dashboard","active-shipments","alerts","map-view","fleet-live-wall","alerts-center",
               "dispatch","dispatch-board","vehicles","drivers","jobs","route-planning","routes","iot-devices","gps-tracking","obd-j1939","sensor-health","cold-chain",
               "customer-portal","customer-eta","maintenance","work-orders","dvir-inspections","documents",
               "safety","dashcam","coaching","incidents","evidence-packages","customers","assets",
               "ai-copilot","predictive-analytics","fuel-idling","expenses","contracts-rates","carrier-management","predictive-margin",
-              "cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
+              "tax-config","billing-consolidation","driver-pay","revenue-recognition","cost-leakage","compliance","hos-eld","settings","reports-analytics","sla-kpi","audit-logs",
               "executive","about","reports","shipments","load-bookings","route-plans","proof-of-delivery",
               "last-mile-delivery","leads","sales-pipeline","opportunities","campaigns","account-health",
               "follow-ups","support-tickets","renewals","upsell-opportunities","contracts","rate-cards",
@@ -353,7 +380,7 @@ export default function App() {
               "invoices","payments","profitability","integrations","owners","assignments","feature-flags",
               "carbon-tracking","digital-forms",
               "geofences","driver-scorecards",
-              "alert-rules","driver-messaging","workforce",
+              "alert-rules","workforce",
               "notifications","messages",
               "user-management",
               "fleet-health",

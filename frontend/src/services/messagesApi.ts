@@ -25,4 +25,8 @@ export const messagesApi = {
 
   markRead: (conversationId: number | string) =>
     unwrap<AnyRecord>(apiClient.post(`/api/messages/conversations/${conversationId}/read`, {})),
+
+  // Count of DISTINCT threads with unread inbound messages — drives the driver "Messages" nav badge.
+  unreadCount: () =>
+    unwrap<{ count: number }>(apiClient.get("/api/messages/unread-count")),
 };

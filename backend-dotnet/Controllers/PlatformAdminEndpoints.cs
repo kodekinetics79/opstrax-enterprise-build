@@ -539,6 +539,15 @@ public static class PlatformAdminEndpoints
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
         if (error is not null) return error;
 
+        // Do not let an already-enabled second factor be silently rebound (a hijacked session could
+        // otherwise overwrite the secret with the attacker's authenticator). Enrolling over an active
+        // MFA requires disabling it first through a re-authenticated path.
+        var current = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_admins WHERE id=@id AND mfa_enabled=true",
+            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+        if (current > 0)
+            return Results.Json(ApiResponse<object>.Fail("MFA is already enabled", "mfa_already_enabled"),
+                statusCode: StatusCodes.Status409Conflict);
+
         var secret = TotpService.GenerateSecret();
         var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
         var protectedSecret = pii.Encrypt(secret);

@@ -80,9 +80,9 @@ function SectionHeader({ icon: Icon, title, description }: { icon: React.Element
   );
 }
 
-function SaveRow({ onSave, isPending, saved, canSave }: { onSave: () => void; isPending: boolean; saved: boolean; canSave: boolean }) {
+function SaveRow({ onSave, isPending, saved, canSave, error }: { onSave: () => void; isPending: boolean; saved: boolean; canSave: boolean; error?: string }) {
   return (
-    <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
+    <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-slate-100">
       <button
         type="button"
         className="rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-sm px-5 py-2 shadow-[0_3px_10px_rgba(13,148,136,.28),inset_0_1px_0_rgba(255,255,255,.25)] transition active:translate-y-px disabled:opacity-50"
@@ -97,6 +97,32 @@ function SaveRow({ onSave, isPending, saved, canSave }: { onSave: () => void; is
           <Check className="h-3.5 w-3.5" /> Saved
         </span>
       )}
+      {error && (
+        <span role="alert" className="text-xs font-medium text-rose-600">{error}</span>
+      )}
+    </div>
+  );
+}
+
+/* Module-scope form rows — defining these inside SettingsPage would give them a
+   new identity every render, forcing React to remount the input and drop focus
+   after every keystroke. */
+function SelectField({ label, value, onChange, options, disabled }: { label: string; value: string; onChange: (v: string) => void; options: string[]; disabled?: boolean }) {
+  return (
+    <div className="grid grid-cols-[1fr_1.5fr] items-center gap-4 border-b border-slate-100 pb-3 min-w-0">
+      <label className="text-sm text-slate-600 truncate" title={label}>{label}</label>
+      <select aria-label={label} className="field w-full min-w-0" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange, disabled, type = "text", placeholder }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean; type?: string; placeholder?: string }) {
+  return (
+    <div className="grid grid-cols-[1fr_1.5fr] items-center gap-4 border-b border-slate-100 pb-3 min-w-0">
+      <label className="text-sm text-slate-600 truncate" title={label}>{label}</label>
+      <input aria-label={label} type={type} className="field w-full min-w-0" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} disabled={disabled} />
     </div>
   );
 }
@@ -106,6 +132,9 @@ export function SettingsPage() {
   const { session } = useAuth();
   const hasPermission = useHasPermission();
   const canUpdateSettings = hasPermission(PERMISSIONS.SETTINGS_UPDATE);
+  // The security-policy endpoints require security:manage server-side — gating
+  // on settings:update alone would render editable controls whose saves fail.
+  const canManageSecurity = hasPermission("security:manage");
 
   const queryClient = useQueryClient();
 
@@ -209,13 +238,24 @@ export function SettingsPage() {
     });
   }, [securitySettingsQ.data]);
   const securitySettingsMut = useMutation({
+    // The PUT deserializes a FULL settings record server-side — unsent fields
+    // reset to defaults. Merge the loaded row so the 3 edited fields never
+    // silently wipe the tenant's password policy / lockout configuration.
     mutationFn: () => settingsApi.securitySettingsPut({
+      ...((securitySettingsQ.data as Record<string, unknown> | undefined) ?? {}),
       sessionIdleTimeoutMinutes: Number(securityForm.sessionTimeoutMin) || 60,
       mfaRequired: securityForm.requireMfa,
       auditRetentionDays: Number(securityForm.auditRetentionDays) || 90,
     }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-security"] }),
   });
+  // ── Active sessions — the signed-in user's own device sessions ───────────
+  const mySessionsQ = useQuery({ queryKey: ["my-sessions"], queryFn: settingsApi.mySessions });
+  const revokeSessionMut = useMutation({
+    mutationFn: (id: number) => settingsApi.mySessionRevoke(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["my-sessions"] }),
+  });
+
   const [securitySaved, setSecuritySaved] = useState(false);
   function saveSecurity() {
     securitySettingsMut.mutate(undefined, {
@@ -291,26 +331,6 @@ export function SettingsPage() {
     { key: "about",         label: "About Platform",   hint: "Version & support",         icon: Info },
   ];
 
-  function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
-    return (
-      <div className="grid grid-cols-[1fr_1.5fr] items-center gap-4 border-b border-slate-100 pb-3 min-w-0">
-        <label className="text-sm text-slate-600 truncate" title={label}>{label}</label>
-        <select aria-label={label} className="field w-full min-w-0" value={value} onChange={(e) => onChange(e.target.value)} disabled={!canUpdateSettings}>
-          {options.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
-    );
-  }
-
-  function TextField({ label, value, onChange, type = "text", placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
-    return (
-      <div className="grid grid-cols-[1fr_1.5fr] items-center gap-4 border-b border-slate-100 pb-3 min-w-0">
-        <label className="text-sm text-slate-600 truncate" title={label}>{label}</label>
-        <input aria-label={label} type={type} className="field w-full min-w-0" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} disabled={!canUpdateSettings} />
-      </div>
-    );
-  }
-
   const about = (aboutQ.data ?? null) as AnyRecord | null;
   const health = (healthQ.data ?? null) as AnyRecord | null;
 
@@ -359,8 +379,8 @@ export function SettingsPage() {
               <SectionHeader icon={Building2} title="Company Profile" description="Display name, contact info and business address — shown on documents and the customer portal" />
               <div className="grid gap-x-8 gap-y-3 xl:grid-cols-2">
                 <div className="space-y-3 min-w-0">
-                  <TextField label="Company Name"    value={companyForm.displayName}  onChange={(v) => setCompanyForm((f) => ({ ...f, displayName: v }))} />
-                  <TextField label="Address"         value={companyForm.addressLine1} onChange={(v) => setCompanyForm((f) => ({ ...f, addressLine1: v }))} />
+                  <TextField disabled={!canUpdateSettings} label="Company Name"    value={companyForm.displayName}  onChange={(v) => setCompanyForm((f) => ({ ...f, displayName: v }))} />
+                  <TextField disabled={!canUpdateSettings} label="Address"         value={companyForm.addressLine1} onChange={(v) => setCompanyForm((f) => ({ ...f, addressLine1: v }))} />
                   <div className="grid grid-cols-3 gap-3">
                     <div className="min-w-0">
                       <label className="text-xs text-slate-500">City</label>
@@ -379,12 +399,12 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <div className="space-y-3 min-w-0">
-                  <TextField label="Phone"    value={companyForm.phone}        onChange={(v) => setCompanyForm((f) => ({ ...f, phone: v }))}        type="tel" />
-                  <TextField label="Email"    value={companyForm.contactEmail} onChange={(v) => setCompanyForm((f) => ({ ...f, contactEmail: v }))} type="email" />
-                  <TextField label="Website"  value={companyForm.website}      onChange={(v) => setCompanyForm((f) => ({ ...f, website: v }))} />
+                  <TextField disabled={!canUpdateSettings} label="Phone"    value={companyForm.phone}        onChange={(v) => setCompanyForm((f) => ({ ...f, phone: v }))}        type="tel" />
+                  <TextField disabled={!canUpdateSettings} label="Email"    value={companyForm.contactEmail} onChange={(v) => setCompanyForm((f) => ({ ...f, contactEmail: v }))} type="email" />
+                  <TextField disabled={!canUpdateSettings} label="Website"  value={companyForm.website}      onChange={(v) => setCompanyForm((f) => ({ ...f, website: v }))} />
                 </div>
               </div>
-              <SaveRow onSave={saveCompany} isPending={companyProfileMut.isPending} saved={companySaved} canSave={canUpdateSettings} />
+              <SaveRow onSave={saveCompany} isPending={companyProfileMut.isPending} saved={companySaved} canSave={canUpdateSettings} error={companyProfileMut.isError ? "Could not save the company profile. Please try again." : undefined} />
             </div>
           )}
 
@@ -419,12 +439,12 @@ export function SettingsPage() {
               <div className="iam-card space-y-4 p-6">
                 <SectionHeader icon={Globe} title={t("tenant_settings")} description="Timezone, date format, units and currency" />
                 <div className="space-y-3">
-                  <SelectField label={t("default_country")} value={localeForm.defaultCountry} onChange={(v) => setLocaleForm((f) => ({ ...f, defaultCountry: v }))} options={["US","CA","SA","AE","PK"]} />
-                  <SelectField label={t("timezone")}        value={localeForm.timezone}        onChange={(v) => setLocaleForm((f) => ({ ...f, timezone: v }))}        options={TIMEZONES} />
-                  <SelectField label={t("date_format")}     value={localeForm.dateFormat}      onChange={(v) => setLocaleForm((f) => ({ ...f, dateFormat: v }))}      options={DATE_FORMATS} />
-                  <SelectField label={t("currency")}        value={localeForm.currency}        onChange={(v) => setLocaleForm((f) => ({ ...f, currency: v }))}        options={CURRENCIES} />
-                  <SelectField label={t("distance_unit")}   value={localeForm.distanceUnit}    onChange={(v) => setLocaleForm((f) => ({ ...f, distanceUnit: v }))}    options={DISTANCE_UNITS} />
-                  <SelectField label={t("volume_unit")}     value={localeForm.volumeUnit}      onChange={(v) => setLocaleForm((f) => ({ ...f, volumeUnit: v }))}      options={VOLUME_UNITS} />
+                  <SelectField disabled={!canUpdateSettings} label={t("default_country")} value={localeForm.defaultCountry} onChange={(v) => setLocaleForm((f) => ({ ...f, defaultCountry: v }))} options={["US","CA","SA","AE","PK"]} />
+                  <SelectField disabled={!canUpdateSettings} label={t("timezone")}        value={localeForm.timezone}        onChange={(v) => setLocaleForm((f) => ({ ...f, timezone: v }))}        options={TIMEZONES} />
+                  <SelectField disabled={!canUpdateSettings} label={t("date_format")}     value={localeForm.dateFormat}      onChange={(v) => setLocaleForm((f) => ({ ...f, dateFormat: v }))}      options={DATE_FORMATS} />
+                  <SelectField disabled={!canUpdateSettings} label={t("currency")}        value={localeForm.currency}        onChange={(v) => setLocaleForm((f) => ({ ...f, currency: v }))}        options={CURRENCIES} />
+                  <SelectField disabled={!canUpdateSettings} label={t("distance_unit")}   value={localeForm.distanceUnit}    onChange={(v) => setLocaleForm((f) => ({ ...f, distanceUnit: v }))}    options={DISTANCE_UNITS} />
+                  <SelectField disabled={!canUpdateSettings} label={t("volume_unit")}     value={localeForm.volumeUnit}      onChange={(v) => setLocaleForm((f) => ({ ...f, volumeUnit: v }))}      options={VOLUME_UNITS} />
                 </div>
                 <SaveRow onSave={saveLocale} isPending={updateSettingsMut.isPending} saved={localeSaved} canSave={canUpdateSettings} />
               </div>
@@ -469,7 +489,7 @@ export function SettingsPage() {
                   </tbody>
                 </table>
               </div>
-              <SaveRow onSave={saveNotif} isPending={notifPrefsMut.isPending} saved={notifSaved} canSave={canUpdateSettings} />
+              <SaveRow onSave={saveNotif} isPending={notifPrefsMut.isPending} saved={notifSaved} canSave={canUpdateSettings} error={notifPrefsMut.isError ? "Could not save notification preferences. Please try again." : undefined} />
             </div>
           )}
 
@@ -484,34 +504,67 @@ export function SettingsPage() {
                   <div className="iam-card space-y-4 p-6">
                     <SectionHeader icon={Lock} title="Session & Access" description="Idle timeout and audit log retention policy" />
                     <div className="space-y-3">
-                      <SelectField label="Session Timeout (min)" value={securityForm.sessionTimeoutMin} onChange={(v) => setSecurityForm((f) => ({ ...f, sessionTimeoutMin: v }))} options={["15","30","60","120","240"]} />
-                      <TextField  label="Audit Retention (days)" value={securityForm.auditRetentionDays} onChange={(v) => setSecurityForm((f) => ({ ...f, auditRetentionDays: v }))} type="number" />
+                      <SelectField disabled={!canManageSecurity} label="Session Timeout (min)" value={securityForm.sessionTimeoutMin} onChange={(v) => setSecurityForm((f) => ({ ...f, sessionTimeoutMin: v }))} options={["15","30","60","120","240"]} />
+                      <TextField disabled={!canManageSecurity} label="Audit Retention (days)" value={securityForm.auditRetentionDays} onChange={(v) => setSecurityForm((f) => ({ ...f, auditRetentionDays: v }))} type="number" />
                     </div>
                     <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-800">Require 2FA for all users</p>
                         <p className="text-xs text-slate-500 mt-0.5">Every user must enrol a TOTP or email OTP before accessing the platform.</p>
                       </div>
-                      <ToggleSwitch checked={securityForm.requireMfa} onChange={(v) => setSecurityForm((f) => ({ ...f, requireMfa: v }))} disabled={!canUpdateSettings} label="Require 2FA for all users" />
+                      <ToggleSwitch checked={securityForm.requireMfa} onChange={(v) => setSecurityForm((f) => ({ ...f, requireMfa: v }))} disabled={!canManageSecurity} label="Require 2FA for all users" />
                     </div>
-                    <SaveRow onSave={saveSecurity} isPending={securitySettingsMut.isPending} saved={securitySaved} canSave={canUpdateSettings} />
+                    <SaveRow onSave={saveSecurity} isPending={securitySettingsMut.isPending} saved={securitySaved} canSave={canManageSecurity} error={securitySettingsMut.isError ? "Could not save the security policy. Check your permissions and try again." : undefined} />
                   </div>
 
                   <div className="iam-card space-y-4 p-6">
-                    <SectionHeader icon={Lock} title="Active Session" description="Details about your current authenticated session" />
+                    <SectionHeader icon={Lock} title="Active Sessions" description="Devices currently signed in to your account — revoke any you don't recognize" />
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       {[
-                        ["User",     String(session?.user?.fullName ?? session?.user?.email ?? "—")],
-                        ["Role",     String(session?.role ?? "—")],
-                        ["Tenant",   String(session?.company?.name ?? session?.company?.id ?? "—")],
-                        ["Session",  "Active · Server-verified"],
+                        ["User",          String(session?.user?.fullName ?? session?.user?.email ?? "—")],
+                        ["Role · Tenant", `${String(session?.role ?? "—")} · ${String(session?.company?.name ?? session?.company?.id ?? "—")}`],
                       ].map(([k, v]) => (
                         <div key={k} className="iam-kv flex-col !items-start gap-1">
-                          <p className="text-slate-500 font-medium">{k}</p>
-                          <p className="text-slate-900 font-semibold break-words w-full">{v}</p>
+                          <p className="text-slate-500 font-medium truncate w-full">{k}</p>
+                          <p className="text-slate-900 font-semibold break-words w-full min-w-0">{v}</p>
                         </div>
                       ))}
                     </div>
+                    {mySessionsQ.isLoading ? (
+                      <p className="text-xs text-slate-400">Loading sessions…</p>
+                    ) : mySessionsQ.isError ? (
+                      <p role="alert" className="text-xs font-medium text-rose-600">Could not load sessions.</p>
+                    ) : (mySessionsQ.data ?? []).length === 0 ? (
+                      <p className="text-xs text-slate-500">No other active sessions.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {(mySessionsQ.data as AnyRecord[]).map((s) => (
+                          <div key={String(s.id)} className="iam-kv !items-center text-xs">
+                            <div className="min-w-0">
+                              <p className="text-slate-900 font-semibold truncate">
+                                Signed in {s.createdAt ? new Date(String(s.createdAt)).toLocaleString() : "—"}
+                              </p>
+                              <p className="text-slate-500 mt-0.5 truncate">
+                                Expires {s.expiresAt ? new Date(String(s.expiresAt)).toLocaleString() : "—"}
+                              </p>
+                            </div>
+                            {s.isCurrent ? (
+                              <span className="iam-chip !text-teal-700 !border-teal-300/60 shrink-0"><span>This device</span></span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="shrink-0 text-xs font-semibold text-rose-600 hover:text-rose-700 disabled:opacity-50"
+                                onClick={() => revokeSessionMut.mutate(Number(s.id))}
+                                disabled={revokeSessionMut.isPending}
+                              >
+                                Revoke
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-500">Revoking a session signs that device out immediately. Your current session cannot be revoked from here.</p>
                   </div>
                 </div>
               </div>
@@ -651,7 +704,7 @@ export function SettingsPage() {
                   </div>
                 )}
 
-                <SaveRow onSave={saveApi} isPending={webhookMut.isPending} saved={apiSaved} canSave={canUpdateSettings} />
+                <SaveRow onSave={saveApi} isPending={webhookMut.isPending} saved={apiSaved} canSave={canUpdateSettings} error={webhookMut.isError ? "Could not save the webhook configuration. Please try again." : undefined} />
               </div>
             </div>
           )}
