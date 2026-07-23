@@ -70,14 +70,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  if (revalidating) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-teal-500" />
-      </div>
-    );
-  }
-
   const value = useMemo(() => ({
     session,
     setSession,
@@ -92,6 +84,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
   }), [session]);
+
+  // Early return only AFTER every hook above has run (Rules of Hooks): gate the app on the one-time
+  // session re-validation so stale permissions never render.
+  if (revalidating) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-teal-500" />
+      </div>
+    );
+  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
